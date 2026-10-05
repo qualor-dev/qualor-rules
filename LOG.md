@@ -24,6 +24,13 @@ Entry format:
   branches left behind.
 ```
 
+## 2026-10-06: release 2026.10.1 (`/release-pack`)
+
+- **Request:** the maintainer asked to integrate the rules into the Qualor server and CLI (pin and publish the pack) and to release despite the §8.4 Java result ("Выпускать сейчас").
+- **Done:** qualor-rules-2026.10.1.tar.gz, sha256 aa9ce2da7571a57d7191d23f3937ae58a6e6c4f1ca750b2e4c31430161402b32, OpenGrep 1.30.0; 49 rules (46 issues, 3 hotspots): the 4 seed rules (java.sql-injection changed) and the 45 rules of the 2026-10-04 run. Reproducible: host twice and Linux, identical.
+- **Measurement:** MEASUREMENTS.md 2026-10-05 entry (rules fa2c6d7): noise projects and qualor-cc 0 findings; Benchmark TPR 86–89 %, FPR cmdi 45.6 %, ldapi 53.1 %, pathtraver 65.2 %, sqli 53.9 %, xss 47.8 %: §8.4 NOT met in all five (released on the maintainer's word; `--taint-intrafile` is the next task).
+- **Notes:** the repository is public since 2026-10-06 (rulesets on main and v* tags, secret scanning, private vulnerability reporting, SECURITY.md).
+
 ## 2026-10-04: rules run (`/write-rules 56`)
 
 - **Request:** the maintainer asked for 50 new rules now ("50 правил надо написать сейчас"); N = 56 so that 50 new rules are written after the 6 maintenance rows at the top of the queue.
