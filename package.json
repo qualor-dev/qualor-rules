@@ -1,0 +1,25 @@
+{
+  "name": "qualor-rules",
+  "version": "2026.10.0",
+  "private": true,
+  "description": "Qualor's security rules for OpenGrep. Source-available under PolyForm Shield 1.0.0, not open source.",
+  "license": "SEE LICENSE IN LICENSE",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "opengrep": "1.30.0",
+  "scripts": {
+    "check": "node tools/check.mjs && node tools/backlog.mjs",
+    "test:tools": "node --test \"tools/*.test.mjs\"",
+    "test:rules": "node tools/test-rules.mjs",
+    "test": "npm run check && npm run test:tools && npm run test:rules",
+    "test:docker": "node tools/scanner.mjs test",
+    "probe": "node tools/scanner.mjs probe",
+    "scan": "node tools/scanner.mjs scan",
+    "measure": "node tools/measure.mjs",
+    "release": "node tools/release.mjs"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0",
+    "yaml": "2.9.1"
+  }
+}

@@ -1,0 +1,566 @@
+rules:
+  - id: java.xss
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request is written into an HTML response without encoding, so a client
+      can make the page run a script in another user's browser (cross-site scripting). Encode it
+      for its HTML context (OWASP Java Encoder `Encode.forHtml`, Spring `HtmlUtils.htmlEscape`),
+      render it through an escaping template engine, or send it with a non-HTML content type
+      (`application/json`, `text/plain`).
+    metadata:
+      title: HTML response built from HTTP request data (Java)
+      cwe: ['CWE-79']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [servlet, spring-mvc, jax-rs]
+      sources:
+        - https://cwe.mitre.org/data/definitions/79.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+        - https://owasp.org/www-project-java-encoder/
+        - https://github.com/OWASP/owasp-java-encoder
+        - https://javadoc.io/static/org.owasp.esapi/esapi/2.5.0.0/org/owasp/esapi/Encoder.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/util/HtmlUtils.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/converter/StringHttpMessageConverter.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/ResponseEntity.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-requestmapping.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/responsebody.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestparam.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestbody.html
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/servletrequest
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/servletresponse
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest
+        - https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/produces
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/core/response
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/pathparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam
+        - https://commons.apache.org/proper/commons-text/apidocs/org/apache/commons/text/StringEscapeUtils.html
+        - https://commons.apache.org/proper/commons-lang/apidocs/org/apache/commons/lang3/StringEscapeUtils.html
+        - https://commons.apache.org/proper/commons-lang/javadocs/api-2.6/org/apache/commons/lang/StringEscapeUtils.html
+        - https://quarkus.io/guides/rest
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A handler parameter without an annotation is not a source (the Jakarta REST entity
+    #   parameter, a Spring MVC simple-type parameter), and only the scalar types of the source
+    #   block count as safe: an enum, a `List<Long>` or an `Optional<Long>` parameter is still a
+    #   source, as in java.sql-injection.
+    # - Conditions are not evaluated: a switch over a value computed from constants still counts
+    #   its request-data branch.
+    # - Only one method is analysed at a time: a helper method or inner class of the same file
+    #   that encodes the value (or returns a constant) still passes the request data on.
+    # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
+    #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
+    #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
+    #   and valueOf of an enum from another file still pass the request data on.
+    # - Under a Jakarta REST XML or SVG type, only markup the code builds is a sink (a String
+    #   return, or a Response entity that is a String variable, a concatenation or
+    #   String.format); a DTO entity is written escaped by JAXB or JSON-B, and a String from a
+    #   call (a StringBuilder's toString) is not reported. Any String variable counts as built
+    #   markup, so a serialiser's escaped output kept in a variable
+    #   (`String xml = xmlMapper.writeValueAsString(dto)`, then sent with an XML type) is still
+    #   reported.
+    # - A Jakarta REST String or Response without @Produces (method or class) and without an
+    #   explicit type is not reported: its media type is negotiated (the specification lets a
+    #   browser's Accept header pick text/html; Quarkus REST picks text/plain for a String).
+    # - A servlet response counts as non-HTML only when a literal JSON, plain-text, CSV, PDF or
+    #   image content type (or a Spring MediaType constant) is set earlier in the same block; a
+    #   content type set in a branch, a helper or a filter is not seen.
+    # - Spring MVC: only a handler that returns String (in a @RestController or with @ResponseBody
+    #   on the method) or ResponseEntity<String> is a sink, unless its produces (method, or class
+    #   when the method has none) names JSON or plain text, or the ResponseEntity builder sets a
+    #   non-HTML contentType or Content-Type header. XML and SVG types count as HTML (a browser
+    #   runs scripts in them). @ResponseBody on a @Controller class, a ResponseEntity<Object> body
+    #   and a content type set through an HttpHeaders object are not seen.
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.servlet.ServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.ServletRequest $R).$GET(...)
+              - pattern: (javax.servlet.http.HttpServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.http.HttpServletRequest $R).$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getRequestURL|getPathInfo|getReader|getInputStream|getPart|getParts)$
+      # Spring MVC and Jakarta REST: the controller-method parameters bound from the request
+      # (query, path, matrix, header, cookie, form, body, model attribute). Numbers, booleans,
+      # UUIDs and dates are converted by the framework and cannot carry injected text.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $RET $M(..., @$ANN $T $P, ...) { ... }
+              - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $ANN
+              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+          - pattern: $P
+    pattern-propagators:
+      # HTML assembled with a StringBuilder or StringBuffer.
+      - pattern: $SB.append($X)
+        from: $X
+        to: $SB
+      # ... also later in an append chain.
+      - pattern: $SB.append(...). ... .append($X)
+        from: $X
+        to: $SB
+    pattern-sanitizers:
+      - pattern: Integer.parseInt(...)
+      - pattern: Long.parseLong(...)
+      - pattern: Integer.valueOf(...)
+      - pattern: Long.valueOf(...)
+      # Allow-list lookups yield only values the code holds: Map.of(...) of literals and constants,
+      # in a static final field or in place, looked up with get(key) or getOrDefault(key, a
+      # literal or constant), and constants of an enum declared in this file. A map filled from
+      # request data, or a lookup whose fallback is request data, stays tainted.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final $MT $MAP = $INIT; ... }
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+          - pattern-either:
+              - pattern: $MAP.get($K)
+              - patterns:
+                  - pattern: $MAP.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+      - patterns:
+          - pattern-either:
+              - pattern: $INIT.get($K)
+              - patterns:
+                  - pattern: $INIT.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+      - pattern: Enum.valueOf(...)
+      - pattern: java.lang.Enum.valueOf(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $X { ... enum $E { ... } ... }
+              - pattern-inside: |
+                  class $X { ... }
+                  ...
+                  enum $E { ... }
+              - pattern-inside: |
+                  enum $E { ... }
+                  ...
+                  class $X { ... }
+          - pattern: $E.valueOf(...)
+      # HTML encoding: the OWASP Java Encoder, Spring's HtmlUtils, Commons Text and Commons Lang.
+      - patterns:
+          - pattern: org.owasp.encoder.Encode.$ENC(...)
+          - metavariable-regex:
+              metavariable: $ENC
+              regex: ^for(Html|HtmlContent|HtmlAttribute|Xml|XmlContent|XmlAttribute|UriComponent)$
+      - patterns:
+          - pattern: org.springframework.web.util.HtmlUtils.$ENC(...)
+          - metavariable-regex:
+              metavariable: $ENC
+              regex: ^htmlEscape(Decimal|Hex)?$
+      - patterns:
+          - pattern: org.apache.commons.text.StringEscapeUtils.$ENC(...)
+          - metavariable-regex:
+              metavariable: $ENC
+              regex: ^escape(Html3|Html4|Xml10|Xml11)$
+      - patterns:
+          - pattern: org.apache.commons.lang3.StringEscapeUtils.$ENC(...)
+          - metavariable-regex:
+              metavariable: $ENC
+              regex: ^escape(Html3|Html4|Xml|Xml10|Xml11)$
+      - patterns:
+          - pattern: org.apache.commons.lang.StringEscapeUtils.$ENC(...)
+          - metavariable-regex:
+              metavariable: $ENC
+              regex: ^escape(Html|Xml)$
+      - patterns:
+          - pattern-either:
+              - pattern: org.owasp.esapi.ESAPI.encoder().$ENC(...)
+              - pattern: (org.owasp.esapi.Encoder $E).$ENC(...)
+          - metavariable-regex:
+              metavariable: $ENC
+              regex: ^encodeFor(HTML|HTMLAttribute|XML|XMLAttribute|URL)$
+    pattern-sinks:
+      # Servlet: the response writer and output stream, unless a non-HTML content type was set
+      # first. Only the arguments are sinks (the writer itself is not request data).
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.servlet.ServletResponse $RESP).$GETW().$PRINT($...ARGS)
+              - pattern: (jakarta.servlet.ServletResponse $RESP).$GETW().$PRINT($...ARGS)
+              - pattern: (javax.servlet.http.HttpServletResponse $RESP).$GETW().$PRINT($...ARGS)
+              - pattern: (jakarta.servlet.http.HttpServletResponse $RESP).$GETW().$PRINT($...ARGS)
+              - pattern: (javax.servlet.ServletResponse $RESP).$GETW().append(...). ... .$PRINT($...ARGS)
+              - pattern: (jakarta.servlet.ServletResponse $RESP).$GETW().append(...). ... .$PRINT($...ARGS)
+              - pattern: (javax.servlet.http.HttpServletResponse $RESP).$GETW().append(...). ... .$PRINT($...ARGS)
+              - pattern: (jakarta.servlet.http.HttpServletResponse $RESP).$GETW().append(...). ... .$PRINT($...ARGS)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $W = (javax.servlet.ServletResponse $RESP).$GETW();
+                          ...
+                      - pattern-inside: |
+                          $W = (jakarta.servlet.ServletResponse $RESP).$GETW();
+                          ...
+                      - pattern-inside: |
+                          $W = (javax.servlet.http.HttpServletResponse $RESP).$GETW();
+                          ...
+                      - pattern-inside: |
+                          $W = (jakarta.servlet.http.HttpServletResponse $RESP).$GETW();
+                          ...
+                      - pattern-inside: |
+                          try ($WT $W = (javax.servlet.ServletResponse $RESP).$GETW()) { ... }
+                      - pattern-inside: |
+                          try ($WT $W = (jakarta.servlet.ServletResponse $RESP).$GETW()) { ... }
+                      - pattern-inside: |
+                          try ($WT $W = (javax.servlet.http.HttpServletResponse $RESP).$GETW()) { ... }
+                      - pattern-inside: |
+                          try ($WT $W = (jakarta.servlet.http.HttpServletResponse $RESP).$GETW()) { ... }
+                  - pattern-either:
+                      - pattern: $W.$PRINT($...ARGS)
+                      # PrintWriter.append returns the writer.
+                      - pattern: $W.append(...). ... .$PRINT($...ARGS)
+              # A writer or stream that wraps the response's own.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $W = new $WRAP(<... (javax.servlet.ServletResponse $RESP).$GETW() ...>, ...);
+                          ...
+                      - pattern-inside: |
+                          $W = new $WRAP(<... (jakarta.servlet.ServletResponse $RESP).$GETW() ...>, ...);
+                          ...
+                      - pattern-inside: |
+                          $W = new $WRAP(<... (javax.servlet.http.HttpServletResponse $RESP).$GETW() ...>, ...);
+                          ...
+                      - pattern-inside: |
+                          $W = new $WRAP(<... (jakarta.servlet.http.HttpServletResponse $RESP).$GETW() ...>, ...);
+                          ...
+                  - metavariable-regex:
+                      metavariable: $WRAP
+                      regex: ^(java\.io\.)?(PrintWriter|PrintStream|BufferedWriter|OutputStreamWriter|BufferedOutputStream)$
+                  - pattern: $W.$PRINT($...ARGS)
+          - metavariable-regex:
+              metavariable: $GETW
+              regex: ^(getWriter|getOutputStream)$
+          - metavariable-regex:
+              metavariable: $PRINT
+              regex: ^(print|println|write|append|format|printf)$
+          - pattern-not-inside: |
+              $R.setContentType("=~/(?i)^\s*(application\/(json|[\w.+-]*\+json|octet-stream|pdf|zip)|text\/(plain|csv)|image\/(png|jpeg|gif|webp))\s*(;.*)?$/");
+              ...
+          - pattern-not-inside: |
+              $R.setHeader("=~/(?i)^content-type$/", "=~/(?i)^\s*(application\/(json|[\w.+-]*\+json|octet-stream|pdf|zip)|text\/(plain|csv)|image\/(png|jpeg|gif|webp))\s*(;.*)?$/");
+              ...
+          - pattern-not-inside: |
+              $R.addHeader("=~/(?i)^content-type$/", "=~/(?i)^\s*(application\/(json|[\w.+-]*\+json|octet-stream|pdf|zip)|text\/(plain|csv)|image\/(png|jpeg|gif|webp))\s*(;.*)?$/");
+              ...
+          - pattern-not-inside: |
+              $R.setContentType(org.springframework.http.MediaType.APPLICATION_JSON_VALUE);
+              ...
+          - pattern-not-inside: |
+              $R.setContentType(org.springframework.http.MediaType.TEXT_PLAIN_VALUE);
+              ...
+          - focus-metavariable: $...ARGS
+      # Spring MVC: the String a @RestController or @ResponseBody handler returns, and the String
+      # body of a ResponseEntity<String>. The String converter supports every media type, so a
+      # browser that accepts text/html gets text/html. Here the method sets no produces; a class
+      # whose produces names JSON or plain text is excluded.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          @org.springframework.web.bind.annotation.RestController
+                          class $C { ... }
+                      - pattern-inside: |
+                          @org.springframework.web.bind.annotation.ResponseBody
+                          $RT $M(...) { ... }
+                  - pattern-either:
+                      - pattern-inside: |
+                          @$MAP
+                          String $M(...) { ... }
+                      - patterns:
+                          - pattern-inside: |
+                              @$MAP($...MARGS)
+                              String $M(...) { ... }
+                          - metavariable-regex:
+                              metavariable: $...MARGS
+                              regex: ^(?![\s\S]*\bproduces\b)
+                  - pattern: return $X;
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          @$MAP
+                          ResponseEntity<String> $M(...) { ... }
+                      - patterns:
+                          - pattern-inside: |
+                              @$MAP($...MARGS)
+                              ResponseEntity<String> $M(...) { ... }
+                          - metavariable-regex:
+                              metavariable: $...MARGS
+                              regex: ^(?![\s\S]*\bproduces\b)
+                  - pattern-either:
+                      - pattern: org.springframework.http.ResponseEntity.ok($X)
+                      - pattern: new org.springframework.http.ResponseEntity<$T>($X, ...)
+                      - pattern: new org.springframework.http.ResponseEntity<>($X, ...)
+                      - patterns:
+                          - pattern: $B.body($X)
+                          - metavariable-regex:
+                              metavariable: $B
+                              regex: (?s)^(org\.springframework\.http\.)?ResponseEntity\s*\.(?!.*\.\s*(contentType\s*\(|header\s*\(\s*("(?i:content-type)"|(\w+\.)*CONTENT_TYPE)\s*,)(?![^)]*(?i:html|xml|svg)))
+          - metavariable-regex:
+              metavariable: $MAP
+              regex: ^(\w+\.)*(Get|Post|Put|Delete|Patch|Request)Mapping$
+          - pattern-not-inside: |
+              @org.springframework.web.bind.annotation.RequestMapping(..., produces = "=~/(?i)^(application\/(json|[\w.+-]*\+json)|text\/plain)/", ...)
+              class $C2 { ... }
+          - pattern-not-inside: |
+              @org.springframework.web.bind.annotation.RequestMapping(..., produces = org.springframework.http.MediaType.APPLICATION_JSON_VALUE, ...)
+              class $C2 { ... }
+          - pattern-not-inside: |
+              @org.springframework.web.bind.annotation.RequestMapping(..., produces = org.springframework.http.MediaType.TEXT_PLAIN_VALUE, ...)
+              class $C2 { ... }
+          - pattern-not-inside: |
+              @org.springframework.web.bind.annotation.RequestMapping(..., produces = {"=~/(?i)^(application\/(json|[\w.+-]*\+json)|text\/plain)/"}, ...)
+              class $C2 { ... }
+          - pattern-not-inside: |
+              @org.springframework.web.bind.annotation.RequestMapping(..., produces = {org.springframework.http.MediaType.APPLICATION_JSON_VALUE}, ...)
+              class $C2 { ... }
+          - pattern-not-inside: |
+              @org.springframework.web.bind.annotation.RequestMapping(..., produces = {org.springframework.http.MediaType.TEXT_PLAIN_VALUE}, ...)
+              class $C2 { ... }
+          - focus-metavariable: $X
+      # The same when the method's own produces names HTML, XML or SVG (it overrides the class's;
+      # a browser runs scripts in XHTML-namespaced XML and in SVG).
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          @org.springframework.web.bind.annotation.RestController
+                          class $C { ... }
+                      - pattern-inside: |
+                          @org.springframework.web.bind.annotation.ResponseBody
+                          $RT $M(...) { ... }
+                  - pattern-inside: |
+                      @$MAP($...MARGS)
+                      String $M(...) { ... }
+                  - pattern: return $X;
+              - patterns:
+                  - pattern-inside: |
+                      @$MAP($...MARGS)
+                      ResponseEntity<String> $M(...) { ... }
+                  - pattern-either:
+                      - pattern: org.springframework.http.ResponseEntity.ok($X)
+                      - pattern: new org.springframework.http.ResponseEntity<$T>($X, ...)
+                      - pattern: new org.springframework.http.ResponseEntity<>($X, ...)
+                      - patterns:
+                          - pattern: $B.body($X)
+                          - metavariable-regex:
+                              metavariable: $B
+                              regex: (?s)^(org\.springframework\.http\.)?ResponseEntity\s*\.(?!.*\.\s*(contentType\s*\(|header\s*\(\s*("(?i:content-type)"|(\w+\.)*CONTENT_TYPE)\s*,)(?![^)]*(?i:html|xml|svg)))
+          - metavariable-regex:
+              metavariable: $MAP
+              regex: ^(\w+\.)*(Get|Post|Put|Delete|Patch|Request)Mapping$
+          - metavariable-regex:
+              metavariable: $...MARGS
+              regex: '[\s\S]*\bproduces\b[\s\S]*(?i:html|xml|svg)'
+          - focus-metavariable: $X
+      # Spring MVC: a ResponseEntity body declared as HTML, XML or SVG, whatever the method returns.
+      - patterns:
+          - pattern: $B.body($X)
+          - metavariable-regex:
+              metavariable: $B
+              regex: (?s)^(org\.springframework\.http\.)?ResponseEntity\s*\..*\.\s*(contentType\s*\(|header\s*\(\s*("(?i:content-type)"|(\w+\.)*CONTENT_TYPE)\s*,)[^)]*(?i:html|xml|svg)
+          - focus-metavariable: $X
+      # Jakarta REST: a String returned, or a Response entity, from a method that produces
+      # text/html, or from a class that does and a method without its own @Produces.
+      - patterns:
+          - pattern-inside: |
+              @$PRODUCES($...P)
+              $RT $M(...) { ... }
+          - metavariable-regex:
+              metavariable: $PRODUCES
+              regex: ^((javax|jakarta)\.ws\.rs\.)?Produces$
+          - metavariable-regex:
+              metavariable: $...P
+              regex: (?i)[\s\S]*html
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      String $M2(...) { ... }
+                  - pattern: return $X;
+              - pattern: Response.ok($X, ...)
+              - pattern: Response.$F(...). ... .entity($X, ...)
+          - focus-metavariable: $X
+      - patterns:
+          - pattern-inside: |
+              @$PRODUCES($...P)
+              class $C { ... }
+          - metavariable-regex:
+              metavariable: $PRODUCES
+              regex: ^((javax|jakarta)\.ws\.rs\.)?Produces$
+          - metavariable-regex:
+              metavariable: $...P
+              regex: (?i)[\s\S]*html
+          - pattern-not-inside: |
+              @jakarta.ws.rs.Produces(...)
+              $RT $M(...) { ... }
+          - pattern-not-inside: |
+              @javax.ws.rs.Produces(...)
+              $RT $M(...) { ... }
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      String $M2(...) { ... }
+                  - pattern: return $X;
+              - pattern: Response.ok($X, ...)
+              - pattern: Response.$F(...). ... .entity($X, ...)
+          - focus-metavariable: $X
+      # Jakarta REST: a Response entity given an HTML type.
+      - patterns:
+          - pattern-either:
+              - pattern: Response.ok($X, $TYPE)
+              - pattern: Response.ok($X). ... .type($TYPE)
+              - pattern: Response.$F(...). ... .entity($X). ... .type($TYPE)
+              - pattern: Response.$F(...). ... .type($TYPE). ... .entity($X)
+          - metavariable-regex:
+              metavariable: $TYPE
+              regex: (?i)[\s\S]*html
+          - focus-metavariable: $X
+      # Jakarta REST, XML and SVG (a browser runs scripts in XHTML-namespaced XML and in SVG):
+      # only markup the code builds itself, a String return or an entity that is a String
+      # variable, a concatenation or String.format. A DTO entity is written escaped by JAXB or
+      # JSON-B.
+      - patterns:
+          - pattern-inside: |
+              @$PRODUCES($...P)
+              $RT $M(...) { ... }
+          - metavariable-regex:
+              metavariable: $PRODUCES
+              regex: ^((javax|jakarta)\.ws\.rs\.)?Produces$
+          - metavariable-regex:
+              metavariable: $...P
+              regex: (?i)[\s\S]*(xml|svg)
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      String $M2(...) { ... }
+                  - pattern: return $X;
+              - patterns:
+                  - pattern-either:
+                      - pattern: Response.ok($X, ...)
+                      - pattern: Response.$F(...). ... .entity($X, ...)
+                  - pattern-either:
+                      - pattern-inside: |
+                          String $X = $INIT;
+                          ...
+                      - patterns:
+                          - pattern: Response.$G(..., $X, ...)
+                          - metavariable-pattern:
+                              metavariable: $X
+                              pattern-either:
+                                - pattern: $A + $B
+                                - pattern: String.format(...)
+                      - patterns:
+                          - pattern: Response.$G(...). ... .entity($X, ...)
+                          - metavariable-pattern:
+                              metavariable: $X
+                              pattern-either:
+                                - pattern: $A + $B
+                                - pattern: String.format(...)
+          - focus-metavariable: $X
+      - patterns:
+          - pattern-inside: |
+              @$PRODUCES($...P)
+              class $C { ... }
+          - metavariable-regex:
+              metavariable: $PRODUCES
+              regex: ^((javax|jakarta)\.ws\.rs\.)?Produces$
+          - metavariable-regex:
+              metavariable: $...P
+              regex: (?i)[\s\S]*(xml|svg)
+          - pattern-not-inside: |
+              @jakarta.ws.rs.Produces(...)
+              $RT $M(...) { ... }
+          - pattern-not-inside: |
+              @javax.ws.rs.Produces(...)
+              $RT $M(...) { ... }
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      String $M2(...) { ... }
+                  - pattern: return $X;
+              - patterns:
+                  - pattern-either:
+                      - pattern: Response.ok($X, ...)
+                      - pattern: Response.$F(...). ... .entity($X, ...)
+                  - pattern-either:
+                      - pattern-inside: |
+                          String $X = $INIT;
+                          ...
+                      - patterns:
+                          - pattern: Response.$G(..., $X, ...)
+                          - metavariable-pattern:
+                              metavariable: $X
+                              pattern-either:
+                                - pattern: $A + $B
+                                - pattern: String.format(...)
+                      - patterns:
+                          - pattern: Response.$G(...). ... .entity($X, ...)
+                          - metavariable-pattern:
+                              metavariable: $X
+                              pattern-either:
+                                - pattern: $A + $B
+                                - pattern: String.format(...)
+          - focus-metavariable: $X
+      - patterns:
+          - pattern-either:
+              - pattern: Response.ok($X, $TYPE)
+              - pattern: Response.ok($X). ... .type($TYPE)
+              - pattern: Response.$F(...). ... .entity($X). ... .type($TYPE)
+              - pattern: Response.$F(...). ... .type($TYPE). ... .entity($X)
+          - metavariable-regex:
+              metavariable: $TYPE
+              regex: (?i)[\s\S]*(xml|svg)
+          - pattern-either:
+              - pattern-inside: |
+                  String $X = $INIT;
+                  ...
+              - patterns:
+                  - pattern: Response.$G(..., $X, ...)
+                  - metavariable-pattern:
+                      metavariable: $X
+                      pattern-either:
+                        - pattern: $A + $B
+                        - pattern: String.format(...)
+              - patterns:
+                  - pattern: Response.$G(...). ... .entity($X). ... .type($TYPE)
+                  - metavariable-pattern:
+                      metavariable: $X
+                      pattern-either:
+                        - pattern: $A + $B
+                        - pattern: String.format(...)
+              - patterns:
+                  - pattern: Response.$G(...). ... .type($TYPE). ... .entity($X)
+                  - metavariable-pattern:
+                      metavariable: $X
+                      pattern-either:
+                        - pattern: $A + $B
+                        - pattern: String.format(...)
+              - patterns:
+                  - pattern: Response.ok($X). ... .type($TYPE)
+                  - metavariable-pattern:
+                      metavariable: $X
+                      pattern-either:
+                        - pattern: $A + $B
+                        - pattern: String.format(...)
+          - focus-metavariable: $X

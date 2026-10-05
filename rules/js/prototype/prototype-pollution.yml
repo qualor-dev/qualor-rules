@@ -1,0 +1,303 @@
+rules:
+  - id: js.prototype-pollution
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      A key from the HTTP request selects a property of an object, and another property is then
+      written on what it selected (`obj[key1][key2] = value`): with "__proto__" (or "constructor"
+      and then "prototype") as the key the write lands on Object.prototype and changes every
+      object of the process. Keep such data in a Map or in objects made with Object.create(null),
+      or allow only known keys (an allow-list lookup).
+    metadata:
+      title: Prototype pollution through keys from HTTP request data (Node.js)
+      cwe: ['CWE-1321']
+      owasp: []
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [express, nextjs, fastify]
+      sources:
+        - https://cwe.mitre.org/data/definitions/1321.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Prototype_Pollution_Prevention_Cheat_Sheet.html
+        - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/proto
+        - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Object/create
+        - https://github.com/lodash/lodash/wiki/Changelog
+        - https://fastify.dev/docs/latest/Reference/Server/
+        - https://expressjs.com/en/4x/api.html#req
+        - https://expressjs.com/en/5x/api.html#req
+        - https://nextjs.org/docs/app/api-reference/file-conventions/route
+        - https://fastify.dev/docs/latest/Reference/Routes/
+        - https://fastify.dev/docs/latest/Reference/Request/
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A check of the key before the write is followed only as a literal allow-list: includes()
+    #   or has() on a const array or Set of string literals (also in Object.freeze) that the file
+    #   never changes, as the condition of an if around the write or as an early return. A
+    #   deny-list check (against "__proto__", "constructor", "prototype"), other checks, and
+    #   lists whose strings hold escaped quotes are not followed: the write is still reported.
+    #   The if-form also clears its else branch, where the key is not in the list, and a key
+    #   reassigned with request data inside the checked block (both missed; recorded from
+    #   review, no test line).
+    # - Only writes in one expression are seen: an object first taken with a request key into a
+    #   variable and then written to, path setters written as loops, and recursive merge helpers
+    #   are missed.
+    # - Fastify's JSON parser rejects "__proto__" and "constructor" keys by default, but the keys
+    #   of a Fastify JSON body (`Object.keys(request.body)`) are still taken for request data.
+    # - An allow-list lookup yields constants only in a table declared const in the file with
+    #   literal keys and values (comments allowed, optionally in Object.freeze) that the file never
+    #   writes to; tables with escaped quotes in their strings, nested tables and tables of other
+    #   modules are not recognised, so their lookups are reported.
+    # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
+    #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
+    #   source, and a one-parameter callback given to get/post/... after a path literal (also on
+    #   an HTTP client) is taken for a Fastify route handler.
+    pattern-sources:
+      # Express: the request object, the first parameter of a handler `(req, res, ...)`, carries
+      # the query string, route parameters (`/users/:id`), body, headers, cookies and the URL.
+      # The second parameter's name tells a handler from other two-parameter functions.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|reply|rep|h|ctx|next|_res|_response)$
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Fastify: a handler registered with a route shorthand (`fastify.get('/path', [options],
+      # handler)`) or with `route({ handler })` may take only the request.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: $APP.$ROUTE($PATH, ..., function ($REQ) { ... })
+                  - metavariable-regex:
+                      metavariable: $ROUTE
+                      regex: ^(get|head|post|put|delete|options|patch|all)$
+                  - metavariable-regex:
+                      metavariable: $PATH
+                      regex: ^["'`]/
+              - pattern-inside: '$APP.route({..., handler: function ($REQ) { ... }, ...})'
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Next.js App Router: route handlers are functions named after an HTTP method; the request is
+      # a Web Request (NextRequest) and the context's params hold the dynamic route segments.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern-either:
+              - pattern: $REQ.nextUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.json()
+              - pattern: $REQ.formData()
+              - pattern: $REQ.text()
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, $CTX, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, $CTX, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: $CTX.params
+      - patterns:
+          - pattern-either:
+              - pattern-inside: 'function $METHOD($REQ, {params}, ...) { ... }'
+              - pattern-inside: 'function $METHOD($REQ, {params}: $T, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}: $T, ...) { ... }'
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: params
+    # Values added to an array or a Map make the container carry them.
+    pattern-propagators:
+      - pattern: $LIST.push(..., $X, ...)
+        from: $X
+        to: $LIST
+      - pattern: $LIST.unshift(..., $X, ...)
+        from: $X
+        to: $LIST
+      - pattern: $MAP.set($K, $X)
+        from: $X
+        to: $MAP
+    pattern-sanitizers:
+      - pattern: Number.parseInt(...)
+      - pattern: Number.parseFloat(...)
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      # An allow-list lookup: an index into a const object or array, or get() on a const Map,
+      # declared in the file with literal keys and values only (comments allowed, optionally
+      # wrapped in Object.freeze), and not changed after it.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  const $TABLE = $INIT;
+                  ...
+              - pattern-inside: |
+                  const $TABLE: $TYPE = $INIT;
+                  ...
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: >-
+                ^(?:(?:\{(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\}|\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\]|new\s+Map(?:<[^>]*>)?\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\](?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\])*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\](?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))|Object\.freeze\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:\{(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\}|\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\]|new\s+Map(?:<[^>]*>)?\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\](?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\])*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\](?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))(?:\s+as\s+const)?$
+          - pattern-either:
+              - pattern: $TABLE[$KEY]
+              - pattern: $TABLE.get($KEY)
+          # A table the file writes to after its declaration, in any function, is no allow-list.
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE[$K2] = $V2;
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.$PROP = $V2;
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.set(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.push(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.unshift(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.splice(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              Object.assign($TABLE, ...);
+              ...
+      # A key checked against a literal allow-list (a const array or Set of string literals that
+      # the file never changes) before the write: inside `if (LIST.includes(key)) { ... }`, and
+      # after `if (!LIST.includes(key)) return ...;` (also has() on a Set).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  const $LIST = $INIT;
+                  ...
+              - pattern-inside: |
+                  const $LIST: $TYPE = $INIT;
+                  ...
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(?:\[\s*(?:'[^'\\]*'|"[^"\\]*")(?:\s*,\s*(?:'[^'\\]*'|"[^"\\]*"))*\s*,?\s*\]|Object\.freeze\(\s*\[\s*(?:'[^'\\]*'|"[^"\\]*")(?:\s*,\s*(?:'[^'\\]*'|"[^"\\]*"))*\s*,?\s*\]\s*\)|new\s+Set(?:<[^>]*>)?\(\s*\[\s*(?:'[^'\\]*'|"[^"\\]*")(?:\s*,\s*(?:'[^'\\]*'|"[^"\\]*"))*\s*,?\s*\]\s*\))(?:\s+as\s+const)?$
+          - pattern-either:
+              - pattern-inside: |
+                  if ($LIST.$CHECK($KEY)) { ... }
+              - pattern-inside: |
+                  if ($LIST.$CHECK($KEY) && $OTHER) { ... }
+              - pattern-inside: |
+                  if ($OTHER && $LIST.$CHECK($KEY)) { ... }
+              - pattern-inside: |
+                  if (!$LIST.$CHECK($KEY)) return ...;
+                  ...
+              - pattern-inside: |
+                  if (!$LIST.$CHECK($KEY)) { return ...; }
+                  ...
+              - pattern-inside: |
+                  if (!$LIST.$CHECK($KEY)) throw $ERR;
+                  ...
+              - pattern-inside: |
+                  if (!$LIST.$CHECK($KEY)) { throw $ERR; }
+                  ...
+          - metavariable-regex:
+              metavariable: $CHECK
+              regex: ^(?:includes|has)$
+          - pattern: $KEY
+          - pattern-not-inside: |
+              const $LIST = $DECL;
+              ...
+              $LIST.push(...);
+              ...
+          - pattern-not-inside: |
+              const $LIST = $DECL;
+              ...
+              $LIST.unshift(...);
+              ...
+          - pattern-not-inside: |
+              const $LIST = $DECL;
+              ...
+              $LIST.splice(...);
+              ...
+          - pattern-not-inside: |
+              const $LIST = $DECL;
+              ...
+              $LIST.add(...);
+              ...
+          - pattern-not-inside: |
+              const $LIST = $DECL;
+              ...
+              $LIST[$I] = $V;
+              ...
+    # Library merges and path setters are no sinks: lodash guards merge and mergeWith (4.17.5,
+    # 4.17.11) and defaultsDeep (4.17.12), and its path setter (baseSet, behind set and setWith)
+    # blocks "constructor" and "prototype" as path keys (changelog, v4.18.0). Object.assign() and a single computed
+    # write (`obj[key] = value`) change at most the prototype of that one object.
+    pattern-sinks:
+      # A computed key from the request, then a write on the object it selects: another key or
+      # property, one or two levels down (also with ++).
+      - patterns:
+          - pattern-either:
+              - pattern: $OBJ[$KEY][$K2] = $V
+              - pattern: $OBJ[$KEY].$P = $V
+              - pattern: $OBJ[$KEY][$K2][$K3] = $V
+              - pattern: $OBJ[$KEY][$K2].$P = $V
+              - pattern: $OBJ[$KEY].$P.$P2 = $V
+              - pattern: $OBJ[$KEY][$K2]++
+              - pattern: $OBJ[$KEY].$P++
+              - pattern: ++$OBJ[$KEY][$K2]
+              - pattern: ++$OBJ[$KEY].$P
+          # Objects without a prototype: Object.create(null) or a literal with __proto__: null.
+          - pattern-not-inside: |
+              $OBJ = Object.create(null);
+              ...
+          - pattern-not-inside: |
+              const $OBJ: $TYPE = Object.create(null);
+              ...
+          - pattern-not-inside: |
+              $OBJ = {__proto__: null, ...};
+              ...
+          - focus-metavariable: $KEY

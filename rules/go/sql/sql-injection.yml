@@ -1,0 +1,290 @@
+rules:
+  - id: go.sql-injection
+    mode: taint
+    languages: [go]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches the text of an SQL query. Pass it as a query argument
+      with a placeholder (`db.Query(query, args...)`) instead of building the query string from it.
+    metadata:
+      title: SQL query built from HTTP request data (Go)
+      cwe: ['CWE-89']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [net/http, encoding/json, database/sql, gin, echo, chi, gorilla/mux, gorm]
+      sources:
+        - https://cwe.mitre.org/data/definitions/89.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+        - https://go.dev/doc/database/sql-injection
+        - https://pkg.go.dev/database/sql
+        - https://pkg.go.dev/net/http#Request
+        - https://pkg.go.dev/encoding/json
+        - https://pkg.go.dev/encoding/json#Unmarshal
+        - https://pkg.go.dev/fmt
+        - https://pkg.go.dev/github.com/gin-gonic/gin
+        - https://gin-gonic.com/en/docs/routing/querystring-param/
+        - https://gin-gonic.com/en/docs/binding/binding-and-validation/
+        - https://pkg.go.dev/github.com/labstack/echo/v4
+        - https://pkg.go.dev/github.com/labstack/echo/v4#DefaultBinder
+        - https://echo.labstack.com/guide/request/
+        - https://echo.labstack.com/guide/binding/
+        - https://pkg.go.dev/github.com/go-chi/chi/v5
+        - https://pkg.go.dev/github.com/gorilla/mux
+        - https://gorm.io/docs/query.html
+        - https://gorm.io/docs/security.html
+        - https://gorm.io/docs/session.html
+        - https://gorm.io/docs/transactions.html
+      since: 2026.10.0
+    # Known limits (each has a `todo` line in the test file):
+    # - A local variable named like the receiver's field (`db := ...` beside `h.db.Query(...)`)
+    #   gives the field its type in OpenGrep 1.30.0, so the typed sink is missed (`todoruleid:`).
+    # - The Echo instance's binder (`c.Echo().Binder.Bind(&x, c)`, an interface) is not a source
+    #   (`todoruleid:`); DefaultBinder values and the context's Bind are.
+    # - sqlx, pgx and other drivers with their own query methods are not followed yet; only
+    #   database/sql and GORM are.
+    # - Numeric and boolean fields count as clean only when their type is known in the file: a
+    #   struct declared in another package stays tainted as a whole (`todook:`). OpenGrep 1.30.0
+    #   gives a field of such a struct the type of a same-named field of a struct declared in the
+    #   file, so a string field can count as a number (`todoruleid:`).
+    # - A named numeric type (`type Status int`) is not in the list of clean types and stays
+    #   tainted (`todook:`).
+    # - A clean number turned back into a character (`string(rune(n))`, `%c`) is missed
+    #   (`todoruleid:`).
+    pattern-sources:
+      # The request: net/http's *http.Request, and the same request through Gin and Echo.
+      - patterns:
+          - pattern-either:
+              - pattern: '($R : *http.Request).$F'
+              - pattern: '($C : *gin.Context).Request.$F'
+              - pattern: '($C : echo.Context).Request().$F'
+              - pattern: '($C : *echo.Context).Request().$F'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(URL|Form|PostForm|MultipartForm|Header|Body|RequestURI)$
+      - patterns:
+          - pattern-either:
+              - pattern: '($R : *http.Request).$F(...)'
+              - pattern: '($C : *gin.Context).Request.$F(...)'
+              - pattern: '($C : echo.Context).Request().$F(...)'
+              - pattern: '($C : *echo.Context).Request().$F(...)'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(FormValue|PostFormValue|PathValue|Cookie|Cookies|Referer|UserAgent)$
+      - pattern-either:
+          # Route variables of routers built on net/http.
+          - pattern: chi.URLParam(...)
+          - pattern: mux.Vars(...)
+      # Gin: path parameters, query strings, forms, headers and cookies.
+      - patterns:
+          - pattern: '($C : *gin.Context).$M(...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Param|Query|DefaultQuery|GetQuery|QueryArray|GetQueryArray|QueryMap|GetQueryMap|PostForm|DefaultPostForm|GetPostForm|PostFormArray|GetPostFormArray|PostFormMap|GetPostFormMap|GetHeader|Cookie|GetRawData)$
+      # Echo: path parameters, query parameters, form values and cookies.
+      - patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).$M(...)'
+              - pattern: '($C : *echo.Context).$M(...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Param|ParamValues|QueryParam|QueryParams|QueryString|FormValue|FormParams|Cookie|Cookies)$
+      # Gin and Echo binding: the struct the request is bound into.
+      - by-side-effect: true
+        patterns:
+          - pattern: '($C : *gin.Context).$BIND(&$X, ...)'
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(Bind|BindJSON|BindXML|BindQuery|BindYAML|BindTOML|BindHeader|BindUri|BindWith|MustBindWith|ShouldBind|ShouldBindJSON|ShouldBindXML|ShouldBindQuery|ShouldBindYAML|ShouldBindTOML|ShouldBindHeader|ShouldBindUri|ShouldBindWith|ShouldBindBodyWith)$
+          - focus-metavariable: $X
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).Bind(&$X)'
+              - pattern: '($C : *echo.Context).Bind(&$X)'
+          - focus-metavariable: $X
+      - by-side-effect: true
+        patterns:
+          - pattern: echo.$BIND($C, &$X)
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+          - focus-metavariable: $X
+      # Echo's DefaultBinder used directly: a *echo.DefaultBinder value, `new(echo.DefaultBinder)`
+      # or `&echo.DefaultBinder{}`, made in the same function or typed.
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($B : *echo.DefaultBinder).$BIND($C, &$X)'
+              - pattern: '($B : echo.DefaultBinder).$BIND($C, &$X)'
+              - pattern: (&echo.DefaultBinder{}).$BIND($C, &$X)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B := new(echo.DefaultBinder)
+                          ...
+                      - pattern-inside: |
+                          $B := &echo.DefaultBinder{}
+                          ...
+                  - pattern: $B.$BIND($C, &$X)
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+          - focus-metavariable: $X
+      # DefaultBinder.Bind takes the target first in Echo v4 (`Bind(i, c)`).
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($B : *echo.DefaultBinder).Bind(&$X, $C)'
+              - pattern: '($B : echo.DefaultBinder).Bind(&$X, $C)'
+              - pattern: (&echo.DefaultBinder{}).Bind(&$X, $C)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B := new(echo.DefaultBinder)
+                          ...
+                      - pattern-inside: |
+                          $B := &echo.DefaultBinder{}
+                          ...
+                  - pattern: $B.Bind(&$X, $C)
+          - focus-metavariable: $X
+      # The same binders given a pointer made with new(T) or &T{} in the same function, passed
+      # without `&` (Echo's request guide: `u := new(User); c.Bind(u)`).
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $X := new($T)
+                  ...
+              - pattern-inside: |
+                  $X := &$T{...}
+                  ...
+          - pattern-either:
+              - patterns:
+                  - pattern: '($C : *gin.Context).$BIND($X, ...)'
+                  - metavariable-regex:
+                      metavariable: $BIND
+                      regex: ^(Bind|BindJSON|BindXML|BindQuery|BindYAML|BindTOML|BindHeader|BindUri|BindWith|MustBindWith|ShouldBind|ShouldBindJSON|ShouldBindXML|ShouldBindQuery|ShouldBindYAML|ShouldBindTOML|ShouldBindHeader|ShouldBindUri|ShouldBindWith|ShouldBindBodyWith)$
+              - pattern: '($C : echo.Context).Bind($X)'
+              - pattern: '($C : *echo.Context).Bind($X)'
+              - patterns:
+                  - pattern-either:
+                      - pattern: echo.$BIND($C, $X)
+                      - pattern: '($B : *echo.DefaultBinder).$BIND($C, $X)'
+                      - pattern: '($B : echo.DefaultBinder).$BIND($C, $X)'
+                      - pattern: (&echo.DefaultBinder{}).$BIND($C, $X)
+                  - metavariable-regex:
+                      metavariable: $BIND
+                      regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+              - pattern: '($B : *echo.DefaultBinder).Bind($X, $C)'
+              - pattern: '($B : echo.DefaultBinder).Bind($X, $C)'
+              - pattern: (&echo.DefaultBinder{}).Bind($X, $C)
+          - focus-metavariable: $X
+    pattern-propagators:
+      # encoding/json: decoding a tainted body taints the value it fills.
+      - pattern: json.NewDecoder($R).Decode(&$X)
+        from: $R
+        to: $X
+      - pattern: json.Unmarshal($R, &$X)
+        from: $R
+        to: $X
+    pattern-sanitizers:
+      - pattern: strconv.Atoi(...)
+      - pattern: strconv.ParseInt(...)
+      - pattern: strconv.ParseUint(...)
+      - pattern: strconv.ParseFloat(...)
+      - pattern: strconv.ParseBool(...)
+      # A number or boolean (a numeric field of a bound struct, say) cannot carry SQL text. The
+      # type must be known in the file: a struct of another package stays tainted as a whole.
+      - patterns:
+          - pattern: $E
+          - metavariable-type:
+              metavariable: $E
+              types: [int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool]
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: '($DB : *sql.DB).$M($SQL, ...)'
+              - pattern: '($DB : *sql.Tx).$M($SQL, ...)'
+              # A transaction from Begin()/BeginTx() in the same function.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $DB, $ERR := ($SQLDB : *sql.DB).$BEGIN(...)
+                          ...
+                      - pattern-inside: |
+                          $DB, $ERR = ($SQLDB : *sql.DB).$BEGIN(...)
+                          ...
+                  - metavariable-regex:
+                      metavariable: $BEGIN
+                      regex: ^(Begin|BeginTx)$
+                  - pattern: $DB.$M($SQL, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Query|QueryRow|Exec|Prepare)$
+          - focus-metavariable: $SQL
+      - patterns:
+          - pattern-either:
+              - pattern: '($DB : *sql.DB).$M($CTX, $SQL, ...)'
+              - pattern: '($DB : *sql.Tx).$M($CTX, $SQL, ...)'
+              - pattern: '($DB : *sql.Conn).$M($CTX, $SQL, ...)'
+              # A transaction or connection from Begin()/BeginTx()/Conn() in the same function.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $DB, $ERR := ($SQLDB : *sql.DB).$BEGIN(...)
+                          ...
+                      - pattern-inside: |
+                          $DB, $ERR = ($SQLDB : *sql.DB).$BEGIN(...)
+                          ...
+                  - metavariable-regex:
+                      metavariable: $BEGIN
+                      regex: ^(Begin|BeginTx|Conn)$
+                  - pattern: $DB.$M($CTX, $SQL, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(QueryContext|QueryRowContext|ExecContext|PrepareContext)$
+          - focus-metavariable: $SQL
+      # GORM (security guide): these methods take SQL text as their first argument; a struct or
+      # map condition, and the arguments after a `?` condition, are bound. The receiver is a
+      # *gorm.DB, a chain on one, or a handle derived from one in the same function
+      # (`db := gdb.WithContext(ctx)`, Session, Debug, a transaction from Begin).
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern: $X.$M($SQL, ...)
+                  - metavariable-pattern:
+                      metavariable: $X
+                      pattern: '<... ($G : *gorm.DB) ...>'
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $H := ($G : *gorm.DB).$DERIVE(...)
+                          ...
+                      - pattern-inside: |
+                          $H = ($G : *gorm.DB).$DERIVE(...)
+                          ...
+                  - metavariable-regex:
+                      metavariable: $DERIVE
+                      regex: ^(WithContext|Session|Debug|Begin|Unscoped|Model|Table)$
+                  - pattern: $X.$M($SQL, ...)
+                  - metavariable-pattern:
+                      metavariable: $X
+                      pattern: <... $H ...>
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Raw|Exec|Where|Or|Not|Having|Order|Group|Select|Distinct|Joins|Table|Pluck)$
+          - pattern-not: $X.$M(&$S{...}, ...)
+          - pattern-not: $X.$M($S{...}, ...)
+          - focus-metavariable: $SQL
+      # GORM inline conditions: the argument after the destination.
+      - patterns:
+          - pattern: $X.$M($DEST, $SQL, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(First|Last|Take|Find|Delete|FirstOrInit|FirstOrCreate)$
+          - metavariable-pattern:
+              metavariable: $X
+              pattern: '<... ($G : *gorm.DB) ...>'
+          - focus-metavariable: $SQL

@@ -1,0 +1,615 @@
+rules:
+  - id: go.xss
+    mode: taint
+    languages: [go]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches an HTML response without escaping: it is written to the
+      response, executed by a text/template (which does not escape), or marked as safe content
+      with an html/template conversion (`template.HTML(x)`). Render it with html/template, which
+      escapes the data it is given, or escape it with `html.EscapeString`; send data as JSON or
+      plain text where no HTML is meant.
+    metadata:
+      title: HTML response built from HTTP request data (Go)
+      cwe: ['CWE-79']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [net/http, html/template, text/template, encoding/json, gin, echo, chi, gorilla/mux, bluemonday]
+      sources:
+        - https://cwe.mitre.org/data/definitions/79.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+        - https://top10.owasp.org/2025/A05_2025-Injection
+        - https://top10.owasp.org/2021/A03_2021-Injection
+        - https://pkg.go.dev/html/template
+        - https://pkg.go.dev/html/template#HTML
+        - https://pkg.go.dev/html/template#HTMLEscapeString
+        - https://pkg.go.dev/html/template#JSEscapeString
+        - https://pkg.go.dev/text/template
+        - https://pkg.go.dev/html#EscapeString
+        - https://pkg.go.dev/net/http#ResponseWriter
+        - https://pkg.go.dev/net/http#DetectContentType
+        - https://pkg.go.dev/net/http#Error
+        - https://pkg.go.dev/fmt#Fprintf
+        - https://pkg.go.dev/io#WriteString
+        - https://pkg.go.dev/encoding/json#Marshal
+        - https://pkg.go.dev/encoding/json#Encoder.SetEscapeHTML
+        - https://pkg.go.dev/github.com/microcosm-cc/bluemonday
+        - https://pkg.go.dev/net/http#Request
+        - https://pkg.go.dev/encoding/json
+        - https://pkg.go.dev/encoding/json#Unmarshal
+        - https://pkg.go.dev/github.com/gin-gonic/gin
+        - https://gin-gonic.com/en/docs/rendering/html-rendering/
+        - https://gin-gonic.com/en/docs/routing/querystring-param/
+        - https://gin-gonic.com/en/docs/binding/binding-and-validation/
+        - https://pkg.go.dev/github.com/labstack/echo/v4
+        - https://pkg.go.dev/github.com/labstack/echo/v4#DefaultBinder
+        - https://echo.labstack.com/guide/request/
+        - https://echo.labstack.com/guide/response/
+        - https://echo.labstack.com/guide/binding/
+        - https://pkg.go.dev/github.com/go-chi/chi/v5
+        - https://pkg.go.dev/github.com/gorilla/mux
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A write to an http.ResponseWriter counts as HTML unless the same function first sets a
+    #   Content-Type that browsers do not render as HTML: a literal type (text/plain, JSON, CSV,
+    #   JavaScript, binary) or Echo's JSON, JavaScript, plain-text and octet-stream constants.
+    #   Other constants (Gin's binding.MIME*, Echo's protobuf or msgpack types) are not listed
+    #   (`todook:`). net/http sniffs the type from the first bytes written, so a response whose
+    #   first write is plain text is text/plain, but the order of writes is not followed
+    #   (`todook:`).
+    # - A template is a text/template when its spelling says so: in a file that imports
+    #   text/template without an alias (and html/template, if at all, under another name), the
+    #   name "template"; otherwise the alias of text/template. It must be built in the same
+    #   function or as a package variable, be a parameter, or be a field of that type reached
+    #   through the receiver of a method of its struct. Not followed: a field reached through
+    #   another variable (`todoruleid:`), a field whose name is also used by a struct declared
+    #   later in the file (OpenGrep 1.30.0 then misses it) (`todoruleid:`), a dot import
+    #   (`todoruleid:`), a template built in another file of the package, a local variable named
+    #   "template", and a text/template executed into a buffer that is then written
+    #   (`todoruleid:`).
+    # Inherited from the request source block (go.sql-injection):
+    # - The Echo instance's binder (`c.Echo().Binder.Bind(&x, c)`) is not a source (`todoruleid:`).
+    # - Numeric fields count as clean only when their type is known in the file: a struct declared
+    #   in another package stays tainted as a whole (`todook:`), and OpenGrep 1.30.0 gives its
+    #   fields the type of same-named fields of structs declared in the file (`todoruleid:`).
+    # - A named numeric type (`type Status int`) stays tainted (`todook:`).
+    options:
+      # A map lookup keyed by request data (an allow-list of snippets) yields the map's values.
+      taint_assume_safe_indexes: true
+    pattern-sources:
+      # The request: net/http's *http.Request, and the same request through Gin and Echo.
+      - patterns:
+          - pattern-either:
+              - pattern: '($R : *http.Request).$F'
+              - pattern: '($C : *gin.Context).Request.$F'
+              - pattern: '($C : echo.Context).Request().$F'
+              - pattern: '($C : *echo.Context).Request().$F'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(URL|Form|PostForm|MultipartForm|Header|Body|RequestURI)$
+      - patterns:
+          - pattern-either:
+              - pattern: '($R : *http.Request).$F(...)'
+              - pattern: '($C : *gin.Context).Request.$F(...)'
+              - pattern: '($C : echo.Context).Request().$F(...)'
+              - pattern: '($C : *echo.Context).Request().$F(...)'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(FormValue|PostFormValue|PathValue|Cookie|Cookies|Referer|UserAgent)$
+      - pattern-either:
+          # Route variables of routers built on net/http.
+          - pattern: chi.URLParam(...)
+          - pattern: mux.Vars(...)
+      # Gin: path parameters, query strings, forms, headers and cookies.
+      - patterns:
+          - pattern: '($C : *gin.Context).$M(...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Param|Query|DefaultQuery|GetQuery|QueryArray|GetQueryArray|QueryMap|GetQueryMap|PostForm|DefaultPostForm|GetPostForm|PostFormArray|GetPostFormArray|PostFormMap|GetPostFormMap|GetHeader|Cookie|GetRawData)$
+      # Echo: path parameters, query parameters, form values and cookies.
+      - patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).$M(...)'
+              - pattern: '($C : *echo.Context).$M(...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Param|ParamValues|QueryParam|QueryParams|QueryString|FormValue|FormParams|Cookie|Cookies)$
+      # Gin and Echo binding: the struct the request is bound into.
+      - by-side-effect: true
+        patterns:
+          - pattern: '($C : *gin.Context).$BIND(&$X, ...)'
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(Bind|BindJSON|BindXML|BindQuery|BindYAML|BindTOML|BindHeader|BindUri|BindWith|MustBindWith|ShouldBind|ShouldBindJSON|ShouldBindXML|ShouldBindQuery|ShouldBindYAML|ShouldBindTOML|ShouldBindHeader|ShouldBindUri|ShouldBindWith|ShouldBindBodyWith)$
+          - focus-metavariable: $X
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).Bind(&$X)'
+              - pattern: '($C : *echo.Context).Bind(&$X)'
+          - focus-metavariable: $X
+      - by-side-effect: true
+        patterns:
+          - pattern: echo.$BIND($C, &$X)
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+          - focus-metavariable: $X
+      # Echo's DefaultBinder used directly: a *echo.DefaultBinder value, `new(echo.DefaultBinder)`
+      # or `&echo.DefaultBinder{}`, made in the same function or typed.
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($B : *echo.DefaultBinder).$BIND($C, &$X)'
+              - pattern: '($B : echo.DefaultBinder).$BIND($C, &$X)'
+              - pattern: (&echo.DefaultBinder{}).$BIND($C, &$X)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B := new(echo.DefaultBinder)
+                          ...
+                      - pattern-inside: |
+                          $B := &echo.DefaultBinder{}
+                          ...
+                  - pattern: $B.$BIND($C, &$X)
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+          - focus-metavariable: $X
+      # DefaultBinder.Bind takes the target first in Echo v4 (`Bind(i, c)`).
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($B : *echo.DefaultBinder).Bind(&$X, $C)'
+              - pattern: '($B : echo.DefaultBinder).Bind(&$X, $C)'
+              - pattern: (&echo.DefaultBinder{}).Bind(&$X, $C)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B := new(echo.DefaultBinder)
+                          ...
+                      - pattern-inside: |
+                          $B := &echo.DefaultBinder{}
+                          ...
+                  - pattern: $B.Bind(&$X, $C)
+          - focus-metavariable: $X
+      # The same binders given a pointer made with new(T) or &T{} in the same function, passed
+      # without `&` (Echo's request guide: `u := new(User); c.Bind(u)`).
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $X := new($T)
+                  ...
+              - pattern-inside: |
+                  $X := &$T{...}
+                  ...
+          - pattern-either:
+              - patterns:
+                  - pattern: '($C : *gin.Context).$BIND($X, ...)'
+                  - metavariable-regex:
+                      metavariable: $BIND
+                      regex: ^(Bind|BindJSON|BindXML|BindQuery|BindYAML|BindTOML|BindHeader|BindUri|BindWith|MustBindWith|ShouldBind|ShouldBindJSON|ShouldBindXML|ShouldBindQuery|ShouldBindYAML|ShouldBindTOML|ShouldBindHeader|ShouldBindUri|ShouldBindWith|ShouldBindBodyWith)$
+              - pattern: '($C : echo.Context).Bind($X)'
+              - pattern: '($C : *echo.Context).Bind($X)'
+              - patterns:
+                  - pattern-either:
+                      - pattern: echo.$BIND($C, $X)
+                      - pattern: '($B : *echo.DefaultBinder).$BIND($C, $X)'
+                      - pattern: '($B : echo.DefaultBinder).$BIND($C, $X)'
+                      - pattern: (&echo.DefaultBinder{}).$BIND($C, $X)
+                  - metavariable-regex:
+                      metavariable: $BIND
+                      regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+              - pattern: '($B : *echo.DefaultBinder).Bind($X, $C)'
+              - pattern: '($B : echo.DefaultBinder).Bind($X, $C)'
+              - pattern: (&echo.DefaultBinder{}).Bind($X, $C)
+          - focus-metavariable: $X
+    pattern-propagators:
+      # encoding/json: decoding a tainted body taints the value it fills.
+      - pattern: json.NewDecoder($R).Decode(&$X)
+        from: $R
+        to: $X
+      - pattern: json.Unmarshal($R, &$X)
+        from: $R
+        to: $X
+    pattern-sanitizers:
+      - pattern: strconv.Atoi(...)
+      - pattern: strconv.ParseInt(...)
+      - pattern: strconv.ParseUint(...)
+      - pattern: strconv.ParseFloat(...)
+      - pattern: strconv.ParseBool(...)
+      # A number or boolean (a numeric field of a bound struct, say) cannot carry markup. The type
+      # must be known in the file: a struct of another package stays tainted as a whole.
+      - patterns:
+          - pattern: $E
+          - metavariable-type:
+              metavariable: $E
+              types: [int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool]
+      # Escaping: html.EscapeString and html/template's escapers turn <, >, &, ' and " into
+      # entities or escapes (URLQueryEscaper into %XX).
+      - pattern: html.EscapeString(...)
+      - patterns:
+          - pattern: template.$ESC(...)
+          - metavariable-regex:
+              metavariable: $ESC
+              regex: ^(HTMLEscapeString|HTMLEscaper|JSEscapeString|JSEscaper|URLQueryEscaper)$
+      # The content of a file is not request data, even when the request names the file.
+      - pattern: os.ReadFile(...)
+      - pattern: ioutil.ReadFile(...)
+      # URL escaping: the output holds only letters, digits, "-_.~", "%" and "+".
+      - pattern: url.QueryEscape(...)
+      - pattern: url.PathEscape(...)
+      # encoding/json escapes <, > and & inside strings.
+      - pattern: json.Marshal(...)
+      - pattern: json.MarshalIndent(...)
+      # bluemonday: the HTML a policy lets through.
+      - patterns:
+          - pattern-either:
+              - pattern: bluemonday.$POLICY(...).$SANITIZE(...)
+              - pattern: '($P : *bluemonday.Policy).$SANITIZE(...)'
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $P := bluemonday.$POLICY(...)
+                          ...
+                      - pattern-inside: |
+                          $P = bluemonday.$POLICY(...)
+                          ...
+                      - pattern-inside: |
+                          var $P = bluemonday.$POLICY(...)
+                          ...
+                  - pattern: $P.$SANITIZE(...)
+          - metavariable-regex:
+              metavariable: $SANITIZE
+              regex: ^(Sanitize|SanitizeBytes)$
+    pattern-sinks:
+      # html/template's typed strings: the content is inserted verbatim, so it must come from a
+      # trusted source.
+      - patterns:
+          - pattern: template.$TYPE($X)
+          - metavariable-regex:
+              metavariable: $TYPE
+              regex: ^(HTML|HTMLAttr|JS|JSStr|URL|CSS|Srcset)$
+          - focus-metavariable: $X
+      # Writes to the response: fmt.Fprint*, io.WriteString and Write on an http.ResponseWriter,
+      # Gin's c.Writer and Echo's c.Response(). net/http sniffs the Content-Type from the first
+      # bytes when none is set; a function that first sets a non-HTML type is skipped.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: 'fmt.$F(($W : http.ResponseWriter), ..., $DATA, ...)'
+                      - pattern-inside: 'fmt.$F(($C : *gin.Context).Writer, ..., $DATA, ...)'
+                      - pattern-inside: 'fmt.$F(($C : echo.Context).Response(), ..., $DATA, ...)'
+                      - pattern-inside: 'fmt.$F(($C : *echo.Context).Response(), ..., $DATA, ...)'
+                      - pattern-inside: 'fmt.$F(($C : echo.Context).Response().Writer, ..., $DATA, ...)'
+                      - pattern-inside: 'fmt.$F(($C : *echo.Context).Response().Writer, ..., $DATA, ...)'
+                  - metavariable-regex:
+                      metavariable: $F
+                      regex: ^(Fprint|Fprintf|Fprintln)$
+              - pattern-inside: 'io.WriteString(($W : http.ResponseWriter), $DATA)'
+              - pattern-inside: 'io.WriteString(($C : *gin.Context).Writer, $DATA)'
+              - pattern-inside: 'io.WriteString(($C : echo.Context).Response(), $DATA)'
+              - pattern-inside: 'io.WriteString(($C : *echo.Context).Response(), $DATA)'
+              - pattern-inside: '($W : http.ResponseWriter).Write($DATA)'
+              - pattern-inside: '($C : *gin.Context).Writer.$WRITE($DATA)'
+              - pattern-inside: '($C : echo.Context).Response().$WRITE($DATA)'
+              - pattern-inside: '($C : *echo.Context).Response().$WRITE($DATA)'
+              - pattern-inside: '($C : echo.Context).Response().Writer.$WRITE($DATA)'
+              - pattern-inside: '($C : *echo.Context).Response().Writer.$WRITE($DATA)'
+              # A text/template (no escaping) executed into the response. Go names an unaliased
+              # import after its package, so in a file that imports text/template without an alias
+              # (and html/template, if at all, under another name) the spelling "template" is
+              # text/template; with an alias, the alias is. The template is built in the same
+              # function or as a package variable, is a parameter, or is a field of that type reached through the receiver of a
+              # method of its struct.
+              - patterns:
+                  - pattern-either:
+                      - patterns:
+                          - pattern-inside: |
+                              import "text/template"
+                              ...
+                          - pattern-not-inside: |
+                              import "html/template"
+                              ...
+                      - patterns:
+                          - pattern-inside: |
+                              import "text/template"
+                              ...
+                          - pattern-inside: |
+                              import $HTML "html/template"
+                              ...
+                  - pattern-either:
+                      - pattern-inside: |
+                          $T := $INIT
+                          ...
+                      - pattern-inside: |
+                          $T, $ERR := $INIT
+                          ...
+                      - pattern-inside: |
+                          $T = $INIT
+                          ...
+                      - pattern-inside: |
+                          var $T = $INIT
+                          ...
+                  - metavariable-pattern:
+                      metavariable: $INIT
+                      patterns:
+                        - pattern: $PKG.$CTOR(...)
+                        - metavariable-regex:
+                            metavariable: $CTOR
+                            regex: ^(New|Must|ParseFiles|ParseGlob|ParseFS)$
+                        - metavariable-pattern:
+                            metavariable: $PKG
+                            language: generic
+                            pattern-regex: ^template$
+                  - pattern-either:
+                      - pattern-inside: '$T.Execute(($W : http.ResponseWriter), $DATA)'
+                      - pattern-inside: '$T.Execute(($C : *gin.Context).Writer, $DATA)'
+                      - pattern-inside: '$T.Execute(($C : echo.Context).Response(), $DATA)'
+                      - pattern-inside: '$T.Execute(($C : *echo.Context).Response(), $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($W : http.ResponseWriter), $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : *gin.Context).Writer, $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : echo.Context).Response(), $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : *echo.Context).Response(), $NAME, $DATA)'
+              - patterns:
+                  - pattern-either:
+                      - patterns:
+                          - pattern-inside: |
+                              import "text/template"
+                              ...
+                          - pattern-not-inside: |
+                              import "html/template"
+                              ...
+                      - patterns:
+                          - pattern-inside: |
+                              import "text/template"
+                              ...
+                          - pattern-inside: |
+                              import $HTML "html/template"
+                              ...
+                  - pattern-either:
+                      - pattern-inside: |
+                          func $F(..., $T *$PKG.Template, ...) $RET { ... }
+                      - pattern-inside: |
+                          func $F(..., $T *$PKG.Template, ...) { ... }
+                      - pattern-inside: |
+                          func ($RECV $RT) $F(..., $T *$PKG.Template, ...) $RET { ... }
+                      - pattern-inside: |
+                          func ($RECV $RT) $F(..., $T *$PKG.Template, ...) { ... }
+                  - metavariable-pattern:
+                      metavariable: $PKG
+                      language: generic
+                      pattern-regex: ^template$
+                  - pattern-either:
+                      - pattern-inside: '$T.Execute(($W : http.ResponseWriter), $DATA)'
+                      - pattern-inside: '$T.Execute(($C : *gin.Context).Writer, $DATA)'
+                      - pattern-inside: '$T.Execute(($C : echo.Context).Response(), $DATA)'
+                      - pattern-inside: '$T.Execute(($C : *echo.Context).Response(), $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($W : http.ResponseWriter), $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : *gin.Context).Writer, $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : echo.Context).Response(), $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : *echo.Context).Response(), $NAME, $DATA)'
+              - patterns:
+                  - pattern-either:
+                      - patterns:
+                          - pattern-inside: |
+                              import "text/template"
+                              ...
+                          - pattern-not-inside: |
+                              import "html/template"
+                              ...
+                      - patterns:
+                          - pattern-inside: |
+                              import "text/template"
+                              ...
+                          - pattern-inside: |
+                              import $HTML "html/template"
+                              ...
+                  - pattern-inside: |
+                      type $S struct {
+                        ...
+                        $FLD *$PKG.Template
+                        ...
+                      }
+                      ...
+                  - pattern-either:
+                      - pattern-inside: |
+                          func ($RECV *$S) $F(...) $RET { ... }
+                      - pattern-inside: |
+                          func ($RECV *$S) $F(...) { ... }
+                      - pattern-inside: |
+                          func ($RECV $S) $F(...) $RET { ... }
+                      - pattern-inside: |
+                          func ($RECV $S) $F(...) { ... }
+                  - metavariable-pattern:
+                      metavariable: $PKG
+                      language: generic
+                      pattern-regex: ^template$
+                  - pattern-either:
+                      - pattern-inside: '$RECV.$FLD.Execute(($W : http.ResponseWriter), $DATA)'
+                      - pattern-inside: '$RECV.$FLD.Execute(($C : *gin.Context).Writer, $DATA)'
+                      - pattern-inside: '$RECV.$FLD.Execute(($C : echo.Context).Response(), $DATA)'
+                      - pattern-inside: '$RECV.$FLD.Execute(($C : *echo.Context).Response(), $DATA)'
+                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($W : http.ResponseWriter), $NAME, $DATA)'
+                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($C : *gin.Context).Writer, $NAME, $DATA)'
+                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($C : echo.Context).Response(), $NAME, $DATA)'
+                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($C : *echo.Context).Response(), $NAME, $DATA)'
+              - patterns:
+                  - pattern-inside: |
+                      import $ALIAS "text/template"
+                      ...
+                  - pattern-either:
+                      - pattern-inside: |
+                          $T := $ALIAS.$CTOR(...)
+                          ...
+                      - pattern-inside: |
+                          $T := $ALIAS.$CTOR(...).$M(...)
+                          ...
+                      - pattern-inside: |
+                          $T, $ERR := $ALIAS.$CTOR(...)
+                          ...
+                      - pattern-inside: |
+                          $T, $ERR := $ALIAS.$CTOR(...).$M(...)
+                          ...
+                      - pattern-inside: |
+                          $T, $ERR := $ALIAS.$CTOR(...).$M(...).$M2(...)
+                          ...
+                      - pattern-inside: |
+                          var $T = $ALIAS.$CTOR(...)
+                          ...
+                      - pattern-inside: |
+                          $T = $ALIAS.$CTOR(...)
+                          ...
+                  - metavariable-regex:
+                      metavariable: $CTOR
+                      regex: ^(New|Must|ParseFiles|ParseGlob|ParseFS)$
+                  - pattern-either:
+                      - pattern-inside: '$T.Execute(($W : http.ResponseWriter), $DATA)'
+                      - pattern-inside: '$T.Execute(($C : *gin.Context).Writer, $DATA)'
+                      - pattern-inside: '$T.Execute(($C : echo.Context).Response(), $DATA)'
+                      - pattern-inside: '$T.Execute(($C : *echo.Context).Response(), $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($W : http.ResponseWriter), $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : *gin.Context).Writer, $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : echo.Context).Response(), $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : *echo.Context).Response(), $NAME, $DATA)'
+              - patterns:
+                  - pattern-inside: |
+                      import $ALIAS "text/template"
+                      ...
+                  - pattern-either:
+                      - pattern-inside: |
+                          func $F(..., $T *$ALIAS.Template, ...) $RET { ... }
+                      - pattern-inside: |
+                          func $F(..., $T *$ALIAS.Template, ...) { ... }
+                      - pattern-inside: |
+                          func ($RECV $RT) $F(..., $T *$ALIAS.Template, ...) $RET { ... }
+                      - pattern-inside: |
+                          func ($RECV $RT) $F(..., $T *$ALIAS.Template, ...) { ... }
+                  - pattern-either:
+                      - pattern-inside: '$T.Execute(($W : http.ResponseWriter), $DATA)'
+                      - pattern-inside: '$T.Execute(($C : *gin.Context).Writer, $DATA)'
+                      - pattern-inside: '$T.Execute(($C : echo.Context).Response(), $DATA)'
+                      - pattern-inside: '$T.Execute(($C : *echo.Context).Response(), $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($W : http.ResponseWriter), $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : *gin.Context).Writer, $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : echo.Context).Response(), $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : *echo.Context).Response(), $NAME, $DATA)'
+              - patterns:
+                  - pattern-inside: |
+                      import $ALIAS "text/template"
+                      ...
+                  - pattern-inside: |
+                      type $S struct {
+                        ...
+                        $FLD *$ALIAS.Template
+                        ...
+                      }
+                      ...
+                  - pattern-either:
+                      - pattern-inside: |
+                          func ($RECV *$S) $F(...) $RET { ... }
+                      - pattern-inside: |
+                          func ($RECV *$S) $F(...) { ... }
+                      - pattern-inside: |
+                          func ($RECV $S) $F(...) $RET { ... }
+                      - pattern-inside: |
+                          func ($RECV $S) $F(...) { ... }
+                  - pattern-either:
+                      - pattern-inside: '$RECV.$FLD.Execute(($W : http.ResponseWriter), $DATA)'
+                      - pattern-inside: '$RECV.$FLD.Execute(($C : *gin.Context).Writer, $DATA)'
+                      - pattern-inside: '$RECV.$FLD.Execute(($C : echo.Context).Response(), $DATA)'
+                      - pattern-inside: '$RECV.$FLD.Execute(($C : *echo.Context).Response(), $DATA)'
+                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($W : http.ResponseWriter), $NAME, $DATA)'
+                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($C : *gin.Context).Writer, $NAME, $DATA)'
+                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($C : echo.Context).Response(), $NAME, $DATA)'
+                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($C : *echo.Context).Response(), $NAME, $DATA)'
+          - pattern: $DATA
+          # A Content-Type that browsers do not render as HTML, set (Set or Add) earlier in the
+          # function: a literal type, or one of Echo's MIME constants for JSON, JavaScript, plain
+          # text and binary data.
+          - pattern-not-inside: |
+              $X.Header().$SET("=~/^[cC]ontent-[tT]ype$/", "=~/^\s*([tT][eE][xX][tT]\/(plain|csv|event-stream)|application\/(json|x-ndjson|octet-stream|pdf|zip|javascript|[a-z.+-]*\+json)|image\/(png|jpeg|gif|webp))/")
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET("=~/^[cC]ontent-[tT]ype$/", echo.MIMEApplicationJSON)
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET("=~/^[cC]ontent-[tT]ype$/", echo.MIMEApplicationJSONCharsetUTF8)
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET("=~/^[cC]ontent-[tT]ype$/", echo.MIMEApplicationJavaScript)
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET("=~/^[cC]ontent-[tT]ype$/", echo.MIMEApplicationJavaScriptCharsetUTF8)
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET("=~/^[cC]ontent-[tT]ype$/", echo.MIMETextPlain)
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET("=~/^[cC]ontent-[tT]ype$/", echo.MIMETextPlainCharsetUTF8)
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET("=~/^[cC]ontent-[tT]ype$/", echo.MIMEOctetStream)
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET(echo.HeaderContentType, "=~/^\s*([tT][eE][xX][tT]\/(plain|csv|event-stream)|application\/(json|x-ndjson|octet-stream|pdf|zip|javascript|[a-z.+-]*\+json)|image\/(png|jpeg|gif|webp))/")
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET(echo.HeaderContentType, echo.MIMEApplicationJSON)
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET(echo.HeaderContentType, echo.MIMEApplicationJSONCharsetUTF8)
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET(echo.HeaderContentType, echo.MIMEApplicationJavaScript)
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET(echo.HeaderContentType, echo.MIMEApplicationJavaScriptCharsetUTF8)
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET(echo.HeaderContentType, echo.MIMETextPlain)
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET(echo.HeaderContentType, echo.MIMETextPlainCharsetUTF8)
+              ...
+          - pattern-not-inside: |
+              $X.Header().$SET(echo.HeaderContentType, echo.MIMEOctetStream)
+              ...
+          - pattern-not-inside: |
+              $X.Header()["=~/^[cC]ontent-[tT]ype$/"] = []string{"=~/^\s*([tT][eE][xX][tT]\/(plain|csv|event-stream)|application\/(json|x-ndjson|octet-stream|pdf|zip|javascript|[a-z.+-]*\+json)|image\/(png|jpeg|gif|webp))/"}
+              ...
+          - pattern-not-inside: |
+              ($C : *gin.Context).Header("=~/^[cC]ontent-[tT]ype$/", "=~/^\s*([tT][eE][xX][tT]\/(plain|csv|event-stream)|application\/(json|x-ndjson|octet-stream|pdf|zip|javascript|[a-z.+-]*\+json)|image\/(png|jpeg|gif|webp))/")
+              ...
+      # Gin: c.Data and c.DataFromReader with an HTML content type.
+      - patterns:
+          - pattern-either:
+              - pattern: '($C : *gin.Context).Data($CODE, "=~/(?i)html|svg|xml/", $DATA)'
+              - pattern: '($C : *gin.Context).Data($CODE, binding.MIMEHTML, $DATA)'
+              - pattern: '($C : *gin.Context).DataFromReader($CODE, $LEN, "=~/(?i)html|svg|xml/", $DATA, ...)'
+          - focus-metavariable: $DATA
+      # Echo: c.HTML and c.HTMLBlob, and c.Blob or c.Stream with an HTML content type.
+      - patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).$SEND($CODE, $DATA)'
+              - pattern: '($C : *echo.Context).$SEND($CODE, $DATA)'
+          - metavariable-regex:
+              metavariable: $SEND
+              regex: ^(HTML|HTMLBlob)$
+          - focus-metavariable: $DATA
+      - patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).$SEND($CODE, "=~/(?i)html|svg|xml/", $DATA)'
+              - pattern: '($C : *echo.Context).$SEND($CODE, "=~/(?i)html|svg|xml/", $DATA)'
+              - pattern: '($C : echo.Context).$SEND($CODE, echo.MIMETextHTML, $DATA)'
+              - pattern: '($C : *echo.Context).$SEND($CODE, echo.MIMETextHTML, $DATA)'
+              - pattern: '($C : echo.Context).$SEND($CODE, echo.MIMETextHTMLCharsetUTF8, $DATA)'
+              - pattern: '($C : *echo.Context).$SEND($CODE, echo.MIMETextHTMLCharsetUTF8, $DATA)'
+          - metavariable-regex:
+              metavariable: $SEND
+              regex: ^(Blob|Stream)$
+          - focus-metavariable: $DATA

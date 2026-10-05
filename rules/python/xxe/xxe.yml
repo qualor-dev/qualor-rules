@@ -1,0 +1,96 @@
+rules:
+  - id: python.xxe
+    languages: [python]
+    severity: ERROR
+    message: >-
+      This XML parser is configured to load external entities or fetch documents over the network
+      (lxml `resolve_entities=True` or `no_network=False`, or the SAX feature
+      `feature_external_ges` turned on). A document from an untrusted source can then read local
+      files, reach other hosts from the server, or exhaust its resources. Keep the defaults (lxml
+      resolves internal entities only and blocks the network since 5.0; Python's SAX parser skips
+      external entities since 3.7.1), set `resolve_entities=False`, or parse with defusedxml.
+    metadata:
+      title: XML parser configured to resolve external entities (Python)
+      cwe: ['CWE-611', 'CWE-776']
+      owasp: ['A02:2025', 'A05:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [lxml, xml.sax, xml.dom.pulldom, xml.dom.minidom, defusedxml]
+      sources:
+        - https://cwe.mitre.org/data/definitions/611.html
+        - https://cwe.mitre.org/data/definitions/776.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html
+        - https://top10.owasp.org/2025/A02_2025-Security_Misconfiguration
+        - https://top10.owasp.org/2021/A05_2021-Security_Misconfiguration
+        - https://docs.python.org/3/library/xml.html#xml-security
+        - https://docs.python.org/3/library/xml.sax.handler.html#xml.sax.handler.feature_external_ges
+        - https://docs.python.org/3/library/xml.sax.reader.html#xml.sax.xmlreader.XMLReader.setFeature
+        - https://docs.python.org/3/library/xml.sax.html#xml.sax.make_parser
+        - https://docs.python.org/3/library/xml.dom.pulldom.html#xml.dom.pulldom.parse
+        - https://docs.python.org/3/library/xml.dom.minidom.html
+        - https://lxml.de/apidoc/lxml.etree.html#lxml.etree.XMLParser
+        - https://lxml.de/apidoc/lxml.etree.html#lxml.etree.iterparse
+        - https://lxml.de/apidoc/lxml.etree.html#lxml.etree.XMLPullParser
+        - https://lxml.de/apidoc/lxml.objectify.html#lxml.objectify.makeparser
+        - https://lxml.de/apidoc/lxml.html.html#lxml.html.XHTMLParser
+        - https://lxml.de/parsing.html#parser-options
+        - https://lxml.de/FAQ.html#how-do-i-use-lxml-safely-as-a-web-service-endpoint
+        - https://github.com/tiran/defusedxml
+      since: 2026.10.1
+    # Definite misuse on explicit settings only: the defaults are safe in current versions (lxml
+    # 5.0 changed resolve_entities to 'internal'; Python 3.7.1 stopped including external general
+    # entities in SAX). Default parsers of older lxml versions are not reported.
+    # no_network=False is reported unless the same call turns entities off (resolve_entities=False)
+    # and loads no DTD: then the parser has nothing external to fetch.
+    # Not in scope: huge_tree=True, which lxml describes as "disable security restrictions" (the
+    # limits that also bound entity expansion, CWE-776); the row does not name it, and it is
+    # proposed for a separate hotspot row with the DTD-loading options below.
+    # Known limits (each has a `todo` line in the test file):
+    # - Options passed as a dict (`XMLParser(**opts)`) are not seen.
+    # - load_dtd=True, dtd_validation=True and attribute_defaults=True load the external DTD a
+    #   document names (local files while no_network stays on); the lxml FAQ advises against it
+    #   for untrusted input, but validating trusted documents is the documented use, so they are
+    #   not reported.
+    pattern-either:
+      # lxml parsers (XMLTreeBuilder is an alias of ETCompatXMLParser; XHTMLParser is an XMLParser
+      # for lxml.html) and the functions that take parser options.
+      - patterns:
+          - pattern-either:
+              - pattern: lxml.etree.XMLParser(...)
+              - pattern: lxml.etree.ETCompatXMLParser(...)
+              - pattern: lxml.etree.XMLTreeBuilder(...)
+              - pattern: lxml.html.XHTMLParser(...)
+              - pattern: lxml.etree.XMLPullParser(...)
+              - pattern: lxml.etree.iterparse(...)
+              - pattern: lxml.objectify.makeparser(...)
+          - pattern-either:
+              - pattern: $FUNC(..., resolve_entities=True, ...)
+              - patterns:
+                  - pattern: $FUNC(..., no_network=False, ...)
+                  - pattern-not: $FUNC(..., resolve_entities=False, ...)
+              - patterns:
+                  - pattern: $FUNC(..., no_network=False, ...)
+                  - pattern-either:
+                      - pattern: $FUNC(..., load_dtd=True, ...)
+                      - pattern: $FUNC(..., dtd_validation=True, ...)
+                      - pattern: $FUNC(..., attribute_defaults=True, ...)
+      # SAX (also the parser given to pulldom and minidom): external general entities turned on,
+      # positionally or by keyword. A defusedxml parser forbids them whatever the feature says.
+      - patterns:
+          - pattern-either:
+              - pattern: $PARSER.setFeature(xml.sax.handler.feature_external_ges, True)
+              - pattern: $PARSER.setFeature(xml.sax.handler.feature_external_ges, state=True)
+              - pattern: $PARSER.setFeature(name=xml.sax.handler.feature_external_ges, state=True)
+              - pattern: $PARSER.setFeature(xml.sax.handler.feature_external_ges, 1)
+              - pattern: $PARSER.setFeature(xml.sax.handler.feature_external_ges, state=1)
+              - pattern: $PARSER.setFeature(name=xml.sax.handler.feature_external_ges, state=1)
+              - pattern: $PARSER.setFeature("http://xml.org/sax/features/external-general-entities", True)
+              - pattern: $PARSER.setFeature("http://xml.org/sax/features/external-general-entities", state=True)
+              - pattern: $PARSER.setFeature(name="http://xml.org/sax/features/external-general-entities", state=True)
+              - pattern: $PARSER.setFeature("http://xml.org/sax/features/external-general-entities", 1)
+              - pattern: $PARSER.setFeature("http://xml.org/sax/features/external-general-entities", state=1)
+              - pattern: $PARSER.setFeature(name="http://xml.org/sax/features/external-general-entities", state=1)
+          - pattern-not-inside: |
+              $PARSER = defusedxml.sax.make_parser(...)
+              ...

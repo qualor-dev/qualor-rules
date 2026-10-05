@@ -1,0 +1,355 @@
+rules:
+  - id: js.tls-verification-disabled
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      TLS certificate verification is turned off here (`rejectUnauthorized: false` for an https
+      request or Agent, tls.connect(), http2.connect() or an undici dispatcher, or
+      NODE_TLS_REJECT_UNAUTHORIZED set to '0'). The client then accepts any certificate, so
+      anyone on the network path can read and change the traffic; a `ca` or
+      `checkServerIdentity` option does not help while rejectUnauthorized is false. Keep the
+      default verification; to trust a private CA, pass it as the `ca` option; to pin a
+      certificate, add a `checkServerIdentity` check and leave rejectUnauthorized on.
+    metadata:
+      title: TLS certificate verification disabled (Node.js)
+      cwe: ['CWE-295']
+      owasp: ['A07:2025', 'A07:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [node-https, node-tls, node-http2, axios, undici]
+      sources:
+        - https://cwe.mitre.org/data/definitions/295.html
+        - https://top10.owasp.org/2025/A07_2025-Authentication_Failures/
+        - https://top10.owasp.org/2021/A07_2021-Identification_and_Authentication_Failures/
+        - https://nodejs.org/api/tls.html#tlsconnectoptions-callback
+        - https://nodejs.org/api/tls.html#tlscreateserveroptions-secureconnectionlistener
+        - https://nodejs.org/api/tls.html#event-secureconnect
+        - https://nodejs.org/api/https.html#httpsrequesturl-options-callback
+        - https://nodejs.org/api/https.html#class-httpsagent
+        - https://nodejs.org/api/https.html#httpsglobalagent
+        - https://nodejs.org/api/https.html#httpscreateserveroptions-requestlistener
+        - https://nodejs.org/api/http2.html#http2connectauthority-options-listener
+        - https://nodejs.org/api/http2.html#http2createsecureserveroptions-onrequesthandler
+        - https://nodejs.org/api/cli.html#node_tls_reject_unauthorizedvalue
+        - https://nodejs.org/api/test.html#running-tests-from-the-command-line
+        - https://axios.rest/pages/advanced/request-config
+        - https://github.com/nodejs/undici/blob/main/docs/docs/api/Client.md
+        - https://github.com/nodejs/undici/blob/main/docs/docs/api/Pool.md
+        - https://github.com/nodejs/undici/blob/main/docs/docs/api/Agent.md
+        - https://github.com/nodejs/undici/blob/main/docs/docs/api/ProxyAgent.md
+        - https://github.com/nodejs/undici/blob/main/docs/docs/api/Connector.md
+        - https://jestjs.io/docs/configuration#testmatch-arraystring
+        - https://vitest.dev/config/#include
+      since: 2026.10.1
+    # Test code is out of scope (as for go.tls-verification-disabled and
+    # python.tls-verification-disabled, ruling F10): test servers use self-signed certificates.
+    # Files the Node.js test runner, Jest and Vitest collect by default (*.test.*, *.spec.*,
+    # *-test.*, *_test.*, anything under __tests__/, test/ or tests/) are excluded. Accepted
+    # trade-off: a non-test module named like that (load-test.js) is hidden too; e2e/ and
+    # cypress/ directories are still scanned.
+    # The value: the literal false, or a name that can only hold false (a module constant, a
+    # local set once); OpenGrep's constant propagation follows those. A value from settings, the
+    # environment, a parameter, a ternary or a variable set differently on two branches is not
+    # reported: the deployment decides, and the code lets it keep verification on. A literal
+    # false inside a configuration branch (`if (config.allowSelfSigned) new https.Agent({
+    # rejectUnauthorized: false })`) is reported: the program carries the off switch itself (as
+    # the Go and Python rules do). The same holds for NODE_TLS_REJECT_UNAUTHORIZED set to '0'.
+    # A `ca` or a custom `checkServerIdentity` next to rejectUnauthorized: false does not make it
+    # safe: tls.connect() rejects a connection only when rejectUnauthorized is not false, so a
+    # failed check lets the connection go on.
+    # Servers are not reported: for tls.createServer(), https.createServer() and
+    # http2.createSecureServer(), rejectUnauthorized: false only means "do not require a client
+    # certificate". APIs are bound to their modules (https, tls, http2 and undici, also with the
+    # node: prefix): the same option given to http, net, fetch(), axios's request config (which
+    # has no such option; axios takes an https.Agent as httpsAgent), undici's top-level options
+    # or a module of the application is not reported.
+    # Known limits (each has a `todo` line in the test file):
+    # - An options object from another module, a function's parameter, or spread into the
+    #   options (`{ ...insecureTls }`) is not followed, nor one built first and given to a module
+    #   required in place (`require('tls').connect(port, host, options)`; options written in
+    #   the call are).
+    # - Other libraries' TLS options (pg `ssl`, ws, nodemailer `tls`, got `https`, ...) are not in
+    #   this rule.
+    # - A checkServerIdentity that accepts any host while the chain is still verified (CWE-297)
+    #   is not reported.
+    # - The options of the global agent or of an Agent imported by name (`const { globalAgent } =
+    #   require('https')`), changed after the import, are not followed; https.globalAgent and agents
+    #   made with new https.Agent() are.
+    # - A function parameter whose default is false (`function makeAgent(verify = false)`) is not
+    #   reported.
+    # - The bracket form `process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0'` is matched as text
+    #   (see the pattern): a constant on its right is not followed (todoruleid), and the line is
+    #   reported inside a block comment unless it starts with `*` (todook).
+    # - A client that turns verification off and checks `tlsSocket.authorized` itself, as the tls
+    #   docs describe for 'secureConnect', is still reported (todook).
+    paths:
+      exclude: ['*.test.*', '*.spec.*', '*-test.*', '*_test.*', '__tests__/', 'test/', 'tests/']
+    # (The import and call shapes are written once, under a YAML anchor, and reused below.)
+    # Maintenance, performance. Two things keep this rule fast; time every change on a large
+    # minified file (a 900 kB bundle) with `opengrep scan --time --timeout 0`, once as it is and
+    # once with `var o={rejectUnauthorized:!0};` prepended:
+    # - Without the literal, the match time must stay 0: OpenGrep 1.30 skips a file only through
+    #   the rule's literal prefilter (rejectUnauthorized, NODE_TLS_REJECT_UNAUTHORIZED), and gives
+    #   it up when the rule has more alternatives than this one or a branch yields no literal (a
+    #   string key such as process.env['...']). (Variable forms for a module required in place
+    #   were one alternative too many.)
+    # - With the literal, the match time must stay near 1 s: every statement sequence
+    #   (`$OPTS = ...; ... call($OPTS)`) starts at a statement that holds the literal (or at a
+    #   rare one, `new https.Agent(...)`). A sequence that starts at any assignment
+    #   (`$OPTS = $INIT;`) took 86 s on such a file, and the whole rule over 110 s (a timeout that
+    #   drops the file's findings).
+    pattern-either:
+      # https.request(), https.get(), new https.Agent(), tls.connect() and http2.connect() given
+      # an options object with rejectUnauthorized: false: in place (also nested, as axios's
+      # httpsAgent), or built in a variable first.
+      - patterns:
+          - pattern-either: &api-calls
+              # The module imported as an object.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $MOD = require($M)
+                          ...
+                      - pattern-inside: |
+                          import $MOD from $M;
+                          ...
+                      - pattern-inside: |
+                          import * as $MOD from $M;
+                          ...
+                  - pattern-either:
+                      - pattern-inside: $MOD.$FN(...)
+                      - pattern-inside: new $MOD.$FN(...)
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $OPTS = {..., rejectUnauthorized: false, ...};
+                                  ...
+                                  $MOD.$FN(..., $OPTS, ...);
+                              - pattern-inside: |
+                                  $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
+                                  ...
+                                  $MOD.$FN(..., $OPTS, ...);
+                              - pattern-inside: |
+                                  $OPTS = {..., rejectUnauthorized: false, ...};
+                                  ...
+                                  new $MOD.$FN(..., $OPTS, ...);
+                              - pattern-inside: |
+                                  $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
+                                  ...
+                                  new $MOD.$FN(..., $OPTS, ...);
+                          - pattern-inside: $OPTS = {...}
+              # The module required in place (`require('https').get(...)`), options in place.
+              - pattern-inside: require($M).$FN(...)
+              # Functions imported by name: CommonJS destructuring (also renamed) and renamed ES
+              # imports.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., $FN: $LOCAL, ...} = require($M);
+                          ...
+                      - pattern-inside: |
+                          import {$FN as $LOCAL} from $M;
+                          ...
+                  - pattern-either:
+                      - pattern-inside: $LOCAL(...)
+                      - pattern-inside: new $LOCAL(...)
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $OPTS = {..., rejectUnauthorized: false, ...};
+                                  ...
+                                  $LOCAL(..., $OPTS, ...);
+                              - pattern-inside: |
+                                  $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
+                                  ...
+                                  $LOCAL(..., $OPTS, ...);
+                              - pattern-inside: |
+                                  $OPTS = {..., rejectUnauthorized: false, ...};
+                                  ...
+                                  new $LOCAL(..., $OPTS, ...);
+                              - pattern-inside: |
+                                  $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
+                                  ...
+                                  new $LOCAL(..., $OPTS, ...);
+                          - pattern-inside: $OPTS = {...}
+              # ES named imports under their own names. (An import renamed with `as` matches the
+              # first pattern under its original name, hence the exclusion.)
+              - patterns:
+                  - pattern-inside: |
+                      import {..., $FN, ...} from $M;
+                      ...
+                  - pattern-not-inside: |
+                      import {$FN as $ALIAS} from $M;
+                      ...
+                  - pattern-either:
+                      - pattern-inside: $FN(...)
+                      - pattern-inside: new $FN(...)
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $OPTS = {..., rejectUnauthorized: false, ...};
+                                  ...
+                                  $FN(..., $OPTS, ...);
+                              - pattern-inside: |
+                                  $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
+                                  ...
+                                  $FN(..., $OPTS, ...);
+                              - pattern-inside: |
+                                  $OPTS = {..., rejectUnauthorized: false, ...};
+                                  ...
+                                  new $FN(..., $OPTS, ...);
+                              - pattern-inside: |
+                                  $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
+                                  ...
+                                  new $FN(..., $OPTS, ...);
+                          - pattern-inside: $OPTS = {...}
+          # https.request(), https.get(), new https.Agent(), tls.connect(), http2.connect(), and
+          # undici buildConnector(), which takes tls.connect() options directly.
+          - metavariable-comparison:
+              comparison: >-
+                (re.match("^[\"'`]?(node:)?(https|tls|http2)[\"'`]?$", str($M)) and
+                re.match("^(request|get|Agent|connect)$", str($FN))) or
+                (re.match("^[\"'`]?undici[\"'`]?$", str($M)) and str($FN) == "buildConnector")
+          - pattern: '{..., rejectUnauthorized: false, ...}'
+      # undici: the TLS options of a dispatcher are its `connect` options (Agent, Client, Pool)
+      # or ProxyAgent's requestTls and proxyTls; other top-level options are not TLS options.
+      - patterns:
+          - pattern-either: *api-calls
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?undici["'`]?$
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(?:Agent|Client|Pool|ProxyAgent)$
+          - pattern-inside: '{..., $KEY: {..., rejectUnauthorized: false, ...}, ...}'
+          - metavariable-regex:
+              metavariable: $KEY
+              regex: ^(?:connect|requestTls|proxyTls)$
+          - pattern: '{..., rejectUnauthorized: false, ...}'
+      # rejectUnauthorized set to false on an options object between its creation and the call
+      # (also with Object.assign()).
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $MOD = require($M)
+                          ...
+                      - pattern-inside: |
+                          import $MOD from $M;
+                          ...
+                      - pattern-inside: |
+                          import * as $MOD from $M;
+                          ...
+                  - pattern-either:
+                      - pattern-inside: |
+                          $OPTS.rejectUnauthorized = false;
+                          ...
+                          $MOD.$FN(..., $OPTS, ...);
+                      - pattern-inside: |
+                          Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
+                          ...
+                          $MOD.$FN(..., $OPTS, ...);
+                      - pattern-inside: |
+                          $OPTS.rejectUnauthorized = false;
+                          ...
+                          new $MOD.$FN(..., $OPTS, ...);
+                      - pattern-inside: |
+                          Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
+                          ...
+                          new $MOD.$FN(..., $OPTS, ...);
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., $FN: $LOCAL, ...} = require($M);
+                          ...
+                      - pattern-inside: |
+                          import {$FN as $LOCAL} from $M;
+                          ...
+                  - pattern-either:
+                      - pattern-inside: |
+                          $OPTS.rejectUnauthorized = false;
+                          ...
+                          $LOCAL(..., $OPTS, ...);
+                      - pattern-inside: |
+                          Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
+                          ...
+                          $LOCAL(..., $OPTS, ...);
+                      - pattern-inside: |
+                          $OPTS.rejectUnauthorized = false;
+                          ...
+                          new $LOCAL(..., $OPTS, ...);
+                      - pattern-inside: |
+                          Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
+                          ...
+                          new $LOCAL(..., $OPTS, ...);
+              - patterns:
+                  - pattern-inside: |
+                      import {..., $FN, ...} from $M;
+                      ...
+                  - pattern-not-inside: |
+                      import {$FN as $ALIAS} from $M;
+                      ...
+                  - pattern-either:
+                      - pattern-inside: |
+                          $OPTS.rejectUnauthorized = false;
+                          ...
+                          $FN(..., $OPTS, ...);
+                      - pattern-inside: |
+                          Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
+                          ...
+                          $FN(..., $OPTS, ...);
+                      - pattern-inside: |
+                          $OPTS.rejectUnauthorized = false;
+                          ...
+                          new $FN(..., $OPTS, ...);
+                      - pattern-inside: |
+                          Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
+                          ...
+                          new $FN(..., $OPTS, ...);
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(?:node:)?(?:https|tls|http2)["'`]?$
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(?:request|get|Agent|connect)$
+          - pattern-either:
+              - pattern: $OPTS.rejectUnauthorized = false
+              - patterns:
+                  - pattern-inside: Object.assign($OPTS, ...)
+                  - pattern: '{..., rejectUnauthorized: false, ...}'
+      # The options of https.globalAgent, or of an https.Agent made in the file, changed after it
+      # is made.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $MOD = require($M)
+                  ...
+              - pattern-inside: |
+                  import $MOD from $M;
+                  ...
+              - pattern-inside: |
+                  import * as $MOD from $M;
+                  ...
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(?:node:)?https["'`]?$
+          - pattern-either:
+              - pattern: $MOD.globalAgent.options.rejectUnauthorized = false
+              - patterns:
+                  - pattern-inside: |
+                      $AGENT = new $MOD.Agent(...);
+                      ...
+                  - pattern: $AGENT.options.rejectUnauthorized = false
+      # NODE_TLS_REJECT_UNAUTHORIZED = '0' turns verification off for every TLS connection of the
+      # process: set on process.env, or in an environment object (Object.assign(process.env, ...),
+      # a child process's env).
+      - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"
+      - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = 0
+      - pattern: '{..., NODE_TLS_REJECT_UNAUTHORIZED: "0", ...}'
+      - pattern: '{..., NODE_TLS_REJECT_UNAUTHORIZED: 0, ...}'
+      # The bracket form (process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0'), as text: OpenGrep
+      # takes no prefilter literal from a string key, and a pattern without one makes the rule
+      # run on every file.
+      - pattern-regex: (?m)^[^\n/*]*?\bprocess\.env\[\s*(["'`])NODE_TLS_REJECT_UNAUTHORIZED\1\s*\]\s*=\s*(["'`]?)0\2\s*(?:;|$)

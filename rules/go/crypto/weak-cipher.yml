@@ -1,0 +1,51 @@
+rules:
+  - id: go.weak-cipher
+    languages: [go]
+    severity: WARNING
+    message: >-
+      DES, Triple DES and RC4 are broken ciphers ("cryptographically broken and should not be used
+      for secure applications", Go docs): data encrypted with them can be recovered or changed.
+      Use an authenticated cipher instead: AES-GCM (`aes.NewCipher` with `cipher.NewGCM`) or
+      ChaCha20-Poly1305 (`golang.org/x/crypto/chacha20poly1305`).
+    metadata:
+      title: Broken cipher DES, 3DES or RC4 (Go)
+      cwe: ['CWE-327']
+      owasp: ['A04:2025', 'A02:2021']
+      kind: issue
+      severity: medium
+      confidence: high
+      frameworks: [crypto/des, crypto/rc4]
+      sources:
+        - https://cwe.mitre.org/data/definitions/327.html
+        - https://top10.owasp.org/2025/A04_2025-Cryptographic_Failures/
+        - https://top10.owasp.org/2021/A02_2021-Cryptographic_Failures/
+        - https://pkg.go.dev/crypto/des
+        - https://pkg.go.dev/crypto/rc4
+        - https://pkg.go.dev/crypto/aes
+        - https://pkg.go.dev/crypto/cipher#NewGCM
+        - https://pkg.go.dev/crypto/cipher#NewGCMWithRandomNonce
+        - https://pkg.go.dev/golang.org/x/crypto/chacha20poly1305
+        - https://pkg.go.dev/crypto/tls#InsecureCipherSuites
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - TLS 1.0-1.2 cipher suites with RC4 or 3DES in `tls.Config.CipherSuites` (listed by
+    #   `tls.InsecureCipherSuites`) are not followed (`todoruleid:`).
+    # - A local variable that shadows the package name (`des := ...; des.NewCipher(k)`), and a
+    #   package of another path whose last element is the same, imported under an alias in a
+    #   file that also imports crypto/des or crypto/rc4, are taken for the cipher package
+    #   (`todook:`).
+    # The packages are bound by their import path: an alias is followed, and a package of another
+    # path with the same name is not (unless the file also imports the cipher package, above).
+    pattern-either:
+      - patterns:
+          - pattern-inside: |
+              import "crypto/des"
+              ...
+          - pattern-either:
+              - pattern: des.NewCipher
+              - pattern: des.NewTripleDESCipher
+      - patterns:
+          - pattern-inside: |
+              import "crypto/rc4"
+              ...
+          - pattern: rc4.NewCipher

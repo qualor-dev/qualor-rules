@@ -1,0 +1,306 @@
+const express = require('express');
+const http = require('node:http');
+const _ = require('lodash');
+const { escapeRegExp } = require('lodash');
+const escapeOne = require('lodash/escapeRegExp');
+const escapeStandalone = require('lodash.escaperegexp');
+const { normalizeTerm, cleanTerm: tidyTerm } = require('./search-helpers');
+
+const app = express();
+app.use(express.json());
+
+const ARTICLES = ['first post', 'second post'];
+
+// Express: query strings, route parameters, bodies, headers and cookies as the pattern, in place,
+// through a variable, and built into a string.
+app.get('/search', (req, res) => {
+  // ruleid: js.regex-injection
+  const pattern = new RegExp(req.query.q, 'i');
+  res.json(ARTICLES.filter((a) => pattern.test(a)));
+});
+
+app.get('/grep/:expr', (req, res) => {
+  // ruleid: js.regex-injection
+  const re = RegExp(req.params.expr);
+  res.json(ARTICLES.filter((a) => re.test(a)));
+});
+
+app.post('/validate', (req, res) => {
+  const rule = req.body.rule;
+  // ruleid: js.regex-injection
+  const ok = new RegExp(rule).test(req.body.value);
+  // ruleid: js.regex-injection
+  const starts = new RegExp('^' + req.body.prefix).test('some text');
+  // ruleid: js.regex-injection
+  const whole = new RegExp(`^${req.body.word}$`, 'u');
+  res.json({ ok, starts, whole: whole.test('word') });
+});
+
+app.get('/highlight', (req, res) => {
+  const term = String(req.cookies.term);
+  // A length check does not stop a short catastrophic pattern such as (a+)+$.
+  if (term.length > 40) {
+    return res.status(400).end();
+  }
+  // ruleid: js.regex-injection
+  const marked = 'some text'.replace(new RegExp(term, 'g'), '<mark>$&</mark>');
+  res.send(marked);
+});
+
+app.get('/split', (req, res) => {
+  // ruleid: js.regex-injection
+  const parts = 'a,b;c'.split(new RegExp(`[${req.get('X-Separators')}]`));
+  // ruleid: js.regex-injection
+  const any = new RegExp(req.headers['x-words'].split(',').join('|'));
+  // ruleid: js.regex-injection
+  const global = new globalThis.RegExp(req.query.g);
+  res.json({ parts, any: any.source, global: global.source });
+});
+
+// A pattern sent to the database still runs there (MongoDB evaluates a RegExp value).
+app.get('/users', async (req, res) => {
+  // ruleid: js.regex-injection
+  const filter = { name: new RegExp(req.query.name, 'i') };
+  res.json(filter);
+});
+
+// Safe forms: escaped input, request data as the subject of a constant pattern, includes(),
+// request data as flags only, numbers.
+app.get('/safe', (req, res) => {
+  const q = String(req.query.q);
+  // ok: js.regex-injection
+  const a = new RegExp(RegExp.escape(q), 'i');
+  // ok: js.regex-injection
+  const b = new RegExp('^' + _.escapeRegExp(req.query.prefix));
+  // ok: js.regex-injection
+  const c = new RegExp(`\\b${escapeRegExp(req.query.word)}\\b`);
+  // ok: js.regex-injection
+  const d = RegExp(escapeOne(req.query.term) + '$');
+  // ok: js.regex-injection
+  const e = new RegExp(escapeStandalone(req.query.other));
+  // ok: js.regex-injection
+  const f = /^[a-z0-9-]+$/.test(req.query.slug);
+  // ok: js.regex-injection
+  const g = new RegExp('^[a-z]+$').test(req.query.name);
+  // ok: js.regex-injection
+  const h = req.query.text.replace(/\s+/g, ' ');
+  // ok: js.regex-injection
+  const i = ARTICLES.filter((x) => x.includes(req.query.q));
+  // ok: js.regex-injection
+  const j = new RegExp('^[a-z]+$', req.query.flags);
+  // ok: js.regex-injection
+  const k = new RegExp('^.{' + Number(req.query.n) + '}$');
+  // ok: js.regex-injection
+  const l = new RegExp('\\d{' + parseInt(req.query.digits, 10) + '}');
+  res.json({ a: a.source, b: b.source, c: c.source, d: d.source, e: e.source, f, g, h, i, j: j.source, k: k.source, l: l.source });
+});
+
+// Allow-lists: the request only picks one of the file's constant patterns.
+const FILTERS = {
+  // Patterns a client may pick.
+  digits: '\\d+',
+  words: '\\w+', // the default
+};
+const SEPARATORS = Object.freeze({ csv: '[,;]', space: '\\s+' });
+const KINDS = new Map([
+  ['date', '\\d{4}-\\d{2}-\\d{2}'],
+  ['time', '\\d{2}:\\d{2}'],
+]);
+const ORDER = ['^a', '^b'];
+app.get('/filter', (req, res) => {
+  // ok: js.regex-injection
+  const a = new RegExp(FILTERS[req.query.kind]);
+  // ok: js.regex-injection
+  const b = new RegExp(SEPARATORS[req.query.sep] || '\\s+');
+  // ok: js.regex-injection
+  const c = new RegExp(KINDS.get(req.query.kind));
+  // ok: js.regex-injection
+  const d = new RegExp(ORDER[Number(req.query.i)]);
+  // ok: js.regex-injection
+  const e = new RegExp(req.query.mode === 'strict' ? '^[a-z]+$' : '[a-z]+');
+  res.json([a, b, c, d, e].map((r) => r.source));
+});
+
+// A lookup with a request-data fallback, and a table filled with request data, are no allow-lists.
+const SAVED = { recent: '20\\d\\d' };
+app.post('/saved', (req, res) => {
+  // ruleid: js.regex-injection
+  const a = new RegExp(FILTERS[req.body.kind] || req.body.pattern);
+  // ruleid: js.regex-injection
+  const b = new RegExp(KINDS.get(req.body.kind) ?? req.body.pattern);
+  SAVED[req.body.name] = req.body.pattern;
+  // ruleid: js.regex-injection
+  const c = new RegExp(SAVED[req.body.name]);
+  res.json([a, b, c].map((r) => r.source));
+});
+
+// Tables whose strings hold escaped quotes, and nested tables, are not recognised.
+const QUOTED = { name: '[a-z\'-]+' };
+const NESTED = { date: { iso: '\\d{4}-\\d{2}-\\d{2}' } };
+app.get('/tables', (req, res) => {
+  // todook: js.regex-injection
+  const a = new RegExp(QUOTED[req.query.k] || '^$');
+  // todook: js.regex-injection
+  const b = new RegExp(NESTED.date[req.query.k] || '^$');
+  res.json([a.source, b.source]);
+});
+
+// A value checked against a literal allow-list (a const array or Set of string literals the file
+// never changes) with an early return or throw is one of those strings afterwards.
+const SORT_FIELDS = ['title', 'author', 'date'];
+const LANGS = Object.freeze(['en', 'de']);
+const MODES = new Set(['prefix', 'suffix']);
+const OPEN_FIELDS = ['title'];
+OPEN_FIELDS.push('body');
+app.get('/sorted', (req, res) => {
+  const field = String(req.query.field);
+  if (!SORT_FIELDS.includes(field)) return res.status(400).end();
+  // ok: js.regex-injection
+  const a = new RegExp(`^${field}:`);
+  if (!LANGS.includes(req.query.lang)) {
+    return res.status(400).end();
+  }
+  // ok: js.regex-injection
+  const b = new RegExp(req.query.lang + '$');
+  if (!MODES.has(req.query.mode)) throw new Error('unknown mode');
+  // ok: js.regex-injection
+  const c = new RegExp(req.query.mode);
+  res.json([a, b, c].map((r) => r.source));
+});
+
+app.get('/sorted2', (req, res) => {
+  // A list the file changes, and a check that does not return, are no allow-lists.
+  if (!OPEN_FIELDS.includes(req.query.field)) return res.status(400).end();
+  // ruleid: js.regex-injection
+  const a = new RegExp(req.query.field);
+  if (!SORT_FIELDS.includes(req.query.other)) {
+    res.status(400);
+  }
+  // ruleid: js.regex-injection
+  const b = new RegExp(req.query.other);
+  // The check as the condition of an if around the use is not followed.
+  if (SORT_FIELDS.includes(req.query.third)) {
+    // todook: js.regex-injection
+    const c = new RegExp(req.query.third);
+    return res.json([a.source, b.source, c.source]);
+  }
+  return res.json([a.source, b.source]);
+});
+
+// An element of a request array reached through a callback parameter is not followed.
+app.post('/filters', (req, res) => {
+  // todoruleid: js.regex-injection
+  const compiled = req.body.filters.map((filter) => new RegExp(filter.pattern));
+  res.json(compiled.length);
+});
+
+// Data loaded with a request value as its key is not request data; a function imported by name
+// and an awaited formatter return what they are given, so their results stay request data.
+const Filter = { findById: async (id) => ({ pattern: '^' + id.length + '$' }) };
+const text = { format: async (value) => value, clean: async (value) => value };
+app.get('/stored/:id', async (req, res) => {
+  const saved = await Filter.findById(req.params.id);
+  // ok: js.regex-injection
+  const a = new RegExp(saved.pattern);
+  // ruleid: js.regex-injection
+  const b = new RegExp(await normalizeTerm(req.query.q));
+  const tidy = await tidyTerm(req.query.q);
+  // ruleid: js.regex-injection
+  const c = new RegExp(tidy);
+  // ruleid: js.regex-injection
+  const d = new RegExp(await text.format(req.query.q));
+  // A method of another object that returns the request value it is given is not followed.
+  const cleaned = await text.clean(req.query.q);
+  // todoruleid: js.regex-injection
+  const e = new RegExp(cleaned);
+  res.json([a, b, c, d, e].map((r) => r.source));
+});
+
+// A pattern validated first by a constant pattern, a pattern stripped to letters and digits, and
+// a hand-written escaping function (MDN advises RegExp.escape() instead) are not followed: the
+// value is still reported.
+function escapeForPattern(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+app.get('/checked', (req, res) => {
+  const word = String(req.query.word);
+  if (!/^[\w ]+$/.test(word)) {
+    return res.status(400).end();
+  }
+  // todook: js.regex-injection
+  const a = new RegExp(`\\b${word}\\b`);
+  // todook: js.regex-injection
+  const b = new RegExp(req.query.q.replace(/[^a-z0-9]/gi, ''));
+  // todook: js.regex-injection
+  const c = new RegExp(String(req.query.q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  // todook: js.regex-injection
+  const d = new RegExp(escapeForPattern(req.query.q));
+  res.json([a, b, c, d].map((r) => r.source));
+});
+
+// String methods that turn a string argument into a pattern (match, matchAll, search) are not
+// followed: their receivers have no type, and search/match are common method names of other
+// libraries. A MongoDB $regex query operator is not in the rule either.
+const Article = { find: async (query) => [query] };
+app.get('/implicit', async (req, res) => {
+  // todoruleid: js.regex-injection
+  const a = 'first post'.match(req.query.q);
+  // todoruleid: js.regex-injection
+  const b = 'second post'.search(req.query.q);
+  // todoruleid: js.regex-injection
+  const c = await Article.find({ title: { $regex: req.query.q } });
+  res.json({ a, b, c });
+});
+
+// Look-alikes: another library's regular expression class, and a function that is not a handler.
+const RE2 = require('re2');
+app.get('/re2', (req, res) => {
+  // ok: js.regex-injection
+  const re = new RE2(req.query.q);
+  res.json(ARTICLES.filter((a) => re.test(a)));
+});
+
+function buildFilter(req, options) {
+  // ok: js.regex-injection
+  return new RegExp(req.query.q, options.flags);
+}
+
+// Sources are the request block of the SQL rule: a handler is recognised by the name of its
+// second parameter, and a one-parameter callback after a path literal is taken for a route.
+app.get('/find', (request, out) => {
+  // todoruleid: js.regex-injection
+  out.json(new RegExp(request.query.q).source);
+});
+
+const router = { get: (path, done) => done({ query: { q: path } }) };
+router.get('/[a-z]+', (result) => {
+  // todook: js.regex-injection
+  return new RegExp(result.query.q);
+});
+
+// Fastify: (request, reply) handlers and handlers that take only the request.
+const fastify = require('fastify')();
+
+fastify.get('/fastify/search', async (request, reply) => {
+  // ruleid: js.regex-injection
+  return reply.send(ARTICLES.filter((a) => new RegExp(request.query.q).test(a)));
+});
+
+fastify.post('/fastify/match/:field', async (request) => {
+  // ruleid: js.regex-injection
+  const re = new RegExp(request.body.pattern + request.params.field);
+  // ok: js.regex-injection
+  const safe = new RegExp(RegExp.escape(request.body.pattern));
+  return { re: re.source, safe: safe.source };
+});
+
+// Node http handlers.
+http
+  .createServer((req, res) => {
+    const term = new URL(req.url, 'http://localhost').searchParams.get('term');
+    // ruleid: js.regex-injection
+    res.end(String(new RegExp(term).test('some text')));
+  })
+  .listen(0);
+
+module.exports = { app, fastify, buildFilter };

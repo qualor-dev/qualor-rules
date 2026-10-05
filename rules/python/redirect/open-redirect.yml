@@ -1,0 +1,679 @@
+rules:
+  - id: python.open-redirect
+    mode: taint
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Data from the HTTP request decides where the response redirects the browser, so a link to
+      this site can send users on to any other site (phishing, token theft). Redirect to a path
+      built with `url_for()` / `reverse()`, keep the scheme and host fixed (`"/items/" + id`,
+      `SITE + "/items/" + id`), or pick the target from an allow-list.
+    metadata:
+      title: Redirect to a URL from HTTP request data (Python)
+      cwe: ['CWE-601']
+      owasp: ['A01:2025', 'A01:2021']
+      kind: issue
+      severity: medium
+      confidence: high
+      frameworks: [flask, werkzeug, django, django-hosts, fastapi, starlette]
+      sources:
+        - https://cwe.mitre.org/data/definitions/601.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html
+        - https://top10.owasp.org/2025/A01_2025-Broken_Access_Control
+        - https://top10.owasp.org/2021/A01_2021-Broken_Access_Control
+        - https://flask.palletsprojects.com/en/stable/quickstart/#redirects-and-errors
+        - https://flask.palletsprojects.com/en/stable/api/#flask.redirect
+        - https://flask.palletsprojects.com/en/stable/api/#flask.url_for
+        - https://werkzeug.palletsprojects.com/en/stable/utils/#werkzeug.utils.redirect
+        - https://docs.djangoproject.com/en/stable/topics/http/shortcuts/#redirect
+        - https://docs.djangoproject.com/en/stable/ref/request-response/#httpresponseredirect
+        - https://docs.djangoproject.com/en/stable/ref/urlresolvers/#reverse
+        - https://docs.djangoproject.com/en/stable/topics/db/queries/
+        - https://django-hosts.readthedocs.io/en/latest/reference.html
+        - https://docs.djangoproject.com/en/stable/releases/3.0/
+        - https://docs.djangoproject.com/en/stable/topics/settings/
+        - https://fastapi.tiangolo.com/advanced/custom-response/#redirectresponse
+        - https://starlette.dev/responses/
+        - https://starlette.dev/requests/
+        - https://docs.python.org/3/library/urllib.parse.html
+        - https://docs.pydantic.dev/latest/concepts/models/
+        - https://peps.python.org/pep-0008/#constants
+        - https://flask.palletsprojects.com/en/stable/api/#flask.Request
+        - https://flask.palletsprojects.com/en/stable/quickstart/#variable-rules
+        - https://docs.djangoproject.com/en/stable/ref/request-response/
+        - https://docs.djangoproject.com/en/stable/topics/http/urls/
+        - https://docs.djangoproject.com/en/stable/ref/class-based-views/base/
+        - https://fastapi.tiangolo.com/tutorial/body/
+        - https://fastapi.tiangolo.com/advanced/using-request-directly/
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A fixed origin is recognised as a literal, an upper-case module constant assigned a
+    #   literal URL, or a Django setting, at the start of the URL text (concatenation, format(),
+    #   f-string); %-formatting with a constant origin (`"%s/items/%s" % (SITE, id)`) is not,
+    #   nor a chain of more than five operands after a constant ending in "host/" (todook).
+    # - A check of the parsed host (`urlparse(x).netloc`) or Django's
+    #   `url_has_allowed_host_and_scheme()` (a private API, named in the Django 3.0 release
+    #   notes) is not recognised.
+    # - OpenGrep does not carry taint through a slice (`request.args["next"][:200]`).
+    # - The current request's own path or URL is taken for a path on this site; a path that
+    #   begins with "//" (`https://site//evil.example/`, reaching a Django catch-all view or a
+    #   Starlette `request.url.path`) names another host (todoruleid). The
+    #   current path changed by replace() with a request value as the old text is still taken
+    #   for request data (todook).
+    # - A value that a Django manager query or get_object_or_404() returns, and an attribute of
+    #   an object a call returned, are taken for stored data, unless the call is a request
+    #   accessor, a urllib.parse URL parser, json.loads(), pydantic validation, or receives
+    #   request data whole (`Form(request.POST)`). A request value that reaches such a call
+    #   through a variable, or as a subscripted value in place (`Form(next=request.GET["n"])`), is
+    #   not seen (todoruleid).
+    # - An allow-list is recognised as a lookup (`.get()` or `[...]`) in a dict literal of literal
+    #   keys and values (also lists or tuples of literals, with comments between the items)
+    #   assigned to an upper-case (constant) name that the module never changes or assigns
+    #   again, with no default or a literal/constant default for get() (an upper-case name
+    #   assigned in the function is not a constant); or as a ternary of constants. A membership
+    #   check (`if x not in ALLOWED: return`) is not, nor is a nested table or a value written
+    #   as implicitly concatenated literals (todook).
+    # Inherited from the request source block (python.sql-injection), each with a `todook` line:
+    # - A Flask route parameter with a typed converter (`<int:n>`) is still a source.
+    # - A Django URL argument is still a source when its converter (`<int:pk>`, in urls.py) or a
+    #   default value makes it a number.
+    # - A Django-module function whose first parameter is named request is taken for a view: its
+    #   other parameters count as URL arguments, and the request attributes (`headers`, `body`,
+    #   ...) of that parameter count even when it is another library's request object.
+    # - A Flask view parameter annotated int, float or bool is not a source (the FastAPI rule
+    #   below), although Flask passes a str for a rule without a converter (todoruleid).
+    # FastAPI parameters annotated int, float or bool (also `Annotated[int, ...]`), and
+    # dependencies (`= Depends()`, `= Security()`, `Annotated[T, Depends()]` in place or through a
+    # module-level alias) are not sources.
+    pattern-sources:
+      - pattern-either:
+          - pattern: flask.request.args
+          - pattern: flask.request.form
+          - pattern: flask.request.values
+          - pattern: flask.request.headers
+          - pattern: flask.request.cookies
+          - pattern: flask.request.json
+          - pattern: flask.request.get_json(...)
+          - pattern: flask.request.data
+          - pattern: flask.request.get_data(...)
+          - pattern: flask.request.files
+          - pattern: flask.request.view_args
+          - pattern: flask.request.path
+          - pattern: flask.request.full_path
+          - pattern: flask.request.url
+          - pattern: flask.request.query_string
+      # Flask "Variable Rules": the parameters of a view function registered with a URL rule.
+      # FastAPI path operations match too; their parameters annotated int, float or bool are
+      # converted by FastAPI, and those with a Depends()/Security() default are dependencies,
+      # not request data.
+      - patterns:
+          - pattern-inside: |
+              @$APP.$ROUTE(...)
+              def $VIEW(..., $PARAM, ...):
+                ...
+          - metavariable-regex:
+              metavariable: $ROUTE
+              regex: ^(route|get|post|put|patch|delete)$
+          # (A parameter pattern without a type or default also matches a typed one, and one
+          # without a default also matches one with a default.)
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Depends(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Security(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: int, ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: float, ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: bool, ...):
+                ...
+          # The same in FastAPI's Annotated form, written in place or through a module-level
+          # alias (`SettingsDep = Annotated[Settings, Depends(get_settings)]`).
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Depends(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Security(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[int, ...], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[float, ...], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[bool, ...], ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Depends(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Security(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - focus-metavariable: $PARAM
+      # Django, in a module that imports it: the HttpRequest a view receives, the URL arguments
+      # passed to the view after it, and what View.setup() keeps on a class-based view.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      from $DJ import $NAME
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+              - patterns:
+                  - pattern-inside: |
+                      import $DJ
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+          - pattern-either:
+              # The request: the first parameter of a function, the one after self of a method.
+              # The upper-case attributes exist only on Django's HttpRequest; the others count
+              # only on a parameter named request.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW($REQ, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(self, $REQ, ...):
+                            ...
+                  - pattern-either:
+                      - pattern: $REQ.GET
+                      - pattern: $REQ.POST
+                      - pattern: $REQ.COOKIES
+                      - pattern: $REQ.META
+                      - pattern: $REQ.FILES
+                      - patterns:
+                          - pattern-either:
+                              - pattern: $REQ.headers
+                              - pattern: $REQ.body
+                              - pattern: $REQ.path
+                              - pattern: $REQ.path_info
+                              - pattern: $REQ.get_full_path(...)
+                              - pattern: $REQ.get_full_path_info(...)
+                              - pattern: $REQ.build_absolute_uri(...)
+                              - pattern: $REQ.read(...)
+                              - pattern: $REQ.readline(...)
+                              - pattern: $REQ.readlines(...)
+                          - metavariable-regex:
+                              metavariable: $REQ
+                              regex: ^request$
+              # Class-based views: View.setup() keeps the request on self.request and the URL
+              # arguments on self.args and self.kwargs.
+              - patterns:
+                  - pattern-inside: |
+                      class $CLS(...):
+                        ...
+                  - pattern-either:
+                      - pattern: self.request.GET
+                      - pattern: self.request.POST
+                      - pattern: self.request.COOKIES
+                      - pattern: self.request.META
+                      - pattern: self.request.FILES
+                      - pattern: self.request.headers
+                      - pattern: self.request.body
+                      - pattern: self.request.path
+                      - pattern: self.request.path_info
+                      - pattern: self.request.get_full_path(...)
+                      - pattern: self.request.get_full_path_info(...)
+                      - pattern: self.request.build_absolute_uri(...)
+                      - pattern: self.args
+                      - pattern: self.kwargs
+              # URL arguments: the parameters after the request of a function-based view, and of
+              # a class-based view's handler method (dispatch() calls get(), post(), ...).
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW(request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., **$PARAM):
+                            ...
+                      - patterns:
+                          - pattern-inside: |
+                              class $CLS(...):
+                                ...
+                          - pattern-either:
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., $PARAM, ...):
+                                    ...
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., *$PARAM, ...):
+                                    ...
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., **$PARAM):
+                                    ...
+                          - metavariable-regex:
+                              metavariable: $VIEW
+                              regex: ^(get|post|put|patch|delete|head|options|trace|dispatch)$
+                  - focus-metavariable: $PARAM
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+      # An allow-list: a lookup in a dict literal of literal keys and values (strings, numbers,
+      # True/False/None) assigned to an upper-case (constant) name, which the module never
+      # changes (item assignment, update(), setdefault(), |=, assigning the name again). A get()
+      # default must be a literal or a constant too.
+      - patterns:
+          - pattern-inside: |
+              $ALLOWED = $LITERAL
+              ...
+          - metavariable-regex:
+              metavariable: $ALLOWED
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $LITERAL
+              regex: ^\{(\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*:\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*,)*(\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*:\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*)?\s*\}$
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED[$KEY] = $VALUE
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED.update(...)
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED.setdefault(...)
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED |= $VALUE
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED = $OTHER
+              ...
+          - pattern-either:
+              - pattern: $ALLOWED.get($LOOKUP)
+              - pattern: $ALLOWED[$LOOKUP]
+              - patterns:
+                  - pattern: $ALLOWED.get($LOOKUP, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None|[A-Z][A-Z0-9_]*(\[("[^"\\\n]*"|'[^'\\\n]*')\])?)$
+      # An allow-list written as a module table (rule-specific, beside the shared one above): a
+      # dict literal whose keys are literals and whose values are literals or lists/tuples of
+      # literals, with comments allowed between the items, assigned to an upper-case name that
+      # the module never changes or assigns again; a get() default is a literal, a list/tuple of
+      # literals or a module constant; strings may hold backslash escapes.
+      - patterns:
+          - pattern-inside: |
+              $TABLE = $ITEMS
+              ...
+          - metavariable-regex:
+              metavariable: $TABLE
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $ITEMS
+              regex: ^\{(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*)?\}$
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE[$KEY] = $VALUE
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE.update(...)
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE.setdefault(...)
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE |= $VALUE
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE = $OTHER
+              ...
+          - pattern-either:
+              - pattern: $TABLE.get($LOOKUP)
+              - pattern: $TABLE[$LOOKUP]
+              - patterns:
+                  - pattern: $TABLE.get($LOOKUP, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\)|[A-Z][A-Z0-9_]*(\[("[^"\\\n]*"|'[^'\\\n]*')\])?)$
+                  # An upper-case name assigned in the function is a local, not a constant.
+                  - pattern-not-inside: |
+                      def $FUNCTION(...):
+                        ...
+                        $DEFAULT = $ANY
+                        ...
+      # URLs the application builds for its own views.
+      - pattern: flask.url_for(...)
+      - pattern: django.urls.reverse(...)
+      - pattern: django.urls.reverse_lazy(...)
+      - pattern: django_hosts.resolvers.reverse(...)
+      - pattern: $REQUEST.url_for(...)
+      - pattern: $APP.url_path_for(...)
+      # A URL that starts with one the application built for its own views (`reverse(...) +
+      # "?q=" + q`, also through a variable that is only extended with +=).
+      - patterns:
+          - pattern-either:
+              - pattern: flask.url_for(...) + $A
+              - pattern: flask.url_for(...) + $A + $B
+              - pattern: flask.url_for(...) + $A + $B + $C
+              - pattern: flask.url_for(...) + $A + $B + $C + $D
+              - pattern: f"{flask.url_for(...)}..."
+              - pattern: django.urls.reverse(...) + $A
+              - pattern: django.urls.reverse(...) + $A + $B
+              - pattern: django.urls.reverse(...) + $A + $B + $C
+              - pattern: django.urls.reverse(...) + $A + $B + $C + $D
+              - pattern: f"{django.urls.reverse(...)}..."
+              - pattern: django.urls.reverse_lazy(...) + $A
+              - pattern: django.urls.reverse_lazy(...) + $A + $B
+              - pattern: django.urls.reverse_lazy(...) + $A + $B + $C
+              - pattern: django.urls.reverse_lazy(...) + $A + $B + $C + $D
+              - pattern: f"{django.urls.reverse_lazy(...)}..."
+              - pattern: django_hosts.resolvers.reverse(...) + $A
+              - pattern: django_hosts.resolvers.reverse(...) + $A + $B
+              - pattern: django_hosts.resolvers.reverse(...) + $A + $B + $C
+              - pattern: django_hosts.resolvers.reverse(...) + $A + $B + $C + $D
+              - pattern: f"{django_hosts.resolvers.reverse(...)}..."
+              - pattern: $REQUEST.url_for(...) + $A
+              - pattern: $REQUEST.url_for(...) + $A + $B
+              - pattern: $REQUEST.url_for(...) + $A + $B + $C
+              - pattern: $REQUEST.url_for(...) + $A + $B + $C + $D
+              - pattern: f"{$REQUEST.url_for(...)}..."
+              - pattern: $APP.url_path_for(...) + $A
+              - pattern: $APP.url_path_for(...) + $A + $B
+              - pattern: $APP.url_path_for(...) + $A + $B + $C
+              - pattern: $APP.url_path_for(...) + $A + $B + $C + $D
+              - pattern: f"{$APP.url_path_for(...)}..."
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      $URL = flask.url_for(...)
+                      ...
+                  - pattern-not-inside: |
+                      $URL = flask.url_for(...)
+                      ...
+                      $URL = $OTHER
+                      ...
+              - patterns:
+                  - pattern-inside: |
+                      $URL = django.urls.reverse(...)
+                      ...
+                  - pattern-not-inside: |
+                      $URL = django.urls.reverse(...)
+                      ...
+                      $URL = $OTHER
+                      ...
+              - patterns:
+                  - pattern-inside: |
+                      $URL = django.urls.reverse_lazy(...)
+                      ...
+                  - pattern-not-inside: |
+                      $URL = django.urls.reverse_lazy(...)
+                      ...
+                      $URL = $OTHER
+                      ...
+              - patterns:
+                  - pattern-inside: |
+                      $URL = django_hosts.resolvers.reverse(...)
+                      ...
+                  - pattern-not-inside: |
+                      $URL = django_hosts.resolvers.reverse(...)
+                      ...
+                      $URL = $OTHER
+                      ...
+              - patterns:
+                  - pattern-inside: |
+                      $URL = $REQUEST.url_for(...)
+                      ...
+                  - pattern-not-inside: |
+                      $URL = $REQUEST.url_for(...)
+                      ...
+                      $URL = $OTHER
+                      ...
+              - patterns:
+                  - pattern-inside: |
+                      $URL = $APP.url_path_for(...)
+                      ...
+                  - pattern-not-inside: |
+                      $URL = $APP.url_path_for(...)
+                      ...
+                      $URL = $OTHER
+                      ...
+          - pattern-either:
+              - pattern: $URL
+              - pattern: $URL + $A
+              - pattern: $URL + $A + $B
+              - pattern: $URL + $A + $B + $C
+              - pattern: $URL + $A + $B + $C + $D
+              - pattern: f"{$URL}..."
+      # The URL or path of the current request: the browser sent it to this site (the usual
+      # http-to-https redirect, `request.url.replace("http://", "https://", 1)`, or the current
+      # path after a change).
+      - pattern: flask.request.url
+      - pattern: flask.request.path
+      - pattern: flask.request.full_path
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  def $VIEW(request, ...):
+                    ...
+              - pattern-inside: |
+                  def $VIEW(self, request, ...):
+                    ...
+          - pattern-either:
+              - pattern: request.path
+              - pattern: request.path_info
+              - pattern: request.get_full_path(...)
+              - pattern: request.build_absolute_uri()
+      - pattern: self.request.path
+      - pattern: self.request.get_full_path(...)
+      - pattern: self.request.build_absolute_uri()
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  def $VIEW(..., $REQ: fastapi.Request, ...):
+                    ...
+              - pattern-inside: |
+                  def $VIEW(..., $REQ: starlette.requests.Request, ...):
+                    ...
+          - pattern-either:
+              - pattern: $REQ.url
+              - pattern: $REQ.base_url
+              # The base URL ends with "/": text after it stays on this site.
+              - pattern: str($REQ.base_url) + $A
+              - pattern: str($REQ.base_url) + $A + $B
+              - pattern: str($REQ.base_url) + $A + $B + $C
+              - pattern: f"{$REQ.base_url}..."
+      # A Django model looked up through its manager or get_object_or_404(): redirect() sends
+      # the browser to its get_absolute_url().
+      - pattern: $MODEL.objects.$QUERY(...)
+      - pattern: $MODEL.objects.$QUERY(...).$MORE(...)
+      - pattern: $MODEL.objects.$QUERY(...).$MORE(...).$LAST(...)
+      - pattern: django.shortcuts.get_object_or_404(...)
+      - pattern: django.shortcuts.get_list_or_404(...)
+      # An attribute of an object that a call returned (a database row looked up by a request
+      # id, a helper's result), read in place or through a variable assigned (also with :=) in
+      # the function: stored or computed data, not the request's own text. Left out: request
+      # accessors, the URL parsers of urllib.parse, json.loads(), pydantic validation, and calls
+      # that receive request data whole (a form built from `request.POST`, `Model(**body)`).
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      $OBJ = $INIT
+                      ...
+                  - pattern: $OBJ.$ATTR
+              - patterns:
+                  - pattern-inside: |
+                      if <... ($OBJ := $INIT) ...>:
+                        ...
+                      ...
+                  - pattern: $OBJ.$ATTR
+              - pattern: $INIT.$ATTR
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(?!(self\.)?request\b|([\w.]*\.)?(urlparse|urlsplit|urldefrag)\(|json\.loads\(|[\w.]*\.(model_validate|model_validate_json|parse_obj|parse_raw)\(|[\w.]*\.(FILES|POST|GET|COOKIES|META|args|form|files|values|headers|cookies|query_params)\.)[A-Za-z_][\w.]*\((?!(?s:.*)(\b\w+\.(POST|GET|FILES|form|args|values|json|data|query_params)\b(?!\s*[\[.(])|get_json\(|\*\*))
+          - pattern-not-inside: $X.$ATTR(...)
+      # A URL whose text starts with a fixed origin keeps request data out of the scheme and host
+      # (the same check as python.ssrf, with a backslash also refused after a leading "/"):
+      # - a literal scheme, host and "/" (or a literal path on this site: "/" and a character
+      #   other than "/", "\", a quote, "{" or "%"), in concatenation, %-formatting,
+      #   str.format() and f-strings; the host part holds no placeholder (%, {});
+      # - a module constant (upper-case name assigned a literal "scheme://host...") or a Django
+      #   setting, followed by a literal that starts with "/" (or a constant that itself ends
+      #   with "host/"), in concatenation, str.format() and f-strings.
+      - patterns:
+          - pattern-either:
+              - pattern: $LEFT + $RIGHT
+              - pattern: $LEFT % $RIGHT
+              - pattern: $LEFT.format(...)
+          - metavariable-regex:
+              metavariable: $LEFT
+              regex: ^[rbuRBU]{0,2}("|')([A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+/|/[^/\\"'{%\s])
+      - patterns:
+          - pattern: $FSTRING
+          - metavariable-regex:
+              metavariable: $FSTRING
+              regex: ^([fF][rR]?|[rR][fF])("|')([A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+/|/[^/\\"'{%\s])
+      - patterns:
+          - pattern-inside: |
+              $ORIGIN = $VALUE
+              ...
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Z][A-Z0-9_]*$
+          - pattern-not-inside: |
+              $ORIGIN = $VALUE
+              ...
+              $ORIGIN = $OTHER
+              ...
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: ^[rbuRBU]{0,2}("|')[A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+
+          - pattern-either:
+              - patterns:
+                  - pattern: $LEFT + $RIGHT
+                  - metavariable-regex:
+                      metavariable: $LEFT
+                      regex: ^[A-Z][A-Z0-9_]*\s*\+\s*[rbuRBU]{0,2}("|')/
+                  - metavariable-pattern:
+                      metavariable: $LEFT
+                      pattern: $ORIGIN
+              - patterns:
+                  - pattern: f"{$ORIGIN}..."
+                  - pattern: $FSTRING
+                  - metavariable-regex:
+                      metavariable: $FSTRING
+                      regex: ^[fF]("|')\{[A-Z][A-Z0-9_]*\}/
+              - patterns:
+                  - pattern: $FORMAT.format($ORIGIN, ...)
+                  - metavariable-regex:
+                      metavariable: $FORMAT
+                      regex: ^[rbuRBU]{0,2}("|')\{0?\}/
+      - patterns:
+          - pattern-inside: |
+              $ORIGIN = $VALUE
+              ...
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Z][A-Z0-9_]*$
+          - pattern-not-inside: |
+              $ORIGIN = $VALUE
+              ...
+              $ORIGIN = $OTHER
+              ...
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: ^[rbuRBU]{0,2}("|')[A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+/
+          - pattern-either:
+              - pattern: $ORIGIN + $RIGHT
+              - pattern: $ORIGIN + $A + $B
+              - pattern: $ORIGIN + $A + $B + $C
+              - pattern: $ORIGIN + $A + $B + $C + $D
+              - pattern: f"{$ORIGIN}..."
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern: $LEFT + $RIGHT
+                  - metavariable-regex:
+                      metavariable: $LEFT
+                      regex: ^settings\.[A-Za-z_][A-Za-z0-9_]*\s*\+\s*[rbuRBU]{0,2}("|')/
+                  - metavariable-pattern:
+                      metavariable: $LEFT
+                      pattern: django.conf.settings.$SETTING
+              - patterns:
+                  - pattern: f"{django.conf.settings.$SETTING}..."
+                  - pattern: $FSTRING
+                  - metavariable-regex:
+                      metavariable: $FSTRING
+                      regex: ^[fF]("|')\{settings\.[A-Za-z_][A-Za-z0-9_]*\}/
+              - patterns:
+                  - pattern: $FORMAT.format(django.conf.settings.$SETTING, ...)
+                  - metavariable-regex:
+                      metavariable: $FORMAT
+                      regex: ^[rbuRBU]{0,2}("|')\{0?\}/
+    pattern-sinks:
+      # Flask and Werkzeug redirect(location).
+      - patterns:
+          - pattern-either:
+              - pattern: flask.redirect($URL, ...)
+              - pattern: flask.redirect(..., location=$URL, ...)
+              - pattern: werkzeug.utils.redirect($URL, ...)
+              - pattern: werkzeug.utils.redirect(..., location=$URL, ...)
+          - focus-metavariable: $URL
+      # Django: redirect(to) (a URL, a view name or a model) and the redirect responses.
+      - patterns:
+          - pattern-either:
+              - pattern: django.shortcuts.redirect($URL, ...)
+              - pattern: django.http.HttpResponseRedirect($URL, ...)
+              - pattern: django.http.HttpResponseRedirect(..., redirect_to=$URL, ...)
+              - pattern: django.http.HttpResponsePermanentRedirect($URL, ...)
+              - pattern: django.http.HttpResponsePermanentRedirect(..., redirect_to=$URL, ...)
+          - focus-metavariable: $URL
+      # FastAPI and Starlette: RedirectResponse(url), and the return value of a path operation
+      # declared with response_class=RedirectResponse.
+      - patterns:
+          - pattern-either:
+              - pattern: fastapi.responses.RedirectResponse($URL, ...)
+              - pattern: fastapi.responses.RedirectResponse(..., url=$URL, ...)
+              - pattern: starlette.responses.RedirectResponse($URL, ...)
+              - pattern: starlette.responses.RedirectResponse(..., url=$URL, ...)
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  @$APP.$ROUTE(..., response_class=fastapi.responses.RedirectResponse, ...)
+                  def $VIEW(...):
+                    ...
+              - pattern-inside: |
+                  @$APP.$ROUTE(..., response_class=starlette.responses.RedirectResponse, ...)
+                  def $VIEW(...):
+                    ...
+          - pattern: return $URL
+          - focus-metavariable: $URL

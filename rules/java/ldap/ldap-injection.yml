@@ -1,0 +1,214 @@
+rules:
+  - id: java.ldap-injection
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches the text of an LDAP search filter, so characters such as
+      `*`, `(`, `)` and `\` can change what the filter selects. Pass the value as a filter argument
+      (JNDI `search(name, "(uid={0})", new Object[] { value }, controls)`, Spring LDAP
+      `query().where("uid").is(value)` or `filter("(uid={0})", value)`, or a filter class such as
+      EqualsFilter), or escape it with `LdapEncoder.filterEncode` or ESAPI `encodeForLDAP`.
+    metadata:
+      title: LDAP search filter built from HTTP request data (Java)
+      cwe: ['CWE-90']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [servlet, spring-mvc, jax-rs, jndi, spring-ldap]
+      sources:
+        - https://cwe.mitre.org/data/definitions/90.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/LDAP_Injection_Prevention_Cheat_Sheet.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.naming/javax/naming/directory/DirContext.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.naming/javax/naming/directory/InitialDirContext.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.naming/javax/naming/ldap/LdapContext.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.naming/javax/naming/directory/BasicAttributes.html
+        - https://docs.spring.io/spring-ldap/docs/current/api/org/springframework/ldap/core/LdapTemplate.html
+        - https://docs.spring.io/spring-ldap/docs/current/api/org/springframework/ldap/query/LdapQueryBuilder.html
+        - https://docs.spring.io/spring-ldap/docs/current/api/org/springframework/ldap/query/ConditionCriteria.html
+        - https://docs.spring.io/spring-ldap/docs/current/api/org/springframework/ldap/support/LdapEncoder.html
+        - https://docs.spring.io/spring-ldap/docs/current/api/org/springframework/ldap/filter/HardcodedFilter.html
+        - https://docs.spring.io/spring-ldap/docs/current/api/org/springframework/ldap/filter/EqualsFilter.html
+        - https://docs.spring.io/spring-ldap/docs/current/api/org/springframework/ldap/filter/CompareFilter.html
+        - https://docs.spring.io/spring-ldap/reference/query-builder-advanced.html
+        - https://javadoc.io/static/org.owasp.esapi/esapi/2.5.0.0/org/owasp/esapi/Encoder.html
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/servletrequest
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/arguments.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestparam.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestbody.html
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/pathparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A handler parameter without an annotation is not a source (the Jakarta REST entity
+    #   parameter, a Spring MVC simple-type parameter), and only the scalar types of the source
+    #   block count as safe: an enum, a `List<Long>` or an `Optional<Long>` parameter is still a
+    #   source, as in java.sql-injection.
+    # - One method is analysed at a time and conditions are not evaluated: a helper method of the
+    #   same class that returns a constant still passes the request data on, and a switch over a
+    #   constant still counts its request-data branch; a wrapper class that reads the request (in
+    #   this file or another) is not a source.
+    # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
+    #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
+    #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
+    #   and valueOf of an enum from another file still pass the request data on.
+    # - Only the search filter is a sink: a distinguished name built from request data (the search
+    #   base, a lookup or bind name), which needs DN escaping (LdapEncoder.nameEncode, ESAPI
+    #   encodeForDN, Spring LdapNameBuilder), is not reported.
+    # - The filter classes of Spring LDAP (EqualsFilter, LikeFilter, ...) count as encoding their
+    #   value only when the attribute name is a literal; LikeFilter keeps `*` as a wildcard by
+    #   design. The attribute name given to LdapQueryBuilder where(...) is not a sink.
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.servlet.ServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.ServletRequest $R).$GET(...)
+              - pattern: (javax.servlet.http.HttpServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.http.HttpServletRequest $R).$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getRequestURL|getPathInfo|getReader|getInputStream|getPart|getParts)$
+      # Spring MVC and Jakarta REST: the controller-method parameters bound from the request
+      # (query, path, matrix, header, cookie, form, body, model attribute). Numbers, booleans,
+      # UUIDs and dates are converted by the framework and cannot carry injected text.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $RET $M(..., @$ANN $T $P, ...) { ... }
+              - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $ANN
+              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+          - pattern: $P
+      # Spring MVC: an HttpEntity or RequestEntity parameter holds the request body.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  @$MAP
+                  $RET $M(..., $T $P, ...) { ... }
+              - pattern-inside: |
+                  @$MAP(...)
+                  $RET $M(..., $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $MAP
+              regex: ^(\w+\.)*(Get|Post|Put|Delete|Patch|Request)Mapping$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(org\.springframework\.http\.)?(HttpEntity|RequestEntity)\s*<
+          - pattern: $P
+    pattern-propagators:
+      # Filter text assembled with a StringBuilder or StringBuffer.
+      - pattern: $SB.append($X)
+        from: $X
+        to: $SB
+      # ... also later in an append chain.
+      - pattern: $SB.append(...). ... .append($X)
+        from: $X
+        to: $SB
+    pattern-sanitizers:
+      - pattern: Integer.parseInt(...)
+      - pattern: Long.parseLong(...)
+      - pattern: Integer.valueOf(...)
+      - pattern: Long.valueOf(...)
+      # Escaping for a search filter (Spring LDAP, OWASP ESAPI).
+      - pattern: org.springframework.ldap.support.LdapEncoder.filterEncode(...)
+      - pattern: org.owasp.esapi.ESAPI.encoder().encodeForLDAP(...)
+      - pattern: (org.owasp.esapi.Encoder $ENC).encodeForLDAP(...)
+      # Spring LDAP filter classes encode their value; the attribute name must be a literal.
+      - patterns:
+          - pattern: new $FILTER("$ATTR", ...)
+          - metavariable-regex:
+              metavariable: $FILTER
+              regex: ^(org\.springframework\.ldap\.filter\.)?(EqualsFilter|GreaterThanOrEqualsFilter|LessThanOrEqualsFilter|LikeFilter|WhitespaceWildcardsFilter|ProximityFilter)$
+      # JNDI attribute matching takes values, not filter text.
+      - pattern: new javax.naming.directory.BasicAttributes(...)
+      # Allow-list lookups yield only values the code holds: Map.of(...) of literals and constants,
+      # in a static final field or in place, looked up with get(key) or getOrDefault(key, a
+      # literal or constant), and constants of an enum declared in this file. A map filled from
+      # request data, or a lookup whose fallback is request data, stays tainted.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final $MT $MAP = $INIT; ... }
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+          - pattern-either:
+              - pattern: $MAP.get($K)
+              - patterns:
+                  - pattern: $MAP.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+      - patterns:
+          - pattern-either:
+              - pattern: $INIT.get($K)
+              - patterns:
+                  - pattern: $INIT.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+      - pattern: Enum.valueOf(...)
+      - pattern: java.lang.Enum.valueOf(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $X { ... enum $E { ... } ... }
+              - pattern-inside: |
+                  class $X { ... }
+                  ...
+                  enum $E { ... }
+              - pattern-inside: |
+                  enum $E { ... }
+                  ...
+                  class $X { ... }
+          - pattern: $E.valueOf(...)
+    pattern-sinks:
+      # JNDI: the filter (or filter expression) of DirContext.search. The filterArgs of the
+      # four-argument form are escaped by JNDI and are not a sink.
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.naming.directory.DirContext $C).search($N, $F, $X, ...)
+              - pattern: (javax.naming.directory.InitialDirContext $C).search($N, $F, $X, ...)
+              - pattern: (javax.naming.ldap.LdapContext $C).search($N, $F, $X, ...)
+              - pattern: (javax.naming.ldap.InitialLdapContext $C).search($N, $F, $X, ...)
+              - pattern: (javax.naming.event.EventDirContext $C).search($N, $F, $X, ...)
+              # A context created in place or declared with `var` from a constructor has the
+              # constructor's type; one declared with `var` from a Spring ContextSource has none.
+              - patterns:
+                  - pattern-inside: |
+                      $C = (org.springframework.ldap.core.ContextSource $CS).$GETCTX(...);
+                      ...
+                  - pattern: $C.search($N, $F, $X, ...)
+          - focus-metavariable: $F
+      # Spring LDAP: the String filter of LdapTemplate (base, filter, ...). The LdapQuery forms
+      # take a query built by LdapQueryBuilder (below), and the password of authenticate is a
+      # credential.
+      - patterns:
+          - pattern-either:
+              - pattern: (org.springframework.ldap.core.LdapTemplate $T).$M($B, $F, $X, ...)
+              - pattern: (org.springframework.ldap.core.LdapOperations $T).$M($B, $F, $X, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(search|searchForObject|authenticate)$
+          - metavariable-regex:
+              metavariable: $B
+              regex: ^(?!(org\.springframework\.ldap\.query\.)?(LdapQueryBuilder\.)?query\(\))
+          - pattern-not: $T.authenticate((org.springframework.ldap.query.LdapQuery $Q), ...)
+          - focus-metavariable: $F
+      # Spring LDAP: a hard-coded filter string (LdapQueryBuilder.filter, also the format of
+      # filter(format, params), whose params are encoded) and HardcodedFilter.
+      - patterns:
+          - pattern-either:
+              - pattern: org.springframework.ldap.query.LdapQueryBuilder.query(). ... .filter($F, ...)
+              - pattern: (org.springframework.ldap.query.LdapQueryBuilder $QB).filter($F, ...)
+              - pattern: (org.springframework.ldap.core.LdapClient $LC). ... .query(($Q) -> $Q.filter($F, ...))
+              - pattern: new org.springframework.ldap.filter.HardcodedFilter($F)
+          - focus-metavariable: $F

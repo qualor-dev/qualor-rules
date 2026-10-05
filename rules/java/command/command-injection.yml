@@ -1,0 +1,451 @@
+rules:
+  - id: java.command-injection
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches an operating-system command: a command string that
+      Runtime.exec splits at white space, the text a shell (`sh -c`, `cmd /c`) runs, the program
+      to start, or the environment of the new process. Start a fixed program and pass the request
+      data as separate arguments (new ProcessBuilder("tool", "--", value)), check it against an
+      allow-list, and never hand it to a shell.
+    metadata:
+      title: Operating-system command built from HTTP request data (Java)
+      cwe: ['CWE-78']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [servlet, spring-mvc, jax-rs]
+      sources:
+        - https://cwe.mitre.org/data/definitions/78.html
+        - https://cwe.mitre.org/data/definitions/426.html
+        - https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd
+        - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh
+        - https://man7.org/linux/man-pages/man8/ld.so.8.html
+        - https://www.gnu.org/software/bash/manual/html_node/Bash-Variables.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Runtime.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/ProcessBuilder.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/List.html
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/servletrequest
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestparam.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-requestmapping.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestbody.html
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/pathparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A handler parameter without an annotation is not a source (the Jakarta REST entity
+    #   parameter, a Spring MVC simple-type parameter), and only the scalar types of the source
+    #   block count as safe: an enum, a `List<Long>` or an `Optional<Long>` parameter is still a
+    #   source, as in java.sql-injection.
+    # - Conditions are not evaluated: a switch over a value computed from constants still counts
+    #   its request-data branch.
+    # - A shell is recognised by a string literal in the first position of the command (with its
+    #   -c, /c or -Command flag later, after literal options), a list that gets a shell literal added in the same
+    #   method, or a variable assigned a shell literal in the same method. A shell chosen by a
+    #   ternary expression, put into an array element by element, or into a list copied from
+    #   Arrays.asList("sh", "-c") is missed.
+    # - In a list that gets a shell added, every later element counts as shell code, even a
+    #   positional parameter after a fixed script.
+    # - A whole command is a sink only when the request hands it over (a request getter, a split
+    #   of request text, a bound handler parameter or a field of it, or a variable assigned from
+    #   one of these). Lists and arrays the method builds (in any form) are checked by their first
+    #   element where it is visible, and lists from helper methods are accepted: a list filled
+    #   with add, with the request value first, is missed.
+    # - For POSIX shells only the element right after -c is shell code; for cmd.exe (/c, /k) and
+    #   PowerShell (-Command, -c) every later element is.
+    # - The environment: an entry is judged by its literal "NAME=" prefix, inline or in a variable
+    #   the method assigns; an entry kept in a variable assigned elsewhere is reported whole.
+    # - Request data as a separate argument of a fixed program is accepted, although a value that
+    #   starts with a dash may be read as an option (argument injection, CWE-88).
+    # - One method is analysed at a time: a helper method of the same class that returns a
+    #   constant whatever it is given still passes the request data on.
+    # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
+    #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
+    #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
+    #   and valueOf of an enum from another file still pass the request data on.
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.servlet.ServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.ServletRequest $R).$GET(...)
+              - pattern: (javax.servlet.http.HttpServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.http.HttpServletRequest $R).$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getRequestURL|getPathInfo|getReader|getInputStream|getPart|getParts)$
+      # Spring MVC and Jakarta REST: the controller-method parameters bound from the request
+      # (query, path, matrix, header, cookie, form, body, model attribute). Numbers, booleans,
+      # UUIDs and dates are converted by the framework and cannot carry injected text.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $RET $M(..., @$ANN $T $P, ...) { ... }
+              - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $ANN
+              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+          - pattern: $P
+    pattern-propagators:
+      # Command text assembled with a StringBuilder or StringBuffer.
+      - pattern: $SB.append($X)
+        from: $X
+        to: $SB
+    pattern-sanitizers:
+      - pattern: Integer.parseInt(...)
+      - pattern: Long.parseLong(...)
+      - pattern: Integer.valueOf(...)
+      - pattern: Long.valueOf(...)
+      # Allow-list lookups yield only values the code holds: Map.of(...) of literals and constants,
+      # in a static final field or in place, looked up with get(key) or getOrDefault(key, a
+      # literal or constant), and constants of an enum declared in this file. A map filled from
+      # request data, or a lookup whose fallback is request data, stays tainted.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final $MT $MAP = $INIT; ... }
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+          - pattern-either:
+              - pattern: $MAP.get($K)
+              - patterns:
+                  - pattern: $MAP.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+      - patterns:
+          - pattern-either:
+              - pattern: $INIT.get($K)
+              - patterns:
+                  - pattern: $INIT.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+      - pattern: Enum.valueOf(...)
+      - pattern: java.lang.Enum.valueOf(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $X { ... enum $E { ... } ... }
+              - pattern-inside: |
+                  class $X { ... }
+                  ...
+                  enum $E { ... }
+              - pattern-inside: |
+                  enum $E { ... }
+                  ...
+                  class $X { ... }
+          - pattern: $E.valueOf(...)
+    pattern-sinks:
+      # A command string: Runtime.exec(String) splits it at white space and runs the first token,
+      # so request data in it chooses the program or adds arguments.
+      - patterns:
+          - pattern-either:
+              - pattern: (Runtime $RT).exec($CMD, ...)
+              - pattern: (java.lang.Runtime $RT).exec($CMD, ...)
+              - pattern: Runtime.getRuntime().exec($CMD, ...)
+              - patterns:
+                  - pattern-inside: |
+                      $RT = Runtime.getRuntime();
+                      ...
+                  - pattern: $RT.exec($CMD, ...)
+          - pattern-not: $RT.exec((String[] $A), ...)
+          - pattern-not: $RT.exec(new String[] {...}, ...)
+          - pattern-not: Runtime.getRuntime().exec((String[] $A), ...)
+          - pattern-not: Runtime.getRuntime().exec(new String[] {...}, ...)
+          - pattern-not: $RT.exec($S.split(...), ...)
+          - pattern-not: Runtime.getRuntime().exec($S.split(...), ...)
+          # A list turned into the array form: judged as a whole command below.
+          - pattern-not: $RT.exec($L.toArray(...), ...)
+          - pattern-not: Runtime.getRuntime().exec($L.toArray(...), ...)
+          - focus-metavariable: $CMD
+      # A whole command handed over by the request: a request getter (getParameterValues, a
+      # parameter used alone as the program), a command line split into words (String.split of
+      # request text), a handler parameter bound from the request (a list, an array, a body field),
+      # or a variable holding one of these. Lists and arrays the method builds, and helper calls,
+      # are not whole-command sinks; their first element is checked below.
+      - patterns:
+          - pattern-either:
+              - pattern: new ProcessBuilder($CMD)
+              - pattern: (ProcessBuilder $B).command($CMD)
+              - pattern: (Runtime $RT).exec($CMD, ...)
+              - pattern: Runtime.getRuntime().exec($CMD, ...)
+          - pattern-either:
+              # A request getter or a split, in place or wrapped in toArray/Arrays.asList/List.of.
+              - patterns:
+                  - pattern: $CMD
+                  - metavariable-pattern:
+                      metavariable: $CMD
+                      pattern-either:
+                        - pattern: (javax.servlet.ServletRequest $R).$GET(...)
+                        - pattern: (jakarta.servlet.ServletRequest $R).$GET(...)
+                        - pattern: (javax.servlet.http.HttpServletRequest $R).$GET(...)
+                        - pattern: (jakarta.servlet.http.HttpServletRequest $R).$GET(...)
+                        - pattern: $S.split(...)
+                        - pattern: $S.split(...).$F(...)
+                        - pattern: Arrays.asList($S.split(...))
+                        - pattern: List.of($S.split(...))
+                  - metavariable-regex:
+                      metavariable: $CMD
+                      regex: ^(?!(new\s|"))
+              # A variable that the method assigns from a request getter or a split.
+              - patterns:
+                  - pattern: $CMD
+                  - pattern-either:
+                      - pattern-inside: |
+                          $CMD = (javax.servlet.ServletRequest $R).$GET(...);
+                          ...
+                      - pattern-inside: |
+                          $CMD = (jakarta.servlet.ServletRequest $R).$GET(...);
+                          ...
+                      - pattern-inside: |
+                          $CMD = (javax.servlet.http.HttpServletRequest $R).$GET(...);
+                          ...
+                      - pattern-inside: |
+                          $CMD = (jakarta.servlet.http.HttpServletRequest $R).$GET(...);
+                          ...
+                      - pattern-inside: |
+                          $CMD = $S.split(...);
+                          ...
+                      - pattern-inside: |
+                          $CMD = Arrays.asList($S.split(...));
+                          ...
+          - focus-metavariable: $CMD
+      # A handler parameter bound from the request (a list, an array, a body object) passed whole,
+      # or a field or the array of it.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $RET $M(..., @$ANN $T $P, ...) { ... }
+              - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $ANN
+              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+          - pattern-either:
+              - pattern: new ProcessBuilder($P)
+              - pattern: new ProcessBuilder($P.$GET(...))
+              - pattern: new ProcessBuilder($P.toArray(...))
+              - pattern: new ProcessBuilder($P.$GET(...).toArray(...))
+              - pattern: (ProcessBuilder $B).command($P)
+              - pattern: (ProcessBuilder $B).command($P.$GET(...))
+              - pattern: (Runtime $RT).exec($P.toArray(...), ...)
+              - pattern: (Runtime $RT).exec($P.$GET(...).toArray(...), ...)
+              - pattern: Runtime.getRuntime().exec($P.toArray(...), ...)
+              - pattern: Runtime.getRuntime().exec($P.$GET(...).toArray(...), ...)
+          - focus-metavariable: $P
+      # The program: the first element of a command array or list.
+      - patterns:
+          - pattern-either:
+              - pattern: new ProcessBuilder($P, $ARG, ...)
+              - pattern: (ProcessBuilder $B).command($P, $ARG, ...)
+              - pattern: (Runtime $RT).exec(new String[] {$P, ...}, ...)
+              - pattern: (java.lang.Runtime $RT).exec(new String[] {$P, ...}, ...)
+              - pattern: Runtime.getRuntime().exec(new String[] {$P, ...}, ...)
+              - patterns:
+                  - pattern-inside: |
+                      $RT = Runtime.getRuntime();
+                      ...
+                  - pattern: $RT.exec(new String[] {$P, ...}, ...)
+              - pattern: new ProcessBuilder(List.of($P, ...))
+              - pattern: new ProcessBuilder(Arrays.asList($P, ...))
+              - pattern: (ProcessBuilder $B).command(List.of($P, ...))
+              - pattern: (ProcessBuilder $B).command(Arrays.asList($P, ...))
+          - focus-metavariable: $P
+      # A command array or list declared first: its first element is the program (reported where
+      # it is declared).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $T[] $A = {$P, ...};
+                  ...
+                  (Runtime $RT).exec($A, ...);
+              - pattern-inside: |
+                  $T[] $A = {$P, ...};
+                  ...
+                  Runtime.getRuntime().exec($A, ...);
+              - pattern-inside: |
+                  $T[] $A = {$P, ...};
+                  ...
+                  new ProcessBuilder($A);
+              - pattern-inside: |
+                  $T[] $A = {$P, ...};
+                  ...
+                  (ProcessBuilder $B).command($A);
+          - pattern: $T[] $A = {$P, ...};
+          - focus-metavariable: $P
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $L = $INIT;
+                  ...
+                  new ProcessBuilder($L);
+              - pattern-inside: |
+                  $L = $INIT;
+                  ...
+                  (ProcessBuilder $B).command($L);
+          - pattern: $L = $INIT;
+          - metavariable-pattern:
+              metavariable: $INIT
+              pattern-either:
+                - pattern: List.of($P, ...)
+                - pattern: java.util.List.of($P, ...)
+                - pattern: Arrays.asList($P, ...)
+                - pattern: java.util.Arrays.asList($P, ...)
+                - pattern: new ArrayList<>(List.of($P, ...))
+                - pattern: new ArrayList<>(Arrays.asList($P, ...))
+                - pattern: new java.util.ArrayList<>(java.util.List.of($P, ...))
+                - pattern: new java.util.ArrayList<>(java.util.Arrays.asList($P, ...))
+          - focus-metavariable: $P
+      # A shell: the script that follows "sh -c", "cmd /c", "powershell -Command" and the like
+      # (with or without options before the flag, "bash -l -c") is shell code. Arguments after the
+      # script are positional parameters ($1 ...) and stay data.
+      - patterns:
+          - pattern-either:
+              - pattern: new ProcessBuilder("$SH", ..., "$FLAG", $X, ...)
+              - pattern: (ProcessBuilder $B).command("$SH", ..., "$FLAG", $X, ...)
+              - pattern: new String[] {"$SH", ..., "$FLAG", $X, ...}
+              - pattern: $T[] $A = {"$SH", ..., "$FLAG", $X, ...};
+              - pattern: List.of("$SH", ..., "$FLAG", $X, ...)
+              - pattern: Arrays.asList("$SH", ..., "$FLAG", $X, ...)
+          - metavariable-regex:
+              metavariable: $FLAG
+              regex: (?i)^(-[a-z]*c|/c|/k|-command)$
+          - metavariable-regex:
+              metavariable: $SH
+              regex: (?i)^(.*/)?(sh|bash|zsh|ksh|dash|ash|csh|tcsh|fish|cmd|cmd\.exe|powershell|powershell\.exe|pwsh)$
+          - focus-metavariable: $X
+      # cmd.exe (/c, /k) and PowerShell (-Command, -c) take every argument after the flag as part
+      # of the command they run, not only the first.
+      - patterns:
+          - pattern-either:
+              - pattern: new ProcessBuilder("$SH", ..., "$FLAG", ..., $X, ...)
+              - pattern: (ProcessBuilder $B).command("$SH", ..., "$FLAG", ..., $X, ...)
+              - pattern: new String[] {"$SH", ..., "$FLAG", ..., $X, ...}
+              - pattern: $T[] $A = {"$SH", ..., "$FLAG", ..., $X, ...};
+              - pattern: List.of("$SH", ..., "$FLAG", ..., $X, ...)
+              - pattern: Arrays.asList("$SH", ..., "$FLAG", ..., $X, ...)
+          - metavariable-regex:
+              metavariable: $SH
+              regex: (?i)^(.*[/\\])?(cmd|cmd\.exe|powershell|powershell\.exe|pwsh|pwsh\.exe)$
+          - metavariable-regex:
+              metavariable: $FLAG
+              regex: (?i)^(/c|/k|-command|-c)$
+          - focus-metavariable: $X
+      # A command list that gets a shell somewhere in the method (often in an if/else on the
+      # operating system): any later element.
+      - patterns:
+          - pattern-inside: |
+              $RET $METH(...) {
+                ...
+                $L.add("$SH");
+                ...
+              }
+          - pattern: $L.add($X)
+          - metavariable-regex:
+              metavariable: $SH
+              regex: (?i)^(.*/)?(sh|bash|zsh|ksh|dash|ash|csh|tcsh|fish|cmd|cmd\.exe|powershell|powershell\.exe|pwsh)$
+          - focus-metavariable: $X
+      # A shell assigned to a variable (in an if/else on the operating system, say), then put first
+      # into the command: the third element is the script.
+      - patterns:
+          - pattern-inside: |
+              $RET $METH(...) {
+                ...
+                $V = "$SH";
+                ...
+              }
+          - pattern-either:
+              - pattern: new ProcessBuilder($V, $F, $X, ...)
+              - pattern: (ProcessBuilder $B).command($V, $F, $X, ...)
+              - pattern: new String[] {$V, $F, $X, ...}
+              - pattern: $T[] $A = {$V, $F, $X, ...};
+          - metavariable-regex:
+              metavariable: $SH
+              regex: (?i)^(.*/)?(sh|bash|zsh|ksh|dash|ash|csh|tcsh|fish|cmd|cmd\.exe|powershell|powershell\.exe|pwsh)$
+          - focus-metavariable: $X
+      # The environment of the new process (CWE-426): an entry whose name the request chooses, or
+      # a value for a variable that decides what runs (PATH, LD_PRELOAD, LD_LIBRARY_PATH, BASH_ENV,
+      # ENV ...). An entry built as "NAME=" + value or String.format("NAME=%s", value) for another
+      # name is accepted.
+      - patterns:
+          - pattern-either:
+              - pattern: (Runtime $RT).exec($CMD, new String[] {..., $E, ...}, ...)
+              - pattern: Runtime.getRuntime().exec($CMD, new String[] {..., $E, ...}, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $T[] $ENV = {..., $E, ...};
+                          ...
+                          (Runtime $RT).exec($CMD, $ENV, ...);
+                      - pattern-inside: |
+                          $T[] $ENV = {..., $E, ...};
+                          ...
+                          Runtime.getRuntime().exec($CMD, $ENV, ...);
+                  - pattern: $T[] $ENV = {..., $E, ...};
+          - metavariable-regex:
+              metavariable: $E
+              regex: ^(?!(String\.format\(\s*)?"(?!(PATH|LD_[A-Z_]+|DYLD_[A-Z_]+|BASH_ENV|ENV|IFS|SHELLOPTS)=)[A-Za-z_][A-Za-z0-9_]*=)
+          # An entry assigned in the method: judged by its "NAME=" prefix (below), not here.
+          - pattern-not-inside: |
+              $E = "$NAME" + $VALUE;
+              ...
+          - pattern-not-inside: |
+              $E = String.format("$FORMAT", ...);
+              ...
+          - focus-metavariable: $E
+      # An entry kept in a variable that the method assigns from a literal: reported (at the use)
+      # unless the literal is the "NAME=" prefix of a variable that does not decide what runs.
+      - patterns:
+          - pattern-either:
+              - pattern: (Runtime $RT).exec($CMD, new String[] {..., $E, ...}, ...)
+              - pattern: Runtime.getRuntime().exec($CMD, new String[] {..., $E, ...}, ...)
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      $E = "$NAME" + $VALUE;
+                      ...
+                  - metavariable-regex:
+                      metavariable: $NAME
+                      regex: ^(?!(?!(PATH|LD_[A-Z_]+|DYLD_[A-Z_]+|BASH_ENV|ENV|IFS|SHELLOPTS)=)[A-Za-z_][A-Za-z0-9_]*=$)
+              - patterns:
+                  - pattern-inside: |
+                      $E = String.format("$FORMAT", ...);
+                      ...
+                  - metavariable-regex:
+                      metavariable: $FORMAT
+                      regex: ^(?!(?!(PATH|LD_[A-Z_]+|DYLD_[A-Z_]+|BASH_ENV|ENV|IFS|SHELLOPTS)=)[A-Za-z_][A-Za-z0-9_]*=)
+          - focus-metavariable: $E
+      # ProcessBuilder's environment map: a variable name chosen by the request, or a value for a
+      # variable that decides what runs.
+      - patterns:
+          - pattern-either:
+              - pattern: (ProcessBuilder $B).environment().put($NAME, $VALUE)
+              - patterns:
+                  - pattern-inside: |
+                      $ENVMAP = (ProcessBuilder $B).environment();
+                      ...
+                  - pattern: $ENVMAP.put($NAME, $VALUE)
+          - focus-metavariable: $NAME
+      - patterns:
+          - pattern-either:
+              - pattern: (ProcessBuilder $B).environment().put("$NAME", $VALUE)
+              - patterns:
+                  - pattern-inside: |
+                      $ENVMAP = (ProcessBuilder $B).environment();
+                      ...
+                  - pattern: $ENVMAP.put("$NAME", $VALUE)
+          - metavariable-regex:
+              metavariable: $NAME
+              regex: ^(PATH|LD_[A-Z_]+|DYLD_[A-Z_]+|BASH_ENV|ENV|IFS|SHELLOPTS)$
+          - focus-metavariable: $VALUE

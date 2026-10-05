@@ -1,0 +1,1830 @@
+rules:
+  - id: js.open-redirect
+    mode: taint
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Data from the HTTP request decides where the response redirects the browser: as the whole
+      target, its scheme or its host (also after an origin without a trailing `/`, where
+      `@evil.example` names another host, or after a single `/`, where `//evil.example` does), so
+      a link to this site can send users to another site. Redirect to a path that starts with a
+      fixed segment (`'/users/' + id`) or to a fixed origin followed by `/`, `?` or `#`, encode a
+      single path segment with encodeURIComponent(), or map the request value to a target through
+      an allow-list.
+    metadata:
+      title: Redirect to a URL from HTTP request data (Node.js)
+      cwe: ['CWE-601']
+      owasp: ['A01:2025', 'A01:2021']
+      kind: issue
+      severity: medium
+      confidence: high
+      frameworks: [express, nextjs, fastify, node-http]
+      sources:
+        - https://cwe.mitre.org/data/definitions/601.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html
+        - https://top10.owasp.org/2025/A01_2025-Broken_Access_Control
+        - https://top10.owasp.org/2021/A01_2021-Broken_Access_Control
+        - https://expressjs.com/en/5x/api/response/
+        - https://expressjs.com/en/4x/api.html#res.redirect
+        - https://expressjs.com/en/advanced/best-practice-security.html
+        - https://expressjs.com/en/4x/api.html#req
+        - https://expressjs.com/en/5x/api.html#req
+        - https://nodejs.org/api/http.html
+        - https://fastify.dev/docs/latest/Reference/Reply/
+        - https://fastify.dev/docs/latest/Reference/Routes/
+        - https://fastify.dev/docs/latest/Reference/Request/
+        - https://nextjs.org/docs/app/api-reference/functions/next-response
+        - https://nextjs.org/docs/app/api-reference/functions/redirect
+        - https://nextjs.org/docs/app/api-reference/functions/permanentRedirect
+        - https://nextjs.org/docs/app/api-reference/file-conventions/route
+        - https://nextjs.org/docs/pages/building-your-application/routing/api-routes
+        - https://developer.mozilla.org/en-US/docs/Web/API/Response/redirect_static
+        - https://developer.mozilla.org/en-US/docs/Web/API/URL/URL
+        - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/encodeURIComponent
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A check before the call or in the argument ("starts with / but not //", the parsed host
+    #   compared with a constant as in the Express security guide, `[...].includes(x) ? x : '/'`)
+    #   is not followed: the checked value is still reported.
+    # - Headers are request data, so a redirect to the host the browser asked for
+    #   (`'https://' + req.headers.host + req.originalUrl`) is reported, and so is the Referer
+    #   (`req.get('Referrer') || '/'`); Express 4's `res.redirect('back')`, which goes to the
+    #   same Referer, is a literal and is not.
+    # - The request's own URL is a clean base of new URL(), and a copy of it in a variable
+    #   (clone(), new URL(url)) is clean as a whole, only when the request is named req, request,
+    #   _req or _request (`new URL('/login', request.url)`).
+    # - encodeURIComponent() is clean also where its value becomes the host after a scheme or "//".
+    # - After a start that does not fix the host, the part after it, or after one more constant
+    #   without a separator (`'https://' + HOST + x`), is checked; a second such constant
+    #   (`'https://' + HOST + ':' + x`) hides the request value. Templates: the interpolation
+    #   after the start, or after one interpolation that follows it.
+    # - A target built in a variable before the call counts as safe when its start is a constant
+    #   that ends with a separator, or a base followed by a string that starts with one: UPPER_CASE
+    #   constants, process.env, this.*, config/settings objects, and identifiers declared const in
+    #   the file from a literal with a host or process.env (with a literal default with a host).
+    #   Other bases are reported, and so is a base whose name the file redeclares with request
+    #   data in a nested block. The separator is '?', '#' or a '/' that is not followed by '/' or
+    #   '\', so `base + '//' + x` is reported even when the base holds a host.
+    # - Concatenations of more than six parts are not split into their parts, so they are not
+    #   reported.
+    # - An allow-list lookup yields constants only in a table declared const in the file with
+    #   literal keys and values (comments allowed, optionally in Object.freeze) that the file never
+    #   writes to; tables with escaped quotes in their strings, nested tables and tables of other
+    #   modules are not recognised, so their lookups are reported.
+    # - The results of awaited methods of other objects are not request data (data loaded or made
+    #   with a request value as its key, `await Link.findOne({ slug: req.params.slug })`), except
+    #   promise helpers, parsers, formatters, request.json()/formData()/text(), methods of the
+    #   response and functions imported by name; another method that returns the request value it
+    #   is given is missed. So is an awaited helper that is given the response object
+    #   (`await beginSignIn(provider, returnTo, res)`) and returns a request value.
+    #   A function called through a module object (`import * as links`, `const helpers =
+    #   require(...)`, then `await links.next(req.query.next)`) counts as such a method and is
+    #   missed too (recorded from review, no test line).
+    # - Next.js Server Functions (Server Actions) and the props of pages are not request sources,
+    #   so `redirect(formData.get('next'))` in a Server Action is missed.
+    # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
+    #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
+    #   source, and a one-parameter callback given to get/post/... after a path literal (also on
+    #   an HTTP client) is taken for a Fastify route handler.
+    pattern-sources:
+      # Express: the request object, the first parameter of a handler `(req, res, ...)`, carries
+      # the query string, route parameters (`/users/:id`), body, headers, cookies and the URL.
+      # The second parameter's name tells a handler from other two-parameter functions.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|reply|rep|h|ctx|next|_res|_response)$
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Fastify: a handler registered with a route shorthand (`fastify.get('/path', [options],
+      # handler)`) or with `route({ handler })` may take only the request.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: $APP.$ROUTE($PATH, ..., function ($REQ) { ... })
+                  - metavariable-regex:
+                      metavariable: $ROUTE
+                      regex: ^(get|head|post|put|delete|options|patch|all)$
+                  - metavariable-regex:
+                      metavariable: $PATH
+                      regex: ^["'`]/
+              - pattern-inside: '$APP.route({..., handler: function ($REQ) { ... }, ...})'
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Next.js App Router: route handlers are functions named after an HTTP method; the request is
+      # a Web Request (NextRequest) and the context's params hold the dynamic route segments.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern-either:
+              - pattern: $REQ.nextUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.json()
+              - pattern: $REQ.formData()
+              - pattern: $REQ.text()
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, $CTX, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, $CTX, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: $CTX.params
+      - patterns:
+          - pattern-either:
+              - pattern-inside: 'function $METHOD($REQ, {params}, ...) { ... }'
+              - pattern-inside: 'function $METHOD($REQ, {params}: $T, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}: $T, ...) { ... }'
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: params
+    # Values added to an array or a Map make the container carry them.
+    pattern-propagators:
+      - pattern: $LIST.push(..., $X, ...)
+        from: $X
+        to: $LIST
+      - pattern: $LIST.unshift(..., $X, ...)
+        from: $X
+        to: $LIST
+      - pattern: $MAP.set($K, $X)
+        from: $X
+        to: $MAP
+    pattern-sanitizers:
+      - pattern: Number.parseInt(...)
+      - pattern: Number.parseFloat(...)
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      # An allow-list lookup: an index into a const object or array, or get() on a const Map,
+      # declared in the file with literal keys and values only (comments allowed, optionally
+      # wrapped in Object.freeze), and not changed after it.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  const $TABLE = $INIT;
+                  ...
+              - pattern-inside: |
+                  const $TABLE: $TYPE = $INIT;
+                  ...
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: >-
+                ^(?:(?:\{(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\}|\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\]|new\s+Map(?:<[^>]*>)?\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\](?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\])*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\](?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))|Object\.freeze\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:\{(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\}|\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\]|new\s+Map(?:<[^>]*>)?\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\](?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\])*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\](?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))(?:\s+as\s+const)?$
+          - pattern-either:
+              - pattern: $TABLE[$KEY]
+              - pattern: $TABLE.get($KEY)
+          # A table the file writes to after its declaration, in any function, is no allow-list.
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE[$K2] = $V2;
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.$PROP = $V2;
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.set(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.push(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.unshift(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.splice(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              Object.assign($TABLE, ...);
+              ...
+      # A URL object made from a constant absolute URL (its base, if any, is then ignored): setting
+      # its query parameters (searchParams) does not change its host. Assigning its host, hostname,
+      # href, protocol or port does.
+      - patterns:
+          - pattern-inside: |
+              $URLOBJ = new URL("$C", ...);
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = new URL("$C", ...);
+              ...
+              $URLOBJ.host = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = new URL("$C", ...);
+              ...
+              $URLOBJ.hostname = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = new URL("$C", ...);
+              ...
+              $URLOBJ.href = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = new URL("$C", ...);
+              ...
+              $URLOBJ.protocol = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = new URL("$C", ...);
+              ...
+              $URLOBJ.port = $V;
+              ...
+          - metavariable-regex:
+              metavariable: $C
+              regex: ^[a-zA-Z][a-zA-Z0-9+.-]*://[^/?#\\]+
+          - pattern: $URLOBJ
+      # A URL built before the call whose start fixes the host: a constant string that ends with a
+      # path separator after the host, a constant origin or a configuration value (UPPER_CASE
+      # constants, process.env, this.*, config/settings objects) followed by a string that starts
+      # with a path separator.
+      - patterns:
+          - pattern-either:
+              - pattern: '"$U" + $S1'
+              - pattern: '"$U" + $S1 + $S2'
+              - pattern: '"$U" + $S1 + $S2 + $S3'
+              - pattern: '"$U" + $S1 + $S2 + $S3 + $S4'
+              - pattern: '"$U" + $S1 + $S2 + $S3 + $S4 + $S5'
+              - pattern: '`$U${$A}...`'
+          - metavariable-regex:
+              metavariable: $U
+              regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+      - patterns:
+          - pattern-either:
+              - pattern: '"$U" + "$V" + $S1'
+              - pattern: '"$U" + "$V" + $S1 + $S2'
+              - pattern: '"$U" + "$V" + $S1 + $S2 + $S3'
+              - pattern: '"$U" + "$V" + $S1 + $S2 + $S3 + $S4'
+          - metavariable-regex:
+              metavariable: $U
+              regex: ^(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+$
+          - metavariable-regex:
+              metavariable: $V
+              regex: ^(?:/(?![/\\])|[?#])
+      - patterns:
+          - pattern-either:
+              - pattern: '$FIRST + "$V" + $S1'
+              - pattern: '$FIRST + "$V" + $S1 + $S2'
+              - pattern: '$FIRST + "$V" + $S1 + $S2 + $S3'
+              - pattern: '$FIRST + "$V" + $S1 + $S2 + $S3 + $S4'
+          - metavariable-regex:
+              metavariable: $FIRST
+              regex: ^(?:[A-Z][A-Z0-9_]*|process\.env\.\w+|this\.\w+(?:\.\w+)*|\w*(?:[Cc]onfig|[Ss]ettings|[Ee]nv|[Cc]onf|[Cc]fg)\w*(?:\.\w+)+)$
+          - metavariable-pattern:
+              metavariable: $FIRST
+              patterns:
+                - pattern-either:
+                    - patterns:
+                        - pattern: $ANYBASE
+                        - pattern-not: '"$K"'
+                    - patterns:
+                        - pattern: '"$K"'
+                        - metavariable-regex:
+                            metavariable: $K
+                            regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\]+
+          - metavariable-regex:
+              metavariable: $V
+              regex: ^(?:/(?![/\\])|[?#])
+      - patterns:
+          - pattern: '`${$FIRST}...`'
+          - pattern-regex: '\x60\$\{\s*(?:[A-Z][A-Z0-9_]*|process\.env\.\w+|this\.\w+(?:\.\w+)*|\w*(?:[Cc]onfig|[Ss]ettings|[Ee]nv|[Cc]onf|[Cc]fg)\w*(?:\.\w+)+)\s*\}(?:/(?![/\\])|[?#])(?:[^\x60\\]|\\.)*\x60'
+          - metavariable-pattern:
+              metavariable: $FIRST
+              patterns:
+                - pattern-either:
+                    - patterns:
+                        - pattern: $ANYBASE
+                        - pattern-not: '"$K"'
+                    - patterns:
+                        - pattern: '"$K"'
+                        - metavariable-regex:
+                            metavariable: $K
+                            regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\]+
+      # A base declared const in the file from a literal, process.env or process.env with a literal
+      # default, followed by a string that starts with a path separator.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  const $BASE = $INIT;
+                  ...
+              - pattern-inside: |
+                  const $BASE: $TYPE = $INIT;
+                  ...
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(?:process\.env\.\w+|process\.env\[(?:"[^"]*"|'[^']*')\])(?:\s*(?:\|\||\?\?)\s*(?:"[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\"]+[^"\\]*"|'[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\']+[^'\\]*'|`[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\`$]+[^`$\\]*`))?$|^(?:"[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\"]+[^"\\]*"|'[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\']+[^'\\]*'|`[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\`$]+[^`$\\]*`)$
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern: '$BASE + "$V" + $S1'
+                      - pattern: '$BASE + "$V" + $S1 + $S2'
+                      - pattern: '$BASE + "$V" + $S1 + $S2 + $S3'
+                      - pattern: '$BASE + "$V" + $S1 + $S2 + $S3 + $S4'
+                  - metavariable-regex:
+                      metavariable: $V
+                      regex: ^(?:/(?![/\\])|[?#])
+              - patterns:
+                  - pattern: '`${$BASE}...`'
+                  - pattern-regex: '\x60\$\{\s*[A-Za-z_$][\w$]*\s*\}(?:/(?![/\\])|[?#])(?:[^\x60\\]|\\.)*\x60'
+      # A value encoded with encodeURIComponent(): '/', ':', '?', '#', '\' and '@' are escaped, so
+      # it cannot add a scheme, a host or "//"; as a whole target it is a relative path on this
+      # site. Where it is the host after a scheme or "//" it is taken as clean too (Known limits).
+      - pattern: encodeURIComponent(...)
+      # The request's own URL as the base of new URL(): a relative path stays on the host the
+      # browser asked for (`new URL('/login', request.url)`); an absolute path still replaces it.
+      - patterns:
+          - pattern: new URL($X, $BASE)
+          - metavariable-regex:
+              metavariable: $BASE
+              regex: ^(?:req|request|_req|_request)\.(?:url|nextUrl(?:\.(?:origin|href))?)$
+          - focus-metavariable: $BASE
+      # A URL object made from a constant relative path and the request's own URL or a constant
+      # origin, or copied from the request's own URL into a variable (`request.nextUrl.clone()`,
+      # `new URL(request.url)`), used as a whole: setting its path or query parameters does not
+      # change its host. Assigning its host, hostname, href, protocol or port does, and what is
+      # read from its query string or fragment (searchParams, search, hash, also destructured)
+      # is still request data.
+      - patterns:
+          - pattern-inside: |
+              $URLOBJ = new URL("$C", $BASE);
+              ...
+          - metavariable-regex:
+              metavariable: $C
+              regex: ^(?![a-zA-Z][a-zA-Z0-9+.-]*:|[/\\][/\\])
+          - metavariable-regex:
+              metavariable: $BASE
+              regex: ^(?:(?:req|request|_req|_request)\.(?:url|nextUrl(?:\.(?:origin|href))?)|[A-Z][A-Z0-9_]*|process\.env\.\w+|["'`][a-zA-Z][a-zA-Z0-9+.-]*://[^/?#\\"'`]+[^"'`]*["'`])$
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.host = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.hostname = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.href = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.protocol = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.port = $V;
+              ...
+          - metavariable-regex:
+              metavariable: $URLOBJ
+              regex: ^[A-Za-z_$][\w$]*$
+          - pattern-not-inside: $URLOBJ.searchParams
+          - pattern-not-inside: $URLOBJ.search
+          - pattern-not-inside: $URLOBJ.hash
+          - pattern-not-inside: const {...} = $URLOBJ;
+          - pattern: $URLOBJ
+      - patterns:
+          - pattern-inside: |
+              $URLOBJ = $OWN.clone();
+              ...
+          - metavariable-regex:
+              metavariable: $OWN
+              regex: ^(?:req|request|_req|_request)\.(?:url|nextUrl)$
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.host = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.hostname = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.href = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.protocol = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.port = $V;
+              ...
+          - metavariable-regex:
+              metavariable: $URLOBJ
+              regex: ^[A-Za-z_$][\w$]*$
+          - pattern-not-inside: $URLOBJ.searchParams
+          - pattern-not-inside: $URLOBJ.search
+          - pattern-not-inside: $URLOBJ.hash
+          - pattern-not-inside: const {...} = $URLOBJ;
+          - pattern: $URLOBJ
+      - patterns:
+          - pattern-inside: |
+              $URLOBJ = new URL($OWN);
+              ...
+          - metavariable-regex:
+              metavariable: $OWN
+              regex: ^(?:req|request|_req|_request)\.(?:url|nextUrl)$
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.host = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.hostname = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.href = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.protocol = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = $INIT;
+              ...
+              $URLOBJ.port = $V;
+              ...
+          - metavariable-regex:
+              metavariable: $URLOBJ
+              regex: ^[A-Za-z_$][\w$]*$
+          - pattern-not-inside: $URLOBJ.searchParams
+          - pattern-not-inside: $URLOBJ.search
+          - pattern-not-inside: $URLOBJ.hash
+          - pattern-not-inside: const {...} = $URLOBJ;
+          - pattern: $URLOBJ
+      # Results of awaited methods of other objects (services, models, clients: data loaded or
+      # made with a request value as its key) are not request data. Promise helpers, parsers and
+      # formatters return what they are given; the body readers of a Web Request stay sources.
+      # Not sanitizers: methods of the response (an awaited sink stays a sink) and functions
+      # imported by name (OpenGrep matches their calls as methods).
+      - patterns:
+          - pattern: await $OBJ.$M(...)
+          - pattern-not: await $R.json()
+          - pattern-not: await $R.formData()
+          - pattern-not: await $R.text()
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(?!(?:resolve|all|any|race|allSettled|parse|format\w*)$)
+          - metavariable-regex:
+              metavariable: $OBJ
+              regex: ^(?!(?:res|resp|response|reply|rep|_res|_response)\b)
+          - pattern-not-inside: |
+              import {..., $M, ...} from $FROM;
+              ...
+          - pattern-not-inside: |
+              import {$M as $ALIAS} from $FROM;
+              ...
+          - pattern-not-inside: |
+              const {..., $M, ...} = require($FROM);
+              ...
+          - pattern-not-inside: |
+              const {..., $M: $ALIAS, ...} = require($FROM);
+              ...
+      # An awaited helper that is given the handler's response object writes its own answer
+      # (`await startSignIn(provider, returnTo, reply)`): its result is not a redirect target.
+      - patterns:
+          - pattern: await $F(..., $RESARG, ...)
+          - metavariable-regex:
+              metavariable: $RESARG
+              regex: ^(?:res|resp|response|reply|rep|_res|_response)$
+    pattern-sinks:
+      # Express, Next.js Pages Router and Fastify: res.redirect(url), res.location(url),
+      # reply.redirect(url[, code]) (the response object of the handler, also after status()/code()).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|reply|rep|_res|_response)$
+          - metavariable-regex:
+              metavariable: $OBJ
+              regex: ^(?:res|resp|response|reply|rep|_res|_response)(?:\s*\.\s*(?:status|code)\s*\([^()]*\))*$
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(redirect|location)$
+          - pattern-either:
+              # the first argument: the whole value, when it is neither a concatenation nor a template
+              - patterns:
+                  - pattern: '$OBJ.$M($PART, ...)'
+                  - pattern-not: '$OBJ.$M($X + $Y, ...)'
+                  - pattern-not: '$OBJ.$M(`...`, ...)'
+              # the first argument: the first part of a concatenation of k parts (not of k + 1)
+              - patterns:
+                  - pattern: '$OBJ.$M($PART + $S1, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M($PART + $S1 + $S2, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M($PART + $S1 + $S2 + $S3, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M($PART + $S1 + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M($PART + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+              # the first argument: the second part, after a constant string that does not end with a path separator after the host
+              - patterns:
+                  - pattern: '$OBJ.$M("$U" + $PART, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M("$U" + $PART + $S2, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M("$U" + $PART + $S2 + $S3, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M("$U" + $PART + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M("$U" + $PART + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              # the first argument: the third part, after a constant string and a constant without a path separator (a scheme, then a constant host name)
+              - patterns:
+                  - pattern: '$OBJ.$M("$U" + "$A" + $PART, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M("$U" + "$A" + $PART + $S3, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M("$U" + "$A" + $PART + $S3 + $S4, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M("$U" + "$A" + $PART + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              # the first argument: the third part, after a scheme alone and slashes (with or without host text)
+              - patterns:
+                  - pattern: '$OBJ.$M("$U" + "$A" + $PART, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M("$U" + "$A" + $PART + $S3, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M("$U" + "$A" + $PART + $S3 + $S4, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M("$U" + "$A" + $PART + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              # the first argument: the second part, after a start that is not a constant string
+              - patterns:
+                  - pattern: '$OBJ.$M($FIRST + $PART, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2, ...)'
+                  - pattern-not: '$OBJ.$M("$U" + $S1, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M($FIRST + $PART + $S2, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3, ...)'
+                  - pattern-not: '$OBJ.$M("$U" + $S1 + $S2, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M($FIRST + $PART + $S2 + $S3, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - pattern-not: '$OBJ.$M("$U" + $S1 + $S2 + $S3, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M($FIRST + $PART + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - pattern-not: '$OBJ.$M("$U" + $S1 + $S2 + $S3 + $S4, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M($FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - pattern-not: '$OBJ.$M("$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
+              # the first argument: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
+              - patterns:
+                  - pattern: '$OBJ.$M(`${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M(`$H${$PART}...`, ...)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M(`$H${$A}${$PART}...`, ...)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M(`${$P}${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M(`${$P}://${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M(`${$P}//${$PART}...`, ...)'
+          - focus-metavariable: $PART
+      # Express and the Pages Router: res.redirect(status, url).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|reply|rep|_res|_response)$
+          - metavariable-regex:
+              metavariable: $OBJ
+              regex: ^(?:res|resp|response|reply|rep|_res|_response)(?:\s*\.\s*(?:status|code)\s*\([^()]*\))*$
+          - pattern-either:
+              # the second argument: the whole value, when it is neither a concatenation nor a template
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, $PART, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $Y, ...)'
+                  - pattern-not: '$OBJ.redirect($X, `...`, ...)'
+              # the second argument: the first part of a concatenation of k parts (not of k + 1)
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, $PART + $S1, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2, ...)'
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, $PART + $S1 + $S2, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3, ...)'
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, $PART + $S1 + $S2 + $S3, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4, ...)'
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, $PART + $S1 + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, $PART + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+              # the second argument: the second part, after a constant string that does not end with a path separator after the host
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, "$U" + $PART, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, "$U" + $PART + $S2, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, "$U" + $PART + $S2 + $S3, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, "$U" + $PART + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, "$U" + $PART + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              # the second argument: the third part, after a constant string and a constant without a path separator (a scheme, then a constant host name)
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, "$U" + "$A" + $PART, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, "$U" + "$A" + $PART + $S3, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, "$U" + "$A" + $PART + $S3 + $S4, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, "$U" + "$A" + $PART + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              # the second argument: the third part, after a scheme alone and slashes (with or without host text)
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, "$U" + "$A" + $PART, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, "$U" + "$A" + $PART + $S3, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, "$U" + "$A" + $PART + $S3 + $S4, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, "$U" + "$A" + $PART + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              # the second argument: the second part, after a start that is not a constant string
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, $FIRST + $PART, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2, ...)'
+                  - pattern-not: '$OBJ.redirect($X, "$U" + $S1, ...)'
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, $FIRST + $PART + $S2, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3, ...)'
+                  - pattern-not: '$OBJ.redirect($X, "$U" + $S1 + $S2, ...)'
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, $FIRST + $PART + $S2 + $S3, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - pattern-not: '$OBJ.redirect($X, "$U" + $S1 + $S2 + $S3, ...)'
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, $FIRST + $PART + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - pattern-not: '$OBJ.redirect($X, "$U" + $S1 + $S2 + $S3 + $S4, ...)'
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, $FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - pattern-not: '$OBJ.redirect($X, "$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
+              # the second argument: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, `${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, `$H${$PART}...`, ...)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, `$H${$A}${$PART}...`, ...)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, `${$P}${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, `${$P}://${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$OBJ.redirect($X, `${$P}//${$PART}...`, ...)'
+          - focus-metavariable: $PART
+      # Express, Node http and Fastify: a Location header set by name.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|reply|rep|_res|_response)$
+          - metavariable-regex:
+              metavariable: $OBJ
+              regex: ^(?:res|resp|response|reply|rep|_res|_response)(?:\s*\.\s*(?:status|code)\s*\([^()]*\))*$
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(set|header|setHeader|append)$
+          - metavariable-regex:
+              metavariable: $H
+              regex: (?i)^["'`]location["'`]$
+          - pattern-either:
+              # the header value: the whole value, when it is neither a concatenation nor a template
+              - patterns:
+                  - pattern: '$OBJ.$M($H, $PART)'
+                  - pattern-not: '$OBJ.$M($H, $X + $Y)'
+                  - pattern-not: '$OBJ.$M($H, `...`)'
+              # the header value: the first part of a concatenation of k parts (not of k + 1)
+              - patterns:
+                  - pattern: '$OBJ.$M($H, $PART + $S1)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2)'
+              - patterns:
+                  - pattern: '$OBJ.$M($H, $PART + $S1 + $S2)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3)'
+              - patterns:
+                  - pattern: '$OBJ.$M($H, $PART + $S1 + $S2 + $S3)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4)'
+              - patterns:
+                  - pattern: '$OBJ.$M($H, $PART + $S1 + $S2 + $S3 + $S4)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4 + $O5)'
+              - patterns:
+                  - pattern: '$OBJ.$M($H, $PART + $S1 + $S2 + $S3 + $S4 + $S5)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6)'
+              # the header value: the second part, after a constant string that does not end with a path separator after the host
+              - patterns:
+                  - pattern: '$OBJ.$M($H, "$U" + $PART)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M($H, "$U" + $PART + $S2)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M($H, "$U" + $PART + $S2 + $S3)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M($H, "$U" + $PART + $S2 + $S3 + $S4)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4 + $O5)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M($H, "$U" + $PART + $S2 + $S3 + $S4 + $S5)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              # the header value: the third part, after a constant string and a constant without a path separator (a scheme, then a constant host name)
+              - patterns:
+                  - pattern: '$OBJ.$M($H, "$U" + "$A" + $PART)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M($H, "$U" + "$A" + $PART + $S3)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M($H, "$U" + "$A" + $PART + $S3 + $S4)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4 + $O5)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M($H, "$U" + "$A" + $PART + $S3 + $S4 + $S5)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              # the header value: the third part, after a scheme alone and slashes (with or without host text)
+              - patterns:
+                  - pattern: '$OBJ.$M($H, "$U" + "$A" + $PART)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M($H, "$U" + "$A" + $PART + $S3)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M($H, "$U" + "$A" + $PART + $S3 + $S4)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4 + $O5)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M($H, "$U" + "$A" + $PART + $S3 + $S4 + $S5)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              # the header value: the second part, after a start that is not a constant string
+              - patterns:
+                  - pattern: '$OBJ.$M($H, $FIRST + $PART)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2)'
+                  - pattern-not: '$OBJ.$M($H, "$U" + $S1)'
+              - patterns:
+                  - pattern: '$OBJ.$M($H, $FIRST + $PART + $S2)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3)'
+                  - pattern-not: '$OBJ.$M($H, "$U" + $S1 + $S2)'
+              - patterns:
+                  - pattern: '$OBJ.$M($H, $FIRST + $PART + $S2 + $S3)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4)'
+                  - pattern-not: '$OBJ.$M($H, "$U" + $S1 + $S2 + $S3)'
+              - patterns:
+                  - pattern: '$OBJ.$M($H, $FIRST + $PART + $S2 + $S3 + $S4)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4 + $O5)'
+                  - pattern-not: '$OBJ.$M($H, "$U" + $S1 + $S2 + $S3 + $S4)'
+              - patterns:
+                  - pattern: '$OBJ.$M($H, $FIRST + $PART + $S2 + $S3 + $S4 + $S5)'
+                  - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6)'
+                  - pattern-not: '$OBJ.$M($H, "$U" + $S1 + $S2 + $S3 + $S4 + $S5)'
+              # the header value: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
+              - patterns:
+                  - pattern: '$OBJ.$M($H, `${$PART}...`)'
+              - patterns:
+                  - pattern: '$OBJ.$M($H, `$H${$PART}...`)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M($H, `$H${$A}${$PART}...`)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M($H, `${$P}${$PART}...`)'
+              - patterns:
+                  - pattern: '$OBJ.$M($H, `${$P}://${$PART}...`)'
+              - patterns:
+                  - pattern: '$OBJ.$M($H, `${$P}//${$PART}...`)'
+          - focus-metavariable: $PART
+      # Express, Node http and Fastify: a Location header in an object of headers
+      # (res.set({...}), res.writeHead(code, {...}), reply.headers({...})).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|reply|rep|_res|_response)$
+          - metavariable-regex:
+              metavariable: $OBJ
+              regex: ^(?:res|resp|response|reply|rep|_res|_response)(?:\s*\.\s*(?:status|code)\s*\([^()]*\))*$
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(set|header|headers|writeHead)$
+          - metavariable-regex:
+              metavariable: $H
+              regex: (?i)^["'`]?location["'`]?$
+          - pattern-either:
+              # the Location value: the whole value, when it is neither a concatenation nor a template
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: $PART, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $Y, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: `...`, ...}, ...)'
+              # the Location value: the first part of a concatenation of k parts (not of k + 1)
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: $PART + $S1, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2, ...}, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: $PART + $S1 + $S2, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3, ...}, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: $PART + $S1 + $S2 + $S3, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4, ...}, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: $PART + $S1 + $S2 + $S3 + $S4, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: $PART + $S1 + $S2 + $S3 + $S4 + $S5, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...)'
+              # the Location value: the second part, after a constant string that does not end with a path separator after the host
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: "$U" + $PART, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: "$U" + $PART + $S2, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: "$U" + $PART + $S2 + $S3, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: "$U" + $PART + $S2 + $S3 + $S4, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: "$U" + $PART + $S2 + $S3 + $S4 + $S5, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              # the Location value: the third part, after a constant string and a constant without a path separator (a scheme, then a constant host name)
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: "$U" + "$A" + $PART, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: "$U" + "$A" + $PART + $S3, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: "$U" + "$A" + $PART + $S3 + $S4, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: "$U" + "$A" + $PART + $S3 + $S4 + $S5, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              # the Location value: the third part, after a scheme alone and slashes (with or without host text)
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: "$U" + "$A" + $PART, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: "$U" + "$A" + $PART + $S3, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: "$U" + "$A" + $PART + $S3 + $S4, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: "$U" + "$A" + $PART + $S3 + $S4 + $S5, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              # the Location value: the second part, after a start that is not a constant string
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: $FIRST + $PART, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: "$U" + $S1, ...}, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: $FIRST + $PART + $S2, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: "$U" + $S1 + $S2, ...}, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: $FIRST + $PART + $S2 + $S3, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: "$U" + $S1 + $S2 + $S3, ...}, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: $FIRST + $PART + $S2 + $S3 + $S4, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: "$U" + $S1 + $S2 + $S3 + $S4, ...}, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: $FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...)'
+                  - pattern-not: '$OBJ.$M(..., {..., $H: "$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...}, ...)'
+              # the Location value: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: `${$PART}...`, ...}, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: `$H${$PART}...`, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: `$H${$A}${$PART}...`, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: `${$P}${$PART}...`, ...}, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: `${$P}://${$PART}...`, ...}, ...)'
+              - patterns:
+                  - pattern: '$OBJ.$M(..., {..., $H: `${$P}//${$PART}...`, ...}, ...)'
+          - focus-metavariable: $PART
+      # Next.js App Router and Web responses: NextResponse.redirect(url) and Response.redirect(url).
+      - patterns:
+          - metavariable-regex:
+              metavariable: $NR
+              regex: ^(NextResponse|Response)$
+          - pattern-either:
+              # the first argument: the whole value, when it is neither a concatenation nor a template
+              - patterns:
+                  - pattern: '$NR.redirect($PART, ...)'
+                  - pattern-not: '$NR.redirect($X + $Y, ...)'
+                  - pattern-not: '$NR.redirect(`...`, ...)'
+              # the first argument: the first part of a concatenation of k parts (not of k + 1)
+              - patterns:
+                  - pattern: '$NR.redirect($PART + $S1, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2, ...)'
+              - patterns:
+                  - pattern: '$NR.redirect($PART + $S1 + $S2, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3, ...)'
+              - patterns:
+                  - pattern: '$NR.redirect($PART + $S1 + $S2 + $S3, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4, ...)'
+              - patterns:
+                  - pattern: '$NR.redirect($PART + $S1 + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+              - patterns:
+                  - pattern: '$NR.redirect($PART + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+              # the first argument: the second part, after a constant string that does not end with a path separator after the host
+              - patterns:
+                  - pattern: '$NR.redirect("$U" + $PART, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$NR.redirect("$U" + $PART + $S2, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$NR.redirect("$U" + $PART + $S2 + $S3, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$NR.redirect("$U" + $PART + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$NR.redirect("$U" + $PART + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              # the first argument: the third part, after a constant string and a constant without a path separator (a scheme, then a constant host name)
+              - patterns:
+                  - pattern: '$NR.redirect("$U" + "$A" + $PART, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$NR.redirect("$U" + "$A" + $PART + $S3, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$NR.redirect("$U" + "$A" + $PART + $S3 + $S4, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$NR.redirect("$U" + "$A" + $PART + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              # the first argument: the third part, after a scheme alone and slashes (with or without host text)
+              - patterns:
+                  - pattern: '$NR.redirect("$U" + "$A" + $PART, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$NR.redirect("$U" + "$A" + $PART + $S3, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$NR.redirect("$U" + "$A" + $PART + $S3 + $S4, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$NR.redirect("$U" + "$A" + $PART + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              # the first argument: the second part, after a start that is not a constant string
+              - patterns:
+                  - pattern: '$NR.redirect($FIRST + $PART, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2, ...)'
+                  - pattern-not: '$NR.redirect("$U" + $S1, ...)'
+              - patterns:
+                  - pattern: '$NR.redirect($FIRST + $PART + $S2, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3, ...)'
+                  - pattern-not: '$NR.redirect("$U" + $S1 + $S2, ...)'
+              - patterns:
+                  - pattern: '$NR.redirect($FIRST + $PART + $S2 + $S3, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - pattern-not: '$NR.redirect("$U" + $S1 + $S2 + $S3, ...)'
+              - patterns:
+                  - pattern: '$NR.redirect($FIRST + $PART + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - pattern-not: '$NR.redirect("$U" + $S1 + $S2 + $S3 + $S4, ...)'
+              - patterns:
+                  - pattern: '$NR.redirect($FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - pattern-not: '$NR.redirect("$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
+              # the first argument: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
+              - patterns:
+                  - pattern: '$NR.redirect(`${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$NR.redirect(`$H${$PART}...`, ...)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$NR.redirect(`$H${$A}${$PART}...`, ...)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$NR.redirect(`${$P}${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$NR.redirect(`${$P}://${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$NR.redirect(`${$P}//${$PART}...`, ...)'
+          - focus-metavariable: $PART
+      # Next.js: redirect() and permanentRedirect() imported from next/navigation.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          import {..., $FN, ...} from $MOD;
+                          ...
+                      - pattern-inside: |
+                          const {..., $FN, ...} = require($MOD);
+                          ...
+                  - metavariable-regex:
+                      metavariable: $FN
+                      regex: ^(redirect|permanentRedirect)$
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          import {$ORIG as $FN} from $MOD;
+                          ...
+                      - pattern-inside: |
+                          const {..., $ORIG: $FN, ...} = require($MOD);
+                          ...
+                  - metavariable-regex:
+                      metavariable: $ORIG
+                      regex: ^(redirect|permanentRedirect)$
+          - metavariable-regex:
+              metavariable: $MOD
+              regex: ^["'`]?next/navigation["'`]?$
+          - pattern-either:
+              # the first argument: the whole value, when it is neither a concatenation nor a template
+              - patterns:
+                  - pattern: '$FN($PART, ...)'
+                  - pattern-not: '$FN($X + $Y, ...)'
+                  - pattern-not: '$FN(`...`, ...)'
+              # the first argument: the first part of a concatenation of k parts (not of k + 1)
+              - patterns:
+                  - pattern: '$FN($PART + $S1, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2, ...)'
+              - patterns:
+                  - pattern: '$FN($PART + $S1 + $S2, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3, ...)'
+              - patterns:
+                  - pattern: '$FN($PART + $S1 + $S2 + $S3, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4, ...)'
+              - patterns:
+                  - pattern: '$FN($PART + $S1 + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+              - patterns:
+                  - pattern: '$FN($PART + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+              # the first argument: the second part, after a constant string that does not end with a path separator after the host
+              - patterns:
+                  - pattern: '$FN("$U" + $PART, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$FN("$U" + $PART + $S2, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$FN("$U" + $PART + $S2 + $S3, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$FN("$U" + $PART + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$FN("$U" + $PART + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              # the first argument: the third part, after a constant string and a constant without a path separator (a scheme, then a constant host name)
+              - patterns:
+                  - pattern: '$FN("$U" + "$A" + $PART, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$FN("$U" + "$A" + $PART + $S3, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$FN("$U" + "$A" + $PART + $S3 + $S4, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$FN("$U" + "$A" + $PART + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              # the first argument: the third part, after a scheme alone and slashes (with or without host text)
+              - patterns:
+                  - pattern: '$FN("$U" + "$A" + $PART, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$FN("$U" + "$A" + $PART + $S3, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$FN("$U" + "$A" + $PART + $S3 + $S4, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$FN("$U" + "$A" + $PART + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              # the first argument: the second part, after a start that is not a constant string
+              - patterns:
+                  - pattern: '$FN($FIRST + $PART, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2, ...)'
+                  - pattern-not: '$FN("$U" + $S1, ...)'
+              - patterns:
+                  - pattern: '$FN($FIRST + $PART + $S2, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3, ...)'
+                  - pattern-not: '$FN("$U" + $S1 + $S2, ...)'
+              - patterns:
+                  - pattern: '$FN($FIRST + $PART + $S2 + $S3, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - pattern-not: '$FN("$U" + $S1 + $S2 + $S3, ...)'
+              - patterns:
+                  - pattern: '$FN($FIRST + $PART + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - pattern-not: '$FN("$U" + $S1 + $S2 + $S3 + $S4, ...)'
+              - patterns:
+                  - pattern: '$FN($FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - pattern-not: '$FN("$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
+              # the first argument: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
+              - patterns:
+                  - pattern: '$FN(`${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$FN(`$H${$PART}...`, ...)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$FN(`$H${$A}${$PART}...`, ...)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$FN(`${$P}${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$FN(`${$P}://${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$FN(`${$P}//${$PART}...`, ...)'
+          - focus-metavariable: $PART
+      # Next.js App Router and Web responses: a Location header given to new Response() or
+      # new NextResponse().
+      - patterns:
+          - metavariable-regex:
+              metavariable: $NR
+              regex: ^(NextResponse|Response)$
+          - metavariable-regex:
+              metavariable: $H
+              regex: (?i)^["'`]?location["'`]?$
+          - pattern-either:
+              # the Location value: the whole value, when it is neither a concatenation nor a template
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: $PART, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $Y, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: `...`, ...}, ...})'
+              # the Location value: the first part of a concatenation of k parts (not of k + 1)
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: $PART + $S1, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2, ...}, ...})'
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: $PART + $S1 + $S2, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3, ...}, ...})'
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: $PART + $S1 + $S2 + $S3, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4, ...}, ...})'
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: $PART + $S1 + $S2 + $S3 + $S4, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...})'
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: $PART + $S1 + $S2 + $S3 + $S4 + $S5, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...})'
+              # the Location value: the second part, after a constant string that does not end with a path separator after the host
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: "$U" + $PART, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: "$U" + $PART + $S2, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: "$U" + $PART + $S2 + $S3, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: "$U" + $PART + $S2 + $S3 + $S4, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: "$U" + $PART + $S2 + $S3 + $S4 + $S5, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              # the Location value: the third part, after a constant string and a constant without a path separator (a scheme, then a constant host name)
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: "$U" + "$A" + $PART, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: "$U" + "$A" + $PART + $S3, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: "$U" + "$A" + $PART + $S3 + $S4, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: "$U" + "$A" + $PART + $S3 + $S4 + $S5, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              # the Location value: the third part, after a scheme alone and slashes (with or without host text)
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: "$U" + "$A" + $PART, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: "$U" + "$A" + $PART + $S3, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: "$U" + "$A" + $PART + $S3 + $S4, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: "$U" + "$A" + $PART + $S3 + $S4 + $S5, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              # the Location value: the second part, after a start that is not a constant string
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: $FIRST + $PART, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: "$U" + $S1, ...}, ...})'
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: $FIRST + $PART + $S2, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: "$U" + $S1 + $S2, ...}, ...})'
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: $FIRST + $PART + $S2 + $S3, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: "$U" + $S1 + $S2 + $S3, ...}, ...})'
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: $FIRST + $PART + $S2 + $S3 + $S4, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: "$U" + $S1 + $S2 + $S3 + $S4, ...}, ...})'
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: $FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...})'
+                  - pattern-not: 'new $NR(..., {..., headers: {..., $H: "$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...}, ...})'
+              # the Location value: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: `${$PART}...`, ...}, ...})'
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: `$H${$PART}...`, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: `$H${$A}${$PART}...`, ...}, ...})'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: `${$P}${$PART}...`, ...}, ...})'
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: `${$P}://${$PART}...`, ...}, ...})'
+              - patterns:
+                  - pattern: 'new $NR(..., {..., headers: {..., $H: `${$P}//${$PART}...`, ...}, ...})'
+          - focus-metavariable: $PART

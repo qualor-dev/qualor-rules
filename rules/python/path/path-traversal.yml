@@ -1,0 +1,416 @@
+rules:
+  - id: python.path-traversal
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches a file-system path that the server opens, writes,
+      deletes, lists or sends. Keep only the file name (`werkzeug.utils.secure_filename()`,
+      `os.path.basename()`), join it to a fixed directory with `werkzeug.security.safe_join()` or
+      Flask's `send_from_directory()`, or pick the file from an allow-list.
+    metadata:
+      title: File path built from HTTP request data (Python)
+      cwe: ['CWE-22']
+      owasp: ['A01:2025', 'A01:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [flask, django, fastapi, starlette, werkzeug, pathlib]
+      sources:
+        - https://cwe.mitre.org/data/definitions/22.html
+        - https://owasp.org/www-community/attacks/Path_Traversal
+        - https://top10.owasp.org/2025/A01_2025-Broken_Access_Control
+        - https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
+        - https://docs.python.org/3/library/functions.html#open
+        - https://docs.python.org/3/library/os.html#files-and-directories
+        - https://docs.python.org/3/library/os.path.html#os.path.basename
+        - https://docs.python.org/3/library/shutil.html
+        - https://docs.python.org/3/library/pathlib.html
+        - https://docs.python.org/3/library/uuid.html
+        - https://peps.python.org/pep-0008/#constants
+        - https://docs.djangoproject.com/en/stable/ref/settings/
+        - https://flask.palletsprojects.com/en/stable/api/#flask.Request
+        - https://flask.palletsprojects.com/en/stable/quickstart/#variable-rules
+        - https://flask.palletsprojects.com/en/stable/patterns/fileuploads/
+        - https://flask.palletsprojects.com/en/stable/api/#flask.send_file
+        - https://flask.palletsprojects.com/en/stable/api/#flask.send_from_directory
+        - https://github.com/pallets/flask/blob/main/src/flask/helpers.py
+        - https://werkzeug.palletsprojects.com/en/stable/utils/#werkzeug.utils.secure_filename
+        - https://werkzeug.palletsprojects.com/en/stable/utils/#werkzeug.security.safe_join
+        - https://werkzeug.palletsprojects.com/en/stable/datastructures/#werkzeug.datastructures.FileStorage
+        - https://docs.djangoproject.com/en/stable/ref/request-response/
+        - https://docs.djangoproject.com/en/stable/ref/request-response/#fileresponse-objects
+        - https://docs.djangoproject.com/en/stable/topics/http/urls/
+        - https://docs.djangoproject.com/en/stable/ref/class-based-views/base/
+        - https://fastapi.tiangolo.com/tutorial/body/
+        - https://fastapi.tiangolo.com/advanced/using-request-directly/
+        - https://fastapi.tiangolo.com/advanced/custom-response/#fileresponse
+        - https://starlette.dev/responses/
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A pathlib.Path is followed only when the receiver of the file method is built in the
+    #   function (`Path(...)`, `base / name`, `base.joinpath(name)`), in place or in a variable
+    #   assigned from such an expression: a Path returned whole by a helper is not. A
+    #   zipfile.Path built in place is left out (it reads an archive member); one kept in a
+    #   variable is taken for a file-system Path.
+    # - A check of the resolved path against the base directory (`resolve()` and
+    #   `is_relative_to()`, or `realpath()` and `startswith()`) is not recognised.
+    # - An allow-list is recognised as a lookup (`.get()` or `[...]`) in a dict literal of literal
+    #   keys and values assigned to an upper-case (constant) name that the module never changes
+    #   or assigns again, with no default or a literal/constant default for get(); or as a
+    #   ternary of constants. A membership check (`if x not in ALLOWED: return`) is not.
+    # Inherited from the request source block (python.sql-injection), each with a `todook` line:
+    # - A Flask route parameter with a typed converter (`<int:n>`) is still a source.
+    # - A Django URL argument is still a source when its converter (`<int:pk>`, in urls.py) or a
+    #   default value makes it a number.
+    # - A Django-module function whose first parameter is named request is taken for a view: its
+    #   other parameters count as URL arguments, and the request attributes (`headers`, `body`,
+    #   ...) of that parameter count even when it is another library's request object.
+    # - A Flask view parameter annotated int, float or bool is not a source (the FastAPI rule
+    #   below), although Flask passes a str for a rule without a converter (todoruleid).
+    # FastAPI parameters annotated int, float or bool (also `Annotated[int, ...]`), and
+    # dependencies (`= Depends()`, `= Security()`, `Annotated[T, Depends()]` in place or through a
+    # module-level alias) are not sources.
+    pattern-sources:
+      - pattern-either:
+          - pattern: flask.request.args
+          - pattern: flask.request.form
+          - pattern: flask.request.values
+          - pattern: flask.request.headers
+          - pattern: flask.request.cookies
+          - pattern: flask.request.json
+          - pattern: flask.request.get_json(...)
+          - pattern: flask.request.data
+          - pattern: flask.request.get_data(...)
+          - pattern: flask.request.files
+          - pattern: flask.request.view_args
+          - pattern: flask.request.path
+          - pattern: flask.request.full_path
+          - pattern: flask.request.url
+          - pattern: flask.request.query_string
+      # Flask "Variable Rules": the parameters of a view function registered with a URL rule.
+      # FastAPI path operations match too; their parameters annotated int, float or bool are
+      # converted by FastAPI, and those with a Depends()/Security() default are dependencies,
+      # not request data.
+      - patterns:
+          - pattern-inside: |
+              @$APP.$ROUTE(...)
+              def $VIEW(..., $PARAM, ...):
+                ...
+          - metavariable-regex:
+              metavariable: $ROUTE
+              regex: ^(route|get|post|put|patch|delete)$
+          # (A parameter pattern without a type or default also matches a typed one, and one
+          # without a default also matches one with a default.)
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Depends(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Security(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: int, ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: float, ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: bool, ...):
+                ...
+          # The same in FastAPI's Annotated form, written in place or through a module-level
+          # alias (`SettingsDep = Annotated[Settings, Depends(get_settings)]`).
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Depends(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Security(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[int, ...], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[float, ...], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[bool, ...], ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Depends(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Security(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - focus-metavariable: $PARAM
+      # Django, in a module that imports it: the HttpRequest a view receives, the URL arguments
+      # passed to the view after it, and what View.setup() keeps on a class-based view.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      from $DJ import $NAME
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+              - patterns:
+                  - pattern-inside: |
+                      import $DJ
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+          - pattern-either:
+              # The request: the first parameter of a function, the one after self of a method.
+              # The upper-case attributes exist only on Django's HttpRequest; the others count
+              # only on a parameter named request.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW($REQ, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(self, $REQ, ...):
+                            ...
+                  - pattern-either:
+                      - pattern: $REQ.GET
+                      - pattern: $REQ.POST
+                      - pattern: $REQ.COOKIES
+                      - pattern: $REQ.META
+                      - pattern: $REQ.FILES
+                      - patterns:
+                          - pattern-either:
+                              - pattern: $REQ.headers
+                              - pattern: $REQ.body
+                              - pattern: $REQ.path
+                              - pattern: $REQ.path_info
+                              - pattern: $REQ.get_full_path(...)
+                              - pattern: $REQ.get_full_path_info(...)
+                              - pattern: $REQ.build_absolute_uri(...)
+                              - pattern: $REQ.read(...)
+                              - pattern: $REQ.readline(...)
+                              - pattern: $REQ.readlines(...)
+                          - metavariable-regex:
+                              metavariable: $REQ
+                              regex: ^request$
+              # Class-based views: View.setup() keeps the request on self.request and the URL
+              # arguments on self.args and self.kwargs.
+              - patterns:
+                  - pattern-inside: |
+                      class $CLS(...):
+                        ...
+                  - pattern-either:
+                      - pattern: self.request.GET
+                      - pattern: self.request.POST
+                      - pattern: self.request.COOKIES
+                      - pattern: self.request.META
+                      - pattern: self.request.FILES
+                      - pattern: self.request.headers
+                      - pattern: self.request.body
+                      - pattern: self.request.path
+                      - pattern: self.request.path_info
+                      - pattern: self.request.get_full_path(...)
+                      - pattern: self.request.get_full_path_info(...)
+                      - pattern: self.request.build_absolute_uri(...)
+                      - pattern: self.args
+                      - pattern: self.kwargs
+              # URL arguments: the parameters after the request of a function-based view, and of
+              # a class-based view's handler method (dispatch() calls get(), post(), ...).
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW(request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., **$PARAM):
+                            ...
+                      - patterns:
+                          - pattern-inside: |
+                              class $CLS(...):
+                                ...
+                          - pattern-either:
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., $PARAM, ...):
+                                    ...
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., *$PARAM, ...):
+                                    ...
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., **$PARAM):
+                                    ...
+                          - metavariable-regex:
+                              metavariable: $VIEW
+                              regex: ^(get|post|put|patch|delete|head|options|trace|dispatch)$
+                  - focus-metavariable: $PARAM
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+      # An allow-list: a lookup in a dict literal of literal keys and values (strings, numbers,
+      # True/False/None) assigned to an upper-case (constant) name, which the module never
+      # changes (item assignment, update(), setdefault(), |=, assigning the name again). A get()
+      # default must be a literal or a constant too.
+      - patterns:
+          - pattern-inside: |
+              $ALLOWED = $LITERAL
+              ...
+          - metavariable-regex:
+              metavariable: $ALLOWED
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $LITERAL
+              regex: ^\{(\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*:\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*,)*(\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*:\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*)?\s*\}$
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED[$KEY] = $VALUE
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED.update(...)
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED.setdefault(...)
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED |= $VALUE
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED = $OTHER
+              ...
+          - pattern-either:
+              - pattern: $ALLOWED.get($LOOKUP)
+              - pattern: $ALLOWED[$LOOKUP]
+              - patterns:
+                  - pattern: $ALLOWED.get($LOOKUP, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None|[A-Z][A-Z0-9_]*(\[("[^"\\\n]*"|'[^'\\\n]*')\])?)$
+      # Only the final component, or a name reduced to safe characters, or a path that
+      # safe_join() kept inside the base directory (it returns None otherwise).
+      - pattern: os.path.basename(...)
+      - pattern: werkzeug.utils.secure_filename(...)
+      - pattern: werkzeug.security.safe_join(...)
+      - pattern: pathlib.Path(...).name
+      - pattern: pathlib.PurePath(...).name
+      # A UUID has a fixed form; in-memory file objects are not paths.
+      - pattern: uuid.UUID(...)
+      - pattern: io.BytesIO(...)
+      - pattern: io.StringIO(...)
+    pattern-sinks:
+      # open() and the os and shutil functions that read, write, delete, move or list by path.
+      - patterns:
+          - pattern-either:
+              - pattern: open($PATH, ...)
+              - pattern: io.open($PATH, ...)
+              - pattern: os.open($PATH, ...)
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: os.$FN($PATH, ...)
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(remove|unlink|rmdir|removedirs|rename|renames|replace|listdir|scandir|walk|mkdir|makedirs|chmod|chown|truncate)$
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: os.$FN($SRC, $PATH, ...)
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(rename|renames|replace)$
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: shutil.$FN($PATH, ...)
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(copy|copy2|copyfile|copytree|move|rmtree)$
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: shutil.$FN($SRC, $PATH, ...)
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(copy|copy2|copyfile|copytree|move)$
+          - focus-metavariable: $PATH
+      # pathlib: a file method on a Path built in the function (Path(...), a `/` join or
+      # joinpath()), in place or through a variable assigned from such an expression.
+      - patterns:
+          - pattern: $P.$FN(...)
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(read_text|read_bytes|write_text|write_bytes|open|unlink|rmdir|touch|mkdir|iterdir|glob|rglob|symlink_to|hardlink_to)$
+          - metavariable-pattern:
+              metavariable: $P
+              patterns:
+                - pattern-either:
+                    - pattern: pathlib.Path(...)
+                    - pattern: pathlib.PurePath(...)
+                    # str has no `/` operator: a division whose result has these methods is a
+                    # Path (a module constant, a Django setting such as BASE_DIR).
+                    - pattern: $LEFT / $RIGHT
+                    - pattern: $BASE.joinpath(...)
+          # zipfile.Path reads an archive member, not the file system.
+          - metavariable-regex:
+              metavariable: $P
+              regex: ^(?!\(*\s*zipfile\.Path\()
+          - focus-metavariable: $P
+      - patterns:
+          - pattern-inside: |
+              $P = $INIT
+              ...
+          - metavariable-pattern:
+              metavariable: $INIT
+              patterns:
+                - pattern-either:
+                    - pattern: pathlib.Path(...)
+                    - pattern: pathlib.PurePath(...)
+                    # str has no `/` operator: a division whose result has these methods is a
+                    # Path (a module constant, a Django setting such as BASE_DIR).
+                    - pattern: $LEFT / $RIGHT
+                    - pattern: $BASE.joinpath(...)
+          - pattern: $P.$FN(...)
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(read_text|read_bytes|write_text|write_bytes|open|unlink|rmdir|touch|mkdir|iterdir|glob|rglob|symlink_to|hardlink_to)$
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(?!\(*\s*zipfile\.Path\()
+          - focus-metavariable: $P
+      # Flask send_file() takes a trusted path; send_from_directory() keeps the file name inside
+      # its directory, which itself must not come from the client.
+      - patterns:
+          - pattern-either:
+              - pattern: flask.send_file($PATH, ...)
+              - pattern: flask.send_from_directory($PATH, ...)
+              - pattern: flask.send_from_directory(directory=$PATH, ...)
+          - focus-metavariable: $PATH
+      # Werkzeug FileStorage.save(dst) on an upload from Flask's request.files.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $F = flask.request.files[...]
+                  ...
+              - pattern-inside: |
+                  $F = flask.request.files.get(...)
+                  ...
+          - pattern: $F.save($PATH, ...)
+          - focus-metavariable: $PATH
+      # FastAPI / Starlette FileResponse(path).
+      - patterns:
+          - pattern-either:
+              - pattern: starlette.responses.FileResponse($PATH, ...)
+              - pattern: starlette.responses.FileResponse(..., path=$PATH, ...)
+              - pattern: fastapi.responses.FileResponse($PATH, ...)
+              - pattern: fastapi.responses.FileResponse(..., path=$PATH, ...)
+          - focus-metavariable: $PATH

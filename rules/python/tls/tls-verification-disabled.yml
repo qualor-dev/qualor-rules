@@ -1,0 +1,229 @@
+rules:
+  - id: python.tls-verification-disabled
+    languages: [python]
+    severity: ERROR
+    message: >-
+      TLS certificate verification is turned off here (requests or httpx `verify=False`, an
+      unverified ssl context, `check_hostname = False` with `CERT_NONE`, or urllib3
+      `cert_reqs='CERT_NONE'`). The client then accepts any certificate for any host, so anyone on
+      the network path can read and change the traffic. Keep the default verification; to trust
+      a private CA, pass its bundle (`verify='/path/to/ca.pem'`, `ca_certs=...`) or a context
+      from `ssl.create_default_context(cafile=...)`.
+    metadata:
+      title: TLS certificate verification disabled (Python)
+      cwe: ['CWE-295']
+      owasp: ['A07:2025', 'A07:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [requests, httpx, ssl, urllib3]
+      sources:
+        - https://cwe.mitre.org/data/definitions/295.html
+        - https://top10.owasp.org/2025/A07_2025-Authentication_Failures/
+        - https://top10.owasp.org/2021/A07_2021-Identification_and_Authentication_Failures/
+        - https://requests.readthedocs.io/en/latest/user/advanced/#ssl-cert-verification
+        - https://requests.readthedocs.io/en/latest/api/#requests.request
+        - https://requests.readthedocs.io/en/latest/api/#requests.Session.send
+        - https://requests.readthedocs.io/en/latest/api/#requests.Session.verify
+        - https://www.python-httpx.org/advanced/ssl/
+        - https://www.python-httpx.org/api/
+        - https://docs.python.org/3/library/ssl.html#ssl.SSLContext.check_hostname
+        - https://docs.python.org/3/library/ssl.html#ssl.SSLContext.verify_mode
+        - https://docs.python.org/3/library/ssl.html#ssl.CERT_NONE
+        - https://docs.python.org/3/library/ssl.html#ssl.VerifyMode
+        - https://docs.python.org/3/library/ssl.html#ssl.create_default_context
+        - https://docs.python.org/3/library/ssl.html#ssl.Purpose.CLIENT_AUTH
+        - https://docs.python.org/3/library/ssl.html#ssl.PROTOCOL_TLS_SERVER
+        - https://docs.python.org/3/library/ssl.html#verifying-certificates
+        - https://peps.python.org/pep-0476/
+        - https://urllib3.readthedocs.io/en/stable/user-guide.html#certificate-verification
+        - https://urllib3.readthedocs.io/en/stable/reference/urllib3.poolmanager.html
+        - https://urllib3.readthedocs.io/en/stable/reference/urllib3.connectionpool.html
+        - https://urllib3.readthedocs.io/en/stable/reference/urllib3.util.html#urllib3.util.resolve_cert_reqs
+        - https://urllib3.readthedocs.io/en/stable/reference/urllib3.util.html#urllib3.util.create_urllib3_context
+        - https://urllib3.readthedocs.io/en/stable/reference/urllib3.util.html#urllib3.util.ssl_wrap_socket
+        - https://docs.pytest.org/en/stable/explanation/goodpractices.html#conventions-for-python-test-discovery
+        - https://docs.pytest.org/en/stable/reference/fixtures.html#conftest-py-sharing-fixtures-across-multiple-files
+      since: 2026.10.1
+    # Test code is out of scope (as for go.tls-verification-disabled, ruling F10): requests
+    # documents verify=False as "useful during local development or testing", and test servers
+    # use self-signed certificates. Files pytest collects (test_*.py, *_test.py), conftest.py,
+    # Django's per-app tests.py, and everything under a tests/ or test/ directory are excluded.
+    # Accepted trade-off: test_*.py also hides a non-test module with such a name
+    # (test_utils.py); tests_*.py and integration_tests/ are still scanned.
+    # The value: the literal False, or a name that can only hold False (a module constant, a
+    # local set once); OpenGrep's constant propagation follows those. verify taken from settings,
+    # the environment, app config, a parameter, or a variable set differently on two branches is
+    # not reported: the deployment decides, and the code lets it keep verification on. A literal
+    # False inside a configuration branch (`if insecure: requests.get(url, verify=False)`) is
+    # reported: the program carries the off switch itself (as the Go rule does).
+    # check_hostname = False with CERT_NONE is reported on the CERT_NONE line, in either order,
+    # on the same context in one function, except for server contexts (PROTOCOL_TLS_SERVER,
+    # Purpose.CLIENT_AUTH, or a context the code then wraps with server_side=True), where
+    # CERT_NONE means "request no client certificate".
+    # Known limits (each has a `todo` line in the test file):
+    # - A Session that comes from a factory function, another module or an unannotated
+    #   parameter has no type to bind to (`todoruleid:`). Followed: Sessions made
+    #   (requests.Session(), requests.session(), requests.sessions.Session()) earlier in the same
+    #   function or module (a module-level Session is followed into functions defined after its
+    #   assignment), in a with block, annotated parameters, and a self attribute set by __init__.
+    #   Not followed: a function defined above the module-level assignment, a Session set on
+    #   self in a method other than __init__ (followed only within that method), and a class
+    #   attribute annotated `session: requests.Session`.
+    # - Options passed as a dict (`requests.get(url, **{"verify": False})`) are not seen.
+    # - httpx.HTTPTransport(verify=False): the httpx documentation does not describe the
+    #   transports' verify option, so it is not in the rule.
+    # - check_hostname = False alone, and urllib3 assert_hostname=False, turn off the host name
+    #   check while the chain is still verified (CWE-297); not reported by this rule.
+    # - ssl.SSLContext(PROTOCOL_TLS) (or no protocol) verifies nothing by default; whether it
+    #   serves a client is not known where it is made, so its use by a client is not reported.
+    # - The unverified context looked up with getattr(ssl, "_create_unverified_context").
+    # - Other libraries' TLS switches (boto3 verify=False, aiohttp ssl=False, ...).
+    # - A function parameter whose default is False (`def f(url, verify=False)`).
+    # - A generic context (PROTOCOL_TLS) with check_hostname = False and CERT_NONE that the code
+    #   hands to a server API instead of wrapping it (`asyncio.start_server(..., ssl=ctx)`,
+    #   `loop.create_server(ssl=ctx)`) is still reported (no test line: recorded from review).
+    # - A name reused for two contexts: an insecure client context rebound later in the function
+    #   to a context wrapped with server_side=True is no longer reported (no test line).
+    paths:
+      exclude: ['test_*.py', '*_test.py', 'conftest.py', 'tests.py', 'tests/', 'test/']
+    pattern-either:
+      # requests and httpx: the module functions, httpx's clients, and an inline Session.
+      - patterns:
+          - pattern-either:
+              - pattern: requests.$FN(...)
+              - pattern: requests.Session(...).$FN(...)
+              - pattern: requests.session(...).$FN(...)
+              - pattern: requests.sessions.Session(...).$FN(...)
+              - pattern: httpx.$FN(...)
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(get|post|put|patch|delete|head|options|request|send|stream|Client|AsyncClient)$
+          - pattern: $CALL(..., verify=False, ...)
+      # A requests Session (requests.Session, the lowercase requests.session factory, or
+      # requests.sessions.Session): assigned earlier, a with block, or a typed parameter; its
+      # request methods with verify=False, or its `verify` attribute set to False.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $S = requests.Session(...)
+                  ...
+              - pattern-inside: |
+                  $S = requests.session(...)
+                  ...
+              - pattern-inside: |
+                  $S = requests.sessions.Session(...)
+                  ...
+              - pattern-inside: |
+                  with requests.Session(...) as $S:
+                      ...
+              - pattern-inside: |
+                  with requests.session(...) as $S:
+                      ...
+              - pattern-inside: |
+                  with requests.sessions.Session(...) as $S:
+                      ...
+              - pattern-inside: |
+                  def $F(..., $S: requests.Session, ...):
+                      ...
+          - pattern-either:
+              - patterns:
+                  - pattern: $S.$M(..., verify=False, ...)
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: ^(get|post|put|patch|delete|head|options|request|send)$
+              - pattern: $S.verify = False
+      # A Session kept in an attribute of self by __init__, used in the other methods.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $C(...):
+                      ...
+                      def __init__(self, ...):
+                          ...
+                          self.$A = requests.Session(...)
+                      ...
+              - pattern-inside: |
+                  class $C(...):
+                      ...
+                      def __init__(self, ...):
+                          ...
+                          self.$A = requests.session(...)
+                      ...
+              - pattern-inside: |
+                  class $C(...):
+                      ...
+                      def __init__(self, ...):
+                          ...
+                          self.$A = requests.sessions.Session(...)
+                      ...
+          - pattern-either:
+              - patterns:
+                  - pattern: self.$A.$M(..., verify=False, ...)
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: ^(get|post|put|patch|delete|head|options|request|send)$
+              - pattern: self.$A.verify = False
+      # ssl: the unverified context (PEP 476) and its old name.
+      - pattern: ssl._create_unverified_context
+      - pattern: ssl._create_stdlib_context
+      # ssl: hostname checking off and CERT_NONE on the same context (either order), unless the
+      # context is made for a server, where CERT_NONE only means "no client certificate".
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $CTX.check_hostname = False
+                  ...
+              - pattern-inside: |
+                  $CTX.verify_mode = $ANY
+                  ...
+                  $CTX.check_hostname = False
+          - pattern-either:
+              - pattern: $CTX.verify_mode = ssl.CERT_NONE
+              - pattern: $CTX.verify_mode = ssl.VerifyMode.CERT_NONE
+          - pattern-not-inside: |
+              $CTX = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+              ...
+          - pattern-not-inside: |
+              $CTX = ssl.SSLContext(protocol=ssl.PROTOCOL_TLS_SERVER)
+              ...
+          - pattern-not-inside: |
+              $CTX = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH, ...)
+              ...
+          - pattern-not-inside: |
+              $CTX = ssl.create_default_context(..., purpose=ssl.Purpose.CLIENT_AUTH, ...)
+              ...
+          # A context the code then uses on the server side of a connection.
+          - pattern-not-inside: |
+              $CTX.verify_mode = $ANY
+              ...
+              $CTX.wrap_socket(..., server_side=True, ...)
+          - pattern-not-inside: |
+              $CTX.verify_mode = $ANY
+              ...
+              with $CTX.wrap_socket(..., server_side=True, ...) as $TLS:
+                  ...
+          - pattern-not-inside: |
+              $CTX.verify_mode = $ANY
+              ...
+              $CTX.wrap_bio(..., server_side=True, ...)
+      # urllib3: cert_reqs CERT_NONE, by name, abbreviation or ssl constant.
+      - patterns:
+          - pattern-either:
+              - pattern: urllib3.PoolManager(...)
+              - pattern: urllib3.poolmanager.PoolManager(...)
+              - pattern: urllib3.ProxyManager(...)
+              - pattern: urllib3.poolmanager.ProxyManager(...)
+              - pattern: urllib3.HTTPSConnectionPool(...)
+              - pattern: urllib3.connectionpool.HTTPSConnectionPool(...)
+              - pattern: urllib3.connection_from_url(...)
+              - pattern: urllib3.connectionpool.connection_from_url(...)
+              - pattern: urllib3.util.create_urllib3_context(...)
+              - pattern: urllib3.util.ssl_.create_urllib3_context(...)
+              - pattern: urllib3.util.ssl_wrap_socket(...)
+              - pattern: urllib3.util.ssl_.ssl_wrap_socket(...)
+          - pattern-either:
+              - pattern: $CALL(..., cert_reqs="CERT_NONE", ...)
+              - pattern: $CALL(..., cert_reqs="NONE", ...)
+              - pattern: $CALL(..., cert_reqs=ssl.CERT_NONE, ...)
+              - pattern: $CALL(..., cert_reqs=ssl.VerifyMode.CERT_NONE, ...)

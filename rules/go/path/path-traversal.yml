@@ -1,0 +1,264 @@
+rules:
+  - id: go.path-traversal
+    mode: taint
+    languages: [go]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches the path of a file that is opened, written, removed or
+      served, so `../` or an absolute path can reach files outside the intended directory. Open
+      the file through `os.OpenInRoot` or an `os.Root` (Go 1.24), or keep only the last element
+      of the name with `filepath.Base`.
+    metadata:
+      title: File path built from HTTP request data (Go)
+      cwe: ['CWE-22']
+      owasp: ['A01:2025', 'A01:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [net/http, encoding/json, os, gin, echo, chi, gorilla/mux]
+      sources:
+        - https://cwe.mitre.org/data/definitions/22.html
+        - https://owasp.org/www-community/attacks/Path_Traversal
+        - https://go.dev/blog/osroot
+        - https://pkg.go.dev/os
+        - https://pkg.go.dev/os#Root
+        - https://pkg.go.dev/os#OpenInRoot
+        - https://pkg.go.dev/io/ioutil
+        - https://pkg.go.dev/net/url#QueryEscape
+        - https://pkg.go.dev/net/url#PathEscape
+        - https://pkg.go.dev/path#Base
+        - https://pkg.go.dev/path/filepath
+        - https://pkg.go.dev/net/http#ServeFile
+        - https://pkg.go.dev/net/http#ServeFileFS
+        - https://pkg.go.dev/net/http#FileServer
+        - https://pkg.go.dev/io/fs#ValidPath
+        - https://pkg.go.dev/embed
+        - https://pkg.go.dev/mime/multipart#Part.FileName
+        - https://pkg.go.dev/net/http#Request
+        - https://pkg.go.dev/encoding/json
+        - https://pkg.go.dev/encoding/json#Unmarshal
+        - https://pkg.go.dev/github.com/gin-gonic/gin
+        - https://pkg.go.dev/github.com/gin-gonic/gin#Context.File
+        - https://gin-gonic.com/en/docs/routing/querystring-param/
+        - https://gin-gonic.com/en/docs/binding/binding-and-validation/
+        - https://pkg.go.dev/github.com/labstack/echo/v4
+        - https://pkg.go.dev/github.com/labstack/echo/v4#DefaultBinder
+        - https://echo.labstack.com/guide/request/
+        - https://echo.labstack.com/guide/binding/
+        - https://echo.labstack.com/guide/response/
+        - https://pkg.go.dev/github.com/go-chi/chi/v5
+        - https://pkg.go.dev/github.com/gorilla/mux
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A check before the call (`filepath.IsLocal`, `fs.ValidPath`, `strings.Contains(name, "..")`)
+    #   is not followed: the value checked is still reported (`todook:`).
+    # - `filepath.Clean("/" + name)` drops leading ".." elements but is not a sanitizer here,
+    #   since Clean of a relative path does not (`todook:`).
+    # - `filepath.Base`, `url.QueryEscape` and `url.PathEscape` count as clean, but they leave
+    #   ".." as it is, which still names the parent of the directory it is joined to
+    #   (`todoruleid:`). `path.Base` is not a sanitizer: the path package handles only "/"
+    #   separators (`todook:`).
+    # - Request data passed to a function value (a callback) counts as reaching its result,
+    #   whatever the function does with it (`todook:`).
+    # - os.Mkdir, MkdirAll, Rename, Link, Symlink, Chmod and Stat are not sinks yet (`todoruleid:`).
+    options:
+      # A map lookup keyed by request data (an allow-list of files) yields the map's values.
+      taint_assume_safe_indexes: true
+    pattern-sources:
+      # The request: net/http's *http.Request, and the same request through Gin and Echo.
+      - patterns:
+          - pattern-either:
+              - pattern: '($R : *http.Request).$F'
+              - pattern: '($C : *gin.Context).Request.$F'
+              - pattern: '($C : echo.Context).Request().$F'
+              - pattern: '($C : *echo.Context).Request().$F'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(URL|Form|PostForm|MultipartForm|Header|Body|RequestURI)$
+      - patterns:
+          - pattern-either:
+              - pattern: '($R : *http.Request).$F(...)'
+              - pattern: '($C : *gin.Context).Request.$F(...)'
+              - pattern: '($C : echo.Context).Request().$F(...)'
+              - pattern: '($C : *echo.Context).Request().$F(...)'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(FormValue|PostFormValue|PathValue|Cookie|Cookies|Referer|UserAgent)$
+      - pattern-either:
+          # Route variables of routers built on net/http.
+          - pattern: chi.URLParam(...)
+          - pattern: mux.Vars(...)
+      # Gin: path parameters, query strings, forms, headers and cookies.
+      - patterns:
+          - pattern: '($C : *gin.Context).$M(...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Param|Query|DefaultQuery|GetQuery|QueryArray|GetQueryArray|QueryMap|GetQueryMap|PostForm|DefaultPostForm|GetPostForm|PostFormArray|GetPostFormArray|PostFormMap|GetPostFormMap|GetHeader|Cookie|GetRawData)$
+      # Echo: path parameters, query parameters, form values and cookies.
+      - patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).$M(...)'
+              - pattern: '($C : *echo.Context).$M(...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Param|ParamValues|QueryParam|QueryParams|QueryString|FormValue|FormParams|Cookie|Cookies)$
+      # Gin and Echo binding: the struct the request is bound into.
+      - by-side-effect: true
+        patterns:
+          - pattern: '($C : *gin.Context).$BIND(&$X, ...)'
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(Bind|BindJSON|BindXML|BindQuery|BindYAML|BindTOML|BindHeader|BindUri|BindWith|MustBindWith|ShouldBind|ShouldBindJSON|ShouldBindXML|ShouldBindQuery|ShouldBindYAML|ShouldBindTOML|ShouldBindHeader|ShouldBindUri|ShouldBindWith|ShouldBindBodyWith)$
+          - focus-metavariable: $X
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).Bind(&$X)'
+              - pattern: '($C : *echo.Context).Bind(&$X)'
+          - focus-metavariable: $X
+      - by-side-effect: true
+        patterns:
+          - pattern: echo.$BIND($C, &$X)
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+          - focus-metavariable: $X
+      # Echo's DefaultBinder used directly: a *echo.DefaultBinder value, `new(echo.DefaultBinder)`
+      # or `&echo.DefaultBinder{}`, made in the same function or typed.
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($B : *echo.DefaultBinder).$BIND($C, &$X)'
+              - pattern: '($B : echo.DefaultBinder).$BIND($C, &$X)'
+              - pattern: (&echo.DefaultBinder{}).$BIND($C, &$X)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B := new(echo.DefaultBinder)
+                          ...
+                      - pattern-inside: |
+                          $B := &echo.DefaultBinder{}
+                          ...
+                  - pattern: $B.$BIND($C, &$X)
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+          - focus-metavariable: $X
+      # DefaultBinder.Bind takes the target first in Echo v4 (`Bind(i, c)`).
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($B : *echo.DefaultBinder).Bind(&$X, $C)'
+              - pattern: '($B : echo.DefaultBinder).Bind(&$X, $C)'
+              - pattern: (&echo.DefaultBinder{}).Bind(&$X, $C)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B := new(echo.DefaultBinder)
+                          ...
+                      - pattern-inside: |
+                          $B := &echo.DefaultBinder{}
+                          ...
+                  - pattern: $B.Bind(&$X, $C)
+          - focus-metavariable: $X
+      # The same binders given a pointer made with new(T) or &T{} in the same function, passed
+      # without `&` (Echo's request guide: `u := new(User); c.Bind(u)`).
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $X := new($T)
+                  ...
+              - pattern-inside: |
+                  $X := &$T{...}
+                  ...
+          - pattern-either:
+              - patterns:
+                  - pattern: '($C : *gin.Context).$BIND($X, ...)'
+                  - metavariable-regex:
+                      metavariable: $BIND
+                      regex: ^(Bind|BindJSON|BindXML|BindQuery|BindYAML|BindTOML|BindHeader|BindUri|BindWith|MustBindWith|ShouldBind|ShouldBindJSON|ShouldBindXML|ShouldBindQuery|ShouldBindYAML|ShouldBindTOML|ShouldBindHeader|ShouldBindUri|ShouldBindWith|ShouldBindBodyWith)$
+              - pattern: '($C : echo.Context).Bind($X)'
+              - pattern: '($C : *echo.Context).Bind($X)'
+              - patterns:
+                  - pattern-either:
+                      - pattern: echo.$BIND($C, $X)
+                      - pattern: '($B : *echo.DefaultBinder).$BIND($C, $X)'
+                      - pattern: '($B : echo.DefaultBinder).$BIND($C, $X)'
+                      - pattern: (&echo.DefaultBinder{}).$BIND($C, $X)
+                  - metavariable-regex:
+                      metavariable: $BIND
+                      regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+              - pattern: '($B : *echo.DefaultBinder).Bind($X, $C)'
+              - pattern: '($B : echo.DefaultBinder).Bind($X, $C)'
+              - pattern: (&echo.DefaultBinder{}).Bind($X, $C)
+          - focus-metavariable: $X
+    pattern-propagators:
+      # encoding/json: decoding a tainted body taints the value it fills.
+      - pattern: json.NewDecoder($R).Decode(&$X)
+        from: $R
+        to: $X
+      - pattern: json.Unmarshal($R, &$X)
+        from: $R
+        to: $X
+    pattern-sanitizers:
+      - pattern: strconv.Atoi(...)
+      - pattern: strconv.ParseInt(...)
+      - pattern: strconv.ParseUint(...)
+      - pattern: strconv.ParseFloat(...)
+      - pattern: strconv.ParseBool(...)
+      # A number or boolean (a numeric field of a bound struct, say) cannot carry a path. The
+      # type must be known in the file: a struct of another package stays tainted as a whole.
+      - patterns:
+          - pattern: $E
+          - metavariable-type:
+              metavariable: $E
+              types: [int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool]
+      # The last element of a path has no separators, and URL escaping turns every "/" into %2F.
+      - pattern: filepath.Base(...)
+      - pattern: url.QueryEscape(...)
+      - pattern: url.PathEscape(...)
+      # http.ServeFile rejects requests whose r.URL.Path holds a ".." element.
+      - patterns:
+          - pattern-inside: http.ServeFile($W, $REQ, ...)
+          - pattern: $REQ.URL.Path
+    pattern-sinks:
+      # The os package: the name of the file opened, read, written, created or removed.
+      - patterns:
+          - pattern: os.$F($PATH, ...)
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(Open|OpenFile|ReadFile|WriteFile|Create|Remove|RemoveAll)$
+          - focus-metavariable: $PATH
+      # io/ioutil (deprecated, same behaviour as os.ReadFile and os.WriteFile).
+      - patterns:
+          - pattern: ioutil.$F($PATH, ...)
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(ReadFile|WriteFile)$
+          - focus-metavariable: $PATH
+      # net/http: the file served (see the sanitizer for r.URL.Path).
+      - patterns:
+          - pattern: http.ServeFile($W, $REQ, $PATH)
+          - focus-metavariable: $PATH
+      # Gin: the file sent, and where an upload is saved.
+      - patterns:
+          - pattern-either:
+              - pattern: '($C : *gin.Context).File($PATH)'
+              - pattern: '($C : *gin.Context).FileAttachment($PATH, $NAME)'
+              - pattern: '($C : *gin.Context).SaveUploadedFile($FILE, $PATH, ...)'
+          - focus-metavariable: $PATH
+      # Echo: the file sent (the second argument of Attachment and Inline only names it).
+      - patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).File($PATH)'
+              - pattern: '($C : *echo.Context).File($PATH)'
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).$M($PATH, $NAME)'
+              - pattern: '($C : *echo.Context).$M($PATH, $NAME)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Attachment|Inline)$
+          - focus-metavariable: $PATH

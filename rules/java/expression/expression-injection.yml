@@ -1,0 +1,237 @@
+rules:
+  - id: java.expression-injection
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request is evaluated as an expression (Spring SpEL, Jakarta Expression
+      Language, OGNL or MVEL). These languages can call methods, create objects and reach any class,
+      so the request can run code on the server. Evaluate only expressions the application owns and
+      pass request data as a variable or value (`ctx.setVariable(...)`, `defineBean(...)`, an OGNL
+      context entry); for SpEL that must read user-written expressions, evaluate them with a
+      `SimpleEvaluationContext`, never the default `StandardEvaluationContext`.
+    metadata:
+      title: Expression language evaluated from HTTP request data (Java)
+      cwe: ['CWE-917']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [servlet, spring-mvc, jax-rs, spring-expression, jakarta-el, ognl, mvel]
+      sources:
+        - https://cwe.mitre.org/data/definitions/917.html
+        - https://community.owasp.org/vulnerabilities/Expression_Language_Injection
+        - https://docs.spring.io/spring-framework/reference/core/expressions/evaluation.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/expression/Expression.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/expression/ExpressionParser.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/expression/spel/standard/SpelExpression.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/expression/spel/support/SimpleEvaluationContext.html
+        - https://jakarta.ee/specifications/expression-language/5.0/apidocs/jakarta.el/jakarta/el/elprocessor
+        - https://jakarta.ee/specifications/expression-language/5.0/apidocs/jakarta.el/jakarta/el/expressionfactory
+        - https://github.com/orphan-oss/ognl/blob/main/docs/DeveloperGuide.md
+        - https://github.com/orphan-oss/ognl/blob/main/docs/LanguageGuide.md
+        - https://javadoc.io/static/org.mvel/mvel2/2.5.2.Final/org/mvel2/MVEL.html
+        - https://github.com/mvel/mvel/blob/main/SECURITY.md
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/servletrequest
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/arguments.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestparam.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestbody.html
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/pathparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A handler parameter without an annotation is not a source (the Jakarta REST entity
+    #   parameter, a Spring MVC simple-type parameter), and only the scalar types of the source
+    #   block count as safe: an enum, a `List<Long>` or an `Optional<Long>` parameter is still a
+    #   source, as in java.sql-injection.
+    # - One method is analysed at a time and conditions are not evaluated: a helper method of the
+    #   same class that returns a constant still passes the request data on, and a switch over a
+    #   constant still counts its request-data branch; a wrapper class that reads the request (in
+    #   this file or another) is not a source.
+    # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
+    #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
+    #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
+    #   and valueOf of an enum from another file still pass the request data on.
+    # - SpEL and OGNL are reported where the parsed expression is evaluated (getValue, setValue,
+    #   getValueType): an expression parsed from request data in one method and evaluated in
+    #   another is missed. A SimpleEvaluationContext is recognised by its type, in place, or in a
+    #   variable built from SimpleEvaluationContext.for...(...).build() in the same method; one
+    #   returned by a helper method is not recognised, and the evaluation is reported.
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.servlet.ServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.ServletRequest $R).$GET(...)
+              - pattern: (javax.servlet.http.HttpServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.http.HttpServletRequest $R).$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getRequestURL|getPathInfo|getReader|getInputStream|getPart|getParts)$
+      # Spring MVC and Jakarta REST: the controller-method parameters bound from the request
+      # (query, path, matrix, header, cookie, form, body, model attribute). Numbers, booleans,
+      # UUIDs and dates are converted by the framework and cannot carry injected text.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $RET $M(..., @$ANN $T $P, ...) { ... }
+              - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $ANN
+              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+          - pattern: $P
+      # Spring MVC: an HttpEntity or RequestEntity parameter holds the request body.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  @$MAP
+                  $RET $M(..., $T $P, ...) { ... }
+              - pattern-inside: |
+                  @$MAP(...)
+                  $RET $M(..., $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $MAP
+              regex: ^(\w+\.)*(Get|Post|Put|Delete|Patch|Request)Mapping$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(org\.springframework\.http\.)?(HttpEntity|RequestEntity)\s*<
+          - pattern: $P
+    pattern-propagators:
+      # Expression text assembled with a StringBuilder or StringBuffer.
+      - pattern: $SB.append($X)
+        from: $X
+        to: $SB
+      # ... also later in an append chain.
+      - pattern: $SB.append(...). ... .append($X)
+        from: $X
+        to: $SB
+    pattern-sanitizers:
+      - pattern: Integer.parseInt(...)
+      - pattern: Long.parseLong(...)
+      - pattern: Integer.valueOf(...)
+      - pattern: Long.valueOf(...)
+      # Allow-list lookups yield only values the code holds: Map.of(...) of literals and constants,
+      # in a static final field or in place, looked up with get(key) or getOrDefault(key, a
+      # literal or constant), and constants of an enum declared in this file. A map filled from
+      # request data, or a lookup whose fallback is request data, stays tainted.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final $MT $MAP = $INIT; ... }
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+          - pattern-either:
+              - pattern: $MAP.get($K)
+              - patterns:
+                  - pattern: $MAP.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+      - patterns:
+          - pattern-either:
+              - pattern: $INIT.get($K)
+              - patterns:
+                  - pattern: $INIT.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+      - pattern: Enum.valueOf(...)
+      - pattern: java.lang.Enum.valueOf(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $X { ... enum $E { ... } ... }
+              - pattern-inside: |
+                  class $X { ... }
+                  ...
+                  enum $E { ... }
+              - pattern-inside: |
+                  enum $E { ... }
+                  ...
+                  class $X { ... }
+          - pattern: $E.valueOf(...)
+    pattern-sinks:
+      # Spring SpEL: an expression parsed from request data and evaluated, unless the evaluation
+      # context is a SimpleEvaluationContext (getValue() without a context, or with a root object,
+      # uses the default context).
+      - patterns:
+          - pattern-either:
+              # Parsed and evaluated in place (a parser created in place or declared with `var` has
+              # its constructor's type).
+              - patterns:
+                  - pattern-either:
+                      - pattern: (org.springframework.expression.ExpressionParser $P).parseExpression($X, ...).$M(...)
+                      - pattern: (org.springframework.expression.spel.standard.SpelExpressionParser $P).parseExpression($X, ...).$M(...)
+                      - pattern: (org.springframework.expression.spel.standard.SpelExpressionParser $P).parseRaw($X).$M(...)
+                  - focus-metavariable: $X
+              # An Expression variable (typed, or declared with `var` from a parser).
+              - patterns:
+                  - pattern-either:
+                      - pattern: (org.springframework.expression.Expression $X).$M(...)
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $X = (org.springframework.expression.ExpressionParser $P).parseExpression(...);
+                                  ...
+                              - pattern-inside: |
+                                  $X = (org.springframework.expression.spel.standard.SpelExpressionParser $P).parseExpression(...);
+                                  ...
+                          - pattern: $X.$M(...)
+                  - focus-metavariable: $X
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(getValue|setValue|getValueType|getValueTypeDescriptor)$
+          # Evaluated with a SimpleEvaluationContext.
+          - pattern-not-inside: $R.$M((org.springframework.expression.spel.support.SimpleEvaluationContext $C), ...)
+          - pattern-not-inside: $R.$M(org.springframework.expression.spel.support.SimpleEvaluationContext.$F(...). ... .build(), ...)
+          - pattern-not-inside:
+              patterns:
+                - pattern: $R.$M($C, ...)
+                - pattern-inside: |
+                    $C = org.springframework.expression.spel.support.SimpleEvaluationContext.$F(...). ... .build();
+                    ...
+      # Jakarta (and Java EE) Expression Language: ELProcessor and ExpressionFactory.
+      - patterns:
+          - pattern-either:
+              # Typed, created in place or declared with `var` (the constructor's type).
+              - pattern: (jakarta.el.ELProcessor $P).$M($X, ...)
+              - pattern: (javax.el.ELProcessor $P).$M($X, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(eval|getValue|setValue)$
+          - focus-metavariable: $X
+      - patterns:
+          - pattern-either:
+              - pattern: (jakarta.el.ELProcessor $P).setVariable($V, $X)
+              - pattern: (javax.el.ELProcessor $P).setVariable($V, $X)
+          - focus-metavariable: $X
+      - patterns:
+          - pattern-either:
+              - pattern: (jakarta.el.ExpressionFactory $F).createValueExpression($CTX, $X, $T)
+              - pattern: (javax.el.ExpressionFactory $F).createValueExpression($CTX, $X, $T)
+              - pattern: jakarta.el.ExpressionFactory.newInstance(...).createValueExpression($CTX, $X, $T)
+              - pattern: javax.el.ExpressionFactory.newInstance(...).createValueExpression($CTX, $X, $T)
+              - pattern: (jakarta.el.ExpressionFactory $F).createMethodExpression($CTX, $X, ...)
+              - pattern: (javax.el.ExpressionFactory $F).createMethodExpression($CTX, $X, ...)
+              - pattern: jakarta.el.ExpressionFactory.newInstance(...).createMethodExpression($CTX, $X, ...)
+              - pattern: javax.el.ExpressionFactory.newInstance(...).createMethodExpression($CTX, $X, ...)
+          - focus-metavariable: $X
+      # OGNL: the expression (text, or a tree parsed from it) that is evaluated.
+      - patterns:
+          - pattern-either:
+              - pattern: ognl.Ognl.getValue($X, ...)
+              - pattern: ognl.Ognl.setValue($X, ...)
+          - focus-metavariable: $X
+      # MVEL: the expression evaluated, or the compiled expression executed.
+      - patterns:
+          - pattern: org.mvel2.MVEL.$M($X, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(eval|evalToString|evalToBoolean|executeExpression|executeSetExpression)$
+          - focus-metavariable: $X

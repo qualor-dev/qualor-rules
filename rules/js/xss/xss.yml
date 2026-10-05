@@ -1,0 +1,515 @@
+rules:
+  - id: js.xss
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request is written into an HTML response without escaping: markup or
+      script in it runs in the browser of whoever opens the page. Escape it for HTML
+      (`escapeHtml(x)` from escape-html, `he.escape(x)`), sanitize HTML that users may author
+      (sanitize-html, DOMPurify), render it through an autoescaping template engine
+      (`res.render(view, data)`), or answer with JSON (`res.json(data)`) or another content type.
+    metadata:
+      title: HTML response built from HTTP request data (Node.js)
+      cwe: ['CWE-79']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [express, nextjs, fastify, node-http]
+      sources:
+        - https://cwe.mitre.org/data/definitions/79.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+        - https://expressjs.com/en/5x/api/response/
+        - https://expressjs.com/en/4x/api.html#res.send
+        - https://expressjs.com/en/4x/api.html#req
+        - https://expressjs.com/en/5x/api.html#req
+        - https://nodejs.org/api/http.html
+        - https://fastify.dev/docs/latest/Reference/Reply/
+        - https://fastify.dev/docs/latest/Reference/Routes/
+        - https://fastify.dev/docs/latest/Reference/Request/
+        - https://nextjs.org/docs/app/api-reference/file-conventions/route
+        - https://nextjs.org/docs/pages/building-your-application/routing/api-routes
+        - https://github.com/component/escape-html
+        - https://github.com/mathiasbynens/he
+        - https://github.com/validatorjs/validator.js
+        - https://github.com/apostrophecms/sanitize-html
+        - https://github.com/cure53/DOMPurify
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A content type set through an object of headers (`res.set({ 'Content-Type': ... })`) is
+    #   not seen: a later res.send() of a string is taken for HTML.
+    # - res.write()/res.end() without an HTML content type are sinks only when the text is visibly
+    #   HTML (a string with a tag in it); a bare request value written without a content type is
+    #   missed although browsers may sniff it as HTML.
+    # - The results of awaited methods of other objects are not request data (data loaded with a
+    #   request value as its key, `await User.findById(req.params.id)`), except renderers,
+    #   parsers, formatters, translators, promise helpers and request.json()/formData()/text();
+    #   another method that returns the request value it is given is missed.
+    # - res.send() of a variable first assigned an object or array literal is taken for JSON, also
+    #   when the variable is later given a string.
+    # - A Fastify handler whose reply parameter is named res is taken for an Express handler, so a
+    #   string it sends (text/plain in Fastify) is reported.
+    # - An allow-list lookup yields constants only in a table declared const in the file with
+    #   literal keys and values (comments allowed, optionally in Object.freeze) that the file never
+    #   writes to; tables with escaped quotes in their strings, nested tables and tables of other
+    #   modules are not recognised, so their lookups are reported.
+    # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
+    #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
+    #   source, and a one-parameter callback given to get/post/... after a path literal (also on
+    #   an HTTP client) is taken for a Fastify route handler.
+    pattern-sources:
+      # Express: the request object, the first parameter of a handler `(req, res, ...)`, carries
+      # the query string, route parameters (`/users/:id`), body, headers, cookies and the URL.
+      # The second parameter's name tells a handler from other two-parameter functions.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|reply|rep|h|ctx|next|_res|_response)$
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Fastify: a handler registered with a route shorthand (`fastify.get('/path', [options],
+      # handler)`) or with `route({ handler })` may take only the request.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: $APP.$ROUTE($PATH, ..., function ($REQ) { ... })
+                  - metavariable-regex:
+                      metavariable: $ROUTE
+                      regex: ^(get|head|post|put|delete|options|patch|all)$
+                  - metavariable-regex:
+                      metavariable: $PATH
+                      regex: ^["'`]/
+              - pattern-inside: '$APP.route({..., handler: function ($REQ) { ... }, ...})'
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Next.js App Router: route handlers are functions named after an HTTP method; the request is
+      # a Web Request (NextRequest) and the context's params hold the dynamic route segments.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern-either:
+              - pattern: $REQ.nextUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.json()
+              - pattern: $REQ.formData()
+              - pattern: $REQ.text()
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, $CTX, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, $CTX, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: $CTX.params
+      - patterns:
+          - pattern-either:
+              - pattern-inside: 'function $METHOD($REQ, {params}, ...) { ... }'
+              - pattern-inside: 'function $METHOD($REQ, {params}: $T, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}: $T, ...) { ... }'
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: params
+    # Values added to an array or a Map make the container carry them.
+    pattern-propagators:
+      - pattern: $LIST.push(..., $X, ...)
+        from: $X
+        to: $LIST
+      - pattern: $LIST.unshift(..., $X, ...)
+        from: $X
+        to: $LIST
+      - pattern: $MAP.set($K, $X)
+        from: $X
+        to: $MAP
+    pattern-sanitizers:
+      - pattern: Number.parseInt(...)
+      - pattern: Number.parseFloat(...)
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      # An allow-list lookup: an index into a const object or array, or get() on a const Map,
+      # declared in the file with literal keys and values only (comments allowed, optionally
+      # wrapped in Object.freeze), and not changed after it.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  const $TABLE = $INIT;
+                  ...
+              - pattern-inside: |
+                  const $TABLE: $TYPE = $INIT;
+                  ...
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: >-
+                ^(?:(?:\{(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\}|\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\]|new\s+Map(?:<[^>]*>)?\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\](?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\])*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\](?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))|Object\.freeze\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:\{(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\}|\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\]|new\s+Map(?:<[^>]*>)?\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\](?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\])*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\](?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))(?:\s+as\s+const)?$
+          - pattern-either:
+              - pattern: $TABLE[$KEY]
+              - pattern: $TABLE.get($KEY)
+          # A table the file writes to after its declaration, in any function, is no allow-list.
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE[$K2] = $V2;
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.$PROP = $V2;
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.set(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.push(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.unshift(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.splice(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              Object.assign($TABLE, ...);
+              ...
+      # HTML escaping and sanitising functions: escape-html, he, validator.escape, sanitize-html
+      # and DOMPurify.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $LIB = require($M)
+                  ...
+              - pattern-inside: |
+                  import $LIB from $M;
+                  ...
+              - pattern-inside: |
+                  import * as $LIB from $M;
+                  ...
+          - pattern: $LIB(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(escape-html|sanitize-html|validator/lib/escape)["'`]?$
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $LIB = require($M)
+                  ...
+              - pattern-inside: |
+                  import $LIB from $M;
+                  ...
+              - pattern-inside: |
+                  import * as $LIB from $M;
+                  ...
+          - pattern-either:
+              - pattern: $LIB.encode(...)
+              - pattern: $LIB.escape(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(he|validator)["'`]?$
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $LIB = require($M)
+                  ...
+              - pattern-inside: |
+                  import $LIB from $M;
+                  ...
+              - pattern-inside: |
+                  import * as $LIB from $M;
+                  ...
+          - pattern: $LIB.sanitize(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(isomorphic-)?dompurify["'`]?$
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $LIB = require($M)
+                  ...
+              - pattern-inside: |
+                  import $LIB from $M;
+                  ...
+              - pattern-inside: |
+                  import * as $LIB from $M;
+                  ...
+          - pattern-inside: |
+              $PURIFY = $LIB(...)
+              ...
+          - pattern: $PURIFY.sanitize(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?dompurify["'`]?$
+      # Results of awaited methods of other objects (services, models, clients: data loaded with
+      # a request value as its key) are not request data. Renderers, parsers, formatters,
+      # translators and promise helpers return what they are given; the body readers of a Web
+      # Request stay sources.
+      - patterns:
+          - pattern: await $OBJ.$M(...)
+          - pattern-not: await $R.json()
+          - pattern-not: await $R.formData()
+          - pattern-not: await $R.text()
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(?!(?:render\w*|parse|compile\w*|html\w*|toHtml|markdown\w*|format\w*|template\w*|translate|t|resolve|all|any|race|allSettled)$)
+      # Comparisons and negations give booleans, which Express sends as JSON.
+      - pattern-either:
+          - pattern: $A === $B
+          - pattern: $A !== $B
+          - pattern: $A == $B
+          - pattern: $A != $B
+          - pattern: '!$A'
+          - pattern: $A instanceof $B
+    pattern-sinks:
+      # Express res.send() of a string answers with text/html unless a content type was set before
+      # it. Next.js Pages Router API routes set no content type for a string, and browsers may
+      # sniff the body as HTML.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|_res|_response)$
+          - pattern-either:
+              - pattern: $RES.send($BODY)
+              - pattern: $RES.status($CODE).send($BODY)
+          # Objects and arrays are sent as JSON, also the parsed request objects themselves.
+          - pattern-not: $RES.send({...})
+          - pattern-not: $RES.status($CODE).send({...})
+          - pattern-not: $RES.send([...])
+          - pattern-not: $RES.status($CODE).send([...])
+          - pattern-not: $RES.send($REQ.$PART)
+          - pattern-not: $RES.status($CODE).send($REQ.$PART)
+          # Buffers are sent as application/octet-stream; objects and arrays held in a variable as
+          # JSON.
+          - pattern-not: $RES.send(Buffer.$FROM(...))
+          - pattern-not: $RES.status($CODE).send(Buffer.$FROM(...))
+          - pattern-not-inside: |
+              $V = {...};
+              ...
+              $RES.send($V);
+          - pattern-not-inside: |
+              $V = {...};
+              ...
+              return $RES.send($V);
+          - pattern-not-inside: |
+              $V = {...};
+              ...
+              $RES.status($CODE).send($V);
+          - pattern-not-inside: |
+              $V = {...};
+              ...
+              return $RES.status($CODE).send($V);
+          - pattern-not-inside: |
+              $V = [...];
+              ...
+              $RES.send($V);
+          - pattern-not-inside: |
+              $V = [...];
+              ...
+              return $RES.send($V);
+          - pattern-not-inside: |
+              $V = [...];
+              ...
+              $RES.status($CODE).send($V);
+          - pattern-not-inside: |
+              $V = [...];
+              ...
+              return $RES.status($CODE).send($V);
+          - pattern-not-inside: |
+              $RES.type(...);
+              ...
+          - pattern-not-inside: |
+              $RES.contentType(...);
+              ...
+          - pattern-not-inside: |
+              $RES.set('Content-Type', ...);
+              ...
+          - pattern-not-inside: |
+              $RES.set('content-type', ...);
+              ...
+          - pattern-not-inside: |
+              $RES.header('Content-Type', ...);
+              ...
+          - pattern-not-inside: |
+              $RES.header('content-type', ...);
+              ...
+          - pattern-not-inside: |
+              $RES.setHeader('Content-Type', ...);
+              ...
+          - pattern-not-inside: |
+              $RES.setHeader('content-type', ...);
+              ...
+          - pattern-not-inside: |
+              $RES.writeHead(...);
+              ...
+          - focus-metavariable: $BODY
+      # A response whose content type is set to HTML (also XHTML, XML and SVG) in the same call
+      # chain: Express res and Fastify reply.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|_res|_response|reply|rep)$
+          - pattern-either:
+              - pattern: $RES.type($TYPE).send($BODY)
+              - pattern: $RES.status($CODE).type($TYPE).send($BODY)
+              - pattern: $RES.code($CODE).type($TYPE).send($BODY)
+              - pattern: $RES.contentType($TYPE).send($BODY)
+          - metavariable-regex:
+              metavariable: $TYPE
+              regex: (?i)^.*(html|xml|svg)
+          - focus-metavariable: $BODY
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|_res|_response|reply|rep)$
+          - pattern-either:
+              - pattern: $RES.set($HEADER, $TYPE).send($BODY)
+              - pattern: $RES.header($HEADER, $TYPE).send($BODY)
+              - pattern: $RES.status($CODE).set($HEADER, $TYPE).send($BODY)
+              - pattern: $RES.code($CODE).header($HEADER, $TYPE).send($BODY)
+          - metavariable-regex:
+              metavariable: $HEADER
+              regex: (?i)^["'`]content-type["'`]$
+          - metavariable-regex:
+              metavariable: $TYPE
+              regex: (?i)^.*(html|xml|svg)
+          - focus-metavariable: $BODY
+      # A response whose content type was set to HTML before: what is sent, written or (Fastify)
+      # returned from the handler.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|_res|_response|reply|rep)$
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $RES.type($TYPE);
+                          ...
+                      - pattern-inside: |
+                          $RES.contentType($TYPE);
+                          ...
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $RES.set($HEADER, $TYPE);
+                          ...
+                      - pattern-inside: |
+                          $RES.header($HEADER, $TYPE);
+                          ...
+                      - pattern-inside: |
+                          $RES.setHeader($HEADER, $TYPE);
+                          ...
+                      - pattern-inside: |
+                          $RES.writeHead($CODE, {..., $HEADER: $TYPE, ...});
+                          ...
+                  - metavariable-regex:
+                      metavariable: $HEADER
+                      regex: (?i)^["'`]?content-type["'`]?$
+          - metavariable-regex:
+              metavariable: $TYPE
+              regex: (?i)^.*(html|xml|svg)
+          - pattern-either:
+              - pattern: $RES.send($BODY)
+              - pattern: $RES.status($CODE2).send($BODY)
+              - pattern: $RES.code($CODE2).send($BODY)
+              - pattern: $RES.write($BODY, ...)
+              - pattern: $RES.end($BODY, ...)
+              - patterns:
+                  - pattern: return $BODY;
+                  - pattern-not: return $RES.$METHOD(...);
+          - focus-metavariable: $BODY
+      # res.write()/res.end() (Node http, Express) without a content type: text that is visibly
+      # HTML.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|_res|_response)$
+          - pattern-either:
+              - pattern: $RES.write($BODY, ...)
+              - pattern: $RES.end($BODY, ...)
+          - metavariable-regex:
+              metavariable: $BODY
+              regex: '(?s)^.*["''`][^"''`]*<[A-Za-z!/]'
+          - pattern-not-inside: |
+              $RES.setHeader(...);
+              ...
+          - pattern-not-inside: |
+              $RES.writeHead(...);
+              ...
+          - pattern-not-inside: |
+              $RES.type(...);
+              ...
+          - pattern-not-inside: |
+              $RES.set(...);
+              ...
+          - focus-metavariable: $BODY
+      # A Web Response (Next.js App Router route handlers) with an HTML content type.
+      - patterns:
+          - pattern-either:
+              - pattern: 'new Response($BODY, {..., headers: {..., $HEADER: $TYPE, ...}, ...})'
+              - pattern: 'new NextResponse($BODY, {..., headers: {..., $HEADER: $TYPE, ...}, ...})'
+          - metavariable-regex:
+              metavariable: $HEADER
+              regex: (?i)^["'`]?content-type["'`]?$
+          - metavariable-regex:
+              metavariable: $TYPE
+              regex: (?i)^.*(html|xml|svg)
+          - focus-metavariable: $BODY

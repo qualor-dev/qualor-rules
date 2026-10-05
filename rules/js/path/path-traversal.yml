@@ -1,0 +1,337 @@
+rules:
+  - id: js.path-traversal
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches a file system path: names with `../` segments or an
+      absolute path read, write or delete files outside the intended directory. Serve files with
+      the `root` option of `res.sendFile()`/`res.download()` (Express then keeps the path inside
+      root), keep only the last segment with `path.basename()`, or map the request value to a file
+      name through an allow-list.
+    metadata:
+      title: File path built from HTTP request data (Node.js)
+      cwe: ['CWE-22']
+      owasp: ['A01:2025', 'A01:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [express, nextjs, fastify, node-fs]
+      sources:
+        - https://cwe.mitre.org/data/definitions/22.html
+        - https://community.owasp.org/attacks/Path_Traversal
+        - https://top10.owasp.org/2025/A01_2025-Broken_Access_Control
+        - https://nodejs.org/api/fs.html
+        - https://nodejs.org/api/path.html
+        - https://expressjs.com/en/5x/api/response/
+        - https://expressjs.com/en/4x/api.html#res.sendFile
+        - https://expressjs.com/en/4x/api.html#req
+        - https://expressjs.com/en/5x/api.html#req
+        - https://nextjs.org/docs/app/api-reference/file-conventions/route
+        - https://fastify.dev/docs/latest/Reference/Routes/
+        - https://fastify.dev/docs/latest/Reference/Request/
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A check after resolving the path (`if (!full.startsWith(base)) return`) is not recognised
+    #   as a guard, nor is a ternary that returns the request value after an includes() check;
+    #   path.basename(), number conversions and allow-list lookups are.
+    # - A record looked up in a server-side store with a request value as the key
+    #   (`sessions.get(req.cookies.session).id`) carries the key's taint and is reported.
+    # - Metadata calls (stat, lstat, access, exists, existsSync, realpath) are not sinks:
+    #   realpath() is how a path is canonicalised before a check, and the others only tell whether
+    #   a file exists.
+    # - fs functions are recognised through require() and import of `fs`, `fs/promises` and their
+    #   `node:` names (module object, destructured or named imports, `require(...).fn`,
+    #   `fs.promises.fn`); fs-extra and other file libraries are not.
+    # - res.sendFile()/res.download() are sinks on the second parameter of an Express-style
+    #   handler named res, resp, response, _res or _response; the root option is seen in an options
+    #   object written in the call or assigned to a variable before it; a root that comes from
+    #   the request itself is not checked.
+    # - An allow-list lookup yields constants only in a table declared const in the file with
+    #   literal keys and values (comments allowed, optionally in Object.freeze) that the file never
+    #   writes to; tables with escaped quotes in their strings, nested tables and tables of other
+    #   modules are not recognised, so their lookups are reported.
+    # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
+    #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
+    #   source, and a one-parameter callback given to get/post/... after a path literal (also on
+    #   an HTTP client) is taken for a Fastify route handler.
+    pattern-sources:
+      # Express: the request object, the first parameter of a handler `(req, res, ...)`, carries
+      # the query string, route parameters (`/users/:id`), body, headers, cookies and the URL.
+      # The second parameter's name tells a handler from other two-parameter functions.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|reply|rep|h|ctx|next|_res|_response)$
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Fastify: a handler registered with a route shorthand (`fastify.get('/path', [options],
+      # handler)`) or with `route({ handler })` may take only the request.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: $APP.$ROUTE($PATH, ..., function ($REQ) { ... })
+                  - metavariable-regex:
+                      metavariable: $ROUTE
+                      regex: ^(get|head|post|put|delete|options|patch|all)$
+                  - metavariable-regex:
+                      metavariable: $PATH
+                      regex: ^["'`]/
+              - pattern-inside: '$APP.route({..., handler: function ($REQ) { ... }, ...})'
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Next.js App Router: route handlers are functions named after an HTTP method; the request is
+      # a Web Request (NextRequest) and the context's params hold the dynamic route segments.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern-either:
+              - pattern: $REQ.nextUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.json()
+              - pattern: $REQ.formData()
+              - pattern: $REQ.text()
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, $CTX, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, $CTX, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: $CTX.params
+      - patterns:
+          - pattern-either:
+              - pattern-inside: 'function $METHOD($REQ, {params}, ...) { ... }'
+              - pattern-inside: 'function $METHOD($REQ, {params}: $T, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}: $T, ...) { ... }'
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: params
+    # Values added to an array or a Map make the container carry them.
+    pattern-propagators:
+      - pattern: $LIST.push(..., $X, ...)
+        from: $X
+        to: $LIST
+      - pattern: $LIST.unshift(..., $X, ...)
+        from: $X
+        to: $LIST
+      - pattern: $MAP.set($K, $X)
+        from: $X
+        to: $MAP
+    pattern-sanitizers:
+      - pattern: Number.parseInt(...)
+      - pattern: Number.parseFloat(...)
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      # An allow-list lookup: an index into a const object or array, or get() on a const Map,
+      # declared in the file with literal keys and values only (comments allowed, optionally
+      # wrapped in Object.freeze), and not changed after it.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  const $TABLE = $INIT;
+                  ...
+              - pattern-inside: |
+                  const $TABLE: $TYPE = $INIT;
+                  ...
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: >-
+                ^(?:(?:\{(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\}|\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\]|new\s+Map(?:<[^>]*>)?\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\](?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\])*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\](?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))|Object\.freeze\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:\{(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\}|\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\]|new\s+Map(?:<[^>]*>)?\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\](?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\])*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\](?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))(?:\s+as\s+const)?$
+          - pattern-either:
+              - pattern: $TABLE[$KEY]
+              - pattern: $TABLE.get($KEY)
+          # A table the file writes to after its declaration, in any function, is no allow-list.
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE[$K2] = $V2;
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.$PROP = $V2;
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.set(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.push(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.unshift(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.splice(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              Object.assign($TABLE, ...);
+              ...
+      # path.basename() keeps only the last segment of a path: no directory can be named.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $P = require($PM)
+                          ...
+                      - pattern-inside: |
+                          import * as $P from $PM;
+                          ...
+                      - pattern-inside: |
+                          import $P from $PM;
+                          ...
+                  - pattern: $P.basename(...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., basename, ...} = require($PM);
+                          ...
+                      - pattern-inside: |
+                          import {..., basename, ...} from $PM;
+                          ...
+                  - pattern: basename(...)
+              - pattern: require($PM).basename(...)
+          - metavariable-regex:
+              metavariable: $PM
+              regex: ^["'`]?(node:)?path(/posix|/win32)?["'`]?$
+    pattern-sinks:
+      # The path of the fs functions that read, write, create, list, delete, move or change files:
+      # the first argument.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $FS = require($M)
+                          ...
+                      - pattern-inside: |
+                          import * as $FS from $M;
+                          ...
+                      - pattern-inside: |
+                          import $FS from $M;
+                          ...
+                  - pattern-either:
+                      - pattern: $FS.$FN($FILE, ...)
+                      - pattern: $FS.promises.$FN($FILE, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., $FN, ...} = require($M);
+                          ...
+                      - pattern-inside: |
+                          import {..., $FN, ...} from $M;
+                          ...
+                  - pattern: $FN($FILE, ...)
+              - pattern: require($M).$FN($FILE, ...)
+              - pattern: require($M).promises.$FN($FILE, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(node:)?fs(/promises)?["'`]?$
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(readFile|readFileSync|writeFile|writeFileSync|appendFile|appendFileSync|createReadStream|createWriteStream|open|openSync|openAsBlob|opendir|opendirSync|readdir|readdirSync|mkdir|mkdirSync|rm|rmSync|rmdir|rmdirSync|unlink|unlinkSync|truncate|truncateSync|chmod|chmodSync|chown|chownSync|lchmod|lchmodSync|lchown|lchownSync|utimes|utimesSync|lutimes|lutimesSync|readlink|readlinkSync|copyFile|copyFileSync|cp|cpSync|rename|renameSync|link|linkSync|symlink|symlinkSync)$
+          - focus-metavariable: $FILE
+      # The second path of the fs functions that copy, move or link one path to another.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $FS = require($M)
+                          ...
+                      - pattern-inside: |
+                          import * as $FS from $M;
+                          ...
+                      - pattern-inside: |
+                          import $FS from $M;
+                          ...
+                  - pattern-either:
+                      - pattern: $FS.$FN($FROM, $TO, ...)
+                      - pattern: $FS.promises.$FN($FROM, $TO, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., $FN, ...} = require($M);
+                          ...
+                      - pattern-inside: |
+                          import {..., $FN, ...} from $M;
+                          ...
+                  - pattern: $FN($FROM, $TO, ...)
+              - pattern: require($M).$FN($FROM, $TO, ...)
+              - pattern: require($M).promises.$FN($FROM, $TO, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(node:)?fs(/promises)?["'`]?$
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(copyFile|copyFileSync|cp|cpSync|rename|renameSync|link|linkSync|symlink|symlinkSync)$
+          - focus-metavariable: $TO
+      # Express res.sendFile() and res.download() without the root option: the path is used as
+      # given. With root, Express keeps the resolved path inside the root directory.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|_res|_response)$
+          - pattern-either:
+              - pattern: $RES.sendFile($FILE, ...)
+              - pattern: $RES.download($FILE, ...)
+          - pattern-not: '$RES.$SEND($FILE, ..., {..., root: $ROOT, ...}, ...)'
+          - pattern-not-inside: |
+              $OPTS = {..., root: $ROOT, ...};
+              ...
+              $RES.$SEND($FILE, ..., $OPTS, ...);
+          - pattern-not-inside: |
+              $OPTS = {..., root: $ROOT, ...};
+              ...
+              return $RES.$SEND($FILE, ..., $OPTS, ...);
+          - focus-metavariable: $FILE

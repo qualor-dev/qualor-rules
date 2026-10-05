@@ -1,0 +1,433 @@
+rules:
+  - id: java.zip-slip
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: >-
+      The name of an archive entry reaches the path of a file or directory that is created or
+      written, so an entry named `../x` or `/x` (or a link target) can write outside the
+      extraction directory ("zip slip"). Normalize the joined path and skip the entry unless it
+      still starts with the destination (`target.normalize().startsWith(dest)`, or
+      `getCanonicalPath()` compared with the destination's canonical path plus a separator), keep
+      only the last name element (`Path.getFileName()`), or use Commons Compress
+      `ArchiveEntry.resolveIn(dest)`.
+    metadata:
+      title: Archive entry name used as an extraction path (Java)
+      cwe: ['CWE-22']
+      owasp: ['A01:2025', 'A01:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [java.util.zip, java.util.jar, commons-compress, java.nio.file, commons-io]
+      sources:
+        - https://cwe.mitre.org/data/definitions/22.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/zip/ZipEntry.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/zip/ZipInputStream.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/zip/ZipFile.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/jar/JarInputStream.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/jar/JarFile.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Path.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Files.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/io/File.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/io/FileOutputStream.html
+        - https://commons.apache.org/proper/commons-compress/examples.html
+        - https://commons.apache.org/proper/commons-compress/apidocs/org/apache/commons/compress/archivers/ArchiveEntry.html
+        - https://commons.apache.org/proper/commons-compress/apidocs/org/apache/commons/compress/archivers/ArchiveInputStream.html
+        - https://commons.apache.org/proper/commons-compress/apidocs/org/apache/commons/compress/archivers/tar/TarArchiveEntry.html
+        - https://commons.apache.org/proper/commons-compress/apidocs/org/apache/commons/compress/archivers/tar/TarArchiveInputStream.html
+        - https://commons.apache.org/proper/commons-compress/apidocs/org/apache/commons/compress/archivers/zip/ZipArchiveInputStream.html
+        - https://commons.apache.org/proper/commons-io/apidocs/org/apache/commons/io/FileUtils.html
+        - https://commons.apache.org/proper/commons-io/apidocs/org/apache/commons/io/FilenameUtils.html
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - Checks the rule does not follow (`todook:`): an ad hoc check of the name
+    #   (`name.contains("..")`, which no official doc describes and which misses absolute names),
+    #   a check joined with other conditions (`if (a || !p.normalize().startsWith(dest))`), a check
+    #   in a helper method, a guard body of more than three statements, and the true branch of an
+    #   if that has an else. A guard that leaves only on some paths, a guard on another path, and
+    #   the else branch stay reported (`ruleid:`).
+    # - A check counts only in these forms: Path.normalize() (also after toAbsolutePath() or
+    #   File.toPath()) or File.getCanonicalFile().toPath() followed by Path.startsWith, in place or
+    #   through a variable assigned from normalize(); File.getCanonicalPath() (in place or through
+    #   a variable) followed by String.startsWith of the destination plus File.separator,
+    #   File.separatorChar or "/". Path.startsWith without normalize() and String.startsWith
+    #   without a separator are reported, since "dest/../x" and "dest-evil/x" pass them.
+    # - An entry name obtained through a helper method or class is not a source (`todoruleid:`).
+    pattern-sources:
+      # The entry name (and a tar link target) of the JDK and Commons Compress archive entries,
+      # by type.
+      - patterns:
+          - pattern-either:
+              - pattern: (java.util.zip.ZipEntry $E).getName()
+              - pattern: (java.util.jar.JarEntry $E).getName()
+              - pattern: (org.apache.commons.compress.archivers.ArchiveEntry $E).getName()
+              - pattern: (org.apache.commons.compress.archivers.zip.ZipArchiveEntry $E).getName()
+              - pattern: (org.apache.commons.compress.archivers.jar.JarArchiveEntry $E).getName()
+              - pattern: (org.apache.commons.compress.archivers.tar.TarArchiveEntry $E).getName()
+              - pattern: (org.apache.commons.compress.archivers.tar.TarArchiveEntry $E).getLinkName()
+              - pattern: (org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry $E).getName()
+              - pattern: (org.apache.commons.compress.archivers.ar.ArArchiveEntry $E).getName()
+              - pattern: (org.apache.commons.compress.archivers.cpio.CpioArchiveEntry $E).getName()
+              - pattern: (org.apache.commons.compress.archivers.arj.ArjArchiveEntry $E).getName()
+              - pattern: (org.apache.commons.compress.archivers.dump.DumpArchiveEntry $E).getName()
+          # An entry looked up by a literal name has that name.
+          - pattern-not-inside: |
+              $E = $Z.getEntry("$NAME");
+              ...
+          - pattern-not-inside: |
+              $E = $Z.getJarEntry("$NAME");
+              ...
+      # An entry declared with `var`, from the next-entry method of an archive stream that is
+      # typed or created in the same method.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $E = (java.util.zip.ZipInputStream $IN).$NEXT();
+                  ...
+              - pattern-inside: |
+                  $E = (java.util.jar.JarInputStream $IN).$NEXT();
+                  ...
+              - pattern-inside: |
+                  $E = (org.apache.commons.compress.archivers.ArchiveInputStream $IN).$NEXT();
+                  ...
+              - pattern-inside: |
+                  $E = (org.apache.commons.compress.archivers.ArchiveInputStream<?> $IN).$NEXT();
+                  ...
+              - pattern-inside: |
+                  $E = (org.apache.commons.compress.archivers.ArchiveInputStream<$T> $IN).$NEXT();
+                  ...
+              - pattern-inside: |
+                  $E = (org.apache.commons.compress.archivers.tar.TarArchiveInputStream $IN).$NEXT();
+                  ...
+              - pattern-inside: |
+                  $E = (org.apache.commons.compress.archivers.zip.ZipArchiveInputStream $IN).$NEXT();
+                  ...
+          - metavariable-regex:
+              metavariable: $NEXT
+              regex: ^getNext(Entry|JarEntry|TarEntry|ZipEntry)$
+          - pattern-either:
+              - pattern: $E.getName()
+              - pattern: $E.getLinkName()
+      - patterns:
+          - pattern-inside: |
+              $IN = new $STREAM(...);
+              ...
+              $E = $IN.$NEXT();
+              ...
+          - metavariable-regex:
+              metavariable: $STREAM
+              regex: ^((java\.util\.zip\.)?ZipInputStream|(java\.util\.jar\.)?JarInputStream|(org\.apache\.commons\.compress\.archivers\.\w+\.)?(Zip|Jar|Tar|Ar|Cpio|Arj|Dump)ArchiveInputStream)$
+          - metavariable-regex:
+              metavariable: $NEXT
+              regex: ^getNext(Entry|JarEntry|TarEntry|ZipEntry)$
+          - pattern: $E.getName()
+      # The entries of ZipFile.stream() and JarFile.stream() (the lambda parameter has no declared
+      # type; the expression form also matches a block body).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: (java.util.zip.ZipFile $Z).stream(). ... .forEach(($E) -> $BODY)
+              - pattern-inside: (java.util.jar.JarFile $Z).stream(). ... .forEach(($E) -> $BODY)
+          - pattern: $E.getName()
+    pattern-sanitizers:
+      # Only the last name element remains (Path.getFileName on a java.nio.file.Path, File.getName,
+      # FilenameUtils.getName).
+      - pattern: (java.nio.file.Path $P).getFileName()
+      - pattern: java.nio.file.Paths.get(...).getFileName()
+      - pattern: java.nio.file.Path.of(...).getFileName()
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $P = java.nio.file.Paths.get(...);
+                  ...
+              - pattern-inside: |
+                  $P = java.nio.file.Path.of(...);
+                  ...
+          - pattern: $P.getFileName()
+      - pattern: (java.io.File $F).getName()
+      - pattern: org.apache.commons.io.FilenameUtils.getName(...)
+      # A check that the normalized (or canonical) path starts with the destination, whose last
+      # statement leaves the loop or the method (statements are spelled out so that an exit nested
+      # in an inner if does not count): the checked variable is safe after it.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  if (!$V.normalize().startsWith($D)) {
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  if (!$V.normalize().startsWith($D)) {
+                    $S1;
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  if (!$V.normalize().startsWith($D)) {
+                    $S1;
+                    $S2;
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  if (!$V.toAbsolutePath().normalize().startsWith($D)) {
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  if (!$V.toAbsolutePath().normalize().startsWith($D)) {
+                    $S1;
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  if (!$V.toAbsolutePath().normalize().startsWith($D)) {
+                    $S1;
+                    $S2;
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  if (!$V.toPath().normalize().startsWith($D)) {
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  if (!$V.toPath().normalize().startsWith($D)) {
+                    $S1;
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  if (!$V.toPath().normalize().startsWith($D)) {
+                    $S1;
+                    $S2;
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  if (!$V.getCanonicalFile().toPath().startsWith($D)) {
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  if (!$V.getCanonicalFile().toPath().startsWith($D)) {
+                    $S1;
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  if (!$V.getCanonicalFile().toPath().startsWith($D)) {
+                    $S1;
+                    $S2;
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  $V = $E.normalize();
+                  ...
+                  if (!$V.startsWith($D)) {
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  $V = $E.normalize();
+                  ...
+                  if (!$V.startsWith($D)) {
+                    $S1;
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  $V = $E.normalize();
+                  ...
+                  if (!$V.startsWith($D)) {
+                    $S1;
+                    $S2;
+                    $EXIT;
+                  }
+                  ...
+          - metavariable-regex:
+              metavariable: $EXIT
+              regex: ^(return\b|continue\b|break\b|throw\b)
+          - pattern: $V
+      # The same with File.getCanonicalPath() and String.startsWith of the destination plus a
+      # separator (without it "dest-evil" passes).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  if (!$V.getCanonicalPath().startsWith($D + $SEP)) {
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  if (!$V.getCanonicalPath().startsWith($D + $SEP)) {
+                    $S1;
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  if (!$V.getCanonicalPath().startsWith($D + $SEP)) {
+                    $S1;
+                    $S2;
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  $CP = $V.getCanonicalPath();
+                  ...
+                  if (!$CP.startsWith($D + $SEP)) {
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  $CP = $V.getCanonicalPath();
+                  ...
+                  if (!$CP.startsWith($D + $SEP)) {
+                    $S1;
+                    $EXIT;
+                  }
+                  ...
+              - pattern-inside: |
+                  $CP = $V.getCanonicalPath();
+                  ...
+                  if (!$CP.startsWith($D + $SEP)) {
+                    $S1;
+                    $S2;
+                    $EXIT;
+                  }
+                  ...
+          - metavariable-regex:
+              metavariable: $EXIT
+              regex: ^(return\b|continue\b|break\b|throw\b)
+          - metavariable-regex:
+              metavariable: $SEP
+              regex: ^((java\.io\.)?File\.separator(Char)?|"/"|'/')$
+          - pattern: $V
+      # Inside the branch where the check holds, when the if has no else.
+      - patterns:
+          - pattern-inside: |
+              if ($V.normalize().startsWith($D)) {
+                ...
+              }
+          - pattern-not-inside: |
+              if ($V.normalize().startsWith($D)) {
+                ...
+              } else {
+                ...
+              }
+          - pattern: $V
+      - patterns:
+          - pattern-inside: |
+              if ($V.toAbsolutePath().normalize().startsWith($D)) {
+                ...
+              }
+          - pattern-not-inside: |
+              if ($V.toAbsolutePath().normalize().startsWith($D)) {
+                ...
+              } else {
+                ...
+              }
+          - pattern: $V
+      - patterns:
+          - pattern-inside: |
+              if ($V.toPath().normalize().startsWith($D)) {
+                ...
+              }
+          - pattern-not-inside: |
+              if ($V.toPath().normalize().startsWith($D)) {
+                ...
+              } else {
+                ...
+              }
+          - pattern: $V
+      - patterns:
+          - pattern-inside: |
+              if ($V.getCanonicalFile().toPath().startsWith($D)) {
+                ...
+              }
+          - pattern-not-inside: |
+              if ($V.getCanonicalFile().toPath().startsWith($D)) {
+                ...
+              } else {
+                ...
+              }
+          - pattern: $V
+      - patterns:
+          - pattern-inside: |
+              $V = $E.normalize();
+              ...
+              if ($V.startsWith($D)) {
+                ...
+              }
+          - pattern-not-inside: |
+              if ($V.startsWith($D)) {
+                ...
+              } else {
+                ...
+              }
+          - pattern: $V
+      - patterns:
+          - pattern-inside: |
+              if ($V.getCanonicalPath().startsWith($D + $SEP)) {
+                ...
+              }
+          - pattern-not-inside: |
+              if ($V.getCanonicalPath().startsWith($D + $SEP)) {
+                ...
+              } else {
+                ...
+              }
+          - metavariable-regex:
+              metavariable: $SEP
+              regex: ^((java\.io\.)?File\.separator(Char)?|"/"|'/')$
+          - pattern: $V
+    pattern-sinks:
+      # java.io: a file stream or writer opened for writing on the path.
+      - patterns:
+          - pattern: new $STREAM($X, ...)
+          - metavariable-regex:
+              metavariable: $STREAM
+              regex: ^(java\.io\.)?(FileOutputStream|FileWriter|RandomAccessFile)$
+          - focus-metavariable: $X
+      # java.io.File: directories and files created at the path.
+      - patterns:
+          - pattern: $F.$CREATE()
+          - metavariable-regex:
+              metavariable: $CREATE
+              regex: ^(mkdir|mkdirs|createNewFile)$
+          - focus-metavariable: $F
+      # java.nio.file.Files: the path written, created or copied or moved to, and both paths of
+      # a link (a tar entry's link target may point anywhere).
+      - patterns:
+          - pattern: java.nio.file.Files.$WRITE($X, ...)
+          - metavariable-regex:
+              metavariable: $WRITE
+              regex: ^(newOutputStream|newBufferedWriter|newByteChannel|write|writeString|createFile|createDirectory|createDirectories)$
+          - focus-metavariable: $X
+      - patterns:
+          - pattern-either:
+              - pattern: java.nio.file.Files.copy($SRC, $X, ...)
+              - pattern: java.nio.file.Files.move($SRC, $X, ...)
+          - focus-metavariable: $X
+      - patterns:
+          - pattern-either:
+              - pattern: java.nio.file.Files.createSymbolicLink($LINK, $TARGET, ...)
+              - pattern: java.nio.file.Files.createLink($LINK, $TARGET)
+          - focus-metavariable: $LINK
+      - patterns:
+          - pattern-either:
+              - pattern: java.nio.file.Files.createSymbolicLink($LINK, $TARGET, ...)
+              - pattern: java.nio.file.Files.createLink($LINK, $TARGET)
+          - focus-metavariable: $TARGET
+      # Commons IO: files written or directories created at the path.
+      - patterns:
+          - pattern-either:
+              - pattern: org.apache.commons.io.FileUtils.copyInputStreamToFile($IN, $X)
+              - pattern: org.apache.commons.io.FileUtils.copyToFile($IN, $X)
+          - focus-metavariable: $X
+      - patterns:
+          - pattern: org.apache.commons.io.FileUtils.$OPEN($X, ...)
+          - metavariable-regex:
+              metavariable: $OPEN
+              regex: ^(openOutputStream|writeByteArrayToFile|writeStringToFile|write|writeLines|forceMkdir|forceMkdirParent|touch)$
+          - focus-metavariable: $X

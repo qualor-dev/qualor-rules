@@ -1,0 +1,181 @@
+rules:
+  - id: js.react-dangerous-html
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Raw HTML is given to React's `dangerouslySetInnerHTML`: if any part of it comes from users
+      (props, fetched or stored content), script in it runs in the page. Check where the HTML comes
+      from; render text as children instead, sanitise HTML with DOMPurify
+      (`DOMPurify.sanitize(html)`) or sanitize-html, and escape `<` in JSON-LD
+      (`JSON.stringify(data).replace(/</g, '\\u003c')`).
+    metadata:
+      title: Raw HTML in React dangerouslySetInnerHTML (review)
+      cwe: ['CWE-79']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: hotspot
+      severity: medium
+      confidence: high
+      frameworks: [react, nextjs]
+      sources:
+        - https://cwe.mitre.org/data/definitions/79.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+        - https://react.dev/reference/react-dom/components/common
+        - https://nextjs.org/docs/app/guides/json-ld
+        - https://github.com/cure53/DOMPurify
+        - https://github.com/apostrophecms/sanitize-html
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - The markup object is found where it is written (`{ __html: x }` in the prop, assigned to a
+    #   variable, returned, or in createElement props); one passed in from props or another module
+    #   is not followed to the prop.
+    # - DOMPurify is recognised as the import of dompurify or isomorphic-dompurify (its sanitize()
+    #   in the prop or assigned to a variable before it); an instance made with
+    #   `DOMPurify(window)` is not, so its sanitize() result is reported.
+    # - A variable assigned from DOMPurify.sanitize() or sanitize-html counts as sanitised also when
+    #   it is changed later (`clean = clean + raw`).
+    # - Constants are string literals, templates without interpolations and const identifiers
+    #   initialised with them in the file; constants of other modules are reported.
+    pattern-either:
+      # The HTML is neither a constant, nor escaped JSON, nor the result of a sanitiser call.
+      - patterns:
+          - pattern-either:
+              - pattern: '<$EL dangerouslySetInnerHTML={{..., __html: $HTML, ...}} />'
+              - pattern: '<$EL dangerouslySetInnerHTML={{..., __html: $HTML, ...}}>$...CHILDREN</$EL>'
+              - pattern: '$MARKUP = {..., __html: $HTML, ...}'
+              - pattern: 'return {..., __html: $HTML, ...};'
+              - pattern: '$CREATE(..., {..., dangerouslySetInnerHTML: {..., __html: $HTML, ...}, ...}, ...)'
+          - pattern-not: '<$EL dangerouslySetInnerHTML={{..., __html: "...", ...}} />'
+          - pattern-not: '<$EL dangerouslySetInnerHTML={{..., __html: "...", ...}}>$...CHILDREN</$EL>'
+          - pattern-not: '$MARKUP = {..., __html: "...", ...}'
+          - pattern-not: 'return {..., __html: "...", ...};'
+          - pattern-not: '$CREATE(..., {..., dangerouslySetInnerHTML: {..., __html: "...", ...}, ...}, ...)'
+          - pattern-not: '<$EL dangerouslySetInnerHTML={{..., __html: JSON.stringify(...).replace(/</g, $REPLACEMENT), ...}} />'
+          - pattern-not: '<$EL dangerouslySetInnerHTML={{..., __html: JSON.stringify(...).replace(/</g, $REPLACEMENT), ...}}>$...CHILDREN</$EL>'
+          - pattern-not: '$MARKUP = {..., __html: JSON.stringify(...).replace(/</g, $REPLACEMENT), ...}'
+          - pattern-not: 'return {..., __html: JSON.stringify(...).replace(/</g, $REPLACEMENT), ...};'
+          - pattern-not: '$CREATE(..., {..., dangerouslySetInnerHTML: {..., __html: JSON.stringify(...).replace(/</g, $REPLACEMENT), ...}, ...}, ...)'
+          - pattern-not: '<$EL dangerouslySetInnerHTML={{..., __html: $PURIFY.sanitize(...), ...}} />'
+          - pattern-not: '<$EL dangerouslySetInnerHTML={{..., __html: $PURIFY.sanitize(...), ...}}>$...CHILDREN</$EL>'
+          - pattern-not: '$MARKUP = {..., __html: $PURIFY.sanitize(...), ...}'
+          - pattern-not: 'return {..., __html: $PURIFY.sanitize(...), ...};'
+          - pattern-not: '$CREATE(..., {..., dangerouslySetInnerHTML: {..., __html: $PURIFY.sanitize(...), ...}, ...}, ...)'
+          - pattern-not: '<$EL dangerouslySetInnerHTML={{..., __html: $SANITIZE(...), ...}} />'
+          - pattern-not: '<$EL dangerouslySetInnerHTML={{..., __html: $SANITIZE(...), ...}}>$...CHILDREN</$EL>'
+          - pattern-not: '$MARKUP = {..., __html: $SANITIZE(...), ...}'
+          - pattern-not: 'return {..., __html: $SANITIZE(...), ...};'
+          - pattern-not: '$CREATE(..., {..., dangerouslySetInnerHTML: {..., __html: $SANITIZE(...), ...}, ...}, ...)'
+          - pattern-not-inside: |
+              import $PURIFY from 'dompurify';
+              ...
+              $HTML = $PURIFY.sanitize(...);
+              ...
+          - pattern-not-inside: |
+              import * as $PURIFY from 'dompurify';
+              ...
+              $HTML = $PURIFY.sanitize(...);
+              ...
+          - pattern-not-inside: |
+              $PURIFY = require('dompurify')
+              ...
+              $HTML = $PURIFY.sanitize(...);
+              ...
+          - pattern-not-inside: |
+              import $PURIFY from 'isomorphic-dompurify';
+              ...
+              $HTML = $PURIFY.sanitize(...);
+              ...
+          - pattern-not-inside: |
+              import * as $PURIFY from 'isomorphic-dompurify';
+              ...
+              $HTML = $PURIFY.sanitize(...);
+              ...
+          - pattern-not-inside: |
+              $PURIFY = require('isomorphic-dompurify')
+              ...
+              $HTML = $PURIFY.sanitize(...);
+              ...
+          - pattern-not-inside: |
+              import $SAN from 'sanitize-html';
+              ...
+              $HTML = $SAN(...);
+              ...
+          - pattern-not-inside: |
+              import * as $SAN from 'sanitize-html';
+              ...
+              $HTML = $SAN(...);
+              ...
+          - pattern-not-inside: |
+              $SAN = require('sanitize-html')
+              ...
+              $HTML = $SAN(...);
+              ...
+          # A TypeScript cast (`x as string`) also binds its operand: report the operand only.
+          - metavariable-regex:
+              metavariable: $HTML
+              regex: ^(?![\s\S]*\sas\s+[\w.<>\[\]| ]+$)
+          - focus-metavariable: $HTML
+      # A method call other than sanitize(), except JSON with every < escaped.
+      - patterns:
+          - pattern-either:
+              - pattern: '<$EL dangerouslySetInnerHTML={{..., __html: $OBJ.$METHOD($...ARGS), ...}} />'
+              - pattern: '<$EL dangerouslySetInnerHTML={{..., __html: $OBJ.$METHOD($...ARGS), ...}}>$...CHILDREN</$EL>'
+              - pattern: '$MARKUP = {..., __html: $OBJ.$METHOD($...ARGS), ...}'
+              - pattern: 'return {..., __html: $OBJ.$METHOD($...ARGS), ...};'
+              - pattern: '$CREATE(..., {..., dangerouslySetInnerHTML: {..., __html: $OBJ.$METHOD($...ARGS), ...}, ...}, ...)'
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(?!sanitize$)
+          - pattern-not: '<$EL dangerouslySetInnerHTML={{..., __html: JSON.stringify(...).replace(/</g, $REPLACEMENT), ...}} />'
+          - pattern-not: '<$EL dangerouslySetInnerHTML={{..., __html: JSON.stringify(...).replace(/</g, $REPLACEMENT), ...}}>$...CHILDREN</$EL>'
+          - pattern-not: '$MARKUP = {..., __html: JSON.stringify(...).replace(/</g, $REPLACEMENT), ...}'
+          - pattern-not: 'return {..., __html: JSON.stringify(...).replace(/</g, $REPLACEMENT), ...};'
+          - pattern-not: '$CREATE(..., {..., dangerouslySetInnerHTML: {..., __html: JSON.stringify(...).replace(/</g, $REPLACEMENT), ...}, ...}, ...)'
+          - focus-metavariable: $METHOD
+      # sanitize() of an object that is not the DOMPurify import.
+      - patterns:
+          - pattern-either:
+              - pattern: '<$EL dangerouslySetInnerHTML={{..., __html: $PURIFY.sanitize($...ARGS), ...}} />'
+              - pattern: '<$EL dangerouslySetInnerHTML={{..., __html: $PURIFY.sanitize($...ARGS), ...}}>$...CHILDREN</$EL>'
+              - pattern: '$MARKUP = {..., __html: $PURIFY.sanitize($...ARGS), ...}'
+              - pattern: 'return {..., __html: $PURIFY.sanitize($...ARGS), ...};'
+              - pattern: '$CREATE(..., {..., dangerouslySetInnerHTML: {..., __html: $PURIFY.sanitize($...ARGS), ...}, ...}, ...)'
+          - pattern-not-inside: |
+              import $PURIFY from 'dompurify';
+              ...
+          - pattern-not-inside: |
+              import * as $PURIFY from 'dompurify';
+              ...
+          - pattern-not-inside: |
+              $PURIFY = require('dompurify')
+              ...
+          - pattern-not-inside: |
+              import $PURIFY from 'isomorphic-dompurify';
+              ...
+          - pattern-not-inside: |
+              import * as $PURIFY from 'isomorphic-dompurify';
+              ...
+          - pattern-not-inside: |
+              $PURIFY = require('isomorphic-dompurify')
+              ...
+          - focus-metavariable: $PURIFY
+      # A plain function call that is not the sanitize-html import.
+      - patterns:
+          - pattern-either:
+              - pattern: '<$EL dangerouslySetInnerHTML={{..., __html: $SANITIZE($...ARGS), ...}} />'
+              - pattern: '<$EL dangerouslySetInnerHTML={{..., __html: $SANITIZE($...ARGS), ...}}>$...CHILDREN</$EL>'
+              - pattern: '$MARKUP = {..., __html: $SANITIZE($...ARGS), ...}'
+              - pattern: 'return {..., __html: $SANITIZE($...ARGS), ...};'
+              - pattern: '$CREATE(..., {..., dangerouslySetInnerHTML: {..., __html: $SANITIZE($...ARGS), ...}, ...}, ...)'
+          - metavariable-regex:
+              metavariable: $SANITIZE
+              regex: ^[A-Za-z_$][A-Za-z0-9_$]*$
+          - pattern-not-inside: |
+              import $SANITIZE from 'sanitize-html';
+              ...
+          - pattern-not-inside: |
+              import * as $SANITIZE from 'sanitize-html';
+              ...
+          - pattern-not-inside: |
+              $SANITIZE = require('sanitize-html')
+              ...
+          - focus-metavariable: $SANITIZE

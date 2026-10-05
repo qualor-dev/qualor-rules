@@ -1,0 +1,360 @@
+rules:
+  - id: js.command-injection
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches an operating system command: run through a shell (exec,
+      execSync, the shell option of spawn and execFile, or a shell program such as `sh -c`), its
+      shell metacharacters can start other
+      commands, and as the program name it runs whatever the client names. Run a fixed program with
+      an argument array and no shell (`execFile('git', ['log', ref])`), and check values against an
+      allow-list.
+    metadata:
+      title: OS command built from HTTP request data (Node.js)
+      cwe: ['CWE-78']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [express, nextjs, fastify, node-child-process]
+      sources:
+        - https://cwe.mitre.org/data/definitions/78.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html
+        - https://nodejs.org/api/child_process.html
+        - https://expressjs.com/en/4x/api.html#req
+        - https://expressjs.com/en/5x/api.html#req
+        - https://nextjs.org/docs/app/api-reference/file-conventions/route
+        - https://fastify.dev/docs/latest/Reference/Routes/
+        - https://fastify.dev/docs/latest/Reference/Request/
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - The shell option is recognised in an options object literal of the call; options built
+    #   before the call (`const options = { shell: true }`) are not followed.
+    # - An allow-list check before the call (`if (!TOOLS.includes(x)) return`) is not recognised as
+    #   a guard; an allow-list that yields constants is (a ternary, or a lookup in an object, array
+    #   or Map declared const in the file with literal keys and values, comments allowed,
+    #   optionally in Object.freeze). A table the file writes to after its declaration is not
+    #   trusted. Tables with escaped quotes in their strings, nested tables and tables of other
+    #   modules are not recognised, so their lookups are reported.
+    # - A shell program's command is followed when the argument array is written in the call
+    #   (`spawn('sh', ['-c', cmd])`); an array built before the call is not.
+    # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
+    #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
+    #   source, and a one-parameter callback given to get/post/... after a path literal (also on
+    #   an HTTP client) is taken for a Fastify route handler.
+    # - child_process functions are recognised through require() and import of `child_process` or
+    #   `node:child_process` (module object, destructured or named imports, `require(...).exec`)
+    #   and util.promisify() of exec or execFile; renamed imports (`exec as run`) are not.
+    pattern-sources:
+      # Express: the request object, the first parameter of a handler `(req, res, ...)`, carries
+      # the query string, route parameters (`/users/:id`), body, headers, cookies and the URL.
+      # The second parameter's name tells a handler from other two-parameter functions.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|reply|rep|h|ctx|next|_res|_response)$
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Fastify: a handler registered with a route shorthand (`fastify.get('/path', [options],
+      # handler)`) or with `route({ handler })` may take only the request.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: $APP.$ROUTE($PATH, ..., function ($REQ) { ... })
+                  - metavariable-regex:
+                      metavariable: $ROUTE
+                      regex: ^(get|head|post|put|delete|options|patch|all)$
+                  - metavariable-regex:
+                      metavariable: $PATH
+                      regex: ^["'`]/
+              - pattern-inside: '$APP.route({..., handler: function ($REQ) { ... }, ...})'
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Next.js App Router: route handlers are functions named after an HTTP method; the request is
+      # a Web Request (NextRequest) and the context's params hold the dynamic route segments.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern-either:
+              - pattern: $REQ.nextUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.json()
+              - pattern: $REQ.formData()
+              - pattern: $REQ.text()
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, $CTX, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, $CTX, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: $CTX.params
+      - patterns:
+          - pattern-either:
+              - pattern-inside: 'function $METHOD($REQ, {params}, ...) { ... }'
+              - pattern-inside: 'function $METHOD($REQ, {params}: $T, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}: $T, ...) { ... }'
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: params
+    # Values added to an array or a Map make the container carry them.
+    pattern-propagators:
+      - pattern: $LIST.push(..., $X, ...)
+        from: $X
+        to: $LIST
+      - pattern: $LIST.unshift(..., $X, ...)
+        from: $X
+        to: $LIST
+      - pattern: $MAP.set($K, $X)
+        from: $X
+        to: $MAP
+    pattern-sanitizers:
+      - pattern: Number.parseInt(...)
+      - pattern: Number.parseFloat(...)
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      # An allow-list lookup: an index into a const object or array, or get() on a const Map,
+      # declared in the file with literal keys and values only (comments allowed, optionally
+      # wrapped in Object.freeze), and not changed after it.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  const $TABLE = $INIT;
+                  ...
+              - pattern-inside: |
+                  const $TABLE: $TYPE = $INIT;
+                  ...
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: >-
+                ^(?:(?:\{(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\}|\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\]|new\s+Map(?:<[^>]*>)?\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\](?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\])*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\](?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))|Object\.freeze\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:\{(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\}|\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\]|new\s+Map(?:<[^>]*>)?\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\](?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\])*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\](?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))(?:\s+as\s+const)?$
+          - pattern-either:
+              - pattern: $TABLE[$KEY]
+              - pattern: $TABLE.get($KEY)
+          # A table the file writes to after its declaration, in any function, is no allow-list.
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE[$K2] = $V2;
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.$PROP = $V2;
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.set(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.push(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.unshift(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.splice(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              Object.assign($TABLE, ...);
+              ...
+    pattern-sinks:
+      # The command of exec/execSync (run by a shell) and the program of execFile, execFileSync,
+      # spawn, spawnSync and fork: the first argument of the child_process functions.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $CP = require($M)
+                          ...
+                      - pattern-inside: |
+                          import * as $CP from $M;
+                          ...
+                      - pattern-inside: |
+                          import $CP from $M;
+                          ...
+                  - pattern: $CP.$FN($CMD, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., $FN, ...} = require($M);
+                          ...
+                      - pattern-inside: |
+                          import {..., $FN, ...} from $M;
+                          ...
+                  - pattern: $FN($CMD, ...)
+              - pattern: require($M).$FN($CMD, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(node:)?child_process["'`]?$
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)$
+          - focus-metavariable: $CMD
+      # The arguments of execFile, execFileSync, spawn and spawnSync when the shell option is set:
+      # they are joined into a command line for the shell.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $CP = require($M)
+                          ...
+                      - pattern-inside: |
+                          import * as $CP from $M;
+                          ...
+                      - pattern-inside: |
+                          import $CP from $M;
+                          ...
+                  - pattern: '$CP.$FN($PROG, $ARGS, {..., shell: $SHELL, ...}, ...)'
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., $FN, ...} = require($M);
+                          ...
+                      - pattern-inside: |
+                          import {..., $FN, ...} from $M;
+                          ...
+                  - pattern: '$FN($PROG, $ARGS, {..., shell: $SHELL, ...}, ...)'
+              - pattern: 'require($M).$FN($PROG, $ARGS, {..., shell: $SHELL, ...}, ...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(node:)?child_process["'`]?$
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(execFile|execFileSync|spawn|spawnSync)$
+          - metavariable-regex:
+              metavariable: $SHELL
+              regex: ^(?!false$|undefined$|null$|0$|""$|''$)
+          - focus-metavariable: $ARGS
+      # The command given to a shell program (sh, bash, cmd.exe, PowerShell) after its command
+      # flag (-c, also in a flag cluster such as -lc, /c, -Command): the shell runs it as a
+      # command line. Later arguments are only
+      # positional parameters ($1, ...) of that command.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $CP = require($M)
+                          ...
+                      - pattern-inside: |
+                          import * as $CP from $M;
+                          ...
+                      - pattern-inside: |
+                          import $CP from $M;
+                          ...
+                  - pattern: '$CP.$FN($SHELLPROG, [..., $FLAG, $SCRIPT, ...], ...)'
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., $FN, ...} = require($M);
+                          ...
+                      - pattern-inside: |
+                          import {..., $FN, ...} from $M;
+                          ...
+                  - pattern: '$FN($SHELLPROG, [..., $FLAG, $SCRIPT, ...], ...)'
+              - pattern: 'require($M).$FN($SHELLPROG, [..., $FLAG, $SCRIPT, ...], ...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(node:)?child_process["'`]?$
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(execFile|execFileSync|spawn|spawnSync)$
+          - metavariable-regex:
+              metavariable: $SHELLPROG
+              regex: (?i)^["'`]((/usr)?(/local)?/bin/)?(sh|bash|zsh|dash|ksh|ash|cmd|cmd\.exe|powershell|powershell\.exe|pwsh)["'`]$
+          - metavariable-regex:
+              metavariable: $FLAG
+              regex: ^["'`](-[A-Za-z]*c[A-Za-z]*|/c|/C|-Command|-command)["'`]$
+          - focus-metavariable: $SCRIPT
+      # util.promisify() of exec or execFile, as in the Node.js documentation.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      $P = $PROMISIFY(require($M).$FN)
+                      ...
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $CP = require($M)
+                          ...
+                      - pattern-inside: |
+                          import * as $CP from $M;
+                          ...
+                      - pattern-inside: |
+                          import $CP from $M;
+                          ...
+                  - pattern-inside: |
+                      $P = $PROMISIFY($CP.$FN)
+                      ...
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., $FN, ...} = require($M);
+                          ...
+                      - pattern-inside: |
+                          import {..., $FN, ...} from $M;
+                          ...
+                  - pattern-inside: |
+                      $P = $PROMISIFY($FN)
+                      ...
+          - pattern: $P($CMD, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(node:)?child_process["'`]?$
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(exec|execFile)$
+          - metavariable-regex:
+              metavariable: $PROMISIFY
+              regex: ^(\w+\.)?promisify$
+          - focus-metavariable: $CMD

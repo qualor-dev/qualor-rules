@@ -1,0 +1,247 @@
+rules:
+  - id: go.command-injection
+    mode: taint
+    languages: [go]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches an OS command: it is part of a shell script (`sh -c`,
+      `cmd /C`, `pwsh -Command`) or it chooses the program to run. Run a fixed program and pass the
+      request data as separate arguments (`exec.Command("convert", name, "out.png")`), without a
+      shell; if the program must vary, map the request value to a constant from an allow-list.
+    metadata:
+      title: OS command built from HTTP request data (Go)
+      cwe: ['CWE-78']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [net/http, encoding/json, os/exec, gin, echo, chi, gorilla/mux]
+      sources:
+        - https://cwe.mitre.org/data/definitions/78.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html
+        - https://pkg.go.dev/os/exec
+        - https://pkg.go.dev/os/exec#Command
+        - https://pkg.go.dev/os/exec#CommandContext
+        - https://pkg.go.dev/os/exec#Cmd
+        - https://pubs.opengroup.org/onlinepubs/9799919799/utilities/sh.html
+        - https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd
+        - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh
+        - https://pkg.go.dev/strings#Builder
+        - https://pkg.go.dev/bytes#Buffer
+        - https://pkg.go.dev/net/http#Request
+        - https://pkg.go.dev/encoding/json
+        - https://pkg.go.dev/encoding/json#Unmarshal
+        - https://pkg.go.dev/github.com/gin-gonic/gin
+        - https://gin-gonic.com/en/docs/routing/querystring-param/
+        - https://gin-gonic.com/en/docs/binding/binding-and-validation/
+        - https://pkg.go.dev/github.com/labstack/echo/v4
+        - https://pkg.go.dev/github.com/labstack/echo/v4#DefaultBinder
+        - https://echo.labstack.com/guide/request/
+        - https://echo.labstack.com/guide/binding/
+        - https://pkg.go.dev/github.com/go-chi/chi/v5
+        - https://pkg.go.dev/github.com/gorilla/mux
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - An allow-list written as an `if` check that returns early is not followed: the value
+    #   checked is still reported (`todook:`). A switch or map lookup that yields constants is.
+    # - os.StartProcess and syscall.Exec are not followed yet (`todoruleid:`).
+    # - Arguments given as a slice (`exec.Command("sh", args...)`) and the arguments of a batch
+    #   file (which cmd.exe parses again) are not followed (`todoruleid:`).
+    options:
+      # A map lookup keyed by request data (an allow-list of programs) yields the map's values.
+      taint_assume_safe_indexes: true
+    pattern-sources:
+      # The request: net/http's *http.Request, and the same request through Gin and Echo.
+      - patterns:
+          - pattern-either:
+              - pattern: '($R : *http.Request).$F'
+              - pattern: '($C : *gin.Context).Request.$F'
+              - pattern: '($C : echo.Context).Request().$F'
+              - pattern: '($C : *echo.Context).Request().$F'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(URL|Form|PostForm|MultipartForm|Header|Body|RequestURI)$
+      - patterns:
+          - pattern-either:
+              - pattern: '($R : *http.Request).$F(...)'
+              - pattern: '($C : *gin.Context).Request.$F(...)'
+              - pattern: '($C : echo.Context).Request().$F(...)'
+              - pattern: '($C : *echo.Context).Request().$F(...)'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(FormValue|PostFormValue|PathValue|Cookie|Cookies|Referer|UserAgent)$
+      - pattern-either:
+          # Route variables of routers built on net/http.
+          - pattern: chi.URLParam(...)
+          - pattern: mux.Vars(...)
+      # Gin: path parameters, query strings, forms, headers and cookies.
+      - patterns:
+          - pattern: '($C : *gin.Context).$M(...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Param|Query|DefaultQuery|GetQuery|QueryArray|GetQueryArray|QueryMap|GetQueryMap|PostForm|DefaultPostForm|GetPostForm|PostFormArray|GetPostFormArray|PostFormMap|GetPostFormMap|GetHeader|Cookie|GetRawData)$
+      # Echo: path parameters, query parameters, form values and cookies.
+      - patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).$M(...)'
+              - pattern: '($C : *echo.Context).$M(...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Param|ParamValues|QueryParam|QueryParams|QueryString|FormValue|FormParams|Cookie|Cookies)$
+      # Gin and Echo binding: the struct the request is bound into.
+      - by-side-effect: true
+        patterns:
+          - pattern: '($C : *gin.Context).$BIND(&$X, ...)'
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(Bind|BindJSON|BindXML|BindQuery|BindYAML|BindTOML|BindHeader|BindUri|BindWith|MustBindWith|ShouldBind|ShouldBindJSON|ShouldBindXML|ShouldBindQuery|ShouldBindYAML|ShouldBindTOML|ShouldBindHeader|ShouldBindUri|ShouldBindWith|ShouldBindBodyWith)$
+          - focus-metavariable: $X
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).Bind(&$X)'
+              - pattern: '($C : *echo.Context).Bind(&$X)'
+          - focus-metavariable: $X
+      - by-side-effect: true
+        patterns:
+          - pattern: echo.$BIND($C, &$X)
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+          - focus-metavariable: $X
+      # Echo's DefaultBinder used directly: a *echo.DefaultBinder value, `new(echo.DefaultBinder)`
+      # or `&echo.DefaultBinder{}`, made in the same function or typed.
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($B : *echo.DefaultBinder).$BIND($C, &$X)'
+              - pattern: '($B : echo.DefaultBinder).$BIND($C, &$X)'
+              - pattern: (&echo.DefaultBinder{}).$BIND($C, &$X)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B := new(echo.DefaultBinder)
+                          ...
+                      - pattern-inside: |
+                          $B := &echo.DefaultBinder{}
+                          ...
+                  - pattern: $B.$BIND($C, &$X)
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+          - focus-metavariable: $X
+      # DefaultBinder.Bind takes the target first in Echo v4 (`Bind(i, c)`).
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($B : *echo.DefaultBinder).Bind(&$X, $C)'
+              - pattern: '($B : echo.DefaultBinder).Bind(&$X, $C)'
+              - pattern: (&echo.DefaultBinder{}).Bind(&$X, $C)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B := new(echo.DefaultBinder)
+                          ...
+                      - pattern-inside: |
+                          $B := &echo.DefaultBinder{}
+                          ...
+                  - pattern: $B.Bind(&$X, $C)
+          - focus-metavariable: $X
+      # The same binders given a pointer made with new(T) or &T{} in the same function, passed
+      # without `&` (Echo's request guide: `u := new(User); c.Bind(u)`).
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $X := new($T)
+                  ...
+              - pattern-inside: |
+                  $X := &$T{...}
+                  ...
+          - pattern-either:
+              - patterns:
+                  - pattern: '($C : *gin.Context).$BIND($X, ...)'
+                  - metavariable-regex:
+                      metavariable: $BIND
+                      regex: ^(Bind|BindJSON|BindXML|BindQuery|BindYAML|BindTOML|BindHeader|BindUri|BindWith|MustBindWith|ShouldBind|ShouldBindJSON|ShouldBindXML|ShouldBindQuery|ShouldBindYAML|ShouldBindTOML|ShouldBindHeader|ShouldBindUri|ShouldBindWith|ShouldBindBodyWith)$
+              - pattern: '($C : echo.Context).Bind($X)'
+              - pattern: '($C : *echo.Context).Bind($X)'
+              - patterns:
+                  - pattern-either:
+                      - pattern: echo.$BIND($C, $X)
+                      - pattern: '($B : *echo.DefaultBinder).$BIND($C, $X)'
+                      - pattern: '($B : echo.DefaultBinder).$BIND($C, $X)'
+                      - pattern: (&echo.DefaultBinder{}).$BIND($C, $X)
+                  - metavariable-regex:
+                      metavariable: $BIND
+                      regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+              - pattern: '($B : *echo.DefaultBinder).Bind($X, $C)'
+              - pattern: '($B : echo.DefaultBinder).Bind($X, $C)'
+              - pattern: (&echo.DefaultBinder{}).Bind($X, $C)
+          - focus-metavariable: $X
+    pattern-propagators:
+      # encoding/json: decoding a tainted body taints the value it fills.
+      - pattern: json.NewDecoder($R).Decode(&$X)
+        from: $R
+        to: $X
+      - pattern: json.Unmarshal($R, &$X)
+        from: $R
+        to: $X
+      # A script assembled in a strings.Builder or bytes.Buffer.
+      - pattern: '($SB : strings.Builder).$W($X)'
+        from: $X
+        to: $SB
+      - pattern: '($SB : *strings.Builder).$W($X)'
+        from: $X
+        to: $SB
+      - pattern: '($SB : bytes.Buffer).$W($X)'
+        from: $X
+        to: $SB
+      - pattern: '($SB : *bytes.Buffer).$W($X)'
+        from: $X
+        to: $SB
+    pattern-sanitizers:
+      - pattern: strconv.Atoi(...)
+      - pattern: strconv.ParseInt(...)
+      - pattern: strconv.ParseUint(...)
+      - pattern: strconv.ParseFloat(...)
+      - pattern: strconv.ParseBool(...)
+      # A number or boolean (a numeric field of a bound struct, say) cannot carry shell syntax or a
+      # program name. The type must be known in the file: a struct of another package stays
+      # tainted as a whole.
+      - patterns:
+          - pattern: $E
+          - metavariable-type:
+              metavariable: $E
+              types: [int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool]
+    pattern-sinks:
+      # A POSIX shell given a script: `sh -c <script>` (also `bash -lc`, `sh -e -c`, a variable or
+      # constant that holds the shell's name, or the shell started through `env`). The arguments
+      # after the script are positional parameters ($0, $1, ...), not shell code.
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command("=~/^(/usr)?(/local)?(/bin/)?(sh|bash|dash|zsh|ksh|mksh|ash)$/", ..., "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/^(/usr)?(/local)?(/bin/)?(sh|bash|dash|zsh|ksh|mksh|ash)$/", ..., "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $SCRIPT, ...)
+              - pattern: exec.Command("=~/^(/usr)?(/bin/)?env$/", "=~/^(/usr)?(/local)?(/bin/)?(sh|bash|dash|zsh|ksh|mksh|ash)$/", ..., "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/^(/usr)?(/bin/)?env$/", "=~/^(/usr)?(/local)?(/bin/)?(sh|bash|dash|zsh|ksh|mksh|ash)$/", ..., "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $SCRIPT, ...)
+          - focus-metavariable: $SCRIPT
+      # cmd.exe given a command line: every argument after `/C` or `/K` is part of the command
+      # (os/exec: cmd.exe has its own unquoting).
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command("=~/^(.*[^a-zA-Z0-9])?[cC][mM][dD]([.][eE][xX][eE])?$/", ..., "=~/^/[cCkK]$/", ..., $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?[cC][mM][dD]([.][eE][xX][eE])?$/", ..., "=~/^/[cCkK]$/", ..., $SCRIPT, ...)
+          - focus-metavariable: $SCRIPT
+      # PowerShell given a command: every argument after `-Command` (`-c`, any case) is part of it.
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command("=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([cC]|[cC][oO][mM][mM][aA][nN][dD])$/", ..., $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([cC]|[cC][oO][mM][mM][aA][nN][dD])$/", ..., $SCRIPT, ...)
+          - focus-metavariable: $SCRIPT
+      # The program itself: the name or path given to Command or CommandContext, or Cmd.Path.
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command($PROG, ...)
+              - pattern: exec.CommandContext($CTX, $PROG, ...)
+              - pattern: 'exec.Cmd{..., Path: $PROG, ...}'
+          - focus-metavariable: $PROG

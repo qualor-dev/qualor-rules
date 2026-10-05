@@ -1,0 +1,297 @@
+const express = require('express');
+const { exec, execSync, execFile, spawn, spawnSync, execFileSync } = require('child_process');
+const childProcess = require('node:child_process');
+const util = require('node:util');
+
+const app = express();
+app.use(express.json());
+
+// exec and execSync run their command through a shell.
+app.get('/ping', (req, res) => {
+  // ruleid: js.command-injection
+  exec('ping -c 1 ' + req.query.host, (err, stdout) => res.send(stdout));
+});
+
+app.get('/files/:dir', (req, res) => {
+  const dir = req.params.dir;
+  // ruleid: js.command-injection
+  const out = execSync(`ls -la ${dir}`);
+  // ruleid: js.command-injection
+  childProcess.exec('du -sh ' + req.params.dir);
+  // ruleid: js.command-injection
+  require('child_process').execSync('wc -l ' + req.get('X-File'));
+  // ok: js.command-injection
+  execFile('ls', ['-la', dir], (err, stdout) => res.send(stdout));
+  // ok: js.command-injection
+  spawn('ls', ['-la', req.params.dir]);
+  // ok: js.command-injection
+  execSync('ls -la /var/data');
+  res.send(out);
+});
+
+app.post('/convert', (req, res) => {
+  const { input, format } = req.body;
+  const cmd = 'convert ' + input + ' out.' + format;
+  // ruleid: js.command-injection
+  execSync(cmd);
+  // ruleid: js.command-injection
+  exec(util.format('gzip %s', req.body.file));
+  // ruleid: js.command-injection
+  childProcess.execSync(`tar -czf backup.tgz ${req.cookies.folder}`, { cwd: '/tmp' });
+  // ok: js.command-injection
+  execFileSync('convert', [input, 'out.png']);
+  const size = Number.parseInt(req.body.size, 10);
+  // ok: js.command-injection
+  execSync('head -c ' + size + ' /dev/urandom');
+  const mode = req.body.mode === 'fast' ? 'fast' : 'safe';
+  // ok: js.command-injection
+  execSync('backup --mode ' + mode);
+  res.end();
+});
+
+// spawn, spawnSync, execFile and execFileSync run a shell only with the shell option: then the
+// arguments are joined into a command line.
+app.get('/grep', (req, res) => {
+  // ruleid: js.command-injection
+  spawn('grep', ['-r', req.query.pattern, '.'], { shell: true });
+  // ruleid: js.command-injection
+  spawnSync('find', ['.', '-name', req.query.name], { shell: '/bin/bash' });
+  // ruleid: js.command-injection
+  execFile('git', ['log', req.query.ref], { shell: true }, () => {});
+  const args = ['-n', req.query.count];
+  // ruleid: js.command-injection
+  childProcess.execFileSync('tail', args, { shell: true });
+  // ok: js.command-injection
+  spawn('grep', ['-r', req.query.pattern, '.'], { shell: false });
+  // ok: js.command-injection
+  spawn('grep', ['-r', req.query.pattern, '.'], { cwd: '/srv' });
+  // ok: js.command-injection
+  spawn('grep -r TODO .', { shell: true });
+  res.end();
+});
+
+// The program itself taken from the request runs whatever the client names.
+app.post('/run', (req, res) => {
+  // ruleid: js.command-injection
+  spawn(req.body.program, ['--version']);
+  // ruleid: js.command-injection
+  execFile(req.body.program, [], () => {});
+  // ruleid: js.command-injection
+  childProcess.fork(req.body.script);
+  // ok: js.command-injection
+  childProcess.fork('./workers/resize.js', [req.body.image]);
+  res.end();
+});
+
+// util.promisify(exec), as in the Node.js documentation.
+const execAsync = util.promisify(require('node:child_process').exec);
+const pexec = util.promisify(exec);
+
+app.get('/version/:tool', async (req, res) => {
+  // ruleid: js.command-injection
+  const { stdout } = await execAsync(req.params.tool + ' --version');
+  // ruleid: js.command-injection
+  await pexec(`which ${req.params.tool}`);
+  // ok: js.command-injection
+  await execAsync('node --version');
+  res.send(stdout);
+});
+
+// Allow-list lookups in tables declared const in this file yield only the table's values.
+const RUNNERS = { list: 'ls', where: 'pwd' };
+const SORTS = new Map([['size', '-S'], ['time', '-t']]);
+const PAGERS = ['less', 'more'];
+
+app.get('/runner', (req, res) => {
+  // ok: js.command-injection
+  execFile(RUNNERS[req.query.op] || 'true', ['-1'], () => res.end());
+  const flag = SORTS.get(req.query.sort) ?? '';
+  // ok: js.command-injection
+  exec('ls ' + flag);
+  // ok: js.command-injection
+  spawn(PAGERS[req.query.pager], ['README.md']);
+  // ruleid: js.command-injection
+  exec('ls ' + req.query.sort + ' ' + flag);
+});
+
+// Tables built from or filled with request data are no allow-lists.
+const LAST = {};
+
+app.post('/tables', (req, res) => {
+  const pieces = [req.query.folder, '-h'];
+  // ruleid: js.command-injection
+  exec('du ' + pieces[0]);
+  const job = { script: req.body.script };
+  // ruleid: js.command-injection
+  exec(job['script']);
+  const fields = { ...req.query };
+  // ruleid: js.command-injection
+  execSync('echo ' + fields[req.query.key]);
+  const vars = new Map([['target', req.query.target]]);
+  // ruleid: js.command-injection
+  exec('make ' + vars.get('target'));
+  LAST[req.body.slot] = req.body.command;
+  // ruleid: js.command-injection
+  exec(LAST[req.body.slot]);
+  const pending = [];
+  pending.push(req.body.task);
+  // ruleid: js.command-injection
+  execSync(pending[0]);
+  const named = new Map();
+  named.set('job', req.body.job);
+  // ruleid: js.command-injection
+  exec(named.get('job'));
+  const PRESETS = { quick: 'ls' };
+  PRESETS[req.body.name] = req.body.cmd;
+  // ruleid: js.command-injection
+  exec(PRESETS[req.query.preset]);
+  res.end();
+});
+
+// A literal table that the file writes to, in another function or a nested block, is no
+// allow-list.
+const ALIASES = { up: 'uptime' };
+app.post('/alias', (req, res) => {
+  ALIASES[req.body.name] = req.body.cmd;
+  res.end();
+});
+app.get('/alias/:name', (req, res) => {
+  // ruleid: js.command-injection
+  exec(ALIASES[req.params.name]);
+  res.end();
+});
+
+const SHORTCUTS = { disk: 'df -h' };
+app.post('/shortcut', (req, res) => {
+  if (req.body.save) {
+    SHORTCUTS[req.body.label] = req.body.command;
+  }
+  // ruleid: js.command-injection
+  execSync(SHORTCUTS[req.body.label]);
+  res.end();
+});
+
+// Literal allow-lists written with comments, across lines or frozen.
+const ARCHIVERS = {
+  zip: 'zip -r', // the default
+  /* streaming */ tar: 'tar -czf',
+};
+const SIGNALS = Object.freeze({ stop: 'SIGTERM', kill: 'SIGKILL' });
+const LEVELS = [
+  'info',
+  'debug', // verbose
+];
+
+// Tables whose strings hold escaped quotes, and nested tables, are not recognised.
+const GREETINGS = { formal: 'echo \'good day\'' };
+const GROUPS = { net: { ip: 'ip addr', routes: 'ip route' } };
+
+app.get('/presets', (req, res) => {
+  // ok: js.command-injection
+  exec(ARCHIVERS[req.query.kind] + ' out.archive data');
+  // ok: js.command-injection
+  exec('kill -s ' + SIGNALS[req.query.sig] + ' 1234');
+  // ok: js.command-injection
+  exec('logger -p user.' + LEVELS[req.query.level] + ' started');
+  // todook: js.command-injection
+  exec(GREETINGS[req.query.style] || 'true');
+  // todook: js.command-injection
+  exec(GROUPS.net[req.query.view] || 'true');
+  res.end();
+});
+
+// A shell program given its command flag runs the next argument as a command line.
+app.get('/script', (req, res) => {
+  // ruleid: js.command-injection
+  spawn('sh', ['-c', req.query.script]);
+  // ruleid: js.command-injection
+  execFileSync('/bin/bash', ['-c', 'echo ' + req.query.msg]);
+  // ok: js.command-injection
+  spawn('sh', ['-c', 'ls -la /srv']);
+  // ok: js.command-injection
+  spawn('sh', ['-c', 'du -sh -- "$1"', 'sh', req.query.folder]);
+  // ruleid: js.command-injection
+  spawn('powershell.exe', ['-NoProfile', '-Command', 'Get-Item ' + req.query.item]);
+  // An argument array built before the call is not followed.
+  const shellArgs = ['-c', req.query.script];
+  // todoruleid: js.command-injection
+  spawn('sh', shellArgs);
+  // ok: js.command-injection
+  spawn('bash', ['./scripts/build.sh', req.query.target]);
+  // ruleid: js.command-injection
+  spawn('bash', ['-lc', 'make ' + req.query.target]);
+  // ok: js.command-injection
+  spawn('bash', ['-l', './scripts/deploy.sh', req.query.target]);
+  res.end();
+});
+
+// Sources are the request block of the SQL rule: a handler is recognised by the name of its
+// second parameter, and a one-parameter callback after a path literal is taken for a route.
+app.get('/archive', (request, out) => {
+  // todoruleid: js.command-injection
+  execSync('zip -r out.zip ' + request.query.dir);
+  out.end();
+});
+
+const http = { get: (path, done) => done({ query: { name: path } }) };
+http.get('/archive/latest', (result) => {
+  // todook: js.command-injection
+  execSync('zip -r latest.zip ' + result.query.name);
+});
+
+// Options built before the call: the shell setting is not followed.
+app.get('/list', (req, res) => {
+  const options = { shell: true };
+  // todoruleid: js.command-injection
+  spawn('ls', [req.query.dir], options);
+  res.end();
+});
+
+// An allow-list check before the call is not recognised as a guard.
+const TOOLS = ['git', 'node'];
+app.get('/which', (req, res) => {
+  if (!TOOLS.includes(req.query.tool)) return res.sendStatus(400);
+  // todook: js.command-injection
+  execSync('which ' + req.query.tool);
+  res.end();
+});
+
+// Look-alikes: exec of regular expressions, SQLite and other objects.
+const Database = require('better-sqlite3');
+const db = new Database('app.db');
+const runner = { exec: (s) => s };
+
+app.post('/other', (req, res) => {
+  // ok: js.command-injection
+  const m = /^(\w+)$/.exec(req.body.name);
+  // ok: js.command-injection
+  db.exec('CREATE TABLE IF NOT EXISTS t (x)');
+  // ok: js.command-injection
+  runner.exec(req.body.name);
+  res.json({ m });
+});
+
+// Functions that are not request handlers: their parameters are no request.
+function archive(job, opts) {
+  // ok: js.command-injection
+  execSync('tar -czf out.tgz ' + job.query.dir + opts);
+}
+
+// Fastify: (request, reply) handlers and handlers that take only the request.
+const fastify = require('fastify')();
+
+fastify.post('/jobs/:name', async (request, reply) => {
+  // ruleid: js.command-injection
+  exec('run-job ' + request.params.name);
+  // ok: js.command-injection
+  execFile('run-job', [request.params.name]);
+  return reply.send({});
+});
+
+fastify.post('/jobs', async (request) => {
+  // ruleid: js.command-injection
+  execSync(`run-job ${request.body.name}`);
+  return {};
+});
+
+module.exports = { app, fastify, archive };

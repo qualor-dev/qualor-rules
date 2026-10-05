@@ -1,0 +1,348 @@
+rules:
+  - id: go.ssrf
+    mode: taint
+    languages: [go]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request decides which server this server sends a request to (the whole
+      URL, or its scheme and host). Keep the scheme and host fixed and put the request data after
+      a path separator (`baseURL + "/items/" + id`, `url.JoinPath(baseURL, id)`), or map the
+      request value to a server from an allow-list.
+    metadata:
+      title: Server-side request to a URL from HTTP request data (Go)
+      cwe: ['CWE-918']
+      owasp: ['A01:2025', 'A10:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [net/http, net/url, encoding/json, gin, echo, chi, gorilla/mux]
+      sources:
+        - https://cwe.mitre.org/data/definitions/918.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+        - https://top10.owasp.org/2025/A01_2025-Broken_Access_Control
+        - https://top10.owasp.org/2021/A10_2021-Server-Side_Request_Forgery_%28SSRF%29
+        - https://pkg.go.dev/net/http#Get
+        - https://pkg.go.dev/net/http#NewRequest
+        - https://pkg.go.dev/net/http#NewRequestWithContext
+        - https://pkg.go.dev/net/http#Client
+        - https://pkg.go.dev/net/url#URL
+        - https://pkg.go.dev/net/url#JoinPath
+        - https://pkg.go.dev/net/url#URL.JoinPath
+        - https://pkg.go.dev/net/url#URL.ResolveReference
+        - https://pkg.go.dev/fmt
+        - https://pkg.go.dev/net/http#Request
+        - https://pkg.go.dev/encoding/json
+        - https://pkg.go.dev/encoding/json#Unmarshal
+        - https://pkg.go.dev/github.com/gin-gonic/gin
+        - https://gin-gonic.com/en/docs/routing/querystring-param/
+        - https://gin-gonic.com/en/docs/binding/binding-and-validation/
+        - https://pkg.go.dev/github.com/labstack/echo/v4
+        - https://pkg.go.dev/github.com/labstack/echo/v4#DefaultBinder
+        - https://echo.labstack.com/guide/request/
+        - https://echo.labstack.com/guide/binding/
+        - https://pkg.go.dev/github.com/go-chi/chi/v5
+        - https://pkg.go.dev/github.com/gorilla/mux
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A check of the parsed host before the call (`u.Hostname() != "..."`) is not followed: the
+    #   URL checked is still reported (`todook:`).
+    # - An allow-list is a map lookup or a switch that yields constants; a package-level map that
+    #   another function fills with request data still counts as an allow-list (`todoruleid:`).
+    # - A fixed origin is a literal or a constant ("https://host/..."), or a base without request
+    #   data followed by a literal that starts with "/" (`base + "/items/" + id`,
+    #   `fmt.Sprintf("%s/items/%s", base, id)`); a base that is itself a concatenation is checked
+    #   as a whole. The request's own path (`r.URL.Path`, `RequestURI()`) after a base, and
+    #   anything after a literal "?" or "#", are clean; a path cut with strings.TrimPrefix or
+    #   kept in a variable first is not (`todook:`).
+    # - A URL assembled in a strings.Builder or bytes.Buffer counts as a whole: a fixed origin
+    #   written first does not make it clean, and a builder holding a path after an origin
+    #   without a separator is reported (`todook:`). fmt.Fprintf into a builder is not followed
+    #   (`todoruleid:`).
+    # - Reverse proxies (net/http/httputil) and other HTTP clients are not followed yet.
+    # Inherited from the request source block (go.sql-injection):
+    # - The Echo instance's binder (`c.Echo().Binder.Bind(&x, c)`) is not a source (`todoruleid:`).
+    # - Numeric fields count as clean only when their type is known in the file: a struct declared
+    #   in another package stays tainted as a whole (`todook:`), and OpenGrep 1.30.0 gives its
+    #   fields the type of same-named fields of structs declared in the file (`todoruleid:`).
+    # - A named numeric type (`type Status int`) stays tainted (`todook:`).
+    options:
+      # A map lookup keyed by request data (an allow-list of servers) yields the map's values.
+      taint_assume_safe_indexes: true
+    pattern-sources:
+      # The request: net/http's *http.Request, and the same request through Gin and Echo.
+      - patterns:
+          - pattern-either:
+              - pattern: '($R : *http.Request).$F'
+              - pattern: '($C : *gin.Context).Request.$F'
+              - pattern: '($C : echo.Context).Request().$F'
+              - pattern: '($C : *echo.Context).Request().$F'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(URL|Form|PostForm|MultipartForm|Header|Body|RequestURI)$
+      - patterns:
+          - pattern-either:
+              - pattern: '($R : *http.Request).$F(...)'
+              - pattern: '($C : *gin.Context).Request.$F(...)'
+              - pattern: '($C : echo.Context).Request().$F(...)'
+              - pattern: '($C : *echo.Context).Request().$F(...)'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(FormValue|PostFormValue|PathValue|Cookie|Cookies|Referer|UserAgent)$
+      - pattern-either:
+          # Route variables of routers built on net/http.
+          - pattern: chi.URLParam(...)
+          - pattern: mux.Vars(...)
+      # Gin: path parameters, query strings, forms, headers and cookies.
+      - patterns:
+          - pattern: '($C : *gin.Context).$M(...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Param|Query|DefaultQuery|GetQuery|QueryArray|GetQueryArray|QueryMap|GetQueryMap|PostForm|DefaultPostForm|GetPostForm|PostFormArray|GetPostFormArray|PostFormMap|GetPostFormMap|GetHeader|Cookie|GetRawData)$
+      # Echo: path parameters, query parameters, form values and cookies.
+      - patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).$M(...)'
+              - pattern: '($C : *echo.Context).$M(...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Param|ParamValues|QueryParam|QueryParams|QueryString|FormValue|FormParams|Cookie|Cookies)$
+      # Gin and Echo binding: the struct the request is bound into.
+      - by-side-effect: true
+        patterns:
+          - pattern: '($C : *gin.Context).$BIND(&$X, ...)'
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(Bind|BindJSON|BindXML|BindQuery|BindYAML|BindTOML|BindHeader|BindUri|BindWith|MustBindWith|ShouldBind|ShouldBindJSON|ShouldBindXML|ShouldBindQuery|ShouldBindYAML|ShouldBindTOML|ShouldBindHeader|ShouldBindUri|ShouldBindWith|ShouldBindBodyWith)$
+          - focus-metavariable: $X
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).Bind(&$X)'
+              - pattern: '($C : *echo.Context).Bind(&$X)'
+          - focus-metavariable: $X
+      - by-side-effect: true
+        patterns:
+          - pattern: echo.$BIND($C, &$X)
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+          - focus-metavariable: $X
+      # Echo's DefaultBinder used directly: a *echo.DefaultBinder value, `new(echo.DefaultBinder)`
+      # or `&echo.DefaultBinder{}`, made in the same function or typed.
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($B : *echo.DefaultBinder).$BIND($C, &$X)'
+              - pattern: '($B : echo.DefaultBinder).$BIND($C, &$X)'
+              - pattern: (&echo.DefaultBinder{}).$BIND($C, &$X)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B := new(echo.DefaultBinder)
+                          ...
+                      - pattern-inside: |
+                          $B := &echo.DefaultBinder{}
+                          ...
+                  - pattern: $B.$BIND($C, &$X)
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+          - focus-metavariable: $X
+      # DefaultBinder.Bind takes the target first in Echo v4 (`Bind(i, c)`).
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($B : *echo.DefaultBinder).Bind(&$X, $C)'
+              - pattern: '($B : echo.DefaultBinder).Bind(&$X, $C)'
+              - pattern: (&echo.DefaultBinder{}).Bind(&$X, $C)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B := new(echo.DefaultBinder)
+                          ...
+                      - pattern-inside: |
+                          $B := &echo.DefaultBinder{}
+                          ...
+                  - pattern: $B.Bind(&$X, $C)
+          - focus-metavariable: $X
+      # The same binders given a pointer made with new(T) or &T{} in the same function, passed
+      # without `&` (Echo's request guide: `u := new(User); c.Bind(u)`).
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $X := new($T)
+                  ...
+              - pattern-inside: |
+                  $X := &$T{...}
+                  ...
+          - pattern-either:
+              - patterns:
+                  - pattern: '($C : *gin.Context).$BIND($X, ...)'
+                  - metavariable-regex:
+                      metavariable: $BIND
+                      regex: ^(Bind|BindJSON|BindXML|BindQuery|BindYAML|BindTOML|BindHeader|BindUri|BindWith|MustBindWith|ShouldBind|ShouldBindJSON|ShouldBindXML|ShouldBindQuery|ShouldBindYAML|ShouldBindTOML|ShouldBindHeader|ShouldBindUri|ShouldBindWith|ShouldBindBodyWith)$
+              - pattern: '($C : echo.Context).Bind($X)'
+              - pattern: '($C : *echo.Context).Bind($X)'
+              - patterns:
+                  - pattern-either:
+                      - pattern: echo.$BIND($C, $X)
+                      - pattern: '($B : *echo.DefaultBinder).$BIND($C, $X)'
+                      - pattern: '($B : echo.DefaultBinder).$BIND($C, $X)'
+                      - pattern: (&echo.DefaultBinder{}).$BIND($C, $X)
+                  - metavariable-regex:
+                      metavariable: $BIND
+                      regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+              - pattern: '($B : *echo.DefaultBinder).Bind($X, $C)'
+              - pattern: '($B : echo.DefaultBinder).Bind($X, $C)'
+              - pattern: (&echo.DefaultBinder{}).Bind($X, $C)
+          - focus-metavariable: $X
+    pattern-propagators:
+      # encoding/json: decoding a tainted body taints the value it fills.
+      - pattern: json.NewDecoder($R).Decode(&$X)
+        from: $R
+        to: $X
+      - pattern: json.Unmarshal($R, &$X)
+        from: $R
+        to: $X
+      # A URL assembled in a strings.Builder or bytes.Buffer.
+      - pattern: '($SB : strings.Builder).$W($X)'
+        from: $X
+        to: $SB
+      - pattern: '($SB : *strings.Builder).$W($X)'
+        from: $X
+        to: $SB
+      - pattern: '($SB : bytes.Buffer).$W($X)'
+        from: $X
+        to: $SB
+      - pattern: '($SB : *bytes.Buffer).$W($X)'
+        from: $X
+        to: $SB
+    pattern-sanitizers:
+      - pattern: strconv.Atoi(...)
+      - pattern: strconv.ParseInt(...)
+      - pattern: strconv.ParseUint(...)
+      - pattern: strconv.ParseFloat(...)
+      - pattern: strconv.ParseBool(...)
+      # A number or boolean (a numeric field of a bound struct, say) cannot name a host. The type
+      # must be known in the file: a struct of another package stays tainted as a whole.
+      - patterns:
+          - pattern: $E
+          - metavariable-type:
+              metavariable: $E
+              types: [int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool]
+      # A url.URL with a fixed host (a literal or a constant).
+      - pattern-either:
+          - pattern: 'url.URL{..., Host: "...", ...}'
+          - pattern: '&url.URL{..., Host: "...", ...}'
+      # Path elements given to JoinPath (net/url: joined to the base's path and cleaned of ./ and
+      # ../), but not the base of url.JoinPath.
+      - patterns:
+          - pattern-not-inside: url.JoinPath(...)
+          - pattern-inside: $U.JoinPath(..., $ELEM, ...)
+          - pattern: $ELEM
+      - patterns:
+          - pattern-inside: url.JoinPath($BASE, ..., $ELEM, ...)
+          - pattern: $ELEM
+      # The path, query or fragment of a url.URL parsed or built in the same function.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $U, $ERR := url.Parse(...)
+                  ...
+              - pattern-inside: |
+                  $U, $ERR = url.Parse(...)
+                  ...
+              - pattern-inside: |
+                  $U := &url.URL{...}
+                  ...
+              - pattern-inside: |
+                  $U := url.URL{...}
+                  ...
+          - pattern-inside: $U.$FIELD = $X
+          - metavariable-regex:
+              metavariable: $FIELD
+              regex: ^(Path|RawPath|RawQuery|Fragment|RawFragment)$
+          - pattern: $X
+      # The request's own path or request URI (net/http: it starts with "/") after a base: the
+      # base decides the scheme and host. A lone "" or "/" in front is not a base.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: '$LEFT + ($R : *http.Request).URL.$PATH'
+              - pattern-inside: '$LEFT + ($R : *http.Request).URL.$PATHFN()'
+              - pattern-inside: '$LEFT + ($R : *http.Request).RequestURI'
+          - pattern-either:
+              - patterns:
+                  - pattern: $R.URL.$PATH
+                  - metavariable-regex:
+                      metavariable: $PATH
+                      regex: ^(Path|RawPath)$
+              - patterns:
+                  - pattern: $R.URL.$PATHFN()
+                  - metavariable-regex:
+                      metavariable: $PATHFN
+                      regex: ^(EscapedPath|RequestURI)$
+              - pattern: $R.RequestURI
+          - metavariable-regex:
+              metavariable: $LEFT
+              regex: ^(?!"/?"$)
+      # A query or fragment: what follows a literal "?" or "#" cannot change the scheme or host.
+      - patterns:
+          - pattern-inside: '"=~/^[?#]/" + $X'
+          - pattern: $X
+    pattern-sinks:
+      - patterns:
+          # The URL of a request: net/http's package functions, NewRequest(WithContext), and the
+          # methods of an *http.Client (typed, http.DefaultClient, or made in the same function).
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: http.$F($URL, ...)
+                  - metavariable-regex:
+                      metavariable: $F
+                      regex: ^(Get|Head|Post|PostForm)$
+              - pattern-inside: http.NewRequest($METHOD, $URL, ...)
+              - pattern-inside: http.NewRequestWithContext($CTX, $METHOD, $URL, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: '($C : *http.Client).$F($URL, ...)'
+                      - pattern-inside: '($C : http.Client).$F($URL, ...)'
+                      - pattern-inside: http.DefaultClient.$F($URL, ...)
+                      - pattern-inside: (&http.Client{...}).$F($URL, ...)
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $C := &http.Client{...}
+                                  ...
+                              - pattern-inside: |
+                                  $C := http.Client{...}
+                                  ...
+                              - pattern-inside: |
+                                  $C = &http.Client{...}
+                                  ...
+                          - pattern-inside: $C.$F($URL, ...)
+                  - metavariable-regex:
+                      metavariable: $F
+                      regex: ^(Get|Head|Post|PostForm)$
+          - pattern-either:
+              # The whole URL, unless it starts with a fixed origin (scheme, host and "/"), or with
+              # a base followed by a literal that starts with "/" (the next branch).
+              - patterns:
+                  - pattern: $URL
+                  - metavariable-regex:
+                      metavariable: $URL
+                      regex: ^(?!"[a-zA-Z][a-zA-Z0-9+.-]*://[^/?#"]+[/?#])(?![^+]*\+\s*"(/(?!/)|[?#]))
+                  - pattern-not: '"=~/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\/?#]+[\/?#]/"'
+                  - pattern-not: '"=~/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\/?#]+[\/?#]/" + $A'
+                  - pattern-not: '"=~/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\/?#]+[\/?#]/" + $A + $B'
+                  - pattern-not: '"=~/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\/?#]+[\/?#]/" + $A + $B + $C'
+                  - pattern-not: 'fmt.Sprintf("=~/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\/?#%]+[\/?#]/", ...)'
+                  - pattern-not: 'fmt.Sprintf("=~/^%[sv]\/(?!\/)/", ...)'
+              # The base before the first "/" literal: it sets the scheme and host.
+              - patterns:
+                  - pattern-either:
+                      - pattern: $BASE + "=~/^(\/(?!\/)|[?#])/"
+                      - pattern: 'fmt.Sprintf("=~/^%[sv]\/(?!\/)/", $BASE, ...)'
+                  - metavariable-regex:
+                      metavariable: $BASE
+                      regex: ^[^+]*$
+                  - focus-metavariable: $BASE

@@ -1,0 +1,303 @@
+rules:
+  - id: go.insecure-cookie
+    languages: [go]
+    severity: INFO
+    message: >-
+      This cookie is set without `Secure` or without `HttpOnly`. Without `Secure` the browser also
+      sends it over plain HTTP, where anyone on the network path can read it; without `HttpOnly`
+      any script on the page, an injected one too, can read it. Review what the cookie holds: a
+      session id, a token or other sensitive data needs both flags (`Secure: true, HttpOnly: true`
+      on the `http.Cookie`; `secure` and `httpOnly` true in Gin's `SetCookie`).
+    metadata:
+      title: Cookie without Secure or HttpOnly (Go)
+      cwe: ['CWE-614', 'CWE-1004']
+      owasp: ['A02:2025', 'A05:2021']
+      kind: hotspot
+      severity: low
+      confidence: high
+      frameworks: [net/http, gin, echo]
+      sources:
+        - https://cwe.mitre.org/data/definitions/614.html
+        - https://cwe.mitre.org/data/definitions/1004.html
+        - https://top10.owasp.org/2025/A02_2025-Security_Misconfiguration/
+        - https://top10.owasp.org/2021/A05_2021-Security_Misconfiguration/
+        - https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html
+        - https://pkg.go.dev/net/http#Cookie
+        - https://pkg.go.dev/net/http#SetCookie
+        - https://pkg.go.dev/github.com/gin-gonic/gin#Context.SetCookie
+        - https://pkg.go.dev/github.com/gin-gonic/gin#Context.SetCookieData
+        - https://github.com/gin-gonic/gin/blob/master/docs/doc.md
+        - https://pkg.go.dev/github.com/labstack/echo/v4#Context
+        - https://pkg.go.dev/github.com/labstack/echo/v5
+        - https://echo.labstack.com/guide/cookies/
+      since: 2026.10.1
+    # A hotspot: what the cookie holds decides whether the missing flag matters. Reported where
+    # the cookie is set: http.SetCookie, Gin's Context.SetCookie and Context.SetCookieData, and
+    # Echo's Context.SetCookie, with the cookie built in the call or in a variable of the same
+    # function (a literal, new(http.Cookie) or `var c http.Cookie`). A flag counts as set when
+    # the literal, or an assignment before the call at any depth (if, else, switch, loop), gives
+    # it any value but the literal false: a value from configuration or from the request is
+    # reviewed where it is decided. A cookie that deletes itself (MaxAge: -1 in the literal or
+    # assigned in the same block before the call, Gin's maxAge -1, or Expires at the epoch,
+    # time.Unix(0, 0)) holds nothing and is not reported; a deletion on one path only (inside an
+    # if or a switch case) leaves a live cookie on the other path and is reported. Echo is bound by
+    # import and type: v4 with echo.Context, v5 with *echo.Context. Test code (*_test.go) is left
+    # out.
+    # Known limits (each has a `todo` line in the test file):
+    # - A cookie built by another function (`http.SetCookie(w, newCookie())`) or passed in as a
+    #   parameter is not followed (`todoruleid:`).
+    # - A Set-Cookie header written by hand (`w.Header().Add("Set-Cookie", ...)`) is not parsed
+    #   (`todoruleid:`).
+    # - A variable reused for a second cookie keeps what its first literal set: flags or a
+    #   deletion there hide an unsafe second cookie (`todoruleid:`).
+    # - A flag set between two calls with the same variable also covers the first call
+    #   (`todoruleid:`).
+    # - A flag set inside a closure defined before the call counts as set, even when the closure
+    #   runs after the call (`todoruleid:`).
+    # - An assignment of false after the literal (`c.Secure = false`) counts as setting the flag
+    #   (`todoruleid:`).
+    # - A local variable holding false (`secure := false; ... Secure: secure`) counts as a
+    #   decided value (`todoruleid:`).
+    # - Flags set by a helper function (`harden(c)`) are not followed, so the cookie is reported
+    #   (`todook:`).
+    # - A cookie deleted with another negative MaxAge than -1, or expired at another past time
+    #   than the epoch, is reported (`todook:`).
+    paths:
+      exclude: ['*_test.go']
+    pattern-either:
+      # The cookie literal in the call.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      import "net/http"
+                      ...
+                  - pattern: http.SetCookie($W, &$CK)
+              - patterns:
+                  - pattern-inside: |
+                      import "github.com/gin-gonic/gin"
+                      ...
+                  - pattern: '($G : *gin.Context).SetCookieData(&$CK)'
+              # Echo v4 (Context is an interface) and v5 (a struct).
+              - patterns:
+                  - pattern-inside: |
+                      import "github.com/labstack/echo/v4"
+                      ...
+                  - pattern: '($E : echo.Context).SetCookie(&$CK)'
+              - patterns:
+                  - pattern-inside: |
+                      import "github.com/labstack/echo/v5"
+                      ...
+                  - pattern: '($E : *echo.Context).SetCookie(&$CK)'
+          - metavariable-pattern:
+              metavariable: $CK
+              patterns:
+                - pattern: http.Cookie{...}
+                - pattern-either:
+                    - pattern: 'http.Cookie{..., Secure: false, ...}'
+                    - pattern: 'http.Cookie{..., HttpOnly: false, ...}'
+                    - patterns:
+                        - pattern: http.Cookie{...}
+                        - pattern-not: 'http.Cookie{..., Secure: $SV, ...}'
+                    - patterns:
+                        - pattern: http.Cookie{...}
+                        - pattern-not: 'http.Cookie{..., HttpOnly: $HV, ...}'
+                - pattern-not: 'http.Cookie{..., MaxAge: -1, ...}'
+                - pattern-not: 'http.Cookie{..., Expires: time.Unix(0, 0), ...}'
+      # The cookie built in a variable before the call.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      import "net/http"
+                      ...
+                  - pattern-either:
+                      - pattern: http.SetCookie($W, $CK)
+                      - pattern: http.SetCookie($W, &$CK)
+              - patterns:
+                  - pattern-inside: |
+                      import "github.com/gin-gonic/gin"
+                      ...
+                  - pattern-either:
+                      - pattern: '($G : *gin.Context).SetCookieData($CK)'
+                      - pattern: '($G : *gin.Context).SetCookieData(&$CK)'
+              - patterns:
+                  - pattern-inside: |
+                      import "github.com/labstack/echo/v4"
+                      ...
+                  - pattern-either:
+                      - pattern: '($E : echo.Context).SetCookie($CK)'
+                      - pattern: '($E : echo.Context).SetCookie(&$CK)'
+              - patterns:
+                  - pattern-inside: |
+                      import "github.com/labstack/echo/v5"
+                      ...
+                  - pattern-either:
+                      - pattern: '($E : *echo.Context).SetCookie($CK)'
+                      - pattern: '($E : *echo.Context).SetCookie(&$CK)'
+          # A cookie that deletes itself: MaxAge -1 in the literal, or assigned in the same block
+          # before the call (a deletion on one path only, inside an if or a switch case, still
+          # leaves a live cookie on the other path).
+          - pattern-not-inside: |
+              $CK.MaxAge = -1
+              ...
+          - pattern-not-inside: |
+              $CK = &http.Cookie{..., MaxAge: -1, ...}
+              ...
+          - pattern-not-inside: |
+              $CK = http.Cookie{..., MaxAge: -1, ...}
+              ...
+          - pattern-not-inside: |
+              $CK = &http.Cookie{..., Expires: time.Unix(0, 0), ...}
+              ...
+          - pattern-not-inside: |
+              $CK = http.Cookie{..., Expires: time.Unix(0, 0), ...}
+              ...
+          - pattern-either:
+              # Secure not set.
+              - patterns:
+                  - pattern-either:
+                      - pattern: $CALL(..., $CK)
+                      - pattern: $CALL(..., &$CK)
+                  - pattern-either:
+                      - pattern-inside: |
+                          $CK = &http.Cookie{..., Secure: false, ...}
+                          ...
+                      - pattern-inside: |
+                          $CK = http.Cookie{..., Secure: false, ...}
+                          ...
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $CK = &http.Cookie{...}
+                                  ...
+                              - pattern-inside: |
+                                  $CK = http.Cookie{...}
+                                  ...
+                          - pattern-not-inside: |
+                              $CK = &http.Cookie{..., Secure: $SV, ...}
+                              ...
+                          - pattern-not-inside: |
+                              $CK = http.Cookie{..., Secure: $SV, ...}
+                              ...
+                      - pattern-inside: |
+                          $CK = new(http.Cookie)
+                          ...
+                      - pattern-inside: |
+                          var $CK http.Cookie
+                          ...
+                  # Secure set before the call, at any depth (if, else, switch, loop).
+                  - pattern-not-inside: |
+                      $CK = $INIT
+                      ...
+                      $CK.Secure = $SV
+                      ...
+                      $CALL(..., <... $CK ...>)
+                  - pattern-not-inside: |
+                      var $CK http.Cookie
+                      ...
+                      $CK.Secure = $SV
+                      ...
+                      $CALL(..., <... $CK ...>)
+                  - pattern-not-inside: |
+                      $CK = $INIT
+                      ...
+                      $CK.Secure, $CK.HttpOnly = $SV, $HV
+                      ...
+                      $CALL(..., <... $CK ...>)
+                  - pattern-not-inside: |
+                      var $CK http.Cookie
+                      ...
+                      $CK.Secure, $CK.HttpOnly = $SV, $HV
+                      ...
+                      $CALL(..., <... $CK ...>)
+                  - pattern-not-inside: |
+                      $CK = $INIT
+                      ...
+                      $CK.HttpOnly, $CK.Secure = $HV, $SV
+                      ...
+                      $CALL(..., <... $CK ...>)
+                  - pattern-not-inside: |
+                      var $CK http.Cookie
+                      ...
+                      $CK.HttpOnly, $CK.Secure = $HV, $SV
+                      ...
+                      $CALL(..., <... $CK ...>)
+              # HttpOnly not set.
+              - patterns:
+                  - pattern-either:
+                      - pattern: $CALL(..., $CK)
+                      - pattern: $CALL(..., &$CK)
+                  - pattern-either:
+                      - pattern-inside: |
+                          $CK = &http.Cookie{..., HttpOnly: false, ...}
+                          ...
+                      - pattern-inside: |
+                          $CK = http.Cookie{..., HttpOnly: false, ...}
+                          ...
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $CK = &http.Cookie{...}
+                                  ...
+                              - pattern-inside: |
+                                  $CK = http.Cookie{...}
+                                  ...
+                          - pattern-not-inside: |
+                              $CK = &http.Cookie{..., HttpOnly: $HV, ...}
+                              ...
+                          - pattern-not-inside: |
+                              $CK = http.Cookie{..., HttpOnly: $HV, ...}
+                              ...
+                      - pattern-inside: |
+                          $CK = new(http.Cookie)
+                          ...
+                      - pattern-inside: |
+                          var $CK http.Cookie
+                          ...
+                  # HttpOnly set before the call, at any depth (if, else, switch, loop).
+                  - pattern-not-inside: |
+                      $CK = $INIT
+                      ...
+                      $CK.HttpOnly = $HV
+                      ...
+                      $CALL(..., <... $CK ...>)
+                  - pattern-not-inside: |
+                      var $CK http.Cookie
+                      ...
+                      $CK.HttpOnly = $HV
+                      ...
+                      $CALL(..., <... $CK ...>)
+                  - pattern-not-inside: |
+                      $CK = $INIT
+                      ...
+                      $CK.Secure, $CK.HttpOnly = $SV, $HV
+                      ...
+                      $CALL(..., <... $CK ...>)
+                  - pattern-not-inside: |
+                      var $CK http.Cookie
+                      ...
+                      $CK.Secure, $CK.HttpOnly = $SV, $HV
+                      ...
+                      $CALL(..., <... $CK ...>)
+                  - pattern-not-inside: |
+                      $CK = $INIT
+                      ...
+                      $CK.HttpOnly, $CK.Secure = $HV, $SV
+                      ...
+                      $CALL(..., <... $CK ...>)
+                  - pattern-not-inside: |
+                      var $CK http.Cookie
+                      ...
+                      $CK.HttpOnly, $CK.Secure = $HV, $SV
+                      ...
+                      $CALL(..., <... $CK ...>)
+      # Gin's SetCookie with a literal false for secure or httpOnly; a negative maxAge deletes.
+      - patterns:
+          - pattern-inside: |
+              import "github.com/gin-gonic/gin"
+              ...
+          - pattern-either:
+              - pattern: '($G : *gin.Context).SetCookie($NAME, $VALUE, $AGE, $PATH, $DOMAIN, false, $HTTPONLY)'
+              - pattern: '($G : *gin.Context).SetCookie($NAME, $VALUE, $AGE, $PATH, $DOMAIN, $SECURE, false)'
+          - pattern-not: '($G : *gin.Context).SetCookie($NAME, $VALUE, -1, $PATH, $DOMAIN, $SECURE, $HTTPONLY)'

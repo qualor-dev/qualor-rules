@@ -1,0 +1,211 @@
+rules:
+  - id: java.sql-injection
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches the text of an SQL statement. Pass it as a bound
+      parameter (a `?` or named placeholder, bound with a PreparedStatement setter, a query
+      argument or setParameter) instead of building the statement text from it.
+    metadata:
+      title: SQL statement built from HTTP request data (Java)
+      cwe: ['CWE-89']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [servlet, spring-mvc, jax-rs, jdbc, spring-jdbc, jpa]
+      sources:
+        - https://cwe.mitre.org/data/definitions/89.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Query_Parameterization_Cheat_Sheet.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.sql/java/sql/Statement.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.sql/java/sql/Connection.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.sql/javax/sql/DataSource.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/servletrequest
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestparam.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-requestmapping.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/modelattrib-method-args.html
+        - https://docs.spring.io/spring-framework/reference/data-access/jdbc/core.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/jdbc/core/JdbcTemplate.html
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/pathparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1
+        - https://jakarta.ee/specifications/persistence/3.1/apidocs/jakarta.persistence/jakarta/persistence/entitymanager
+      since: 2026.10.0
+    # Known limits (each has a `todo` line in the test file):
+    # - A handler parameter without an annotation is not a source: only annotated parameters
+    #   are. That misses a Spring MVC simple-type parameter (`String term`), which Spring binds as
+    #   a request parameter, and the Jakarta REST entity parameter (the request body).
+    # - Only the scalar types listed below count as safe: an enum, a `List<Long>` or an
+    #   `Optional<Long>` parameter is still a source, although it cannot carry SQL.
+    # - A value added to a list (`List.add`) does not make the list tainted: on the OWASP
+    #   Benchmark a propagator for it reported constant elements of the same list as often as
+    #   request data. Map entries are told apart by constant keys.
+    # - Only one method is analysed at a time: a helper method of the same class that returns a
+    #   constant whatever it is given still passes the request data on, and a wrapper class from
+    #   another file that reads the request is not a source.
+    # - JdbcTemplate whose type is not visible (a static field of a class in another file) is a
+    #   sink only when its argument is SQL text: a literal that starts with an SQL statement shape
+    #   (select ... from, insert into, update ... set, delete from, ...), in place or in the
+    #   variable it was assigned to; a query assembled otherwise (a StringBuilder) is missed there.
+    # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
+    #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
+    #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
+    #   and valueOf of an enum from another file still pass the request data on.
+    # - Conditions are not evaluated: a switch over a value computed from constants still counts
+    #   its request-data branch.
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.servlet.ServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.ServletRequest $R).$GET(...)
+              - pattern: (javax.servlet.http.HttpServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.http.HttpServletRequest $R).$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getRequestURL|getPathInfo|getReader|getInputStream|getPart|getParts)$
+      # Spring MVC and Jakarta REST: the controller-method parameters bound from the request
+      # (query, path, matrix, header, cookie, form, body, model attribute). Numbers, booleans,
+      # UUIDs and dates are converted by the framework and cannot carry injected text.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $RET $M(..., @$ANN $T $P, ...) { ... }
+              - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $ANN
+              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+          - pattern: $P
+    pattern-propagators:
+      # SQL text assembled with a StringBuilder or StringBuffer.
+      - pattern: $SB.append($X)
+        from: $X
+        to: $SB
+    pattern-sanitizers:
+      - pattern: Integer.parseInt(...)
+      - pattern: Long.parseLong(...)
+      - pattern: Integer.valueOf(...)
+      - pattern: Long.valueOf(...)
+      # Allow-list lookups yield only values the code holds: Map.of(...) of literals and constants,
+      # in a static final field or in place, looked up with get(key) or getOrDefault(key, a
+      # literal or constant), and constants of an enum declared in this file. A map filled from
+      # request data, or a lookup whose fallback is request data, stays tainted.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final $MT $MAP = $INIT; ... }
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+          - pattern-either:
+              - pattern: $MAP.get($K)
+              - patterns:
+                  - pattern: $MAP.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+      - patterns:
+          - pattern-either:
+              - pattern: $INIT.get($K)
+              - patterns:
+                  - pattern: $INIT.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+      - pattern: Enum.valueOf(...)
+      - pattern: java.lang.Enum.valueOf(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $X { ... enum $E { ... } ... }
+              - pattern-inside: |
+                  class $X { ... }
+                  ...
+                  enum $E { ... }
+              - pattern-inside: |
+                  enum $E { ... }
+                  ...
+                  class $X { ... }
+          - pattern: $E.valueOf(...)
+    pattern-sinks:
+      # JDBC: the SQL text of Statement and Connection (PreparedStatement setters bind values).
+      - patterns:
+          - pattern-either:
+              - pattern: (java.sql.Statement $S).$M($SQL, ...)
+              - pattern: (java.sql.Connection $C).$M($SQL, ...)
+              - pattern: (java.sql.Connection $C).createStatement(...).$M($SQL, ...)
+              # A Statement declared with `var`, from createStatement() in the same method.
+              - patterns:
+                  - pattern-inside: |
+                      $S = (java.sql.Connection $C).createStatement(...);
+                      ...
+                  - pattern: $S.$M($SQL, ...)
+              # A connection declared with `var`, from a DataSource or DriverManager.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $C = (javax.sql.DataSource $DS).getConnection(...);
+                          ...
+                      - pattern-inside: |
+                          $C = java.sql.DriverManager.getConnection(...);
+                          ...
+                  - pattern: $C.$M($SQL, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(execute|executeQuery|executeUpdate|executeLargeUpdate|addBatch|prepareStatement|prepareCall|nativeSQL)$
+          - focus-metavariable: $SQL
+      # Spring JDBC: the SQL text of JdbcTemplate, NamedParameterJdbcTemplate and JdbcClient
+      # (the arguments after it, or param(...), bind values).
+      - patterns:
+          - pattern-either:
+              - pattern: (org.springframework.jdbc.core.JdbcTemplate $T).$M($SQL, ...)
+              - pattern: (org.springframework.jdbc.core.JdbcOperations $T).$M($SQL, ...)
+              - pattern: (org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate $T).$M($SQL, ...)
+              - pattern: (org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations $T).$M($SQL, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(query|queryForObject|queryForList|queryForMap|queryForRowSet|queryForStream|update|batchUpdate|execute)$
+          - focus-metavariable: $SQL
+      # JdbcTemplate reached through a field of a class in another file (its type is unknown here):
+      # only when the argument is SQL text, a literal (or text block) that starts with an SQL
+      # statement (select ... from, insert into, update ... set, delete from, ...), in place or in
+      # the variable it was assigned to.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern: $T.$M($SQL, ...)
+                  - metavariable-regex:
+                      metavariable: $SQL
+                      regex: (?is)^(String\.format\(\s*)?"(""\s*)?\s*(select\b.*\bfrom\b|insert\s+into\b|update\s+\w+\s+set\b|delete\s+from\b|merge\s+into\b|with\s+\w+\s+as\s*\(|call\s+\w|(create|drop|alter|truncate)\s+(table|index|view|schema|sequence)\b)
+              - patterns:
+                  - pattern-inside: |
+                      $SQL = $INIT;
+                      ...
+                  - pattern: $T.$M($SQL, ...)
+                  - metavariable-regex:
+                      metavariable: $INIT
+                      regex: (?is)^(String\.format\(\s*)?"(""\s*)?\s*(select\b.*\bfrom\b|insert\s+into\b|update\s+\w+\s+set\b|delete\s+from\b|merge\s+into\b|with\s+\w+\s+as\s*\(|call\s+\w|(create|drop|alter|truncate)\s+(table|index|view|schema|sequence)\b)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(query|queryForObject|queryForList|queryForMap|queryForRowSet|queryForStream|update|batchUpdate|execute)$
+          - focus-metavariable: $SQL
+      - patterns:
+          - pattern: (org.springframework.jdbc.core.simple.JdbcClient $T).sql($SQL)
+          - focus-metavariable: $SQL
+      # JPA and Hibernate: JPQL/HQL and native SQL text (setParameter binds values).
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.persistence.EntityManager $EM).$M($SQL, ...)
+              - pattern: (jakarta.persistence.EntityManager $EM).$M($SQL, ...)
+              - pattern: (org.hibernate.Session $EM).$M($SQL, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(createQuery|createNativeQuery|createSQLQuery|createSelectionQuery|createMutationQuery)$
+          - focus-metavariable: $SQL

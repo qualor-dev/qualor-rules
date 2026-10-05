@@ -1,0 +1,44 @@
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 22.23.3 }
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: sh tools/install-opengrep.sh
+      - run: npm test
+        env: { OPENGREP: '${{ runner.temp }}/opengrep/opengrep' }
+  # A tag v<version> equal to package.json's version publishes the tarball, its .sha256 and
+  # manifest.json as a GitHub release, after building it twice and comparing the bytes.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: { node-version: 22.23.3 }
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+      - run: |
+          npm run release
+          cp dist/qualor-rules-*.tar.gz "$RUNNER_TEMP/first.tar.gz"
+          npm run release
+          cmp "$RUNNER_TEMP/first.tar.gz" dist/qualor-rules-*.tar.gz
+      - run: gh release create "$GITHUB_REF_NAME" dist/qualor-rules-*.tar.gz dist/qualor-rules-*.tar.gz.sha256 dist/manifest.json --title "$GITHUB_REF_NAME" --notes "qualor-rules $GITHUB_REF_NAME (PolyForm Shield 1.0.0, source-available)"
+        env: { GH_TOKEN: '${{ github.token }}' }

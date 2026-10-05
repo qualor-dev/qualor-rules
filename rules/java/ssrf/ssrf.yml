@@ -1,0 +1,487 @@
+rules:
+  - id: java.ssrf
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request decides the URL the server fetches (its scheme or host, or the
+      whole URL), so a client can make the server call internal services or other hosts. Keep the
+      scheme and host fixed (a constant base URL, a RestClient or WebClient built with a fixed
+      baseUrl, URI template variables for the request data), or check the host against an
+      allow-list before the request is sent.
+    metadata:
+      title: Server-side request to a URL from HTTP request data (Java)
+      cwe: ['CWE-918']
+      owasp: ['A01:2025', 'A10:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [servlet, spring-mvc, jax-rs, java-net, java-net-http, spring-web-client]
+      sources:
+        - https://cwe.mitre.org/data/definitions/918.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/net/URL.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.net.http/java/net/http/HttpRequest.html
+        - https://docs.spring.io/spring-framework/reference/integration/rest-clients.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-uri-building.html
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/servletrequest
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestparam.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-requestmapping.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestbody.html
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/pathparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A handler parameter without an annotation is not a source (the Jakarta REST entity
+    #   parameter, a Spring MVC simple-type parameter), and only the scalar types of the source
+    #   block count as safe: an enum, a `List<Long>` or an `Optional<Long>` parameter is still a
+    #   source, as in java.sql-injection.
+    # - Conditions are not evaluated: a switch over a value computed from constants still counts
+    #   its request-data branch.
+    # - A fixed origin is recognised when the URL text starts with it and a "/", "?" or "#"
+    #   follows the host before any request data: a literal "scheme://host/...", a static final
+    #   String field holding a literal origin or a field set from Spring configuration (@Value)
+    #   followed by such a literal (or a static final origin that ends with one), a format string
+    #   "%s/..." given such a base, URL(scheme, host, file) with literals, URL(literal base,
+    #   literal relative path, query or fragment + data), a UriComponentsBuilder started from a literal or such a base (unless a later call
+    #   sets the host, scheme, port, user info or URI with anything but one literal; chains of up to
+    #   eight calls), or a relative "/path" literal (resolved
+    #   against a RestClient or WebClient baseUrl). A host constant in the middle of the string
+    #   ("https://" + HOST + "/" + path) and URI.resolve on a constant URI are not recognised.
+    # - A UriComponentsBuilder chain from a constant base is recognised up to eight calls; a
+    #   longer chain is reported.
+    # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
+    #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
+    #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
+    #   and valueOf of an enum from another file still pass the request data on.
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.servlet.ServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.ServletRequest $R).$GET(...)
+              - pattern: (javax.servlet.http.HttpServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.http.HttpServletRequest $R).$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getRequestURL|getPathInfo|getReader|getInputStream|getPart|getParts)$
+      # Spring MVC and Jakarta REST: the controller-method parameters bound from the request
+      # (query, path, matrix, header, cookie, form, body, model attribute). Numbers, booleans,
+      # UUIDs and dates are converted by the framework and cannot carry injected text.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $RET $M(..., @$ANN $T $P, ...) { ... }
+              - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $ANN
+              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+          - pattern: $P
+    pattern-propagators:
+      # URL text assembled with a StringBuilder or StringBuffer.
+      - pattern: $SB.append($X)
+        from: $X
+        to: $SB
+    pattern-sanitizers:
+      - pattern: Integer.parseInt(...)
+      - pattern: Long.parseLong(...)
+      - pattern: Integer.valueOf(...)
+      - pattern: Long.valueOf(...)
+      # A URL whose text starts with a fixed origin ("https://host/...") or a relative path
+      # ("/path", resolved against a fixed baseUrl): the request data only reaches the path or
+      # the query.
+      - patterns:
+          - pattern: $A + $B
+          - metavariable-regex:
+              metavariable: $A
+              regex: ^("[A-Za-z][A-Za-z0-9+.-]*://[^/?#"\s]+[/?#]|"/[^/"])
+      - patterns:
+          - pattern: String.format("$FMT", ...)
+          - metavariable-regex:
+              metavariable: $FMT
+              regex: ^([A-Za-z][A-Za-z0-9+.-]*://[^/?#%\s]+[/?#]|/[^/%])
+      # A base URL held in a static final String field (a literal origin) or set from Spring
+      # configuration (@Value), followed by a literal that starts with "/", "?" or "#": the
+      # request data only reaches the path or the query. A base that is followed directly by
+      # request data could still have its host extended ("@evil.example").
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final String $BASE = "$ORIGIN"; ... }
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"]+
+          - pattern-either:
+              - pattern: $BASE + "$S" + $X
+              - pattern: $BASE + "$S" + $X + $Y
+              - pattern: $BASE + "$S" + $X + $Y + $Z
+              - pattern: $BASE + "$S" + $X + $Y + $Z + $W
+          - metavariable-regex:
+              metavariable: $S
+              regex: ^[/?#]
+      - patterns:
+          - pattern-inside: |
+              class $C { ... @Value(...) $T $BASE; ... }
+          - pattern-either:
+              - pattern: $BASE + "$S" + $X
+              - pattern: $BASE + "$S" + $X + $Y
+              - pattern: $BASE + "$S" + $X + $Y + $Z
+              - pattern: $BASE + "$S" + $X + $Y + $Z + $W
+          - metavariable-regex:
+              metavariable: $S
+              regex: ^[/?#]
+      # A static final origin that already ends with "/", "?" or "#" after the host.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final String $BASE = "$ORIGIN"; ... }
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"]+[/?#]
+          - pattern-either:
+              - pattern: $BASE + $X
+              - pattern: $BASE + $X + $Y
+              - pattern: $BASE + $X + $Y + $Z
+              - pattern: $BASE + $X + $Y + $Z + $W
+      # A format string that puts such a base first and a separator right after it.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      class $C { ... static final String $BASE = "$ORIGIN"; ... }
+                  - metavariable-regex:
+                      metavariable: $ORIGIN
+                      regex: ^[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"]+
+              - pattern-inside: |
+                  class $C { ... @Value(...) $T $BASE; ... }
+          - pattern: String.format("$FMT", $BASE, ...)
+          - metavariable-regex:
+              metavariable: $FMT
+              regex: ^%s[/?#]
+      # A UriComponentsBuilder started from such a base, unless a later call sets the scheme,
+      # host, port, user info or the whole URI.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      class $C { ... static final String $BASE = "$ORIGIN"; ... }
+                  - metavariable-regex:
+                      metavariable: $ORIGIN
+                      regex: ^[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"]+
+              - pattern-inside: |
+                  class $C { ... @Value(...) $T $BASE; ... }
+          # Up to eight calls between the factory and the end of the chain, none of which sets the
+          # scheme, host, port, user info or the whole URI.
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern: UriComponentsBuilder.$FROM($BASE).$END(...)
+                      - pattern: org.springframework.web.util.UriComponentsBuilder.$FROM($BASE).$END(...)
+              - patterns:
+                  - pattern-either:
+                      - pattern: UriComponentsBuilder.$FROM($BASE).$M1(...).$END(...)
+                      - pattern: org.springframework.web.util.UriComponentsBuilder.$FROM($BASE).$M1(...).$END(...)
+                  - metavariable-regex:
+                      metavariable: $M1
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+              - patterns:
+                  - pattern-either:
+                      - pattern: UriComponentsBuilder.$FROM($BASE).$M1(...).$M2(...).$END(...)
+                      - pattern: org.springframework.web.util.UriComponentsBuilder.$FROM($BASE).$M1(...).$M2(...).$END(...)
+                  - metavariable-regex:
+                      metavariable: $M1
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M2
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+              - patterns:
+                  - pattern-either:
+                      - pattern: UriComponentsBuilder.$FROM($BASE).$M1(...).$M2(...).$M3(...).$END(...)
+                      - pattern: org.springframework.web.util.UriComponentsBuilder.$FROM($BASE).$M1(...).$M2(...).$M3(...).$END(...)
+                  - metavariable-regex:
+                      metavariable: $M1
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M2
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M3
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+              - patterns:
+                  - pattern-either:
+                      - pattern: UriComponentsBuilder.$FROM($BASE).$M1(...).$M2(...).$M3(...).$M4(...).$END(...)
+                      - pattern: org.springframework.web.util.UriComponentsBuilder.$FROM($BASE).$M1(...).$M2(...).$M3(...).$M4(...).$END(...)
+                  - metavariable-regex:
+                      metavariable: $M1
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M2
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M3
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M4
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+              - patterns:
+                  - pattern-either:
+                      - pattern: UriComponentsBuilder.$FROM($BASE).$M1(...).$M2(...).$M3(...).$M4(...).$M5(...).$END(...)
+                      - pattern: org.springframework.web.util.UriComponentsBuilder.$FROM($BASE).$M1(...).$M2(...).$M3(...).$M4(...).$M5(...).$END(...)
+                  - metavariable-regex:
+                      metavariable: $M1
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M2
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M3
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M4
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M5
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+              - patterns:
+                  - pattern-either:
+                      - pattern: UriComponentsBuilder.$FROM($BASE).$M1(...).$M2(...).$M3(...).$M4(...).$M5(...).$M6(...).$END(...)
+                      - pattern: org.springframework.web.util.UriComponentsBuilder.$FROM($BASE).$M1(...).$M2(...).$M3(...).$M4(...).$M5(...).$M6(...).$END(...)
+                  - metavariable-regex:
+                      metavariable: $M1
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M2
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M3
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M4
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M5
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M6
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+              - patterns:
+                  - pattern-either:
+                      - pattern: UriComponentsBuilder.$FROM($BASE).$M1(...).$M2(...).$M3(...).$M4(...).$M5(...).$M6(...).$M7(...).$END(...)
+                      - pattern: org.springframework.web.util.UriComponentsBuilder.$FROM($BASE).$M1(...).$M2(...).$M3(...).$M4(...).$M5(...).$M6(...).$M7(...).$END(...)
+                  - metavariable-regex:
+                      metavariable: $M1
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M2
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M3
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M4
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M5
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M6
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M7
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+              - patterns:
+                  - pattern-either:
+                      - pattern: UriComponentsBuilder.$FROM($BASE).$M1(...).$M2(...).$M3(...).$M4(...).$M5(...).$M6(...).$M7(...).$M8(...).$END(...)
+                      - pattern: org.springframework.web.util.UriComponentsBuilder.$FROM($BASE).$M1(...).$M2(...).$M3(...).$M4(...).$M5(...).$M6(...).$M7(...).$M8(...).$END(...)
+                  - metavariable-regex:
+                      metavariable: $M1
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M2
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M3
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M4
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M5
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M6
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M7
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+                  - metavariable-regex:
+                      metavariable: $M8
+                      regex: ^(?!(host|scheme|uri|port|userInfo|uriComponents)$)
+          - metavariable-regex:
+              metavariable: $FROM
+              regex: ^(fromHttpUrl|fromUriString)$
+          - metavariable-regex:
+              metavariable: $END
+              regex: ^(toUriString|toUri|build|buildAndExpand)$
+      # URL(protocol, host, file) with a literal protocol and host, and a relative URL resolved
+      # against a literal base URL.
+      - pattern: new URL("...", "...", ...)
+      - pattern: new java.net.URL("...", "...", ...)
+      # An absolute spec ("https://other/") or a network-path spec ("//other/") would replace the
+      # base's host, so the spec must start with a literal relative path ("items/", "/items").
+      - patterns:
+          - pattern-either:
+              - pattern: new URL(new URL("$ORIGIN"), "$REL" + $X)
+              - pattern: new URL(new URL("$ORIGIN"), "$REL" + $X + $Y)
+              - pattern: new URL(new URL("$ORIGIN"), "$REL" + $X + $Y + $Z)
+              - pattern: new java.net.URL(new java.net.URL("$ORIGIN"), "$REL" + $X)
+              - pattern: new java.net.URL(new java.net.URL("$ORIGIN"), "$REL" + $X + $Y)
+              - pattern: new java.net.URL(new java.net.URL("$ORIGIN"), "$REL" + $X + $Y + $Z)
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"]+[/?#]
+          - metavariable-regex:
+              metavariable: $REL
+              regex: ^(/[^/]|[?#]|[^/:?#\\]+[/?#])
+      # A UriComponentsBuilder started from a literal URL, or given a literal scheme and host,
+      # unless a later call sets the scheme, host, port, user info or the whole URI.
+      - patterns:
+          - pattern-either:
+              - pattern: $UB.toUriString()
+              - pattern: $UB.toUri()
+              - pattern: $UB.build(...)
+              - pattern: $UB.buildAndExpand(...)
+          - metavariable-regex:
+              metavariable: $UB
+              regex: (?s)^(?!.*\.\s*(host|scheme|uri|port|userInfo|uriComponents)\s*\((?!\s*"[^"]*"\s*\)))(org\.springframework\.web\.util\.)?UriComponentsBuilder\s*\.\s*((fromHttpUrl|fromUriString)\(\s*"[A-Za-z][A-Za-z0-9+.-]*://[^/?#"{\s]+([/?#][^"]*)?"\s*\)|newInstance\(\)\s*\.\s*scheme\(\s*"[A-Za-z]+"\s*\)\s*\.\s*host\(\s*"[^"{]+"\s*\))
+      # Allow-list lookups yield only values the code holds: Map.of(...) of literals and constants,
+      # in a static final field or in place, looked up with get(key) or getOrDefault(key, a
+      # literal or constant), and constants of an enum declared in this file. A map filled from
+      # request data, or a lookup whose fallback is request data, stays tainted.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final $MT $MAP = $INIT; ... }
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+          - pattern-either:
+              - pattern: $MAP.get($K)
+              - patterns:
+                  - pattern: $MAP.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+      - patterns:
+          - pattern-either:
+              - pattern: $INIT.get($K)
+              - patterns:
+                  - pattern: $INIT.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+      - pattern: Enum.valueOf(...)
+      - pattern: java.lang.Enum.valueOf(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $X { ... enum $E { ... } ... }
+              - pattern-inside: |
+                  class $X { ... }
+                  ...
+                  enum $E { ... }
+              - pattern-inside: |
+                  enum $E { ... }
+                  ...
+                  class $X { ... }
+          - pattern: $E.valueOf(...)
+    pattern-sinks:
+      # java.net.URL: the URL that is opened.
+      - patterns:
+          - pattern-either:
+              - pattern: (java.net.URL $U).$M(...)
+              - patterns:
+                  - pattern: $U.$M(...)
+                  - metavariable-pattern:
+                      metavariable: $U
+                      pattern-either:
+                        - pattern: new URL(...)
+                        - pattern: new java.net.URL(...)
+                        - pattern: $X.toURL()
+              - patterns:
+                  - pattern-inside: |
+                      $U = new URL(...);
+                      ...
+                  - pattern: $U.$M(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(openConnection|openStream|getContent)$
+          - focus-metavariable: $U
+      # java.net.http: the URI of an HttpRequest.
+      - patterns:
+          - pattern-either:
+              - pattern: HttpRequest.newBuilder($URI)
+              - pattern: java.net.http.HttpRequest.newBuilder($URI)
+              - pattern: HttpRequest.newBuilder().uri($URI)
+              - pattern: java.net.http.HttpRequest.newBuilder().uri($URI)
+              - pattern: (java.net.http.HttpRequest.Builder $B).uri($URI)
+              - patterns:
+                  - pattern-inside: |
+                      $B = HttpRequest.newBuilder();
+                      ...
+                  - pattern: $B.uri($URI)
+              # uri(...) later in a builder chain.
+              - patterns:
+                  - pattern: $B.uri($URI)
+                  - metavariable-regex:
+                      metavariable: $B
+                      regex: (?s)^(java\.net\.http\.)?HttpRequest\s*\.\s*newBuilder\(
+          - focus-metavariable: $URI
+      # Spring RestTemplate: the URL argument (URI template variables after it are encoded).
+      - patterns:
+          - pattern-either:
+              - pattern: (org.springframework.web.client.RestTemplate $T).$M($URL, ...)
+              - pattern: (org.springframework.web.client.RestOperations $T).$M($URL, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(getForObject|getForEntity|headForHeaders|postForLocation|postForObject|postForEntity|put|patchForObject|delete|optionsForAllow|exchange|execute)$
+          - focus-metavariable: $URL
+      # Spring RestClient and WebClient: the URI of a request, and a base URL.
+      - patterns:
+          - pattern-either:
+              - pattern: (org.springframework.web.client.RestClient $C).$V(...).uri($URL, ...)
+              - pattern: (org.springframework.web.reactive.function.client.WebClient $C).$V(...).uri($URL, ...)
+              - pattern: RestClient.create().$V(...).uri($URL, ...)
+              - pattern: WebClient.create().$V(...).uri($URL, ...)
+              # A client declared with `var` from its factory or builder.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $C = RestClient.$MAKE(...);
+                          ...
+                      - pattern-inside: |
+                          $C = WebClient.$MAKE(...);
+                          ...
+                      - pattern-inside: |
+                          $C = RestClient.builder(). ... .build();
+                          ...
+                      - pattern-inside: |
+                          $C = WebClient.builder(). ... .build();
+                          ...
+                  - pattern: $C.$V(...).uri($URL, ...)
+          - metavariable-regex:
+              metavariable: $V
+              regex: ^(get|head|post|put|patch|delete|options|method)$
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern-either:
+              - pattern: RestClient.create($URL)
+              - pattern: WebClient.create($URL)
+              - pattern: RestClient.builder().baseUrl($URL)
+              - pattern: WebClient.builder().baseUrl($URL)
+              - pattern: (org.springframework.web.client.RestClient.Builder $B).baseUrl($URL)
+              - pattern: (org.springframework.web.reactive.function.client.WebClient.Builder $B).baseUrl($URL)
+          - focus-metavariable: $URL

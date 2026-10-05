@@ -1,0 +1,862 @@
+rules:
+  - id: python.xss
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request is written into an HTML response without escaping, so a crafted
+      value can run script in the user's browser. Render it through an autoescaping template
+      (`render_template()`, Django `render()`), escape it (`markupsafe.escape()`, `html.escape()`,
+      Django `escape()` or `format_html("...{}...", value)`), or send it as JSON or text/plain;
+      never wrap request data in `Markup()`, `mark_safe()` or `SafeString()`.
+    metadata:
+      title: HTML response built from HTTP request data (Python)
+      cwe: ['CWE-79']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [flask, django, fastapi, starlette, markupsafe, bleach, nh3]
+      sources:
+        - https://cwe.mitre.org/data/definitions/79.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+        - https://top10.owasp.org/2025/A05_2025-Injection
+        - https://top10.owasp.org/2021/A03_2021-Injection
+        - https://flask.palletsprojects.com/en/stable/quickstart/#html-escaping
+        - https://flask.palletsprojects.com/en/stable/quickstart/#about-responses
+        - https://flask.palletsprojects.com/en/stable/templating/
+        - https://flask.palletsprojects.com/en/stable/api/#flask.make_response
+        - https://flask.palletsprojects.com/en/stable/api/#flask.Response
+        - https://markupsafe.palletsprojects.com/en/stable/escaping/
+        - https://docs.python.org/3/library/html.html#html.escape
+        - https://peps.python.org/pep-0008/#constants
+        - https://docs.djangoproject.com/en/stable/ref/utils/#django.utils.html.format_html
+        - https://docs.djangoproject.com/en/stable/ref/utils/#django.utils.safestring.mark_safe
+        - https://docs.djangoproject.com/en/stable/ref/request-response/#httpresponse-objects
+        - https://docs.djangoproject.com/en/stable/topics/http/shortcuts/#render
+        - https://fastapi.tiangolo.com/advanced/custom-response/#htmlresponse
+        - https://starlette.dev/responses/
+        - https://fastapi.tiangolo.com/advanced/templates/
+        - https://docs.djangoproject.com/en/stable/topics/templates/
+        - https://bleach.readthedocs.io/en/latest/clean.html
+        - https://nh3.readthedocs.io/en/latest/
+        - https://flask.palletsprojects.com/en/stable/api/#flask.Request
+        - https://flask.palletsprojects.com/en/stable/quickstart/#variable-rules
+        - https://docs.djangoproject.com/en/stable/ref/request-response/
+        - https://docs.djangoproject.com/en/stable/topics/http/urls/
+        - https://docs.djangoproject.com/en/stable/ref/class-based-views/base/
+        - https://fastapi.tiangolo.com/tutorial/body/
+        - https://fastapi.tiangolo.com/advanced/using-request-directly/
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A Flask view is a function decorated with route()/get()/post()/... in a module that
+    #   imports flask and does not make that decorator's object with FastAPI() or APIRouter().
+    #   Class-based Flask views (MethodView, View.dispatch_request) are not followed.
+    # - A response body must be visibly text: an expression that is not a call (a name, a
+    #   lookup, +, %, an f-string), or str() or a string method (`PAGE.format(body=x)`). A
+    #   helper's return value is not followed, even when the helper builds HTML from request data
+    #   (todoruleid); a call's result kept in a variable and returned whole is still taken for
+    #   text (todook).
+    # - An attribute of an object that a call returned (a row looked up by a request id) is
+    #   taken for stored data, unless the call is a request accessor, a urllib.parse URL parser,
+    #   json.loads(), pydantic validation, or receives request data whole (`Form(request.POST)`,
+    #   `Model(**body)`). A request value that reaches such a call through a variable, or as a
+    #   subscripted value in place (`Comment(text=request.args["t"]).text`), is not seen
+    #   (todoruleid), a deliberate trade-off for ORM lookups by a request id.
+    # - A Flask view returning the request's JSON value whole (`request.json`, `get_json()`, an
+    #   `or {}` default, or a variable assigned from them and returned as it is) is taken for
+    #   JSON; a request whose JSON body is a bare string is not followed.
+    # - OpenGrep does not carry taint through a slice (`request.args["q"][:50]`).
+    # - A response whose content type is changed after it is made (`resp.mimetype =
+    #   "text/plain"`, `resp.headers["Content-Type"] = ...`) is still taken for HTML.
+    # - An allow-list is recognised as a lookup (`.get()` or `[...]`) in a dict literal of literal
+    #   keys and values (also lists or tuples of literals, with comments between the items)
+    #   assigned to an upper-case (constant) name that the module never changes or assigns
+    #   again, with no default or a literal/constant default for get() (an upper-case name
+    #   assigned in the function is not a constant); or as a ternary of constants. A membership
+    #   check (`if x not in ALLOWED: return`) is not, nor is a nested table (todook).
+    # Inherited from the request source block (python.sql-injection), each with a `todook` line:
+    # - A Flask route parameter with a typed converter (`<int:n>`) is still a source.
+    # - A Django URL argument is still a source when its converter (`<int:pk>`, in urls.py) or a
+    #   default value makes it a number.
+    # - A Django-module function whose first parameter is named request is taken for a view: its
+    #   other parameters count as URL arguments, and the request attributes (`headers`, `body`,
+    #   ...) of that parameter count even when it is another library's request object.
+    # - A Flask view parameter annotated int, float or bool is not a source (the FastAPI rule
+    #   below), although Flask passes a str for a rule without a converter (todoruleid).
+    # FastAPI parameters annotated int, float or bool (also `Annotated[int, ...]`), and
+    # dependencies (`= Depends()`, `= Security()`, `Annotated[T, Depends()]` in place or through a
+    # module-level alias) are not sources.
+    pattern-sources:
+      - pattern-either:
+          - pattern: flask.request.args
+          - pattern: flask.request.form
+          - pattern: flask.request.values
+          - pattern: flask.request.headers
+          - pattern: flask.request.cookies
+          - pattern: flask.request.json
+          - pattern: flask.request.get_json(...)
+          - pattern: flask.request.data
+          - pattern: flask.request.get_data(...)
+          - pattern: flask.request.files
+          - pattern: flask.request.view_args
+          - pattern: flask.request.path
+          - pattern: flask.request.full_path
+          - pattern: flask.request.url
+          - pattern: flask.request.query_string
+      # Flask "Variable Rules": the parameters of a view function registered with a URL rule.
+      # FastAPI path operations match too; their parameters annotated int, float or bool are
+      # converted by FastAPI, and those with a Depends()/Security() default are dependencies,
+      # not request data.
+      - patterns:
+          - pattern-inside: |
+              @$APP.$ROUTE(...)
+              def $VIEW(..., $PARAM, ...):
+                ...
+          - metavariable-regex:
+              metavariable: $ROUTE
+              regex: ^(route|get|post|put|patch|delete)$
+          # (A parameter pattern without a type or default also matches a typed one, and one
+          # without a default also matches one with a default.)
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Depends(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Security(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: int, ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: float, ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: bool, ...):
+                ...
+          # The same in FastAPI's Annotated form, written in place or through a module-level
+          # alias (`SettingsDep = Annotated[Settings, Depends(get_settings)]`).
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Depends(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Security(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[int, ...], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[float, ...], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[bool, ...], ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Depends(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Security(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - focus-metavariable: $PARAM
+      # Django, in a module that imports it: the HttpRequest a view receives, the URL arguments
+      # passed to the view after it, and what View.setup() keeps on a class-based view.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      from $DJ import $NAME
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+              - patterns:
+                  - pattern-inside: |
+                      import $DJ
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+          - pattern-either:
+              # The request: the first parameter of a function, the one after self of a method.
+              # The upper-case attributes exist only on Django's HttpRequest; the others count
+              # only on a parameter named request.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW($REQ, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(self, $REQ, ...):
+                            ...
+                  - pattern-either:
+                      - pattern: $REQ.GET
+                      - pattern: $REQ.POST
+                      - pattern: $REQ.COOKIES
+                      - pattern: $REQ.META
+                      - pattern: $REQ.FILES
+                      - patterns:
+                          - pattern-either:
+                              - pattern: $REQ.headers
+                              - pattern: $REQ.body
+                              - pattern: $REQ.path
+                              - pattern: $REQ.path_info
+                              - pattern: $REQ.get_full_path(...)
+                              - pattern: $REQ.get_full_path_info(...)
+                              - pattern: $REQ.build_absolute_uri(...)
+                              - pattern: $REQ.read(...)
+                              - pattern: $REQ.readline(...)
+                              - pattern: $REQ.readlines(...)
+                          - metavariable-regex:
+                              metavariable: $REQ
+                              regex: ^request$
+              # Class-based views: View.setup() keeps the request on self.request and the URL
+              # arguments on self.args and self.kwargs.
+              - patterns:
+                  - pattern-inside: |
+                      class $CLS(...):
+                        ...
+                  - pattern-either:
+                      - pattern: self.request.GET
+                      - pattern: self.request.POST
+                      - pattern: self.request.COOKIES
+                      - pattern: self.request.META
+                      - pattern: self.request.FILES
+                      - pattern: self.request.headers
+                      - pattern: self.request.body
+                      - pattern: self.request.path
+                      - pattern: self.request.path_info
+                      - pattern: self.request.get_full_path(...)
+                      - pattern: self.request.get_full_path_info(...)
+                      - pattern: self.request.build_absolute_uri(...)
+                      - pattern: self.args
+                      - pattern: self.kwargs
+              # URL arguments: the parameters after the request of a function-based view, and of
+              # a class-based view's handler method (dispatch() calls get(), post(), ...).
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW(request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., **$PARAM):
+                            ...
+                      - patterns:
+                          - pattern-inside: |
+                              class $CLS(...):
+                                ...
+                          - pattern-either:
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., $PARAM, ...):
+                                    ...
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., *$PARAM, ...):
+                                    ...
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., **$PARAM):
+                                    ...
+                          - metavariable-regex:
+                              metavariable: $VIEW
+                              regex: ^(get|post|put|patch|delete|head|options|trace|dispatch)$
+                  - focus-metavariable: $PARAM
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+      # An allow-list: a lookup in a dict literal of literal keys and values (strings, numbers,
+      # True/False/None) assigned to an upper-case (constant) name, which the module never
+      # changes (item assignment, update(), setdefault(), |=, assigning the name again). A get()
+      # default must be a literal or a constant too.
+      - patterns:
+          - pattern-inside: |
+              $ALLOWED = $LITERAL
+              ...
+          - metavariable-regex:
+              metavariable: $ALLOWED
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $LITERAL
+              regex: ^\{(\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*:\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*,)*(\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*:\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*)?\s*\}$
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED[$KEY] = $VALUE
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED.update(...)
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED.setdefault(...)
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED |= $VALUE
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED = $OTHER
+              ...
+          - pattern-either:
+              - pattern: $ALLOWED.get($LOOKUP)
+              - pattern: $ALLOWED[$LOOKUP]
+              - patterns:
+                  - pattern: $ALLOWED.get($LOOKUP, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None|[A-Z][A-Z0-9_]*(\[("[^"\\\n]*"|'[^'\\\n]*')\])?)$
+      # An allow-list written as a module table (rule-specific, beside the shared one above): a
+      # dict literal whose keys are literals and whose values are literals or lists/tuples of
+      # literals, with comments allowed between the items, assigned to an upper-case name that
+      # the module never changes or assigns again; a get() default is a literal, a list/tuple of
+      # literals or a module constant; strings may hold backslash escapes.
+      - patterns:
+          - pattern-inside: |
+              $TABLE = $ITEMS
+              ...
+          - metavariable-regex:
+              metavariable: $TABLE
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $ITEMS
+              regex: ^\{(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*)?\}$
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE[$KEY] = $VALUE
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE.update(...)
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE.setdefault(...)
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE |= $VALUE
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE = $OTHER
+              ...
+          - pattern-either:
+              - pattern: $TABLE.get($LOOKUP)
+              - pattern: $TABLE[$LOOKUP]
+              - patterns:
+                  - pattern: $TABLE.get($LOOKUP, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\)|[A-Z][A-Z0-9_]*(\[("[^"\\\n]*"|'[^'\\\n]*')\])?)$
+                  # An upper-case name assigned in the function is a local, not a constant.
+                  - pattern-not-inside: |
+                      def $FUNCTION(...):
+                        ...
+                        $DEFAULT = $ANY
+                        ...
+      - pattern: bool(...)
+      - pattern: len(...)
+      # Escaping, and HTML built by the escaping helpers from a literal format string.
+      - pattern: markupsafe.escape(...)
+      - pattern: markupsafe.escape_silent(...)
+      - pattern: markupsafe.Markup.escape(...)
+      - pattern: html.escape(...)
+      - pattern: django.utils.html.escape(...)
+      - pattern: django.utils.html.conditional_escape(...)
+      - pattern: django.utils.html.format_html("...", ...)
+      - pattern: django.utils.html.format_html_join($SEP, "...", ...)
+      - pattern: markupsafe.Markup("...") % $ARGS
+      - pattern: markupsafe.Markup("...").format(...)
+      # Autoescaping templates, JSON, redirects and files: not an HTML body built from the data.
+      - pattern: flask.render_template(...)
+      - pattern: flask.render_template_string(...)
+      - pattern: flask.stream_template(...)
+      - pattern: flask.stream_template_string(...)
+      - pattern: flask.jsonify(...)
+      - pattern: flask.json.jsonify(...)
+      - pattern: flask.redirect(...)
+      - pattern: werkzeug.utils.redirect(...)
+      - pattern: flask.url_for(...)
+      - pattern: flask.send_file(...)
+      - pattern: flask.send_from_directory(...)
+      - pattern: django.shortcuts.render(...)
+      - pattern: django.template.loader.render_to_string(...)
+      - pattern: django.template.loader.get_template(...).render(...)
+      - pattern: django.template.loader.select_template(...).render(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $TEMPLATE = django.template.loader.get_template(...)
+                  ...
+              - pattern-inside: |
+                  $TEMPLATE = django.template.loader.select_template(...)
+                  ...
+          - pattern: $TEMPLATE.render(...)
+      # An attribute of an object that a call returned (a database row looked up by a request
+      # id, a helper's result), read in place or through a variable assigned (also with :=) in
+      # the function: stored or computed data, not the request's own text. Left out: request
+      # accessors, the URL parsers of urllib.parse, json.loads(), pydantic validation, and calls
+      # that receive request data whole (a form built from `request.POST`, `Model(**body)`).
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      $OBJ = $INIT
+                      ...
+                  - pattern: $OBJ.$ATTR
+              - patterns:
+                  - pattern-inside: |
+                      if <... ($OBJ := $INIT) ...>:
+                        ...
+                      ...
+                  - pattern: $OBJ.$ATTR
+              - pattern: $INIT.$ATTR
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(?!(self\.)?request\b|([\w.]*\.)?(urlparse|urlsplit|urldefrag)\(|json\.loads\(|[\w.]*\.(model_validate|model_validate_json|parse_obj|parse_raw)\(|[\w.]*\.(FILES|POST|GET|COOKIES|META|args|form|files|values|headers|cookies|query_params)\.)[A-Za-z_][\w.]*\((?!(?s:.*)(\b\w+\.(POST|GET|FILES|form|args|values|json|data|query_params)\b(?!\s*[\[.(])|get_json\(|\*\*))
+          - pattern-not-inside: $X.$ATTR(...)
+      # Flask: the request's own JSON value returned whole through a variable, `return data` or
+      # `return data, 201` after `data = request.get_json()` (Flask sends a dict or list as JSON).
+      # Only that returned name is cleared, and not after the variable is assigned again.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $DATA = flask.request.json
+                  ...
+              - pattern-inside: |
+                  $DATA = flask.request.get_json(...)
+                  ...
+              - pattern-inside: |
+                  $DATA = flask.request.json or $DEFAULT
+                  ...
+              - pattern-inside: |
+                  $DATA = flask.request.get_json(...) or $DEFAULT
+                  ...
+          - pattern-not-inside: |
+              $DATA = $JSON
+              ...
+              $DATA = $OTHER
+              ...
+          - pattern-either:
+              - pattern-inside: return $DATA
+              - pattern-inside: return $DATA, ...
+          - pattern: $DATA
+      # HTML sanitisers that keep an allow-list of tags and attributes.
+      - pattern: bleach.clean(...)
+      - pattern: nh3.clean(...)
+    pattern-sinks:
+      # Every response-body sink below takes only a value that is visibly text: an expression
+      # that is not a call (a name, a lookup, +, %, an f-string), or str(...) or a string method
+      # (`"...".format(x)`, `PAGE.replace("{b}", x)`, `request.args.get("q")`). Another call,
+      # such as `user.to_dict()` or a helper's result, is not taken for HTML.
+      #
+      # Flask: the return value of a view (a str is sent as text/html; dicts and lists become
+      # JSON), in a module that imports flask, unless the decorator's object is made by FastAPI.
+      # A response kept in a variable is left to the make_response()/Response() sink.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      from $FL import $NAME
+                      ...
+                  - metavariable-regex:
+                      metavariable: $FL
+                      regex: ^flask(\.|$)
+              - patterns:
+                  - pattern-inside: |
+                      import $FL
+                      ...
+                  - metavariable-regex:
+                      metavariable: $FL
+                      regex: ^flask(\.|$)
+          - pattern-inside: |
+              @$APP.$ROUTE(...)
+              def $VIEW(...):
+                ...
+          - metavariable-regex:
+              metavariable: $ROUTE
+              regex: ^(route|get|post|put|patch|delete)$
+          - pattern-not-inside: |
+              $APP = fastapi.FastAPI(...)
+              ...
+          - pattern-not-inside: |
+              $APP = fastapi.APIRouter(...)
+              ...
+          - pattern-either:
+              - patterns:
+                  - pattern: return $BODY
+                  - pattern-not: return $CALL(...)
+              - patterns:
+                  - pattern: return $BODY
+                  - pattern-either:
+                      - pattern: return str(...)
+                      - patterns:
+                          - pattern: return $TEXT.$METHOD(...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+          - pattern-not: return $B, $STATUS
+          - pattern-not: return $B, $STATUS, $HEADERS
+          - pattern-not: return {...}
+          - pattern-not: return [...]
+          # The request's own JSON value returned whole (Flask sends a dict or list as JSON), in
+          # place or with an `or` default (a variable holding it: see the sanitizers).
+          - pattern-not: return flask.request.json
+          - pattern-not: return flask.request.get_json(...)
+          - pattern-not: return flask.request.json or $DEFAULT
+          - pattern-not: return flask.request.get_json(...) or $DEFAULT
+          - pattern-not: return flask.request.json, ...
+          - pattern-not: return flask.request.get_json(...), ...
+          - pattern-not-inside: |
+              $RESPONSE = flask.make_response(...)
+              ...
+              return $RESPONSE
+          - pattern-not-inside: |
+              $RESPONSE = flask.Response(...)
+              ...
+              return $RESPONSE
+          - focus-metavariable: $BODY
+      # The same for the tuple forms (body, status), (body, headers) and (body, status, headers),
+      # unless the headers give a Content-Type other than HTML.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      from $FL import $NAME
+                      ...
+                  - metavariable-regex:
+                      metavariable: $FL
+                      regex: ^flask(\.|$)
+              - patterns:
+                  - pattern-inside: |
+                      import $FL
+                      ...
+                  - metavariable-regex:
+                      metavariable: $FL
+                      regex: ^flask(\.|$)
+          - pattern-inside: |
+              @$APP.$ROUTE(...)
+              def $VIEW(...):
+                ...
+          - metavariable-regex:
+              metavariable: $ROUTE
+              regex: ^(route|get|post|put|patch|delete)$
+          - pattern-not-inside: |
+              $APP = fastapi.FastAPI(...)
+              ...
+          - pattern-not-inside: |
+              $APP = fastapi.APIRouter(...)
+              ...
+          - pattern-either:
+              - patterns:
+                  - pattern: return $BODY, $STATUS
+                  - pattern-not: return $CALL(...), $STATUS
+              - patterns:
+                  - pattern: return $BODY, $STATUS
+                  - pattern-either:
+                      - pattern: return str(...), $STATUS
+                      - patterns:
+                          - pattern: return $TEXT.$METHOD(...), $STATUS
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+              - patterns:
+                  - pattern: return $BODY, $STATUS, $HEADERS
+                  - pattern-not: return $CALL(...), $STATUS, $HEADERS
+              - patterns:
+                  - pattern: return $BODY, $STATUS, $HEADERS
+                  - pattern-either:
+                      - pattern: return str(...), $STATUS, $HEADERS
+                      - patterns:
+                          - pattern: return $TEXT.$METHOD(...), $STATUS, $HEADERS
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+          - pattern-not: return {...}, ...
+          - pattern-not: return [...], ...
+          # The request's own JSON value returned whole (Flask sends a dict or list as JSON), in
+          # place or with an `or` default (a variable holding it: see the sanitizers).
+          - pattern-not: return flask.request.json
+          - pattern-not: return flask.request.get_json(...)
+          - pattern-not: return flask.request.json or $DEFAULT
+          - pattern-not: return flask.request.get_json(...) or $DEFAULT
+          - pattern-not: return flask.request.json, ...
+          - pattern-not: return flask.request.get_json(...), ...
+          - pattern-not: |
+              return $B, {..., "Content-Type": "=~/^(?![^;]*html)/", ...}
+          - pattern-not: |
+              return $B, $STATUS, {..., "Content-Type": "=~/^(?![^;]*html)/", ...}
+          - focus-metavariable: $BODY
+      # Flask: the body of make_response() and Response() (text/html by default).
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern: flask.make_response($BODY, ...)
+                  - pattern-not: flask.make_response($CALL(...), ...)
+              - patterns:
+                  - pattern: flask.make_response($BODY, ...)
+                  - pattern-either:
+                      - pattern: flask.make_response(str(...), ...)
+                      - patterns:
+                          - pattern: flask.make_response($TEXT.$METHOD(...), ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+              - patterns:
+                  - pattern: flask.Response($BODY, ...)
+                  - pattern-not: flask.Response($CALL(...), ...)
+              - patterns:
+                  - pattern: flask.Response($BODY, ...)
+                  - pattern-either:
+                      - pattern: flask.Response(str(...), ...)
+                      - patterns:
+                          - pattern: flask.Response($TEXT.$METHOD(...), ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+              - patterns:
+                  - pattern: flask.Response(..., response=$BODY, ...)
+                  - pattern-not: flask.Response(..., response=$CALL(...), ...)
+              - patterns:
+                  - pattern: flask.Response(..., response=$BODY, ...)
+                  - pattern-either:
+                      - pattern: flask.Response(..., response=str(...), ...)
+                      - patterns:
+                          - pattern: flask.Response(..., response=$TEXT.$METHOD(...), ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+          - pattern-not: flask.Response(..., mimetype="=~/^(?![^;]*html)/", ...)
+          - pattern-not: flask.Response(..., content_type="=~/^(?![^;]*html)/", ...)
+          - focus-metavariable: $BODY
+      # FastAPI: a path operation declared with response_class=HTMLResponse returns HTML.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  @$APP.$ROUTE(..., response_class=fastapi.responses.HTMLResponse, ...)
+                  def $VIEW(...):
+                    ...
+              - pattern-inside: |
+                  @$APP.$ROUTE(..., response_class=starlette.responses.HTMLResponse, ...)
+                  def $VIEW(...):
+                    ...
+          - pattern-either:
+              - patterns:
+                  - pattern: return $BODY
+                  - pattern-not: return $CALL(...)
+              - patterns:
+                  - pattern: return $BODY
+                  - pattern-either:
+                      - pattern: return str(...)
+                      - patterns:
+                          - pattern: return $TEXT.$METHOD(...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+          - focus-metavariable: $BODY
+      # FastAPI and Starlette responses: HTMLResponse, and Response with an HTML media type.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern: fastapi.responses.HTMLResponse($BODY, ...)
+                  - pattern-not: fastapi.responses.HTMLResponse($CALL(...), ...)
+              - patterns:
+                  - pattern: fastapi.responses.HTMLResponse($BODY, ...)
+                  - pattern-either:
+                      - pattern: fastapi.responses.HTMLResponse(str(...), ...)
+                      - patterns:
+                          - pattern: fastapi.responses.HTMLResponse($TEXT.$METHOD(...), ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+              - patterns:
+                  - pattern: fastapi.responses.HTMLResponse(..., content=$BODY, ...)
+                  - pattern-not: fastapi.responses.HTMLResponse(..., content=$CALL(...), ...)
+              - patterns:
+                  - pattern: fastapi.responses.HTMLResponse(..., content=$BODY, ...)
+                  - pattern-either:
+                      - pattern: fastapi.responses.HTMLResponse(..., content=str(...), ...)
+                      - patterns:
+                          - pattern: fastapi.responses.HTMLResponse(..., content=$TEXT.$METHOD(...), ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+              - patterns:
+                  - pattern: starlette.responses.HTMLResponse($BODY, ...)
+                  - pattern-not: starlette.responses.HTMLResponse($CALL(...), ...)
+              - patterns:
+                  - pattern: starlette.responses.HTMLResponse($BODY, ...)
+                  - pattern-either:
+                      - pattern: starlette.responses.HTMLResponse(str(...), ...)
+                      - patterns:
+                          - pattern: starlette.responses.HTMLResponse($TEXT.$METHOD(...), ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+              - patterns:
+                  - pattern: starlette.responses.HTMLResponse(..., content=$BODY, ...)
+                  - pattern-not: starlette.responses.HTMLResponse(..., content=$CALL(...), ...)
+              - patterns:
+                  - pattern: starlette.responses.HTMLResponse(..., content=$BODY, ...)
+                  - pattern-either:
+                      - pattern: starlette.responses.HTMLResponse(..., content=str(...), ...)
+                      - patterns:
+                          - pattern: starlette.responses.HTMLResponse(..., content=$TEXT.$METHOD(...), ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+              - patterns:
+                  - pattern: fastapi.Response($BODY, ..., media_type="=~/html/", ...)
+                  - pattern-not: fastapi.Response($CALL(...), ..., media_type="=~/html/", ...)
+              - patterns:
+                  - pattern: fastapi.Response($BODY, ..., media_type="=~/html/", ...)
+                  - pattern-either:
+                      - pattern: fastapi.Response(str(...), ..., media_type="=~/html/", ...)
+                      - patterns:
+                          - pattern: fastapi.Response($TEXT.$METHOD(...), ..., media_type="=~/html/", ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+              - patterns:
+                  - pattern: fastapi.Response(..., content=$BODY, ..., media_type="=~/html/", ...)
+                  - pattern-not: fastapi.Response(..., content=$CALL(...), ..., media_type="=~/html/", ...)
+              - patterns:
+                  - pattern: fastapi.Response(..., content=$BODY, ..., media_type="=~/html/", ...)
+                  - pattern-either:
+                      - pattern: fastapi.Response(..., content=str(...), ..., media_type="=~/html/", ...)
+                      - patterns:
+                          - pattern: fastapi.Response(..., content=$TEXT.$METHOD(...), ..., media_type="=~/html/", ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+              - patterns:
+                  - pattern: fastapi.responses.Response($BODY, ..., media_type="=~/html/", ...)
+                  - pattern-not: fastapi.responses.Response($CALL(...), ..., media_type="=~/html/", ...)
+              - patterns:
+                  - pattern: fastapi.responses.Response($BODY, ..., media_type="=~/html/", ...)
+                  - pattern-either:
+                      - pattern: fastapi.responses.Response(str(...), ..., media_type="=~/html/", ...)
+                      - patterns:
+                          - pattern: fastapi.responses.Response($TEXT.$METHOD(...), ..., media_type="=~/html/", ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+              - patterns:
+                  - pattern: fastapi.responses.Response(..., content=$BODY, ..., media_type="=~/html/", ...)
+                  - pattern-not: fastapi.responses.Response(..., content=$CALL(...), ..., media_type="=~/html/", ...)
+              - patterns:
+                  - pattern: fastapi.responses.Response(..., content=$BODY, ..., media_type="=~/html/", ...)
+                  - pattern-either:
+                      - pattern: fastapi.responses.Response(..., content=str(...), ..., media_type="=~/html/", ...)
+                      - patterns:
+                          - pattern: fastapi.responses.Response(..., content=$TEXT.$METHOD(...), ..., media_type="=~/html/", ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+              - patterns:
+                  - pattern: starlette.responses.Response($BODY, ..., media_type="=~/html/", ...)
+                  - pattern-not: starlette.responses.Response($CALL(...), ..., media_type="=~/html/", ...)
+              - patterns:
+                  - pattern: starlette.responses.Response($BODY, ..., media_type="=~/html/", ...)
+                  - pattern-either:
+                      - pattern: starlette.responses.Response(str(...), ..., media_type="=~/html/", ...)
+                      - patterns:
+                          - pattern: starlette.responses.Response($TEXT.$METHOD(...), ..., media_type="=~/html/", ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+              - patterns:
+                  - pattern: starlette.responses.Response(..., content=$BODY, ..., media_type="=~/html/", ...)
+                  - pattern-not: starlette.responses.Response(..., content=$CALL(...), ..., media_type="=~/html/", ...)
+              - patterns:
+                  - pattern: starlette.responses.Response(..., content=$BODY, ..., media_type="=~/html/", ...)
+                  - pattern-either:
+                      - pattern: starlette.responses.Response(..., content=str(...), ..., media_type="=~/html/", ...)
+                      - patterns:
+                          - pattern: starlette.responses.Response(..., content=$TEXT.$METHOD(...), ..., media_type="=~/html/", ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+          - focus-metavariable: $BODY
+      # Django: HttpResponse and its error subclasses send text/html unless content_type says
+      # otherwise; write() adds to such a response.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern: django.http.$RESP($BODY, ...)
+                  - pattern-not: django.http.$RESP($CALL(...), ...)
+              - patterns:
+                  - pattern: django.http.$RESP($BODY, ...)
+                  - pattern-either:
+                      - pattern: django.http.$RESP(str(...), ...)
+                      - patterns:
+                          - pattern: django.http.$RESP($TEXT.$METHOD(...), ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+              - patterns:
+                  - pattern: django.http.$RESP(..., content=$BODY, ...)
+                  - pattern-not: django.http.$RESP(..., content=$CALL(...), ...)
+              - patterns:
+                  - pattern: django.http.$RESP(..., content=$BODY, ...)
+                  - pattern-either:
+                      - pattern: django.http.$RESP(..., content=str(...), ...)
+                      - patterns:
+                          - pattern: django.http.$RESP(..., content=$TEXT.$METHOD(...), ...)
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+          - metavariable-regex:
+              metavariable: $RESP
+              regex: ^HttpResponse(BadRequest|NotFound|Forbidden|Gone|ServerError)?$
+          - pattern-not: django.http.$RESP(..., content_type="=~/^(?![^;]*html)/", ...)
+          - pattern-not: django.http.$RESP($X, "=~/^(?![^;]*html)/", ...)
+          - focus-metavariable: $BODY
+      - patterns:
+          - pattern-inside: |
+              $RESPONSE = django.http.HttpResponse(...)
+              ...
+          - pattern-not-inside: |
+              $RESPONSE = django.http.HttpResponse(..., content_type="=~/^(?![^;]*html)/", ...)
+              ...
+          - pattern-either:
+              - patterns:
+                  - pattern: $RESPONSE.write($BODY)
+                  - pattern-not: $RESPONSE.write($CALL(...))
+              - patterns:
+                  - pattern: $RESPONSE.write($BODY)
+                  - pattern-either:
+                      - pattern: $RESPONSE.write(str(...))
+                      - patterns:
+                          - pattern: $RESPONSE.write($TEXT.$METHOD(...))
+                          - metavariable-regex:
+                              metavariable: $METHOD
+                              regex: ^(format|format_map|join|replace|strip|lstrip|rstrip|lower|upper|title|capitalize|casefold|center|ljust|rjust|zfill|expandtabs|removeprefix|removesuffix|encode|decode|get)$
+          - focus-metavariable: $BODY
+      # Marking text as safe HTML: markupsafe Markup(), Django mark_safe() and SafeString(), and
+      # the format string of format_html()/format_html_join() (their other arguments are escaped).
+      - patterns:
+          - pattern-either:
+              - pattern: markupsafe.Markup($BODY, ...)
+              - pattern: flask.Markup($BODY, ...)
+              - pattern: django.utils.safestring.mark_safe($BODY)
+              - pattern: django.utils.safestring.SafeString($BODY)
+              - pattern: django.utils.html.format_html($BODY, ...)
+              - pattern: django.utils.html.format_html_join($SEP, $BODY, ...)
+          - focus-metavariable: $BODY

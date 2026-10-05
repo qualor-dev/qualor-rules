@@ -1,0 +1,206 @@
+rules:
+  - id: java.template-injection
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request becomes the source text of a template (FreeMarker, Velocity or
+      Thymeleaf; with a file or class-path resolver, the name of the Thymeleaf template), so the
+      request can write template directives and expressions that run on the server. Keep
+      templates in the application (a constant, or a file loaded by name) and pass the request
+      data in the data-model or context (`model.put(...)`, `context.put(...)`,
+      `ctx.setVariable(...)`), where it is only data.
+    metadata:
+      title: Template text built from HTTP request data (Java)
+      cwe: ['CWE-1336', 'CWE-94']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [servlet, spring-mvc, jax-rs, freemarker, velocity, thymeleaf]
+      sources:
+        - https://cwe.mitre.org/data/definitions/1336.html
+        - https://cwe.mitre.org/data/definitions/94.html
+        - https://freemarker.apache.org/docs/api/freemarker/template/Template.html
+        - https://freemarker.apache.org/docs/api/freemarker/cache/StringTemplateLoader.html
+        - https://freemarker.apache.org/docs/app_faq.html#faq_template_uploading_security
+        - https://velocity.apache.org/engine/2.3/apidocs/org/apache/velocity/app/Velocity.html
+        - https://velocity.apache.org/engine/2.3/apidocs/org/apache/velocity/app/VelocityEngine.html
+        - https://velocity.apache.org/engine/2.3/developer-guide.html
+        - https://www.thymeleaf.org/apidocs/thymeleaf/3.1.2.RELEASE/org/thymeleaf/TemplateEngine.html
+        - https://www.thymeleaf.org/doc/tutorials/3.1/thymeleafspring.html
+        - https://www.thymeleaf.org/doc/tutorials/3.1/usingthymeleaf.html
+        - https://www.thymeleaf.org/releasenotes.html
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/servletrequest
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/arguments.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestparam.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestbody.html
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/pathparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A handler parameter without an annotation is not a source (the Jakarta REST entity
+    #   parameter, a Spring MVC simple-type parameter), and only the scalar types of the source
+    #   block count as safe: an enum, a `List<Long>` or an `Optional<Long>` parameter is still a
+    #   source, as in java.sql-injection.
+    # - One method is analysed at a time and conditions are not evaluated: a helper method of the
+    #   same class that returns a constant still passes the request data on, and a switch over a
+    #   constant still counts its request-data branch; a wrapper class that reads the request (in
+    #   this file or another) is not a source.
+    # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
+    #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
+    #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
+    #   and valueOf of an enum from another file still pass the request data on.
+    # - Thymeleaf: the engine's template resolver is not seen. TemplateEngine.process takes template
+    #   text with the default StringTemplateResolver and a template name with a file or class-path
+    #   resolver; a request value is reported in both cases.
+    # - Spring MVC view names are not sinks. A view name with a fragment selector (`::`) is parsed
+    #   as a Thymeleaf fragment expression, but Thymeleaf 3.0.12 and later refuse to execute view
+    #   names found in the URL path or query and evaluate fragment expressions in restricted mode,
+    #   and the view technology that resolves a name is not visible here.
+    # - FreeMarker Template(name, sourceName, reader, cfg): the request source name (only a label in
+    #   error messages) is quiet when the third argument is a Reader or StringReader variable or a
+    #   StringReader, BufferedReader or InputStreamReader created in place; with a reader returned
+    #   by a call the four-argument form cannot be told from Template(name, reader, cfg, encoding),
+    #   and the source name is reported.
+    # - Sandbox settings (a FreeMarker TemplateClassResolver, a Velocity SecureUberspector) do not
+    #   make a request template safe: the FreeMarker FAQ lists the object wrapper, the template
+    #   loader and denial of service as well, so such templates are still reported.
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.servlet.ServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.ServletRequest $R).$GET(...)
+              - pattern: (javax.servlet.http.HttpServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.http.HttpServletRequest $R).$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getRequestURL|getPathInfo|getReader|getInputStream|getPart|getParts)$
+      # Spring MVC and Jakarta REST: the controller-method parameters bound from the request
+      # (query, path, matrix, header, cookie, form, body, model attribute). Numbers, booleans,
+      # UUIDs and dates are converted by the framework and cannot carry injected text.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $RET $M(..., @$ANN $T $P, ...) { ... }
+              - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $ANN
+              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+          - pattern: $P
+      # Spring MVC: an HttpEntity or RequestEntity parameter holds the request body.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  @$MAP
+                  $RET $M(..., $T $P, ...) { ... }
+              - pattern-inside: |
+                  @$MAP(...)
+                  $RET $M(..., $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $MAP
+              regex: ^(\w+\.)*(Get|Post|Put|Delete|Patch|Request)Mapping$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(org\.springframework\.http\.)?(HttpEntity|RequestEntity)\s*<
+          - pattern: $P
+    pattern-propagators:
+      # Template text assembled with a StringBuilder or StringBuffer.
+      - pattern: $SB.append($X)
+        from: $X
+        to: $SB
+      # ... also later in an append chain.
+      - pattern: $SB.append(...). ... .append($X)
+        from: $X
+        to: $SB
+    pattern-sanitizers:
+      - pattern: Integer.parseInt(...)
+      - pattern: Long.parseLong(...)
+      - pattern: Integer.valueOf(...)
+      - pattern: Long.valueOf(...)
+      # Allow-list lookups yield only values the code holds: Map.of(...) of literals and constants,
+      # in a static final field or in place, looked up with get(key) or getOrDefault(key, a
+      # literal or constant), and constants of an enum declared in this file. A map filled from
+      # request data, or a lookup whose fallback is request data, stays tainted.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final $MT $MAP = $INIT; ... }
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+          - pattern-either:
+              - pattern: $MAP.get($K)
+              - patterns:
+                  - pattern: $MAP.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+      - patterns:
+          - pattern-either:
+              - pattern: $INIT.get($K)
+              - patterns:
+                  - pattern: $INIT.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+      - pattern: Enum.valueOf(...)
+      - pattern: java.lang.Enum.valueOf(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $X { ... enum $E { ... } ... }
+              - pattern-inside: |
+                  class $X { ... }
+                  ...
+                  enum $E { ... }
+              - pattern-inside: |
+                  enum $E { ... }
+                  ...
+                  class $X { ... }
+          - pattern: $E.valueOf(...)
+    pattern-sinks:
+      # FreeMarker: the source of a Template (a Reader or a String), and a StringTemplateLoader
+      # entry. Template(name, reader, cfg, encoding) has the reader second;
+      # Template(name, sourceName, reader, cfg, ...) has it third, and its sourceName is only the
+      # name shown in error messages.
+      - patterns:
+          - pattern: new freemarker.template.Template($NAME, $X, $CFG, $ENC)
+          - pattern-not-inside: new freemarker.template.Template($NAME, $X, (java.io.Reader $R), $ENC)
+          - pattern-not-inside: new freemarker.template.Template($NAME, $X, (java.io.StringReader $R), $ENC)
+          - pattern-not-inside: new freemarker.template.Template($NAME, $X, new java.io.BufferedReader(...), $ENC)
+          - pattern-not-inside: new freemarker.template.Template($NAME, $X, new java.io.InputStreamReader(...), $ENC)
+          - focus-metavariable: $X
+      - patterns:
+          - pattern-either:
+              - pattern: new freemarker.template.Template($NAME, $X, $CFG)
+              - pattern: new freemarker.template.Template($NAME, $SOURCE, $X, $CFG, ...)
+              # Typed, in place or declared with `var` (OpenGrep takes the type from the constructor).
+              - pattern: (freemarker.cache.StringTemplateLoader $L).putTemplate($NAME, $X, ...)
+          - focus-metavariable: $X
+      # Velocity: the VTL text (a String or a Reader) given to evaluate; the log tag is a name.
+      - patterns:
+          - pattern-either:
+              - pattern: org.apache.velocity.app.Velocity.evaluate($CTX, $OUT, $TAG, $X)
+              # Typed, in place or declared with `var`.
+              - pattern: (org.apache.velocity.app.VelocityEngine $E).evaluate($CTX, $OUT, $TAG, $X)
+          - focus-metavariable: $X
+      # Thymeleaf: the template (or TemplateSpec) given to process or processThrottled, on an
+      # engine that is typed, created in place or declared with `var`.
+      - patterns:
+          - pattern-either:
+              - pattern: (org.thymeleaf.ITemplateEngine $T).$M($X, ...)
+              - pattern: (org.thymeleaf.TemplateEngine $T).$M($X, ...)
+              - pattern: (org.thymeleaf.spring6.SpringTemplateEngine $T).$M($X, ...)
+              - pattern: (org.thymeleaf.spring5.SpringTemplateEngine $T).$M($X, ...)
+              - pattern: (org.thymeleaf.spring4.SpringTemplateEngine $T).$M($X, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(process|processThrottled)$
+          - focus-metavariable: $X

@@ -1,0 +1,939 @@
+rules:
+  - id: js.ssrf
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request decides which server this server sends a request to: as the whole
+      URL, its scheme or its host (also after an origin without a trailing `/`, where
+      `@evil.example` names another host), the server can be made to call internal services or
+      cloud metadata endpoints. Keep the origin fixed and end it with `/` before any request data
+      (`'https://api.example.com/users/' + id`), give relative paths to a client with a fixed base
+      URL, or map the request value to a URL through an allow-list.
+    metadata:
+      title: Server-side request to a URL from HTTP request data (Node.js)
+      cwe: ['CWE-918']
+      owasp: ['A01:2025', 'A10:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [express, nextjs, fastify, fetch, node-http, axios, got, undici]
+      sources:
+        - https://cwe.mitre.org/data/definitions/918.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
+        - https://top10.owasp.org/2025/A01_2025-Broken_Access_Control
+        - https://nodejs.org/api/globals.html
+        - https://nodejs.org/api/http.html
+        - https://nodejs.org/api/https.html
+        - https://developer.mozilla.org/en-US/docs/Web/API/URL/URL
+        - https://undici.nodejs.org/
+        - https://axios.rest/pages/advanced/request-config
+        - https://github.com/sindresorhus/got/blob/main/documentation/2-options.md
+        - https://expressjs.com/en/4x/api.html#req
+        - https://expressjs.com/en/5x/api.html#req
+        - https://nextjs.org/docs/app/api-reference/file-conventions/route
+        - https://fastify.dev/docs/latest/Reference/Routes/
+        - https://fastify.dev/docs/latest/Reference/Request/
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - An allow-list check on the parsed host before the call (`if (!ALLOWED.has(new
+    #   URL(x).hostname)) return`) is not recognised as a guard; allow-list lookups that yield
+    #   constants are.
+    # - After a start that does not fix the host, the part after it, or after one more constant
+    #   without a separator (`'https://' + HOST + x`), is checked; a second such constant
+    #   (`'https://' + HOST + ':' + x`) hides the request value. Templates: the interpolation
+    #   after the start, or after one interpolation that follows it.
+    # - A URL built in a variable before the call counts as safe when its start is a constant
+    #   that ends with a separator, or a base followed by a string that starts with one: UPPER_CASE
+    #   constants, process.env, this.*, config/settings objects, and identifiers declared const in
+    #   the file from a literal with a host or process.env (with a literal default with a host).
+    #   Other bases are reported, and so is a base whose name the file redeclares with request
+    #   data in a nested block. The separator is '?', '#' or a '/' that is not followed by '/' or
+    #   '\', so `base + '//' + x` is reported even when the base holds a host.
+    # - Concatenations of more than six parts are not split into their parts, so they are not
+    #   reported.
+    # - An allow-list lookup yields constants only in a table declared const in the file with
+    #   literal keys and values (comments allowed, optionally in Object.freeze) that the file never
+    #   writes to; tables with escaped quotes in their strings, nested tables and tables of other
+    #   modules are not recognised, so their lookups are reported.
+    # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
+    #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
+    #   source, and a one-parameter callback given to get/post/... after a path literal (also on
+    #   an HTTP client) is taken for a Fastify route handler.
+    pattern-sources:
+      # Express: the request object, the first parameter of a handler `(req, res, ...)`, carries
+      # the query string, route parameters (`/users/:id`), body, headers, cookies and the URL.
+      # The second parameter's name tells a handler from other two-parameter functions.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|reply|rep|h|ctx|next|_res|_response)$
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Fastify: a handler registered with a route shorthand (`fastify.get('/path', [options],
+      # handler)`) or with `route({ handler })` may take only the request.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: $APP.$ROUTE($PATH, ..., function ($REQ) { ... })
+                  - metavariable-regex:
+                      metavariable: $ROUTE
+                      regex: ^(get|head|post|put|delete|options|patch|all)$
+                  - metavariable-regex:
+                      metavariable: $PATH
+                      regex: ^["'`]/
+              - pattern-inside: '$APP.route({..., handler: function ($REQ) { ... }, ...})'
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Next.js App Router: route handlers are functions named after an HTTP method; the request is
+      # a Web Request (NextRequest) and the context's params hold the dynamic route segments.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern-either:
+              - pattern: $REQ.nextUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.json()
+              - pattern: $REQ.formData()
+              - pattern: $REQ.text()
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, $CTX, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, $CTX, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: $CTX.params
+      - patterns:
+          - pattern-either:
+              - pattern-inside: 'function $METHOD($REQ, {params}, ...) { ... }'
+              - pattern-inside: 'function $METHOD($REQ, {params}: $T, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}: $T, ...) { ... }'
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: params
+    # Values added to an array or a Map make the container carry them.
+    pattern-propagators:
+      - pattern: $LIST.push(..., $X, ...)
+        from: $X
+        to: $LIST
+      - pattern: $LIST.unshift(..., $X, ...)
+        from: $X
+        to: $LIST
+      - pattern: $MAP.set($K, $X)
+        from: $X
+        to: $MAP
+    pattern-sanitizers:
+      - pattern: Number.parseInt(...)
+      - pattern: Number.parseFloat(...)
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      # An allow-list lookup: an index into a const object or array, or get() on a const Map,
+      # declared in the file with literal keys and values only (comments allowed, optionally
+      # wrapped in Object.freeze), and not changed after it.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  const $TABLE = $INIT;
+                  ...
+              - pattern-inside: |
+                  const $TABLE: $TYPE = $INIT;
+                  ...
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: >-
+                ^(?:(?:\{(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\}|\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\]|new\s+Map(?:<[^>]*>)?\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\](?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\])*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\](?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))|Object\.freeze\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:\{(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:[A-Za-z_$][\w$]*|"[^"]*"|'[^']*'|\d+)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\}|\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null))*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\]|new\s+Map(?:<[^>]*>)?\((?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\](?:(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\[(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:"[^"]*"|'[^']*'|`[^`$]*`|-?\d+(?:\.\d+)?|true|false|null)(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\])*(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*(?:,(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*)?\](?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))(?:\s|//[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)*\))(?:\s+as\s+const)?$
+          - pattern-either:
+              - pattern: $TABLE[$KEY]
+              - pattern: $TABLE.get($KEY)
+          # A table the file writes to after its declaration, in any function, is no allow-list.
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE[$K2] = $V2;
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.$PROP = $V2;
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.set(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.push(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.unshift(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              $TABLE.splice(...);
+              ...
+          - pattern-not-inside: |
+              const $TABLE = $DECL;
+              ...
+              Object.assign($TABLE, ...);
+              ...
+      # A URL object made from a constant absolute URL (its base, if any, is then ignored): setting
+      # its query parameters (searchParams) does not change its host. Assigning its host, hostname,
+      # href, protocol or port does.
+      - patterns:
+          - pattern-inside: |
+              $URLOBJ = new URL("$C", ...);
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = new URL("$C", ...);
+              ...
+              $URLOBJ.host = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = new URL("$C", ...);
+              ...
+              $URLOBJ.hostname = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = new URL("$C", ...);
+              ...
+              $URLOBJ.href = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = new URL("$C", ...);
+              ...
+              $URLOBJ.protocol = $V;
+              ...
+          - pattern-not-inside: |
+              $URLOBJ = new URL("$C", ...);
+              ...
+              $URLOBJ.port = $V;
+              ...
+          - metavariable-regex:
+              metavariable: $C
+              regex: ^[a-zA-Z][a-zA-Z0-9+.-]*://[^/?#\\]+
+          - pattern: $URLOBJ
+      # A URL built before the call whose start fixes the host: a constant string that ends with a
+      # path separator after the host, a constant origin or a configuration value (UPPER_CASE
+      # constants, process.env, this.*, config/settings objects) followed by a string that starts
+      # with a path separator.
+      - patterns:
+          - pattern-either:
+              - pattern: '"$U" + $S1'
+              - pattern: '"$U" + $S1 + $S2'
+              - pattern: '"$U" + $S1 + $S2 + $S3'
+              - pattern: '"$U" + $S1 + $S2 + $S3 + $S4'
+              - pattern: '"$U" + $S1 + $S2 + $S3 + $S4 + $S5'
+              - pattern: '`$U${$A}...`'
+          - metavariable-regex:
+              metavariable: $U
+              regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+      - patterns:
+          - pattern-either:
+              - pattern: '"$U" + "$V" + $S1'
+              - pattern: '"$U" + "$V" + $S1 + $S2'
+              - pattern: '"$U" + "$V" + $S1 + $S2 + $S3'
+              - pattern: '"$U" + "$V" + $S1 + $S2 + $S3 + $S4'
+          - metavariable-regex:
+              metavariable: $U
+              regex: ^(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+$
+          - metavariable-regex:
+              metavariable: $V
+              regex: ^(?:/(?![/\\])|[?#])
+      - patterns:
+          - pattern-either:
+              - pattern: '$FIRST + "$V" + $S1'
+              - pattern: '$FIRST + "$V" + $S1 + $S2'
+              - pattern: '$FIRST + "$V" + $S1 + $S2 + $S3'
+              - pattern: '$FIRST + "$V" + $S1 + $S2 + $S3 + $S4'
+          - metavariable-regex:
+              metavariable: $FIRST
+              regex: ^(?:[A-Z][A-Z0-9_]*|process\.env\.\w+|this\.\w+(?:\.\w+)*|\w*(?:[Cc]onfig|[Ss]ettings|[Ee]nv|[Cc]onf|[Cc]fg)\w*(?:\.\w+)+)$
+          - metavariable-pattern:
+              metavariable: $FIRST
+              patterns:
+                - pattern-either:
+                    - patterns:
+                        - pattern: $ANYBASE
+                        - pattern-not: '"$K"'
+                    - patterns:
+                        - pattern: '"$K"'
+                        - metavariable-regex:
+                            metavariable: $K
+                            regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\]+
+          - metavariable-regex:
+              metavariable: $V
+              regex: ^(?:/(?![/\\])|[?#])
+      - patterns:
+          - pattern: '`${$FIRST}...`'
+          - pattern-regex: '\x60\$\{\s*(?:[A-Z][A-Z0-9_]*|process\.env\.\w+|this\.\w+(?:\.\w+)*|\w*(?:[Cc]onfig|[Ss]ettings|[Ee]nv|[Cc]onf|[Cc]fg)\w*(?:\.\w+)+)\s*\}(?:/(?![/\\])|[?#])(?:[^\x60\\]|\\.)*\x60'
+          - metavariable-pattern:
+              metavariable: $FIRST
+              patterns:
+                - pattern-either:
+                    - patterns:
+                        - pattern: $ANYBASE
+                        - pattern-not: '"$K"'
+                    - patterns:
+                        - pattern: '"$K"'
+                        - metavariable-regex:
+                            metavariable: $K
+                            regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\]+
+      # A base declared const in the file from a literal, process.env or process.env with a literal
+      # default, followed by a string that starts with a path separator.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  const $BASE = $INIT;
+                  ...
+              - pattern-inside: |
+                  const $BASE: $TYPE = $INIT;
+                  ...
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(?:process\.env\.\w+|process\.env\[(?:"[^"]*"|'[^']*')\])(?:\s*(?:\|\||\?\?)\s*(?:"[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\"]+[^"\\]*"|'[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\']+[^'\\]*'|`[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\`$]+[^`$\\]*`))?$|^(?:"[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\"]+[^"\\]*"|'[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\']+[^'\\]*'|`[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\`$]+[^`$\\]*`)$
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern: '$BASE + "$V" + $S1'
+                      - pattern: '$BASE + "$V" + $S1 + $S2'
+                      - pattern: '$BASE + "$V" + $S1 + $S2 + $S3'
+                      - pattern: '$BASE + "$V" + $S1 + $S2 + $S3 + $S4'
+                  - metavariable-regex:
+                      metavariable: $V
+                      regex: ^(?:/(?![/\\])|[?#])
+              - patterns:
+                  - pattern: '`${$BASE}...`'
+                  - pattern-regex: '\x60\$\{\s*[A-Za-z_$][\w$]*\s*\}(?:/(?![/\\])|[?#])(?:[^\x60\\]|\\.)*\x60'
+    pattern-sinks:
+      # The URL given to fetch, undici, axios, got and the http/https modules: the parts of it that
+      # decide the scheme and host. Those are the whole value; the start of a concatenation or
+      # template; and the part after it when the start is not a constant that ends with a path
+      # separator after the host (`'https://api.example.com' + x` lets `@evil.example` name the host).
+      - patterns:
+          - pattern-either:
+              # fetch: the global (undici in Node.js).
+              - patterns:
+                  - pattern: $CALL(...)
+                  - metavariable-regex:
+                      metavariable: $CALL
+                      regex: ^(globalThis\.)?fetch$
+              # axios and its instances (axios.create), called directly or through a method.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $MOD = require($M)
+                          ...
+                      - pattern-inside: |
+                          import $MOD from $M;
+                          ...
+                      - pattern-inside: |
+                          import * as $MOD from $M;
+                          ...
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: ^["'`]?axios["'`]?$
+                  - pattern: $CALL(...)
+                  - metavariable-pattern:
+                      metavariable: $CALL
+                      patterns:
+                        - pattern-either:
+                            - pattern: $MOD
+                            - patterns:
+                                - pattern: $MOD.$METHOD
+                                - metavariable-regex:
+                                    metavariable: $METHOD
+                                    regex: ^(get|delete|head|options|post|put|patch|request|postForm|putForm|patchForm)$
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $MOD = require($M)
+                          ...
+                      - pattern-inside: |
+                          import $MOD from $M;
+                          ...
+                      - pattern-inside: |
+                          import * as $MOD from $M;
+                          ...
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: ^["'`]?axios["'`]?$
+                  - pattern-inside: |
+                      $INST = $MOD.create(...)
+                      ...
+                  - pattern: $CALL(...)
+                  - metavariable-pattern:
+                      metavariable: $CALL
+                      patterns:
+                        - pattern-either:
+                            - pattern: $INST
+                            - patterns:
+                                - pattern: $INST.$METHOD
+                                - metavariable-regex:
+                                    metavariable: $METHOD
+                                    regex: ^(get|delete|head|options|post|put|patch|request|postForm|putForm|patchForm)$
+              # got and its instances (got.extend).
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $MOD = require($M)
+                          ...
+                      - pattern-inside: |
+                          import $MOD from $M;
+                          ...
+                      - pattern-inside: |
+                          import * as $MOD from $M;
+                          ...
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: ^["'`]?got["'`]?$
+                  - pattern: $CALL(...)
+                  - metavariable-pattern:
+                      metavariable: $CALL
+                      patterns:
+                        - pattern-either:
+                            - pattern: $MOD
+                            - patterns:
+                                - pattern: $MOD.$METHOD
+                                - metavariable-regex:
+                                    metavariable: $METHOD
+                                    regex: ^(get|post|put|patch|head|delete|stream|paginate)$
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $MOD = require($M)
+                          ...
+                      - pattern-inside: |
+                          import $MOD from $M;
+                          ...
+                      - pattern-inside: |
+                          import * as $MOD from $M;
+                          ...
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: ^["'`]?got["'`]?$
+                  - pattern-inside: |
+                      $INST = $MOD.extend(...)
+                      ...
+                  - pattern: $CALL(...)
+                  - metavariable-pattern:
+                      metavariable: $CALL
+                      patterns:
+                        - pattern-either:
+                            - pattern: $INST
+                            - patterns:
+                                - pattern: $INST.$METHOD
+                                - metavariable-regex:
+                                    metavariable: $METHOD
+                                    regex: ^(get|post|put|patch|head|delete|stream|paginate)$
+              # undici: request, stream, pipeline and fetch.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $MOD = require($M)
+                          ...
+                      - pattern-inside: |
+                          import $MOD from $M;
+                          ...
+                      - pattern-inside: |
+                          import * as $MOD from $M;
+                          ...
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: ^["'`]?undici["'`]?$
+                  - pattern: $CALL(...)
+                  - metavariable-pattern:
+                      metavariable: $CALL
+                      patterns:
+                        - pattern-either:
+                            - patterns:
+                                - pattern: $MOD.$METHOD
+                                - metavariable-regex:
+                                    metavariable: $METHOD
+                                    regex: ^(request|stream|pipeline|fetch)$
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., $FN, ...} = require($M);
+                          ...
+                      - pattern-inside: |
+                          import {..., $FN, ...} from $M;
+                          ...
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: ^["'`]?undici["'`]?$
+                  - metavariable-regex:
+                      metavariable: $FN
+                      regex: ^(request|stream|pipeline|fetch)$
+                  - pattern: $CALL(...)
+                  - metavariable-pattern:
+                      metavariable: $CALL
+                      pattern: $FN
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., $ORIG: $FN, ...} = require($M);
+                          ...
+                      - pattern-inside: |
+                          import {$ORIG as $FN} from $M;
+                          ...
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: ^["'`]?undici["'`]?$
+                  - metavariable-regex:
+                      metavariable: $ORIG
+                      regex: ^(request|stream|pipeline|fetch)$
+                  - pattern: $CALL(...)
+                  - metavariable-pattern:
+                      metavariable: $CALL
+                      pattern: $FN
+              # The http and https modules: get and request.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $MOD = require($M)
+                          ...
+                      - pattern-inside: |
+                          import $MOD from $M;
+                          ...
+                      - pattern-inside: |
+                          import * as $MOD from $M;
+                          ...
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: ^["'`]?(node:)?https?["'`]?$
+                  - pattern: $CALL(...)
+                  - metavariable-pattern:
+                      metavariable: $CALL
+                      patterns:
+                        - pattern-either:
+                            - patterns:
+                                - pattern: $MOD.$METHOD
+                                - metavariable-regex:
+                                    metavariable: $METHOD
+                                    regex: ^(get|request)$
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., $FN, ...} = require($M);
+                          ...
+                      - pattern-inside: |
+                          import {..., $FN, ...} from $M;
+                          ...
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: ^["'`]?(node:)?https?["'`]?$
+                  - metavariable-regex:
+                      metavariable: $FN
+                      regex: ^(get|request)$
+                  - pattern: $CALL(...)
+                  - metavariable-pattern:
+                      metavariable: $CALL
+                      pattern: $FN
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., $ORIG: $FN, ...} = require($M);
+                          ...
+                      - pattern-inside: |
+                          import {$ORIG as $FN} from $M;
+                          ...
+                  - metavariable-regex:
+                      metavariable: $M
+                      regex: ^["'`]?(node:)?https?["'`]?$
+                  - metavariable-regex:
+                      metavariable: $ORIG
+                      regex: ^(get|request)$
+                  - pattern: $CALL(...)
+                  - metavariable-pattern:
+                      metavariable: $CALL
+                      pattern: $FN
+          - pattern-either:
+              # the first argument: the whole value, when it is neither a concatenation nor a template
+              - patterns:
+                  - pattern: '$CALL($PART, ...)'
+                  - pattern-not: '$CALL($X + $Y, ...)'
+                  - pattern-not: '$CALL(`...`, ...)'
+                  - pattern-not: '$CALL({...}, ...)'
+              # the first argument: the first part of a concatenation of k parts (not of k + 1)
+              - patterns:
+                  - pattern: '$CALL($PART + $S1, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2, ...)'
+              - patterns:
+                  - pattern: '$CALL($PART + $S1 + $S2, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3, ...)'
+              - patterns:
+                  - pattern: '$CALL($PART + $S1 + $S2 + $S3, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4, ...)'
+              - patterns:
+                  - pattern: '$CALL($PART + $S1 + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+              - patterns:
+                  - pattern: '$CALL($PART + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+              # the first argument: the second part, after a constant string that does not end with a path
+              # separator after the host
+              - patterns:
+                  - pattern: '$CALL("$U" + $PART, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$CALL("$U" + $PART + $S2, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$CALL("$U" + $PART + $S2 + $S3, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$CALL("$U" + $PART + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$CALL("$U" + $PART + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              # the first argument: the third part, after a constant string and a constant without a path
+              # separator (a scheme, then a constant host name)
+              - patterns:
+                  - pattern: '$CALL("$U" + "$A" + $PART, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$CALL("$U" + "$A" + $PART + $S3, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$CALL("$U" + "$A" + $PART + $S3 + $S4, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$CALL("$U" + "$A" + $PART + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              # the first argument: the third part, after a scheme alone and slashes (with or without host text)
+              - patterns:
+                  - pattern: '$CALL("$U" + "$A" + $PART, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$CALL("$U" + "$A" + $PART + $S3, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$CALL("$U" + "$A" + $PART + $S3 + $S4, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$CALL("$U" + "$A" + $PART + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              # the first argument: the second part, after a start that is not a constant string
+              - patterns:
+                  - pattern: '$CALL($FIRST + $PART, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2, ...)'
+                  - pattern-not: '$CALL("$U" + $S1, ...)'
+              - patterns:
+                  - pattern: '$CALL($FIRST + $PART + $S2, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3, ...)'
+                  - pattern-not: '$CALL("$U" + $S1 + $S2, ...)'
+              - patterns:
+                  - pattern: '$CALL($FIRST + $PART + $S2 + $S3, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4, ...)'
+                  - pattern-not: '$CALL("$U" + $S1 + $S2 + $S3, ...)'
+              - patterns:
+                  - pattern: '$CALL($FIRST + $PART + $S2 + $S3 + $S4, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                  - pattern-not: '$CALL("$U" + $S1 + $S2 + $S3 + $S4, ...)'
+              - patterns:
+                  - pattern: '$CALL($FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...)'
+                  - pattern-not: '$CALL($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                  - pattern-not: '$CALL("$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
+              # the first argument: templates. The first interpolation when the template starts with it, or
+              # when the text before it does not end the host; the second when two start the template
+              # or follow a scheme.
+              - patterns:
+                  - pattern: '$CALL(`${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$CALL(`$H${$PART}...`, ...)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$CALL(`$H${$A}${$PART}...`, ...)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$CALL(`${$P}${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$CALL(`${$P}://${$PART}...`, ...)'
+              - patterns:
+                  - pattern: '$CALL(`${$P}//${$PART}...`, ...)'
+              # the url option of a request object (axios, got): the whole value, when it is neither a concatenation nor a template
+              - patterns:
+                  - pattern: '$CALL({..., url: $PART, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $Y, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: `...`, ...}, ...)'
+              # the url option of a request object (axios, got): the first part of a concatenation of k parts (not of k + 1)
+              - patterns:
+                  - pattern: '$CALL({..., url: $PART + $S1, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2, ...}, ...)'
+              - patterns:
+                  - pattern: '$CALL({..., url: $PART + $S1 + $S2, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3, ...}, ...)'
+              - patterns:
+                  - pattern: '$CALL({..., url: $PART + $S1 + $S2 + $S3, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4, ...}, ...)'
+              - patterns:
+                  - pattern: '$CALL({..., url: $PART + $S1 + $S2 + $S3 + $S4, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...)'
+              - patterns:
+                  - pattern: '$CALL({..., url: $PART + $S1 + $S2 + $S3 + $S4 + $S5, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...)'
+              # the url option of a request object (axios, got): the second part, after a constant string that does not end with a path
+              # separator after the host
+              - patterns:
+                  - pattern: '$CALL({..., url: "$U" + $PART, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$CALL({..., url: "$U" + $PART + $S2, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$CALL({..., url: "$U" + $PART + $S2 + $S3, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$CALL({..., url: "$U" + $PART + $S2 + $S3 + $S4, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$CALL({..., url: "$U" + $PART + $S2 + $S3 + $S4 + $S5, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              # the url option of a request object (axios, got): the third part, after a constant string and a constant without a path
+              # separator (a scheme, then a constant host name)
+              - patterns:
+                  - pattern: '$CALL({..., url: "$U" + "$A" + $PART, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$CALL({..., url: "$U" + "$A" + $PART + $S3, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$CALL({..., url: "$U" + "$A" + $PART + $S3 + $S4, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              - patterns:
+                  - pattern: '$CALL({..., url: "$U" + "$A" + $PART + $S3 + $S4 + $S5, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[^/?#\\]*$
+              # the url option of a request object (axios, got): the third part, after a scheme alone and slashes (with or without host text)
+              - patterns:
+                  - pattern: '$CALL({..., url: "$U" + "$A" + $PART, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$CALL({..., url: "$U" + "$A" + $PART + $S3, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$CALL({..., url: "$U" + "$A" + $PART + $S3 + $S4, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              - patterns:
+                  - pattern: '$CALL({..., url: "$U" + "$A" + $PART + $S3 + $S4 + $S5, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $U
+                      regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:$
+                  - metavariable-regex:
+                      metavariable: $A
+                      regex: ^[/\\]{1,2}[^/?#\\]*$
+              # the url option of a request object (axios, got): the second part, after a start that is not a constant string
+              - patterns:
+                  - pattern: '$CALL({..., url: $FIRST + $PART, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: "$U" + $S1, ...}, ...)'
+              - patterns:
+                  - pattern: '$CALL({..., url: $FIRST + $PART + $S2, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: "$U" + $S1 + $S2, ...}, ...)'
+              - patterns:
+                  - pattern: '$CALL({..., url: $FIRST + $PART + $S2 + $S3, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: "$U" + $S1 + $S2 + $S3, ...}, ...)'
+              - patterns:
+                  - pattern: '$CALL({..., url: $FIRST + $PART + $S2 + $S3 + $S4, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4 + $O5, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: "$U" + $S1 + $S2 + $S3 + $S4, ...}, ...)'
+              - patterns:
+                  - pattern: '$CALL({..., url: $FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...)'
+                  - pattern-not: '$CALL({..., url: "$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...}, ...)'
+              # the url option of a request object (axios, got): templates. The first interpolation when the template starts with it, or
+              # when the text before it does not end the host; the second when two start the template
+              # or follow a scheme.
+              - patterns:
+                  - pattern: '$CALL({..., url: `${$PART}...`, ...}, ...)'
+              - patterns:
+                  - pattern: '$CALL({..., url: `$H${$PART}...`, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$CALL({..., url: `$H${$A}${$PART}...`, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $H
+                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
+              - patterns:
+                  - pattern: '$CALL({..., url: `${$P}${$PART}...`, ...}, ...)'
+              - patterns:
+                  - pattern: '$CALL({..., url: `${$P}://${$PART}...`, ...}, ...)'
+              - patterns:
+                  - pattern: '$CALL({..., url: `${$P}//${$PART}...`, ...}, ...)'
+              # http/https request options: the host.
+              - patterns:
+                  - pattern-either:
+                      - pattern: '$CALL({..., host: $PART, ...}, ...)'
+                      - pattern: '$CALL({..., hostname: $PART, ...}, ...)'
+          - focus-metavariable: $PART

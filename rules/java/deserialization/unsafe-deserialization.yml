@@ -1,0 +1,234 @@
+rules:
+  - id: java.unsafe-deserialization
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request is deserialized with Java serialization (ObjectInputStream,
+      XMLDecoder or a SerializationUtils wrapper), which can create objects of any class on the
+      class path and run their code. Accept a data format such as JSON bound to a fixed type
+      instead; if serialized objects must be read, set an ObjectInputFilter that allows only the
+      expected classes (setObjectInputFilter, before the first read) or use Commons IO
+      ValidatingObjectInputStream with accepted classes. Never give XMLDecoder untrusted input.
+    metadata:
+      title: Java deserialization of HTTP request data
+      cwe: ['CWE-502']
+      owasp: ['A08:2025', 'A08:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [servlet, spring-mvc, jax-rs, java-serialization, xml-decoder]
+      sources:
+        - https://cwe.mitre.org/data/definitions/502.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/io/ObjectInputStream.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/io/ObjectInputFilter.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.desktop/java/beans/XMLDecoder.html
+        - https://commons.apache.org/proper/commons-io/apidocs/org/apache/commons/io/serialization/ValidatingObjectInputStream.html
+        - https://commons.apache.org/proper/commons-lang/apidocs/org/apache/commons/lang3/SerializationUtils.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/util/SerializationUtils.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/arguments.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestbody.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/multipart-forms.html
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/servletrequest
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest
+        - https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A handler parameter without an annotation is not a source, except the raw body (an
+    #   InputStream or Reader parameter of a Spring MVC or Jakarta REST handler, and a Spring
+    #   HttpEntity or RequestEntity parameter): a Spring MVC MultipartFile without @RequestParam
+    #   is missed. Only the scalar types of the source block count as safe: an enum parameter is
+    #   still a source, as in java.sql-injection.
+    # - Only a stream created as ObjectInputStream or XMLDecoder in the same method is followed;
+    #   one opened by a helper method is missed. A named subclass of ObjectInputStream is never
+    #   reported, whether or not its resolveClass checks the class; an anonymous subclass counts
+    #   as safe when its resolveClass throws, even when it throws only for a few named classes
+    #   (a deny-list, which the OWASP cheat sheet advises against).
+    # - A filter is recognised when setObjectInputFilter is called on the stream before the read
+    #   in the same method; a JVM-wide filter (ObjectInputFilter.Config.setSerialFilter, the
+    #   jdk.serialFilter property) is not seen.
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.servlet.ServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.ServletRequest $R).$GET(...)
+              - pattern: (javax.servlet.http.HttpServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.http.HttpServletRequest $R).$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getRequestURL|getPathInfo|getReader|getInputStream|getPart|getParts)$
+      # Spring MVC and Jakarta REST: the controller-method parameters bound from the request
+      # (query, path, matrix, header, cookie, form, body, model attribute). Numbers, booleans,
+      # UUIDs and dates are converted by the framework and cannot carry injected text.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $RET $M(..., @$ANN $T $P, ...) { ... }
+              - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $ANN
+              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+          - pattern: $P
+      # Multipart parts bound with @RequestPart, and the raw request body that Spring MVC and
+      # Jakarta REST hand to an InputStream or Reader parameter of a handler.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $RET $M(..., @RequestPart $T $P, ...) { ... }
+              - pattern-inside: $RET $M(..., @RequestPart(...) $T $P, ...) { ... }
+              - pattern-inside: $RET $M(..., @org.springframework.web.bind.annotation.RequestPart $T $P, ...) { ... }
+              - pattern-inside: $RET $M(..., @org.springframework.web.bind.annotation.RequestPart(...) $T $P, ...) { ... }
+          - pattern: $P
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  @$MAP
+                  $RET $M(..., java.io.InputStream $P, ...) { ... }
+              - pattern-inside: |
+                  @$MAP(...)
+                  $RET $M(..., java.io.InputStream $P, ...) { ... }
+              - pattern-inside: |
+                  @$MAP
+                  $RET $M(..., java.io.Reader $P, ...) { ... }
+              - pattern-inside: |
+                  @$MAP(...)
+                  $RET $M(..., java.io.Reader $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $MAP
+              regex: ^(\w+\.)*((Get|Post|Put|Delete|Patch|Request)Mapping|GET|POST|PUT|DELETE|PATCH)$
+          - pattern: $P
+      # Spring MVC: an HttpEntity or RequestEntity parameter holds the request body.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  @$MAP
+                  $RET $M(..., $T $P, ...) { ... }
+              - pattern-inside: |
+                  @$MAP(...)
+                  $RET $M(..., $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $MAP
+              regex: ^(\w+\.)*(Get|Post|Put|Delete|Patch|Request)Mapping$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(org\.springframework\.http\.)?(HttpEntity|RequestEntity)\s*<
+          - pattern: $P
+    pattern-propagators:
+      # Bytes or text assembled with a StringBuilder or StringBuffer.
+      - pattern: $SB.append($X)
+        from: $X
+        to: $SB
+    pattern-sanitizers:
+      - pattern: Integer.parseInt(...)
+      - pattern: Long.parseLong(...)
+      - pattern: Integer.valueOf(...)
+      - pattern: Long.valueOf(...)
+      # Allow-list lookups yield only values the code holds: Map.of(...) of literals and constants,
+      # in a static final field or in place, looked up with get(key) or getOrDefault(key, a
+      # literal or constant), and constants of an enum declared in this file. A map filled from
+      # request data, or a lookup whose fallback is request data, stays tainted.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final $MT $MAP = $INIT; ... }
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+          - pattern-either:
+              - pattern: $MAP.get($K)
+              - patterns:
+                  - pattern: $MAP.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+      - patterns:
+          - pattern-either:
+              - pattern: $INIT.get($K)
+              - patterns:
+                  - pattern: $INIT.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+      - pattern: Enum.valueOf(...)
+      - pattern: java.lang.Enum.valueOf(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $X { ... enum $E { ... } ... }
+              - pattern-inside: |
+                  class $X { ... }
+                  ...
+                  enum $E { ... }
+              - pattern-inside: |
+                  enum $E { ... }
+                  ...
+                  class $X { ... }
+          - pattern: $E.valueOf(...)
+    pattern-sinks:
+      # ObjectInputStream and XMLDecoder created over request data in the same method: the read.
+      # A filter set with setObjectInputFilter before the read restricts the classes.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $O = new java.io.ObjectInputStream($IN);
+                          ...
+                      - pattern-inside: |
+                          $O = new java.io.ObjectInputStream($IN) { ... };
+                          ...
+                      - pattern-inside: |
+                          try ($OT $O = new java.io.ObjectInputStream($IN)) { ... }
+                      - pattern-inside: |
+                          $O = new java.beans.XMLDecoder($IN, ...);
+                          ...
+                      - pattern-inside: |
+                          try ($OT $O = new java.beans.XMLDecoder($IN, ...)) { ... }
+                  - pattern: $O.$READ()
+              - patterns:
+                  - pattern: $O.$READ()
+                  - pattern-either:
+                      - pattern: new java.io.ObjectInputStream(...).$READ()
+                      - pattern: new java.io.ObjectInputStream(...) { ... }.$READ()
+                      - pattern: new java.beans.XMLDecoder(...).$READ()
+          - metavariable-regex:
+              metavariable: $READ
+              regex: ^(readObject|readUnshared)$
+          # An anonymous subclass whose resolveClass refuses (throws for) classes it does not
+          # expect; one that only picks a class loader still reads any class.
+          - pattern-not-inside: |
+              $O = new java.io.ObjectInputStream(...) {
+                ...
+                $RT resolveClass(...) {
+                  ...
+                  throw $EX;
+                  ...
+                }
+                ...
+              };
+              ...
+          - pattern-not: |
+              new java.io.ObjectInputStream(...) {
+                ...
+                $RT resolveClass(...) {
+                  ...
+                  throw $EX;
+                  ...
+                }
+                ...
+              }.$READ()
+          - pattern-not-inside: |
+              $O.setObjectInputFilter(...);
+              ...
+          - focus-metavariable: $O
+      # Wrappers that deserialize a byte array or stream with ObjectInputStream.
+      - patterns:
+          - pattern-either:
+              - pattern: org.springframework.util.SerializationUtils.deserialize($X)
+              - pattern: org.apache.commons.lang3.SerializationUtils.deserialize($X)
+          - focus-metavariable: $X

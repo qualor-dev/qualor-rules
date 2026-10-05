@@ -1,0 +1,244 @@
+rules:
+  - id: java.path-traversal
+    mode: taint
+    languages: [java]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches a file path (java.io.File, a file stream, Paths.get,
+      Path.of, Path.resolve, an upload's write, a Spring file resource), so `../` or an absolute
+      path can reach files outside the intended directory. Keep only the file name
+      (Path.getFileName(), FilenameUtils.getName()), map the request value to a server-side name
+      or an allow-list, or generate the name; when a path must be built, normalize it and check
+      that it still starts with the base directory.
+    metadata:
+      title: File path built from HTTP request data (Java)
+      cwe: ['CWE-22']
+      owasp: ['A01:2025', 'A01:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [servlet, spring-mvc, jax-rs]
+      sources:
+        - https://cwe.mitre.org/data/definitions/22.html
+        - https://owasp.org/www-community/attacks/Path_Traversal
+        - https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/io/File.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/io/FileInputStream.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Path.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Paths.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Files.html
+        - https://commons.apache.org/proper/commons-io/apidocs/org/apache/commons/io/FilenameUtils.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/multipart/MultipartFile.html
+        - https://docs.spring.io/spring-framework/reference/core/resources.html
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/servletrequest
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/part
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestparam.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-requestmapping.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestbody.html
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/pathparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A handler parameter without an annotation is not a source (the Jakarta REST entity
+    #   parameter, a Spring MVC simple-type parameter), and only the scalar types of the source
+    #   block count as safe: an enum, a `List<Long>` or an `Optional<Long>` parameter is still a
+    #   source, as in java.sql-injection.
+    # - Conditions are not evaluated: a switch over a value computed from constants still counts
+    #   its request-data branch.
+    # - A MultipartFile's original file name is a source wherever the MultipartFile comes from.
+    # - A check after the path is built (normalize() and startsWith(base)) is not seen: the path
+    #   is reported where it is built from request data.
+    # - Paths.get and Path.of are sinks themselves: a path built from request data only to take
+    #   its file name later (in another statement) is reported where it is built.
+    # - One method is analysed at a time and conditions are not evaluated: a helper method of the
+    #   same class that returns a constant still passes the request data on, and a switch over a
+    #   constant still counts its request-data branch.
+    # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
+    #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
+    #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
+    #   and valueOf of an enum from another file still pass the request data on.
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.servlet.ServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.ServletRequest $R).$GET(...)
+              - pattern: (javax.servlet.http.HttpServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.http.HttpServletRequest $R).$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getRequestURL|getPathInfo|getReader|getInputStream|getPart|getParts)$
+      # Spring MVC and Jakarta REST: the controller-method parameters bound from the request
+      # (query, path, matrix, header, cookie, form, body, model attribute). Numbers, booleans,
+      # UUIDs and dates are converted by the framework and cannot carry injected text.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: $RET $M(..., @$ANN $T $P, ...) { ... }
+              - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $ANN
+              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+          - pattern: $P
+      # Uploaded files: the file name the client sent (Spring MultipartFile, Servlet Part).
+      - pattern: (org.springframework.web.multipart.MultipartFile $F).getOriginalFilename()
+      - pattern: (jakarta.servlet.http.Part $F).getSubmittedFileName()
+      - pattern: (javax.servlet.http.Part $F).getSubmittedFileName()
+      - pattern: (Part $F).getSubmittedFileName()
+    pattern-propagators:
+      # Path text assembled with a StringBuilder or StringBuffer.
+      - pattern: $SB.append($X)
+        from: $X
+        to: $SB
+    pattern-sanitizers:
+      - pattern: Integer.parseInt(...)
+      - pattern: Long.parseLong(...)
+      - pattern: Integer.valueOf(...)
+      - pattern: Long.valueOf(...)
+      # Only the last name of the path remains (Path.getFileName on a java.nio.file.Path).
+      - pattern: (java.nio.file.Path $P).getFileName()
+      - pattern: (Path $P).getFileName()
+      - pattern: Paths.get(...).getFileName()
+      - pattern: java.nio.file.Paths.get(...).getFileName()
+      - pattern: Path.of(...).getFileName()
+      - pattern: java.nio.file.Path.of(...).getFileName()
+      - pattern: (java.nio.file.Path $P).resolve(...).getFileName()
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $P = Paths.get(...);
+                  ...
+              - pattern-inside: |
+                  $P = java.nio.file.Paths.get(...);
+                  ...
+              - pattern-inside: |
+                  $P = Path.of(...);
+                  ...
+              - pattern-inside: |
+                  $P = java.nio.file.Path.of(...);
+                  ...
+          - pattern: $P.getFileName()
+      - pattern: (java.io.File $F).getName()
+      - pattern: new File(...).getName()
+      - pattern: new java.io.File(...).getName()
+      - pattern: FilenameUtils.getName(...)
+      - pattern: org.apache.commons.io.FilenameUtils.getName(...)
+      # Allow-list lookups yield only values the code holds: Map.of(...) of literals and constants,
+      # in a static final field or in place, looked up with get(key) or getOrDefault(key, a
+      # literal or constant), and constants of an enum declared in this file. A map filled from
+      # request data, or a lookup whose fallback is request data, stays tainted.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final $MT $MAP = $INIT; ... }
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+          - pattern-either:
+              - pattern: $MAP.get($K)
+              - patterns:
+                  - pattern: $MAP.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+      - patterns:
+          - pattern-either:
+              - pattern: $INIT.get($K)
+              - patterns:
+                  - pattern: $INIT.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+      - pattern: Enum.valueOf(...)
+      - pattern: java.lang.Enum.valueOf(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $X { ... enum $E { ... } ... }
+              - pattern-inside: |
+                  class $X { ... }
+                  ...
+                  enum $E { ... }
+              - pattern-inside: |
+                  enum $E { ... }
+                  ...
+                  class $X { ... }
+          - pattern: $E.valueOf(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              # java.io: files and file streams named by a path string.
+              - pattern: new File($X, ...)
+              - pattern: new java.io.File($X, ...)
+              - pattern: new File($PARENT, $X)
+              - pattern: new java.io.File($PARENT, $X)
+              # java.nio.file: paths from strings, and paths resolved against a base.
+              - pattern: Paths.get(..., $X, ...)
+              - pattern: java.nio.file.Paths.get(..., $X, ...)
+              - pattern: Path.of(..., $X, ...)
+              - pattern: java.nio.file.Path.of(..., $X, ...)
+              - pattern: (java.nio.file.FileSystem $FS).getPath(..., $X, ...)
+              - pattern: FileSystems.getDefault().getPath(..., $X, ...)
+              - pattern: java.nio.file.FileSystems.getDefault().getPath(..., $X, ...)
+              - pattern: (java.nio.file.Path $B).resolve($X)
+              - pattern: (java.nio.file.Path $B).resolveSibling($X)
+              - pattern: Paths.get(...).resolve($X)
+              - pattern: java.nio.file.Paths.get(...).resolve($X)
+              - pattern: Path.of(...).resolve($X)
+              - pattern: java.nio.file.Path.of(...).resolve($X)
+              - pattern: Paths.get(...).resolveSibling($X)
+              - pattern: Path.of(...).resolveSibling($X)
+              # A base path declared with `var` (its type is not seen).
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B = Paths.get(...);
+                          ...
+                      - pattern-inside: |
+                          $B = java.nio.file.Paths.get(...);
+                          ...
+                      - pattern-inside: |
+                          $B = Path.of(...);
+                          ...
+                      - pattern-inside: |
+                          $B = java.nio.file.Path.of(...);
+                          ...
+                  - pattern-either:
+                      - pattern: $B.resolve($X)
+                      - pattern: $B.resolveSibling($X)
+              # Servlet: an upload written under a name.
+              - pattern: (jakarta.servlet.http.Part $PART).write($X)
+              - pattern: (javax.servlet.http.Part $PART).write($X)
+              - pattern: (Part $PART).write($X)
+              # Spring: file resources and resource locations.
+              - pattern: new FileSystemResource($X)
+              - pattern: new org.springframework.core.io.FileSystemResource($X)
+              - pattern: (org.springframework.core.io.ResourceLoader $L).getResource($X)
+              - pattern: (org.springframework.context.ApplicationContext $L).getResource($X)
+          # Only the file name of the path is kept: new File(x).getName(), Paths.get(x).getFileName().
+          - pattern-not-inside: new File(...).getName()
+          - pattern-not-inside: new java.io.File(...).getName()
+          - pattern-not-inside: Paths.get(...).getFileName()
+          - pattern-not-inside: java.nio.file.Paths.get(...).getFileName()
+          - pattern-not-inside: Path.of(...).getFileName()
+          - pattern-not-inside: java.nio.file.Path.of(...).getFileName()
+          - focus-metavariable: $X
+      # java.io file streams named by a path string.
+      - patterns:
+          - pattern: new $STREAM($X, ...)
+          - metavariable-regex:
+              metavariable: $STREAM
+              regex: ^(java.io.)?(FileInputStream|FileOutputStream|FileReader|FileWriter|RandomAccessFile)$
+          # Only the file name of the path is kept: new File(x).getName(), Paths.get(x).getFileName().
+          - pattern-not-inside: new File(...).getName()
+          - pattern-not-inside: new java.io.File(...).getName()
+          - pattern-not-inside: Paths.get(...).getFileName()
+          - pattern-not-inside: java.nio.file.Paths.get(...).getFileName()
+          - pattern-not-inside: Path.of(...).getFileName()
+          - pattern-not-inside: java.nio.file.Path.of(...).getFileName()
+          - focus-metavariable: $X

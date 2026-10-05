@@ -1,0 +1,247 @@
+rules:
+  - id: js.sql-injection
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches the text of an SQL query. Pass it as a bound parameter
+      (`query(text, values)`) instead of building the query string from it; in Sequelize
+      `literal()`, quote values with `sequelize.escape()` or use a `where` condition.
+    metadata:
+      title: SQL query built from HTTP request data (Node.js)
+      cwe: ['CWE-89']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [express, nextjs, fastify, pg, mysql2, knex, sequelize, prisma, typeorm]
+      sources:
+        - https://cwe.mitre.org/data/definitions/89.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+        - https://node-postgres.com/features/queries
+        - https://sidorares.github.io/node-mysql2/docs
+        - https://expressjs.com/en/4x/api.html#req
+        - https://expressjs.com/en/5x/api.html#req
+        - https://nextjs.org/docs/app/api-reference/file-conventions/route
+        - https://nextjs.org/docs/pages/building-your-application/routing/api-routes
+        - https://fastify.dev/docs/latest/Reference/Routes/
+        - https://fastify.dev/docs/latest/Reference/Request/
+        - https://knexjs.org/guide/query-builder.html
+        - https://knexjs.org/guide/raw.html
+        - https://sequelize.org/docs/v6/core-concepts/raw-queries/
+        - https://sequelize.org/docs/v6/core-concepts/model-querying-basics/
+        - https://sequelize.org/api/v6/class/src/sequelize.js~sequelize
+        - https://www.prisma.io/docs/orm/prisma-client/using-raw-sql/raw-queries
+        - https://typeorm.io/docs/query-builder/select-query-builder/
+      since: 2026.10.0
+    # Known limits (each has a `todo` line in the test file):
+    # - query()/execute() on a connection made in another module (`require('./db')`), given query
+    #   text that does not start with an SQL string literal, is not followed. A method named
+    #   query()/execute() is a sink only on a connection made in this file (pg, mysql/mysql2,
+    #   Sequelize, TypeORM) or when the query text is visibly SQL, so that use-case objects,
+    #   GraphQL clients and the like with such methods are not reported.
+    # - Sources are Express-style handlers `(req, res, ...)` (also Fastify `(request, reply)` and
+    #   Next.js Pages Router API routes), Fastify route handlers that take only the request, and
+    #   Next.js App Router route handlers (functions named GET, POST, ... with their context's
+    #   params). NestJS `@Param()`/`@Query()`/`@Body()` parameters and the headers()/cookies()
+    #   functions of next/headers are not.
+    # - A handler is recognised by the name of its second parameter (res, resp, response, reply,
+    #   rep, h, ctx, next, _res, _response): a handler `(request, out)` is not a source.
+    # - Any one-parameter callback given to get/post/put/... after a path literal is taken for a
+    #   Fastify route handler, also on an HTTP client with such methods.
+    pattern-sources:
+      # Express: the request object, the first parameter of a handler `(req, res, ...)`, carries
+      # the query string, route parameters (`/users/:id`), body, headers, cookies and the URL.
+      # The second parameter's name tells a handler from other two-parameter functions.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|reply|rep|h|ctx|next|_res|_response)$
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Fastify: a handler registered with a route shorthand (`fastify.get('/path', [options],
+      # handler)`) or with `route({ handler })` may take only the request.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: $APP.$ROUTE($PATH, ..., function ($REQ) { ... })
+                  - metavariable-regex:
+                      metavariable: $ROUTE
+                      regex: ^(get|head|post|put|delete|options|patch|all)$
+                  - metavariable-regex:
+                      metavariable: $PATH
+                      regex: ^["'`]/
+              - pattern-inside: '$APP.route({..., handler: function ($REQ) { ... }, ...})'
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Next.js App Router: route handlers are functions named after an HTTP method; the request is
+      # a Web Request (NextRequest) and the context's params hold the dynamic route segments.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern-either:
+              - pattern: $REQ.nextUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.json()
+              - pattern: $REQ.formData()
+              - pattern: $REQ.text()
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, $CTX, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, $CTX, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: $CTX.params
+      - patterns:
+          - pattern-either:
+              - pattern-inside: 'function $METHOD($REQ, {params}, ...) { ... }'
+              - pattern-inside: 'function $METHOD($REQ, {params}: $T, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}: $T, ...) { ... }'
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: params
+    pattern-sanitizers:
+      - pattern: Number.parseInt(...)
+      - pattern: Number.parseFloat(...)
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      # Sequelize quotes a value for SQL text with escape().
+      - pattern: sequelize.escape(...)
+      - patterns:
+          - pattern-inside: |
+              $DB = new sequelize.Sequelize(...)
+              ...
+          - pattern: $DB.escape(...)
+    pattern-sinks:
+      # query()/execute() on a connection, pool or client made in this file.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $DB = new pg.Pool(...)
+                  ...
+              - pattern-inside: |
+                  $DB = new pg.Client(...)
+                  ...
+              - pattern-inside: |
+                  $POOL = new pg.Pool(...)
+                  ...
+                  $DB = await $POOL.connect(...)
+                  ...
+              - pattern-inside: |
+                  $DB = $MYSQL.createConnection(...)
+                  ...
+              - pattern-inside: |
+                  $DB = await $MYSQL.createConnection(...)
+                  ...
+              - pattern-inside: |
+                  $DB = $MYSQL.createPool(...)
+                  ...
+              - pattern-inside: |
+                  $POOL = $MYSQL.createPool(...)
+                  ...
+                  $DB = await $POOL.getConnection(...)
+                  ...
+              - pattern-inside: |
+                  $DB = new sequelize.Sequelize(...)
+                  ...
+              - pattern-inside: |
+                  $DB = new typeorm.DataSource(...)
+                  ...
+          - pattern-either:
+              - pattern: $DB.query($SQL, ...)
+              - pattern: $DB.execute($SQL, ...)
+          - pattern-not: $DB.$M({...}, ...)
+          - focus-metavariable: $SQL
+      # query()/execute() on any receiver when the query text is visibly SQL: a string or
+      # template literal that starts with an SQL keyword, in place or assigned to the variable.
+      - patterns:
+          - pattern-either:
+              - pattern: $X.query($SQL, ...)
+              - pattern: $X.execute($SQL, ...)
+          - metavariable-regex:
+              metavariable: $SQL
+              regex: (?i)^["'`]\s*\(?\s*(select|insert|update|delete|replace|merge|upsert|with|create|alter|drop|truncate|pragma|exec|execute|call|explain)\b
+          - focus-metavariable: $SQL
+      - patterns:
+          - pattern-inside: |
+              $SQL = $TEXT
+              ...
+          - metavariable-regex:
+              metavariable: $TEXT
+              regex: (?i)^["'`]\s*\(?\s*(select|insert|update|delete|replace|merge|upsert|with|create|alter|drop|truncate|pragma|exec|execute|call|explain)\b
+          - pattern-either:
+              - pattern: $X.query($SQL, ...)
+              - pattern: $X.execute($SQL, ...)
+          - focus-metavariable: $SQL
+      # The query-config objects of node-postgres (`text`) and mysql2 (`sql`).
+      - patterns:
+          - pattern-either:
+              - pattern: '$X.query({text: $SQL, ...}, ...)'
+              - pattern: '$X.query({sql: $SQL, ...}, ...)'
+              - pattern: '$X.execute({sql: $SQL, ...}, ...)'
+          - focus-metavariable: $SQL
+      # Knex: raw SQL text; the query builder's other methods bind their values.
+      - patterns:
+          - pattern: $K.raw($SQL, ...)
+          - pattern-not: $K.raw({...}, ...)
+          - focus-metavariable: $SQL
+      - patterns:
+          - pattern: $K.$RAW($SQL, ...)
+          - metavariable-regex:
+              metavariable: $RAW
+              regex: ^(whereRaw|orWhereRaw|andWhereRaw|havingRaw|orHavingRaw|orderByRaw|groupByRaw|joinRaw|fromRaw)$
+          - focus-metavariable: $SQL
+      # Prisma: the *Unsafe raw methods take SQL text ($queryRaw as a tagged template binds).
+      - patterns:
+          - pattern-either:
+              - pattern: $P.$queryRawUnsafe($SQL, ...)
+              - pattern: $P.$executeRawUnsafe($SQL, ...)
+          - focus-metavariable: $SQL
+      # Sequelize: literal() puts its text into the query unescaped (where, order, attributes).
+      - patterns:
+          - pattern-either:
+              - pattern: sequelize.literal($SQL)
+              - pattern: sequelize.Sequelize.literal($SQL)
+              - patterns:
+                  - pattern-inside: |
+                      $DB = new sequelize.Sequelize(...)
+                      ...
+                  - pattern: $DB.literal($SQL)
+          - focus-metavariable: $SQL

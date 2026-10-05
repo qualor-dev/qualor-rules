@@ -1,0 +1,155 @@
+rules:
+  - id: go.zip-slip
+    mode: taint
+    languages: [go]
+    severity: ERROR
+    message: >-
+      The name of an archive entry reaches the path of a file or directory that is created, so an
+      entry named `../x` or `/x` (or a link target) can write outside the extraction directory
+      ("zip slip"). Create the files through an `os.Root` opened on that directory (Go 1.24), or
+      skip entries whose name fails `filepath.IsLocal`.
+    metadata:
+      title: Archive entry name used as an extraction path (Go)
+      cwe: ['CWE-22']
+      owasp: ['A01:2025', 'A01:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [archive/zip, archive/tar, os]
+      sources:
+        - https://cwe.mitre.org/data/definitions/22.html
+        - https://go.dev/blog/osroot
+        - https://pkg.go.dev/archive/zip
+        - https://pkg.go.dev/archive/zip#ErrInsecurePath
+        - https://pkg.go.dev/archive/zip#OpenReader
+        - https://pkg.go.dev/archive/zip#NewReader
+        - https://pkg.go.dev/archive/zip#FileHeader
+        - https://pkg.go.dev/archive/zip#Reader.Open
+        - https://pkg.go.dev/archive/tar
+        - https://pkg.go.dev/archive/tar#Reader.Next
+        - https://pkg.go.dev/archive/tar#Header
+        - https://pkg.go.dev/os
+        - https://pkg.go.dev/os#Root
+        - https://pkg.go.dev/os#OpenInRoot
+        - https://pkg.go.dev/os#CopyFS
+        - https://pkg.go.dev/io/fs#FileInfo
+        - https://pkg.go.dev/path/filepath#IsLocal
+        - https://pkg.go.dev/path/filepath#Localize
+        - https://pkg.go.dev/path/filepath#Base
+        - https://pkg.go.dev/path/filepath#Clean
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - A prefix check on the joined path (`strings.HasPrefix(target, dst+sep)`) is not followed:
+    #   no official doc describes it, and without the trailing separator it lets a sibling
+    #   directory through (`todook:`).
+    # - `path.Base` splits on "/" only, so it is not a sanitizer (safe on Unix, `todook:`);
+    #   `filepath.Clean("/" + name)` drops leading ".." elements but is not one either (`todook:`).
+    # - IsLocal checks the rule does not follow (`todook:`): one joined with other conditions
+    #   (`if !filepath.IsLocal(n) || ...`), one in the if's init statement (`if ok := ...; !ok`), a
+    #   guard body of more than three statements, and the true branch of an if that has an else.
+    #   A guard that leaves only on some paths, and the else branch, stay reported (`ruleid:`).
+    # - Ad hoc string checks (`strings.Contains(name, "..")`) are not followed: no official doc
+    #   describes them, and ".." alone does not cover an absolute name used without a join
+    #   (`todook:`).
+    # - ErrInsecurePath is returned only when GODEBUG zipinsecurepath=0 (or tarinsecurepath=0) is
+    #   set, which the rule cannot see: a program built that way stays reported (`todook:`).
+    # - os.Chmod, Chtimes, Chown and Lchown on the entry's path are not sinks; the creation of the
+    #   file is (`todoruleid:`).
+    pattern-sources:
+      # The standard library only (archive/zip, archive/tar), not other archive libraries.
+      # archive/zip: the entries of a reader, typed or opened in the same function, and an entry
+      # or header given by type.
+      - pattern-either:
+          - pattern: '($R : *zip.Reader).File'
+          - pattern: '($R : *zip.ReadCloser).File'
+          - pattern: '($F : *zip.File).Name'
+          - pattern: '($F : *zip.File).FileHeader.Name'
+          - pattern: '($H : *zip.FileHeader).Name'
+          - pattern: '($H : zip.FileHeader).Name'
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $R, $E := zip.OpenReader(...)
+                  ...
+              - pattern-inside: |
+                  $R, $E := zip.NewReader(...)
+                  ...
+          - pattern: $R.File
+      # archive/tar: the header returned by Next (its Name and Linkname), and a header by type.
+      - pattern-either:
+          - pattern: '($T : *tar.Reader).Next()'
+          - pattern: '($H : *tar.Header).Name'
+          - pattern: '($H : *tar.Header).Linkname'
+          - pattern: '($H : tar.Header).Name'
+          - pattern: '($H : tar.Header).Linkname'
+      - patterns:
+          - pattern-inside: |
+              $T := tar.NewReader(...)
+              ...
+          - pattern: $T.Next()
+    pattern-sanitizers:
+      # The last element of the name, and a name filepath.Localize accepted (always local).
+      - pattern: filepath.Base(...)
+      - pattern: filepath.Localize(...)
+      - pattern: $X.FileInfo().Name()
+      # filepath.IsLocal: after a check whose last statement leaves the loop or the function
+      # (statements are spelled out so that an exit nested in an inner if, switch or loop does not
+      # count), or inside the branch where it holds when the if has no else.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  if !filepath.IsLocal($X) {
+                    $EXIT
+                  }
+                  ...
+              - pattern-inside: |
+                  if !filepath.IsLocal($X) {
+                    $S1
+                    $EXIT
+                  }
+                  ...
+              - pattern-inside: |
+                  if !filepath.IsLocal($X) {
+                    $S1
+                    $S2
+                    $EXIT
+                  }
+                  ...
+          - metavariable-regex:
+              metavariable: $EXIT
+              regex: ^(return\b|continue\s*$|break\s*$|panic\()
+          - pattern: $X
+      - patterns:
+          - pattern-inside: |
+              if filepath.IsLocal($X) {
+                ...
+              }
+          - pattern-not-inside: |
+              if filepath.IsLocal($X) {
+                ...
+              } else {
+                ...
+              }
+          - pattern: $X
+    pattern-sinks:
+      # The os package: the path of a file, directory or link that is created or written.
+      - patterns:
+          - pattern: os.$F($PATH, ...)
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(Create|OpenFile|WriteFile|Mkdir|MkdirAll)$
+          - focus-metavariable: $PATH
+      - patterns:
+          - pattern: ioutil.WriteFile($PATH, ...)
+          - focus-metavariable: $PATH
+      # Links: the new name, and the target (an entry's Linkname may point anywhere).
+      - patterns:
+          - pattern-either:
+              - pattern: os.Symlink($OLD, $NEW)
+              - pattern: os.Link($OLD, $NEW)
+          - focus-metavariable: $OLD
+      - patterns:
+          - pattern-either:
+              - pattern: os.Symlink($OLD, $NEW)
+              - pattern: os.Link($OLD, $NEW)
+          - focus-metavariable: $NEW

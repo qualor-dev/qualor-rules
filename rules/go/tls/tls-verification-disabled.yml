@@ -1,0 +1,187 @@
+rules:
+  - id: go.tls-verification-disabled
+    languages: [go]
+    severity: ERROR
+    message: >-
+      `InsecureSkipVerify: true` makes the TLS client accept any certificate and any host name,
+      so anyone on the network path can read and change the traffic. Keep verification on: trust
+      a private CA through `RootCAs`, or, if you must check certificates yourself, also set
+      `VerifyConnection` (crypto/tls docs).
+    metadata:
+      title: TLS certificate verification disabled (Go)
+      cwe: ['CWE-295']
+      owasp: ['A07:2025', 'A07:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [crypto/tls, net/http]
+      sources:
+        - https://cwe.mitre.org/data/definitions/295.html
+        - https://top10.owasp.org/2025/A07_2025-Authentication_Failures/
+        - https://top10.owasp.org/2021/A07_2021-Identification_and_Authentication_Failures/
+        - https://pkg.go.dev/crypto/tls
+        - https://pkg.go.dev/crypto/tls#Config
+        - https://pkg.go.dev/crypto/tls#Dial
+        - https://pkg.go.dev/crypto/tls#Client
+        - https://pkg.go.dev/crypto/tls#Dialer
+        - https://pkg.go.dev/net/http#Transport
+        - https://pkg.go.dev/net/http/httptest#NewTLSServer
+        - https://pkg.go.dev/net/http/httptest#Server.Client
+        - https://pkg.go.dev/testing
+      since: 2026.10.1
+    # Test code is out of scope: the crypto/tls docs allow skipping verification "for testing",
+    # and an httptest TLS server has a self-signed certificate. Files named *_test.go are
+    # excluded, and so are functions that take a *testing.T, *testing.B, *testing.F or
+    # testing.TB, or that make an httptest server (NewTLSServer, NewUnstartedServer, or StartTLS
+    # on a *httptest.Server).
+    # Known limits (each has a `todo` line in the test file):
+    # - A config returned by a function call (of this file or another) and changed here
+    #   (`cfg := makeConfig(); cfg.InsecureSkipVerify = true`) has no type to bind to
+    #   (`todoruleid:`).
+    # - A local variable set to true (`skip := true`) is not followed; package and function
+    #   constants are (`todoruleid:`).
+    paths:
+      exclude: ['*_test.go']
+    patterns:
+      - pattern-either:
+          # A tls.Config literal (also behind & and inside a Transport, Dial, Client or Dialer).
+          - patterns:
+              - pattern: 'tls.Config{..., InsecureSkipVerify: $V, ...}'
+              - pattern-not: 'tls.Config{..., VerifyConnection: $VC, ...}'
+              - pattern-not: 'tls.Config{..., VerifyPeerCertificate: $VC, ...}'
+              # The config stored in a variable whose verification callback is set afterwards.
+              - pattern-not-inside: |
+                  $CFG := &tls.Config{...}
+                  ...
+                  $CFG.VerifyConnection = $VC
+              - pattern-not-inside: |
+                  $CFG := &tls.Config{...}
+                  ...
+                  $CFG.VerifyPeerCertificate = $VC
+              - pattern-not-inside: |
+                  $CFG := tls.Config{...}
+                  ...
+                  $CFG.VerifyConnection = $VC
+              - pattern-not-inside: |
+                  $CFG := tls.Config{...}
+                  ...
+                  $CFG.VerifyPeerCertificate = $VC
+          # The field set on a config: typed, made in the same function, or a Transport's.
+          - patterns:
+              - pattern-either:
+                  - pattern: '($CFG : *tls.Config).InsecureSkipVerify = $V'
+                  - pattern: '($CFG : tls.Config).InsecureSkipVerify = $V'
+                  - pattern: $T.TLSClientConfig.InsecureSkipVerify = $V
+                  - patterns:
+                      - pattern-either:
+                          - pattern-inside: |
+                              $CFG := &tls.Config{...}
+                              ...
+                          - pattern-inside: |
+                              $CFG := tls.Config{...}
+                              ...
+                          - pattern-inside: |
+                              $CFG := new(tls.Config)
+                              ...
+                          - pattern-inside: |
+                              var $CFG tls.Config
+                              ...
+                      - pattern: $CFG.InsecureSkipVerify = $V
+              - pattern-not-inside: |
+                  $CFG.InsecureSkipVerify = $V
+                  ...
+                  $CFG.VerifyConnection = $VC
+              - pattern-not-inside: |
+                  $CFG.InsecureSkipVerify = $V
+                  ...
+                  $CFG.VerifyPeerCertificate = $VC
+              - pattern-not-inside: |
+                  $CFG.VerifyConnection = $VC
+                  ...
+                  $CFG.InsecureSkipVerify = $V
+              - pattern-not-inside: |
+                  $CFG.VerifyPeerCertificate = $VC
+                  ...
+                  $CFG.InsecureSkipVerify = $V
+          # A verification callback whose body is only `return nil` verifies nothing: with
+          # InsecureSkipVerify its verifiedChains are nil (crypto/tls docs), so it trusts all.
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: 'tls.Config{..., VerifyConnection: func(...) error { return nil }, ...}'
+                  - pattern-inside: 'tls.Config{..., VerifyPeerCertificate: func(...) error { return nil }, ...}'
+                  - pattern-inside: |
+                      $CFG := &tls.Config{...}
+                      ...
+                      $CFG.VerifyConnection = func(...) error { return nil }
+                  - pattern-inside: |
+                      $CFG := &tls.Config{...}
+                      ...
+                      $CFG.VerifyPeerCertificate = func(...) error { return nil }
+                  - pattern-inside: |
+                      $CFG := tls.Config{...}
+                      ...
+                      $CFG.VerifyConnection = func(...) error { return nil }
+                  - pattern-inside: |
+                      $CFG := tls.Config{...}
+                      ...
+                      $CFG.VerifyPeerCertificate = func(...) error { return nil }
+              - pattern: 'tls.Config{..., InsecureSkipVerify: $V, ...}'
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      $CFG.InsecureSkipVerify = $V
+                      ...
+                      $CFG.VerifyConnection = func(...) error { return nil }
+                  - pattern-inside: |
+                      $CFG.VerifyConnection = func(...) error { return nil }
+                      ...
+                      $CFG.InsecureSkipVerify = $V
+                  - pattern-inside: |
+                      $CFG.InsecureSkipVerify = $V
+                      ...
+                      $CFG.VerifyPeerCertificate = func(...) error { return nil }
+                  - pattern-inside: |
+                      $CFG.VerifyPeerCertificate = func(...) error { return nil }
+                      ...
+                      $CFG.InsecureSkipVerify = $V
+              - pattern: $CFG.InsecureSkipVerify = $V
+      # The value: the literal true, or a constant declared as true.
+      - pattern-either:
+          - patterns:
+              - pattern: $V
+              - metavariable-pattern:
+                  metavariable: $V
+                  pattern: 'true'
+          - patterns:
+              - pattern-inside: |
+                  const $V = true
+                  ...
+              - pattern: $V
+      # Test code (see above).
+      - pattern-not-inside: |
+          func $F(..., $TT *testing.T, ...) { ... }
+      - pattern-not-inside: |
+          func $F(..., $TT *testing.B, ...) { ... }
+      - pattern-not-inside: |
+          func $F(..., $TT *testing.F, ...) { ... }
+      - pattern-not-inside: |
+          func $F(..., $TT testing.TB, ...) { ... }
+      - pattern-not-inside: |
+          func $F(...) {
+            ...
+            httptest.NewTLSServer(...)
+            ...
+          }
+      - pattern-not-inside: |
+          func $F(...) {
+            ...
+            httptest.NewUnstartedServer(...)
+            ...
+          }
+      - pattern-not-inside: |
+          func $F(...) {
+            ...
+            ($S : *httptest.Server).StartTLS()
+            ...
+          }
+      - focus-metavariable: $V

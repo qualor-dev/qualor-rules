@@ -1,0 +1,272 @@
+rules:
+  - id: go.template-injection
+    mode: taint
+    languages: [go]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches the text of a Go template that is parsed (`Parse`), so a
+      user can write template actions that read the data, call its methods and the template's
+      functions, or (text/template) write HTML and script. The Go docs trust template authors,
+      not template data: keep the template text fixed (a file, an embedded file or a constant) and
+      pass the request data to Execute as data.
+    metadata:
+      title: Go template text built from HTTP request data (Go)
+      cwe: ['CWE-1336']
+      owasp: []
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [net/http, html/template, text/template, encoding/json, gin, echo, chi, gorilla/mux]
+      sources:
+        - https://cwe.mitre.org/data/definitions/1336.html
+        - https://pkg.go.dev/html/template
+        - https://pkg.go.dev/html/template#Template.Parse
+        - https://pkg.go.dev/html/template#Template.Clone
+        - https://pkg.go.dev/text/template
+        - https://pkg.go.dev/text/template#Template.Parse
+        - https://top10.owasp.org/2025/A05_2025-Injection
+        - https://pkg.go.dev/net/http#Request
+        - https://pkg.go.dev/encoding/json
+        - https://pkg.go.dev/encoding/json#Unmarshal
+        - https://pkg.go.dev/github.com/gin-gonic/gin
+        - https://gin-gonic.com/en/docs/rendering/html-rendering/
+        - https://gin-gonic.com/en/docs/routing/querystring-param/
+        - https://gin-gonic.com/en/docs/binding/binding-and-validation/
+        - https://pkg.go.dev/github.com/labstack/echo/v4
+        - https://pkg.go.dev/github.com/labstack/echo/v4#DefaultBinder
+        - https://echo.labstack.com/guide/request/
+        - https://echo.labstack.com/guide/binding/
+        - https://pkg.go.dev/github.com/go-chi/chi/v5
+        - https://pkg.go.dev/github.com/gorilla/mux
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - The template is recognised when it is built in the same function or as a package variable
+    #   (template.New, Must, ParseFiles, ParseGlob, ParseFS, or a method of a typed
+    #   *template.Template such as Clone), when it is derived (Clone, New, Lookup) from such a
+    #   package variable, or when its type is known (a struct field, a parameter); a template
+    #   returned by a function of another package is not followed (`todoruleid:`).
+    # - html/template and text/template are both followed; escaping the text for HTML does not
+    #   remove template actions, so it is not a sanitizer.
+    # Inherited from the request source block (go.sql-injection):
+    # - The Echo instance's binder (`c.Echo().Binder.Bind(&x, c)`) is not a source (`todoruleid:`).
+    # - Numeric fields count as clean only when their type is known in the file: a struct declared
+    #   in another package stays tainted as a whole (`todook:`), and OpenGrep 1.30.0 gives its
+    #   fields the type of same-named fields of structs declared in the file (`todoruleid:`).
+    # - A named numeric type (`type Status int`) stays tainted (`todook:`).
+    options:
+      # A map lookup keyed by request data (an allow-list of template texts) yields its values.
+      taint_assume_safe_indexes: true
+    pattern-sources:
+      # The request: net/http's *http.Request, and the same request through Gin and Echo.
+      - patterns:
+          - pattern-either:
+              - pattern: '($R : *http.Request).$F'
+              - pattern: '($C : *gin.Context).Request.$F'
+              - pattern: '($C : echo.Context).Request().$F'
+              - pattern: '($C : *echo.Context).Request().$F'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(URL|Form|PostForm|MultipartForm|Header|Body|RequestURI)$
+      - patterns:
+          - pattern-either:
+              - pattern: '($R : *http.Request).$F(...)'
+              - pattern: '($C : *gin.Context).Request.$F(...)'
+              - pattern: '($C : echo.Context).Request().$F(...)'
+              - pattern: '($C : *echo.Context).Request().$F(...)'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(FormValue|PostFormValue|PathValue|Cookie|Cookies|Referer|UserAgent)$
+      - pattern-either:
+          # Route variables of routers built on net/http.
+          - pattern: chi.URLParam(...)
+          - pattern: mux.Vars(...)
+      # Gin: path parameters, query strings, forms, headers and cookies.
+      - patterns:
+          - pattern: '($C : *gin.Context).$M(...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Param|Query|DefaultQuery|GetQuery|QueryArray|GetQueryArray|QueryMap|GetQueryMap|PostForm|DefaultPostForm|GetPostForm|PostFormArray|GetPostFormArray|PostFormMap|GetPostFormMap|GetHeader|Cookie|GetRawData)$
+      # Echo: path parameters, query parameters, form values and cookies.
+      - patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).$M(...)'
+              - pattern: '($C : *echo.Context).$M(...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Param|ParamValues|QueryParam|QueryParams|QueryString|FormValue|FormParams|Cookie|Cookies)$
+      # Gin and Echo binding: the struct the request is bound into.
+      - by-side-effect: true
+        patterns:
+          - pattern: '($C : *gin.Context).$BIND(&$X, ...)'
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(Bind|BindJSON|BindXML|BindQuery|BindYAML|BindTOML|BindHeader|BindUri|BindWith|MustBindWith|ShouldBind|ShouldBindJSON|ShouldBindXML|ShouldBindQuery|ShouldBindYAML|ShouldBindTOML|ShouldBindHeader|ShouldBindUri|ShouldBindWith|ShouldBindBodyWith)$
+          - focus-metavariable: $X
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($C : echo.Context).Bind(&$X)'
+              - pattern: '($C : *echo.Context).Bind(&$X)'
+          - focus-metavariable: $X
+      - by-side-effect: true
+        patterns:
+          - pattern: echo.$BIND($C, &$X)
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+          - focus-metavariable: $X
+      # Echo's DefaultBinder used directly: a *echo.DefaultBinder value, `new(echo.DefaultBinder)`
+      # or `&echo.DefaultBinder{}`, made in the same function or typed.
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($B : *echo.DefaultBinder).$BIND($C, &$X)'
+              - pattern: '($B : echo.DefaultBinder).$BIND($C, &$X)'
+              - pattern: (&echo.DefaultBinder{}).$BIND($C, &$X)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B := new(echo.DefaultBinder)
+                          ...
+                      - pattern-inside: |
+                          $B := &echo.DefaultBinder{}
+                          ...
+                  - pattern: $B.$BIND($C, &$X)
+          - metavariable-regex:
+              metavariable: $BIND
+              regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+          - focus-metavariable: $X
+      # DefaultBinder.Bind takes the target first in Echo v4 (`Bind(i, c)`).
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern: '($B : *echo.DefaultBinder).Bind(&$X, $C)'
+              - pattern: '($B : echo.DefaultBinder).Bind(&$X, $C)'
+              - pattern: (&echo.DefaultBinder{}).Bind(&$X, $C)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $B := new(echo.DefaultBinder)
+                          ...
+                      - pattern-inside: |
+                          $B := &echo.DefaultBinder{}
+                          ...
+                  - pattern: $B.Bind(&$X, $C)
+          - focus-metavariable: $X
+      # The same binders given a pointer made with new(T) or &T{} in the same function, passed
+      # without `&` (Echo's request guide: `u := new(User); c.Bind(u)`).
+      - by-side-effect: true
+        patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $X := new($T)
+                  ...
+              - pattern-inside: |
+                  $X := &$T{...}
+                  ...
+          - pattern-either:
+              - patterns:
+                  - pattern: '($C : *gin.Context).$BIND($X, ...)'
+                  - metavariable-regex:
+                      metavariable: $BIND
+                      regex: ^(Bind|BindJSON|BindXML|BindQuery|BindYAML|BindTOML|BindHeader|BindUri|BindWith|MustBindWith|ShouldBind|ShouldBindJSON|ShouldBindXML|ShouldBindQuery|ShouldBindYAML|ShouldBindTOML|ShouldBindHeader|ShouldBindUri|ShouldBindWith|ShouldBindBodyWith)$
+              - pattern: '($C : echo.Context).Bind($X)'
+              - pattern: '($C : *echo.Context).Bind($X)'
+              - patterns:
+                  - pattern-either:
+                      - pattern: echo.$BIND($C, $X)
+                      - pattern: '($B : *echo.DefaultBinder).$BIND($C, $X)'
+                      - pattern: '($B : echo.DefaultBinder).$BIND($C, $X)'
+                      - pattern: (&echo.DefaultBinder{}).$BIND($C, $X)
+                  - metavariable-regex:
+                      metavariable: $BIND
+                      regex: ^(BindBody|BindQueryParams|BindPathParams|BindPathValues|BindHeaders)$
+              - pattern: '($B : *echo.DefaultBinder).Bind($X, $C)'
+              - pattern: '($B : echo.DefaultBinder).Bind($X, $C)'
+              - pattern: (&echo.DefaultBinder{}).Bind($X, $C)
+          - focus-metavariable: $X
+    pattern-propagators:
+      # encoding/json: decoding a tainted body taints the value it fills.
+      - pattern: json.NewDecoder($R).Decode(&$X)
+        from: $R
+        to: $X
+      - pattern: json.Unmarshal($R, &$X)
+        from: $R
+        to: $X
+    pattern-sanitizers:
+      - pattern: strconv.Atoi(...)
+      - pattern: strconv.ParseInt(...)
+      - pattern: strconv.ParseUint(...)
+      - pattern: strconv.ParseFloat(...)
+      - pattern: strconv.ParseBool(...)
+      # A number or boolean (a numeric field of a bound struct, say) cannot carry a template
+      # action. The type must be known in the file: a struct of another package stays tainted as
+      # a whole.
+      - patterns:
+          - pattern: $E
+          - metavariable-type:
+              metavariable: $E
+              types: [int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool]
+    pattern-sinks:
+      # The text given to Parse of an html/template or text/template Template.
+      - patterns:
+          - pattern-either:
+              # A template made in place: template.New(...), then Funcs, Delims or Option.
+              - pattern: template.New(...).Parse($TEXT)
+              - pattern: template.New(...).$CHAIN(...).Parse($TEXT)
+              - pattern: template.New(...).$CHAIN(...).$CHAIN2(...).Parse($TEXT)
+              # A template of a known type (a struct field, say), or a template derived from one.
+              - pattern: '($T : *template.Template).Parse($TEXT)'
+              - pattern: '($T : *template.Template).$CHAIN(...).Parse($TEXT)'
+              # A template made in the same function or as a package variable.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $T := $INIT
+                          ...
+                      - pattern-inside: |
+                          $T, $ERR := $INIT
+                          ...
+                      - pattern-inside: |
+                          $T = $INIT
+                          ...
+                      - pattern-inside: |
+                          var $T = $INIT
+                          ...
+                  - metavariable-pattern:
+                      metavariable: $INIT
+                      pattern-either:
+                        - pattern: template.$CTOR(...)
+                        - pattern: '($X : *template.Template).$M(...)'
+                  - pattern-either:
+                      - pattern: $T.Parse($TEXT)
+                      - pattern: $T.$CHAIN(...).Parse($TEXT)
+              # A template derived (Clone, New, Lookup) from a package variable built from the
+              # package, in the same function.
+              - patterns:
+                  - pattern-inside: |
+                      var $P = $PINIT
+                      ...
+                  - metavariable-pattern:
+                      metavariable: $PINIT
+                      pattern: template.$CTOR(...)
+                  - pattern-either:
+                      - pattern-inside: |
+                          $T, $ERR := $P.$DERIVE(...)
+                          ...
+                      - pattern-inside: |
+                          $T := $P.$DERIVE(...)
+                          ...
+                      - pattern-inside: |
+                          $T, $ERR = $P.$DERIVE(...)
+                          ...
+                      - pattern-inside: |
+                          $T = $P.$DERIVE(...)
+                          ...
+                  - metavariable-regex:
+                      metavariable: $DERIVE
+                      regex: ^(Clone|New|Lookup)$
+                  - pattern-either:
+                      - pattern: $T.Parse($TEXT)
+                      - pattern: $T.$CHAIN(...).Parse($TEXT)
+          - focus-metavariable: $TEXT

@@ -1,0 +1,430 @@
+rules:
+  - id: python.unsafe-deserialization
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request is loaded with a deserializer that can build arbitrary objects
+      (pickle, marshal, shelve, dill, jsonpickle, or yaml with an unsafe loader), which lets the
+      sender run code on the server. Use a data-only format (`json.loads()`,
+      `yaml.safe_load()` or `yaml.load(x, Loader=yaml.SafeLoader)`) and validate the result;
+      never unpickle what a client sent.
+    metadata:
+      title: Unsafe deserialization of HTTP request data (Python)
+      cwe: ['CWE-502']
+      owasp: ['A08:2025', 'A08:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [flask, django, fastapi, pickle, marshal, shelve, pyyaml, jsonpickle, dill]
+      sources:
+        - https://cwe.mitre.org/data/definitions/502.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html
+        - https://top10.owasp.org/2025/A08_2025-Software_or_Data_Integrity_Failures
+        - https://top10.owasp.org/2021/A08_2021-Software_and_Data_Integrity_Failures
+        - https://docs.python.org/3/library/pickle.html
+        - https://docs.python.org/3/library/marshal.html
+        - https://docs.python.org/3/library/shelve.html
+        - https://pyyaml.org/wiki/PyYAMLDocumentation
+        - https://github.com/yaml/pyyaml/wiki/PyYAML-yaml.load(input)-Deprecation
+        - https://jsonpickle.github.io/
+        - https://dill.readthedocs.io/en/latest/
+        - https://peps.python.org/pep-0008/#constants
+        - https://flask.palletsprojects.com/en/stable/api/#flask.Request
+        - https://flask.palletsprojects.com/en/stable/quickstart/#variable-rules
+        - https://werkzeug.palletsprojects.com/en/stable/datastructures/#werkzeug.datastructures.FileStorage
+        - https://docs.djangoproject.com/en/stable/ref/request-response/
+        - https://docs.djangoproject.com/en/stable/topics/http/urls/
+        - https://docs.djangoproject.com/en/stable/ref/class-based-views/base/
+        - https://fastapi.tiangolo.com/tutorial/body/
+        - https://fastapi.tiangolo.com/tutorial/request-files/
+        - https://fastapi.tiangolo.com/advanced/using-request-directly/
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - yaml.load() is a sink without a Loader or with one of PyYAML's own unsafe loaders
+    #   (Loader, UnsafeLoader, FullLoader and their C versions); a custom loader class built on
+    #   one of them is not followed.
+    # - A file the server opens from a request-chosen name, and a shelf the request names, are
+    #   reported: they are the request's data when the name can reach an uploaded file.
+    # - A signature check (hmac.compare_digest) before loading is not recognised.
+    # - OpenGrep does not carry taint through a slice (`request.get_data()[4:]`).
+    # - An allow-list is recognised as a lookup (`.get()` or `[...]`) in a dict literal of literal
+    #   keys and values (also lists or tuples of literals, with comments between the items)
+    #   assigned to an upper-case (constant) name that the module never changes or assigns
+    #   again, with no default or a literal/constant default for get() (an upper-case name
+    #   assigned in the function is not a constant); or as a ternary of constants. A membership
+    #   check (`if x not in ALLOWED: return`) is not, nor is a nested table (todook).
+    # Inherited from the request source block (python.sql-injection), each with a `todook` line:
+    # - A Flask route parameter with a typed converter (`<int:n>`) is still a source.
+    # - A Django URL argument is still a source when its converter (`<int:pk>`, in urls.py) or a
+    #   default value makes it a number.
+    # - A Django-module function whose first parameter is named request is taken for a view: its
+    #   other parameters count as URL arguments, and the request attributes (`headers`, `body`,
+    #   ...) of that parameter count even when it is another library's request object.
+    # - A Flask view parameter annotated int, float or bool is not a source (the FastAPI rule
+    #   below), although Flask passes a str for a rule without a converter (todoruleid).
+    # FastAPI parameters annotated int, float or bool (also `Annotated[int, ...]`), and
+    # dependencies (`= Depends()`, `= Security()`, `Annotated[T, Depends()]` in place or through a
+    # module-level alias) are not sources.
+    pattern-sources:
+      - pattern-either:
+          - pattern: flask.request.args
+          - pattern: flask.request.form
+          - pattern: flask.request.values
+          - pattern: flask.request.headers
+          - pattern: flask.request.cookies
+          - pattern: flask.request.json
+          - pattern: flask.request.get_json(...)
+          - pattern: flask.request.data
+          - pattern: flask.request.get_data(...)
+          - pattern: flask.request.files
+          - pattern: flask.request.view_args
+          - pattern: flask.request.path
+          - pattern: flask.request.full_path
+          - pattern: flask.request.url
+          - pattern: flask.request.query_string
+      # Flask "Variable Rules": the parameters of a view function registered with a URL rule.
+      # FastAPI path operations match too; their parameters annotated int, float or bool are
+      # converted by FastAPI, and those with a Depends()/Security() default are dependencies,
+      # not request data.
+      - patterns:
+          - pattern-inside: |
+              @$APP.$ROUTE(...)
+              def $VIEW(..., $PARAM, ...):
+                ...
+          - metavariable-regex:
+              metavariable: $ROUTE
+              regex: ^(route|get|post|put|patch|delete)$
+          # (A parameter pattern without a type or default also matches a typed one, and one
+          # without a default also matches one with a default.)
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Depends(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Security(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: int, ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: float, ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: bool, ...):
+                ...
+          # The same in FastAPI's Annotated form, written in place or through a module-level
+          # alias (`SettingsDep = Annotated[Settings, Depends(get_settings)]`).
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Depends(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Security(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[int, ...], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[float, ...], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[bool, ...], ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Depends(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Security(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - focus-metavariable: $PARAM
+      # Django, in a module that imports it: the HttpRequest a view receives, the URL arguments
+      # passed to the view after it, and what View.setup() keeps on a class-based view.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      from $DJ import $NAME
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+              - patterns:
+                  - pattern-inside: |
+                      import $DJ
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+          - pattern-either:
+              # The request: the first parameter of a function, the one after self of a method.
+              # The upper-case attributes exist only on Django's HttpRequest; the others count
+              # only on a parameter named request.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW($REQ, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(self, $REQ, ...):
+                            ...
+                  - pattern-either:
+                      - pattern: $REQ.GET
+                      - pattern: $REQ.POST
+                      - pattern: $REQ.COOKIES
+                      - pattern: $REQ.META
+                      - pattern: $REQ.FILES
+                      - patterns:
+                          - pattern-either:
+                              - pattern: $REQ.headers
+                              - pattern: $REQ.body
+                              - pattern: $REQ.path
+                              - pattern: $REQ.path_info
+                              - pattern: $REQ.get_full_path(...)
+                              - pattern: $REQ.get_full_path_info(...)
+                              - pattern: $REQ.build_absolute_uri(...)
+                              - pattern: $REQ.read(...)
+                              - pattern: $REQ.readline(...)
+                              - pattern: $REQ.readlines(...)
+                          - metavariable-regex:
+                              metavariable: $REQ
+                              regex: ^request$
+              # Class-based views: View.setup() keeps the request on self.request and the URL
+              # arguments on self.args and self.kwargs.
+              - patterns:
+                  - pattern-inside: |
+                      class $CLS(...):
+                        ...
+                  - pattern-either:
+                      - pattern: self.request.GET
+                      - pattern: self.request.POST
+                      - pattern: self.request.COOKIES
+                      - pattern: self.request.META
+                      - pattern: self.request.FILES
+                      - pattern: self.request.headers
+                      - pattern: self.request.body
+                      - pattern: self.request.path
+                      - pattern: self.request.path_info
+                      - pattern: self.request.get_full_path(...)
+                      - pattern: self.request.get_full_path_info(...)
+                      - pattern: self.request.build_absolute_uri(...)
+                      - pattern: self.args
+                      - pattern: self.kwargs
+              # URL arguments: the parameters after the request of a function-based view, and of
+              # a class-based view's handler method (dispatch() calls get(), post(), ...).
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW(request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., **$PARAM):
+                            ...
+                      - patterns:
+                          - pattern-inside: |
+                              class $CLS(...):
+                                ...
+                          - pattern-either:
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., $PARAM, ...):
+                                    ...
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., *$PARAM, ...):
+                                    ...
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., **$PARAM):
+                                    ...
+                          - metavariable-regex:
+                              metavariable: $VIEW
+                              regex: ^(get|post|put|patch|delete|head|options|trace|dispatch)$
+                  - focus-metavariable: $PARAM
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+      # An allow-list: a lookup in a dict literal of literal keys and values (strings, numbers,
+      # True/False/None) assigned to an upper-case (constant) name, which the module never
+      # changes (item assignment, update(), setdefault(), |=, assigning the name again). A get()
+      # default must be a literal or a constant too.
+      - patterns:
+          - pattern-inside: |
+              $ALLOWED = $LITERAL
+              ...
+          - metavariable-regex:
+              metavariable: $ALLOWED
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $LITERAL
+              regex: ^\{(\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*:\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*,)*(\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*:\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*)?\s*\}$
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED[$KEY] = $VALUE
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED.update(...)
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED.setdefault(...)
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED |= $VALUE
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED = $OTHER
+              ...
+          - pattern-either:
+              - pattern: $ALLOWED.get($LOOKUP)
+              - pattern: $ALLOWED[$LOOKUP]
+              - patterns:
+                  - pattern: $ALLOWED.get($LOOKUP, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None|[A-Z][A-Z0-9_]*(\[("[^"\\\n]*"|'[^'\\\n]*')\])?)$
+      # An allow-list written as a module table (rule-specific, beside the shared one above): a
+      # dict literal whose keys are literals and whose values are literals or lists/tuples of
+      # literals, with comments allowed between the items, assigned to an upper-case name that
+      # the module never changes or assigns again; a get() default is a literal, a list/tuple of
+      # literals or a module constant; strings may hold backslash escapes.
+      - patterns:
+          - pattern-inside: |
+              $TABLE = $ITEMS
+              ...
+          - metavariable-regex:
+              metavariable: $TABLE
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $ITEMS
+              regex: ^\{(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*)?\}$
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE[$KEY] = $VALUE
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE.update(...)
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE.setdefault(...)
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE |= $VALUE
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE = $OTHER
+              ...
+          - pattern-either:
+              - pattern: $TABLE.get($LOOKUP)
+              - pattern: $TABLE[$LOOKUP]
+              - patterns:
+                  - pattern: $TABLE.get($LOOKUP, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\)|[A-Z][A-Z0-9_]*(\[("[^"\\\n]*"|'[^'\\\n]*')\])?)$
+                  # An upper-case name assigned in the function is a local, not a constant.
+                  - pattern-not-inside: |
+                      def $FUNCTION(...):
+                        ...
+                        $DEFAULT = $ANY
+                        ...
+      # Serialising is not loading: a round trip such as `pickle.loads(pickle.dumps(x))` (a deep
+      # copy) builds only what the server serialised.
+      - pattern: pickle.dumps(...)
+      - pattern: _pickle.dumps(...)
+      - pattern: dill.dumps(...)
+      - pattern: marshal.dumps(...)
+      - pattern: jsonpickle.encode(...)
+      - pattern: yaml.dump(...)
+      - pattern: yaml.safe_dump(...)
+    pattern-sinks:
+      # pickle, marshal, dill and jsonpickle: the data or file that is loaded.
+      - patterns:
+          - pattern-either:
+              - pattern: pickle.loads($DATA, ...)
+              - pattern: pickle.load($DATA, ...)
+              - pattern: pickle.Unpickler($DATA, ...)
+              - pattern: _pickle.loads($DATA, ...)
+              - pattern: _pickle.load($DATA, ...)
+              - pattern: marshal.loads($DATA, ...)
+              - pattern: marshal.load($DATA, ...)
+              - pattern: dill.loads($DATA, ...)
+              - pattern: dill.load($DATA, ...)
+              - pattern: jsonpickle.decode($DATA, ...)
+          - focus-metavariable: $DATA
+      # shelve: a shelf is a pickle store; the request must not name the file that is loaded.
+      - patterns:
+          - pattern-either:
+              - pattern: shelve.open($DATA, ...)
+              - pattern: shelve.open(..., filename=$DATA, ...)
+          - focus-metavariable: $DATA
+      # PyYAML: yaml.load() without a Loader (FullLoader in PyYAML 5.1 to 5.4), with one of the
+      # unsafe loaders, and the unsafe_load()/full_load() shortcuts.
+      - patterns:
+          - pattern-either:
+              - pattern: yaml.load($DATA)
+              - pattern: yaml.load_all($DATA)
+              - pattern: yaml.load(stream=$DATA)
+              - pattern: yaml.load_all(stream=$DATA)
+              - pattern: yaml.unsafe_load($DATA, ...)
+              - pattern: yaml.unsafe_load_all($DATA, ...)
+              - pattern: yaml.full_load($DATA, ...)
+              - pattern: yaml.full_load_all($DATA, ...)
+              - pattern: yaml.load($DATA, yaml.Loader, ...)
+              - pattern: yaml.load($DATA, ..., Loader=yaml.Loader, ...)
+              - pattern: yaml.load(..., stream=$DATA, ..., Loader=yaml.Loader, ...)
+              - pattern: yaml.load($DATA, yaml.UnsafeLoader, ...)
+              - pattern: yaml.load($DATA, ..., Loader=yaml.UnsafeLoader, ...)
+              - pattern: yaml.load(..., stream=$DATA, ..., Loader=yaml.UnsafeLoader, ...)
+              - pattern: yaml.load($DATA, yaml.FullLoader, ...)
+              - pattern: yaml.load($DATA, ..., Loader=yaml.FullLoader, ...)
+              - pattern: yaml.load(..., stream=$DATA, ..., Loader=yaml.FullLoader, ...)
+              - pattern: yaml.load($DATA, yaml.CLoader, ...)
+              - pattern: yaml.load($DATA, ..., Loader=yaml.CLoader, ...)
+              - pattern: yaml.load(..., stream=$DATA, ..., Loader=yaml.CLoader, ...)
+              - pattern: yaml.load($DATA, yaml.CUnsafeLoader, ...)
+              - pattern: yaml.load($DATA, ..., Loader=yaml.CUnsafeLoader, ...)
+              - pattern: yaml.load(..., stream=$DATA, ..., Loader=yaml.CUnsafeLoader, ...)
+              - pattern: yaml.load($DATA, yaml.CFullLoader, ...)
+              - pattern: yaml.load($DATA, ..., Loader=yaml.CFullLoader, ...)
+              - pattern: yaml.load(..., stream=$DATA, ..., Loader=yaml.CFullLoader, ...)
+              - pattern: yaml.load_all($DATA, yaml.Loader, ...)
+              - pattern: yaml.load_all($DATA, ..., Loader=yaml.Loader, ...)
+              - pattern: yaml.load_all(..., stream=$DATA, ..., Loader=yaml.Loader, ...)
+              - pattern: yaml.load_all($DATA, yaml.UnsafeLoader, ...)
+              - pattern: yaml.load_all($DATA, ..., Loader=yaml.UnsafeLoader, ...)
+              - pattern: yaml.load_all(..., stream=$DATA, ..., Loader=yaml.UnsafeLoader, ...)
+              - pattern: yaml.load_all($DATA, yaml.FullLoader, ...)
+              - pattern: yaml.load_all($DATA, ..., Loader=yaml.FullLoader, ...)
+              - pattern: yaml.load_all(..., stream=$DATA, ..., Loader=yaml.FullLoader, ...)
+              - pattern: yaml.load_all($DATA, yaml.CLoader, ...)
+              - pattern: yaml.load_all($DATA, ..., Loader=yaml.CLoader, ...)
+              - pattern: yaml.load_all(..., stream=$DATA, ..., Loader=yaml.CLoader, ...)
+              - pattern: yaml.load_all($DATA, yaml.CUnsafeLoader, ...)
+              - pattern: yaml.load_all($DATA, ..., Loader=yaml.CUnsafeLoader, ...)
+              - pattern: yaml.load_all(..., stream=$DATA, ..., Loader=yaml.CUnsafeLoader, ...)
+              - pattern: yaml.load_all($DATA, yaml.CFullLoader, ...)
+              - pattern: yaml.load_all($DATA, ..., Loader=yaml.CFullLoader, ...)
+              - pattern: yaml.load_all(..., stream=$DATA, ..., Loader=yaml.CFullLoader, ...)
+          - focus-metavariable: $DATA

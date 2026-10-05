@@ -1,0 +1,66 @@
+rules:
+  - id: go.weak-hash
+    languages: [go]
+    severity: INFO
+    message: >-
+      MD5 and SHA-1 are broken hash functions ("cryptographically broken and should not be used
+      for secure applications", Go docs): collisions can be made on purpose. Review this use: a
+      checksum against accidental corruption, a cache key or a git object id is fine; a password
+      hash, a signature, a token or an integrity check against tampering needs SHA-256 or better
+      (`crypto/sha256`, `crypto/sha512`), and passwords need a password hashing function.
+    metadata:
+      title: Weak hash MD5 or SHA-1 (Go)
+      cwe: ['CWE-328']
+      owasp: ['A04:2025', 'A02:2021']
+      kind: hotspot
+      severity: low
+      confidence: high
+      frameworks: [crypto/md5, crypto/sha1, crypto]
+      sources:
+        - https://cwe.mitre.org/data/definitions/328.html
+        - https://top10.owasp.org/2025/A04_2025-Cryptographic_Failures/
+        - https://top10.owasp.org/2021/A02_2021-Cryptographic_Failures/
+        - https://pkg.go.dev/crypto/md5
+        - https://pkg.go.dev/crypto/sha1
+        - https://pkg.go.dev/crypto#Hash
+        - https://pkg.go.dev/crypto/sha256
+        - https://pkg.go.dev/crypto/sha512
+        - https://pkg.go.dev/golang.org/x/crypto/sha3
+        - https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html
+      since: 2026.10.1
+    # A hotspot: every call of MD5 or SHA-1 is reported for a person to review, checksums and
+    # git object ids too. Test code (*_test.go files) is left out: a hash computed there protects
+    # nothing.
+    # Known limits (each has a `todo` line in the test file):
+    # - Function values handed to another API (`hmac.New(sha1.New, key)`, a KDF's hash
+    #   parameter) are not reported; only calls of New and Sum are (`todoruleid:`).
+    # - A local variable that shadows the package name (`md5 := x; md5.Sum(b)`), and a package of
+    #   another path whose last element is md5 or sha1, imported under an alias in a file that
+    #   also imports crypto/md5 or crypto/sha1, are taken for the hash package (`todook:`).
+    # The packages are bound by their import path: an alias is followed, and a package of another
+    # path with the same name is not (unless the file also imports the hash package, above).
+    paths:
+      exclude: ['*_test.go']
+    pattern-either:
+      - patterns:
+          - pattern-inside: |
+              import "crypto/md5"
+              ...
+          - pattern-either:
+              - pattern: md5.New()
+              - pattern: md5.Sum(...)
+      - patterns:
+          - pattern-inside: |
+              import "crypto/sha1"
+              ...
+          - pattern-either:
+              - pattern: sha1.New()
+              - pattern: sha1.Sum(...)
+      # The crypto.Hash registry.
+      - patterns:
+          - pattern-inside: |
+              import "crypto"
+              ...
+          - pattern-either:
+              - pattern: crypto.MD5.New()
+              - pattern: crypto.SHA1.New()

@@ -1,0 +1,348 @@
+rules:
+  - id: js.nosql-injection
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches a MongoDB query: as a whole filter or a field value it can
+      carry query operators such as {"$ne": null}, and in $where, $function or $accumulator it is
+      run as JavaScript. Convert values to the expected type (`String(x)`, `Number(x)`), compare
+      with `{ $eq: x }` or use Mongoose `sanitizeFilter`, and never build server-side JavaScript
+      from request data.
+    metadata:
+      title: MongoDB query built from HTTP request data (Node.js)
+      cwe: ['CWE-943']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [express, nextjs, fastify, mongodb, mongoose]
+      sources:
+        - https://cwe.mitre.org/data/definitions/943.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/NoSQL_Security_Cheat_Sheet.html
+        - https://expressjs.com/en/4x/api/request/
+        - https://expressjs.com/en/5x/api/application/
+        - https://nextjs.org/docs/app/api-reference/file-conventions/route
+        - https://fastify.dev/docs/latest/Reference/Routes/
+        - https://fastify.dev/docs/latest/Reference/Request/
+        - https://fastify.dev/docs/latest/Reference/Validation-and-Serialization/
+        - https://www.mongodb.com/docs/drivers/node/current/crud/query/query-document/
+        - https://www.mongodb.com/docs/manual/reference/operator/query/where/
+        - https://www.mongodb.com/docs/manual/reference/operator/aggregation/function/
+        - https://www.mongodb.com/docs/manual/reference/operator/aggregation/accumulator/
+        - https://mongodb.github.io/node-mongodb-native/6.11/classes/BSON.ObjectId.html
+        - https://mongoosejs.com/docs/api/mongoose.html
+        - https://mongoosejs.com/docs/api/model.html
+        - https://mongoosejs.com/docs/api/query.html
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - Operator injection is reported for the JSON body and the query string, which Express 4's
+    #   extended (qs) parser turns into objects; Express 5's default simple parser gives strings,
+    #   but its query values are reported too.
+    # - A `typeof x === 'string'` check before the query is not recognised as a guard.
+    # - String() counts as a conversion that removes operators, also for $where text built with
+    #   it, so `$where: "..." + String(x)` is not reported.
+    # - Fastify body schemas are not read: a route with a literal `schema.body` option is left out
+    #   of operator injection whatever its types, and a schema given as a variable is not seen.
+    #   Fastify's default query parser gives strings, but query values are reported.
+    # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
+    #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
+    #   source, and a one-parameter callback given to get/post/... after a path literal (also on
+    #   an HTTP client) is taken for a Fastify route handler.
+    # - A field value is followed when it is a variable or a property or index chain
+    #   (`req.body.email`, `body.author`); other expressions (`(await request.json()).author`,
+    #   function calls) are not.
+    # - Collections are recognised by `db.collection(name)` in the same file, and Mongoose models
+    #   by `mongoose.model(...)` in the same file or an import from a path with a `models` segment.
+    # - Code after `mongoose.set('sanitizeFilter', true)` in the same file is not checked for
+    #   operator injection, also on driver collections, which that setting does not cover.
+    pattern-sources:
+      # Express: the request object, the first parameter of a handler `(req, res, ...)`, carries
+      # the query string, route parameters (`/users/:id`), body, headers, cookies and the URL.
+      # The second parameter's name tells a handler from other two-parameter functions.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|reply|rep|h|ctx|next|_res|_response)$
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Fastify: a handler registered with a route shorthand (`fastify.get('/path', [options],
+      # handler)`) or with `route({ handler })` may take only the request.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: $APP.$ROUTE($PATH, ..., function ($REQ) { ... })
+                  - metavariable-regex:
+                      metavariable: $ROUTE
+                      regex: ^(get|head|post|put|delete|options|patch|all)$
+                  - metavariable-regex:
+                      metavariable: $PATH
+                      regex: ^["'`]/
+              - pattern-inside: '$APP.route({..., handler: function ($REQ) { ... }, ...})'
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.params
+              - pattern: $REQ.body
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.signedCookies
+              - pattern: $REQ.get(...)
+              - pattern: $REQ.header(...)
+              - pattern: $REQ.originalUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.path
+              - pattern: $REQ.raw
+      # Next.js App Router: route handlers are functions named after an HTTP method; the request is
+      # a Web Request (NextRequest) and the context's params hold the dynamic route segments.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern-either:
+              - pattern: $REQ.nextUrl
+              - pattern: $REQ.url
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.json()
+              - pattern: $REQ.formData()
+              - pattern: $REQ.text()
+      - patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, $CTX, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, $CTX, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: $CTX.params
+      - patterns:
+          - pattern-either:
+              - pattern-inside: 'function $METHOD($REQ, {params}, ...) { ... }'
+              - pattern-inside: 'function $METHOD($REQ, {params}: $T, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {params}: $T, ...) { ... }'
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: params
+      # Operator injection needs a value that can be an object: the parsed JSON body and the
+      # query string (Express 4's default extended parser builds objects from `a[$ne]=1`).
+      - label: OBJ
+        patterns:
+          - pattern-either:
+              - pattern-inside: function ($REQ, $RES, ...) { ... }
+              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+          - metavariable-regex:
+              metavariable: $RES
+              regex: ^(res|resp|response|reply|rep|h|ctx|next|_res|_response)$
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+          # Fastify validates a body against the route's schema (Ajv cannot turn an object into a
+          # string), so routes that declare schema.body are left out.
+          - pattern-not-inside: '$APP.$ROUTE($PATH, {..., schema: {..., body: $BODY, ...}, ...}, ...)'
+          - pattern-not-inside: '$APP.route({..., schema: {..., body: $BODY, ...}, ...})'
+      - label: OBJ
+        patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: $APP.$ROUTE($PATH, ..., function ($REQ) { ... })
+                  - metavariable-regex:
+                      metavariable: $ROUTE
+                      regex: ^(get|head|post|put|delete|options|patch|all)$
+                  - metavariable-regex:
+                      metavariable: $PATH
+                      regex: ^["'`]/
+              - pattern-inside: '$APP.route({..., handler: function ($REQ) { ... }, ...})'
+          - pattern-either:
+              - pattern: $REQ.query
+              - pattern: $REQ.body
+          # Fastify validates a body against the route's schema (Ajv cannot turn an object into a
+          # string), so routes that declare schema.body are left out.
+          - pattern-not-inside: '$APP.$ROUTE($PATH, {..., schema: {..., body: $BODY, ...}, ...}, ...)'
+          - pattern-not-inside: '$APP.route({..., schema: {..., body: $BODY, ...}, ...})'
+      - label: OBJ
+        patterns:
+          - pattern-either:
+              - pattern-inside: function $METHOD($REQ, ...) { ... }
+              - pattern-inside: |
+                  $METHOD = function ($REQ, ...) { ... }
+          - metavariable-regex:
+              metavariable: $METHOD
+              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
+          - pattern: $REQ.json()
+    pattern-sanitizers:
+      - pattern: Number.parseInt(...)
+      - pattern: Number.parseFloat(...)
+      - pattern: parseInt(...)
+      - pattern: parseFloat(...)
+      - pattern: Number(...)
+      - pattern: String(...)
+      - pattern: Boolean(...)
+      # An ObjectId is built only from a hex string, number or bytes; $eq compares with the value
+      # as it is; Mongoose's sanitizeFilter() wraps operator objects in $eq.
+      - pattern: new mongodb.ObjectId(...)
+      - pattern: new bson.ObjectId(...)
+      - pattern: new mongoose.Types.ObjectId(...)
+      - pattern: mongoose.Types.ObjectId(...)
+      - pattern: '{$eq: $X}'
+      - pattern: mongoose.sanitizeFilter(...)
+    pattern-sinks:
+      # The filter of a query on a MongoDB driver collection or a Mongoose model: request data as
+      # the whole filter, or as a field value, can carry operators.
+      - requires: OBJ
+        patterns:
+          - pattern-either:
+              # MongoDB driver: db.collection(name), in place or assigned in this file.
+              - patterns:
+                  - pattern-inside: $C.$OP(...)
+                  - metavariable-pattern:
+                      metavariable: $C
+                      pattern: $DB.collection(...)
+              - pattern-inside: |
+                  $C = $DB.collection(...)
+                  ...
+              # Mongoose: a model made in this file or imported from a models module.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $C = mongoose.model(...)
+                          ...
+                      - pattern-inside: |
+                          $CONN = mongoose.createConnection(...)
+                          ...
+                          $C = $CONN.model(...)
+                          ...
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $C = require($PATH)
+                                  ...
+                              - pattern-inside: |
+                                  $C = require($PATH).$EXPORT
+                                  ...
+                              - pattern-inside: |
+                                  const {..., $C, ...} = require($PATH);
+                                  ...
+                              - pattern-inside: |
+                                  import $C from $PATH;
+                                  ...
+                              - pattern-inside: |
+                                  import {..., $C, ...} from $PATH;
+                                  ...
+                          - metavariable-regex:
+                              metavariable: $PATH
+                              regex: (?i)^["'`]?(.*/)?models?(/|["'`.]|$)
+          - pattern-either:
+              # The whole filter.
+              - patterns:
+                  - pattern-either:
+                      - patterns:
+                          - pattern: $C.$OP($F, ...)
+                          - metavariable-regex:
+                              metavariable: $OP
+                              regex: ^(find|findOne|findOneAndUpdate|findOneAndDelete|findOneAndReplace|findOneAndRemove|update|updateOne|updateMany|deleteOne|deleteMany|remove|replaceOne|countDocuments|count|exists|where)$
+                      - pattern: $C.distinct($FIELD, $F, ...)
+                  - metavariable-regex:
+                      metavariable: $F
+                      regex: ^[^{\[]
+                  - focus-metavariable: $F
+              # A field value of the filter, also inside $or/$and/$nor arrays.
+              - patterns:
+                  - pattern-either:
+                      - patterns:
+                          - pattern-either:
+                              - pattern: '$C.$OP({..., $K: $F, ...}, ...)'
+                              - pattern: '$C.$OP({..., $LOGIC: [..., {..., $K: $F, ...}, ...], ...}, ...)'
+                          - metavariable-regex:
+                              metavariable: $OP
+                              regex: ^(find|findOne|findOneAndUpdate|findOneAndDelete|findOneAndReplace|findOneAndRemove|update|updateOne|updateMany|deleteOne|deleteMany|remove|replaceOne|countDocuments|count|exists|where)$
+                      - pattern: '$C.distinct($FIELD, {..., $K: $F, ...}, ...)'
+                  - metavariable-regex:
+                      metavariable: $F
+                      regex: ^[A-Za-z_$][\w$]*(\??\.[A-Za-z_$][\w$]*|\[[^\]]*\])*$
+                  - focus-metavariable: $F
+              # Mongoose's query builder on the model or a query made from it: where(path, value),
+              # where(path).equals(value), where({...}) or where(filter), and/or/nor([{...}]).
+              - patterns:
+                  - pattern-either:
+                      - pattern: '$C.$QB({..., $K: $F, ...})'
+                      - pattern: '$C.$M(...).$QB({..., $K: $F, ...})'
+                      - pattern: '$C.$M(...). ... .$QB({..., $K: $F, ...})'
+                      - pattern: '$C.$QB([..., {..., $K: $F, ...}, ...])'
+                      - pattern: '$C.$M(...).$QB([..., {..., $K: $F, ...}, ...])'
+                      - pattern: '$C.$M(...). ... .$QB([..., {..., $K: $F, ...}, ...])'
+                      - patterns:
+                          - pattern-either:
+                              - pattern: $C.$QB($PATHNAME, $F)
+                              - pattern: $C.$M(...).$QB($PATHNAME, $F)
+                              - pattern: $C.$M(...). ... .$QB($PATHNAME, $F)
+                          - metavariable-regex:
+                              metavariable: $PATHNAME
+                              regex: ^["'`]
+                      - pattern: $C.$M(...).$QB($F)
+                      - pattern: $C.$M(...). ... .$QB($F)
+                      - pattern: $C.where($PATHNAME).$QB($F)
+                      - pattern: $C.$M(...).where($PATHNAME).$QB($F)
+                      - pattern: $C.$M(...). ... .where($PATHNAME).$QB($F)
+                  - metavariable-regex:
+                      metavariable: $QB
+                      regex: ^(where|and|or|nor|equals)$
+                  - metavariable-regex:
+                      metavariable: $F
+                      regex: ^[A-Za-z_$][\w$]*(\??\.[A-Za-z_$][\w$]*|\[[^\]]*\])*$
+                  - focus-metavariable: $F
+          # Options objects of SQL ORMs (Sequelize, TypeORM, Prisma) put the filter under `where`.
+          - pattern-not-inside: '$Q.$M({..., where: $W, ...}, ...)'
+          # Mongoose's sanitizeFilter, switched on for the file or for the query.
+          - pattern-not-inside: |
+              mongoose.set('sanitizeFilter', true);
+              ...
+          - pattern-not-inside: '$Q.$M(...).setOptions({..., sanitizeFilter: true, ...})'
+          - pattern-not-inside: '$Q.$M($A, $P, {..., sanitizeFilter: true, ...})'
+      # The $match stage of an aggregation pipeline takes a query filter.
+      - requires: OBJ
+        patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern: '{..., $match: $F, ...}'
+                  - metavariable-regex:
+                      metavariable: $F
+                      regex: ^[^{\[]
+              - patterns:
+                  - pattern: '{..., $match: {..., $K: $F, ...}, ...}'
+                  - metavariable-regex:
+                      metavariable: $F
+                      regex: ^[A-Za-z_$][\w$]*(\??\.[A-Za-z_$][\w$]*|\[[^\]]*\])*$
+          - focus-metavariable: $F
+      # Server-side JavaScript: $where (also Mongoose's $where()), the body of $function and the
+      # functions of $accumulator, given as strings.
+      - patterns:
+          - pattern-either:
+              - pattern: '{..., $where: $JS, ...}'
+              - pattern: $Q.$where($JS)
+              - pattern: '{..., $function: {..., body: $JS, ...}, ...}'
+              - patterns:
+                  - pattern: '{..., $accumulator: {..., $FN: $JS, ...}, ...}'
+                  - metavariable-regex:
+                      metavariable: $FN
+                      regex: ^(init|accumulate|merge|finalize)$
+          - focus-metavariable: $JS

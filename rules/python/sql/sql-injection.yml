@@ -1,0 +1,409 @@
+rules:
+  - id: python.sql-injection
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches the text of an SQL query. Pass it as a bound parameter
+      (`execute(sql, params)`, Django's `raw(sql, params)`, `extra(where=..., params=...)` or
+      `RawSQL(sql, params)`) instead of building the query string from it.
+    metadata:
+      title: SQL query built from HTTP request data (Python DB-API, Django)
+      cwe: ['CWE-89']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [flask, django, dbapi, sqlalchemy, psycopg]
+      sources:
+        - https://cwe.mitre.org/data/definitions/89.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+        - https://peps.python.org/pep-0249/
+        - https://peps.python.org/pep-0008/#constants
+        - https://docs.python.org/3/library/sqlite3.html#how-to-use-placeholders-to-bind-values-in-sql-queries
+        - https://flask.palletsprojects.com/en/stable/api/#flask.Request
+        - https://flask.palletsprojects.com/en/stable/quickstart/#variable-rules
+        - https://flask.palletsprojects.com/en/stable/tutorial/database/
+        - https://flask-sqlalchemy.readthedocs.io/en/stable/queries/
+        - https://docs.sqlalchemy.org/en/20/tutorial/data_select.html
+        - https://docs.sqlalchemy.org/en/20/core/dml.html
+        - https://docs.sqlalchemy.org/en/20/core/sqlelement.html#sqlalchemy.sql.expression.text
+        - https://docs.sqlalchemy.org/en/20/core/connections.html#sqlalchemy.engine.Connection.exec_driver_sql
+        - https://www.psycopg.org/docs/usage.html#passing-parameters-to-sql-queries
+        - https://www.psycopg.org/docs/sql.html
+        - https://www.psycopg.org/psycopg3/docs/api/sql.html
+        - https://docs.graphene-python.org/en/latest/execution/execute/
+        - https://docs.djangoproject.com/en/stable/ref/request-response/
+        - https://docs.djangoproject.com/en/stable/topics/http/urls/
+        - https://docs.djangoproject.com/en/stable/ref/class-based-views/base/
+        - https://docs.djangoproject.com/en/stable/topics/db/sql/
+        - https://docs.djangoproject.com/en/stable/ref/models/querysets/#extra
+        - https://docs.djangoproject.com/en/stable/ref/models/expressions/#raw-sql-expressions
+        - https://docs.djangoproject.com/en/stable/topics/security/#sql-injection-protection
+      since: 2026.10.0
+    # Known limits (each has a `todo` line in the test file):
+    # - execute() on a connection from elsewhere (a helper such as get_db(), or a parameter), given
+    #   a query whose text does not start with an SQL string literal, is not followed: a method
+    #   named execute() is a sink only on a DB-API cursor or connection made in the function, or
+    #   when the query text is visibly SQL, so that GraphQL and other execute() methods are not
+    #   reported.
+    # - A Flask route parameter with a typed converter (`<int:order_id>`) is still a source: the
+    #   converter is in the URL rule, not in the function. FastAPI parameters annotated int,
+    #   float or bool (also `Annotated[int, ...]`), and dependencies (`= Depends()`,
+    #   `= Security()`, `Annotated[T, Depends()]` in place or through a module-level alias) are
+    #   not sources; so a Flask view parameter annotated int is not one either, although Flask
+    #   passes a str for a rule without a converter.
+    # - Django views are recognised in a module that imports Django, by their signature: a
+    #   function whose first parameter is named `request` (its other parameters are the URL
+    #   arguments), or a class's get()/post()/... method taking `(self, request, ...)`. The URL
+    #   converters live in another module (urls.py), so an `<int:pk>` argument is still a
+    #   source, and so is a parameter with a default value. A helper whose first parameter is
+    #   named `request` has its other parameters taken for URL arguments, and the request
+    #   attributes (`headers`, `body`, ...) of such a parameter count even when it is another
+    #   library's request object.
+    # - An allow-list is recognised as a lookup (`.get()` or `[...]`) in a dict literal of literal
+    #   keys and values assigned to an upper-case (constant) name that the module never changes
+    #   or assigns again, with no default or a literal/constant default for get(); or as a
+    #   ternary of constants. A membership check (`if x not in ALLOWED: return`) is not.
+    pattern-sources:
+      - pattern-either:
+          - pattern: flask.request.args
+          - pattern: flask.request.form
+          - pattern: flask.request.values
+          - pattern: flask.request.headers
+          - pattern: flask.request.cookies
+          - pattern: flask.request.json
+          - pattern: flask.request.get_json(...)
+          - pattern: flask.request.data
+          - pattern: flask.request.get_data(...)
+          - pattern: flask.request.files
+          - pattern: flask.request.view_args
+          - pattern: flask.request.path
+          - pattern: flask.request.full_path
+          - pattern: flask.request.url
+          - pattern: flask.request.query_string
+      # Flask "Variable Rules": the parameters of a view function registered with a URL rule.
+      # FastAPI path operations match too; their parameters annotated int, float or bool are
+      # converted by FastAPI, and those with a Depends()/Security() default are dependencies,
+      # not request data.
+      - patterns:
+          - pattern-inside: |
+              @$APP.$ROUTE(...)
+              def $VIEW(..., $PARAM, ...):
+                ...
+          - metavariable-regex:
+              metavariable: $ROUTE
+              regex: ^(route|get|post|put|patch|delete)$
+          # (A parameter pattern without a type or default also matches a typed one, and one
+          # without a default also matches one with a default.)
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Depends(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Security(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: int, ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: float, ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: bool, ...):
+                ...
+          # The same in FastAPI's Annotated form, written in place or through a module-level
+          # alias (`SettingsDep = Annotated[Settings, Depends(get_settings)]`).
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Depends(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Security(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[int, ...], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[float, ...], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[bool, ...], ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Depends(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Security(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - focus-metavariable: $PARAM
+      # Django, in a module that imports it: the HttpRequest a view receives, the URL arguments
+      # passed to the view after it, and what View.setup() keeps on a class-based view.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      from $DJ import $NAME
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+              - patterns:
+                  - pattern-inside: |
+                      import $DJ
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+          - pattern-either:
+              # The request: the first parameter of a function, the one after self of a method.
+              # The upper-case attributes exist only on Django's HttpRequest; the others count
+              # only on a parameter named request.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW($REQ, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(self, $REQ, ...):
+                            ...
+                  - pattern-either:
+                      - pattern: $REQ.GET
+                      - pattern: $REQ.POST
+                      - pattern: $REQ.COOKIES
+                      - pattern: $REQ.META
+                      - pattern: $REQ.FILES
+                      - patterns:
+                          - pattern-either:
+                              - pattern: $REQ.headers
+                              - pattern: $REQ.body
+                              - pattern: $REQ.path
+                              - pattern: $REQ.path_info
+                              - pattern: $REQ.get_full_path(...)
+                              - pattern: $REQ.get_full_path_info(...)
+                              - pattern: $REQ.build_absolute_uri(...)
+                              - pattern: $REQ.read(...)
+                              - pattern: $REQ.readline(...)
+                              - pattern: $REQ.readlines(...)
+                          - metavariable-regex:
+                              metavariable: $REQ
+                              regex: ^request$
+              # Class-based views: View.setup() keeps the request on self.request and the URL
+              # arguments on self.args and self.kwargs.
+              - patterns:
+                  - pattern-inside: |
+                      class $CLS(...):
+                        ...
+                  - pattern-either:
+                      - pattern: self.request.GET
+                      - pattern: self.request.POST
+                      - pattern: self.request.COOKIES
+                      - pattern: self.request.META
+                      - pattern: self.request.FILES
+                      - pattern: self.request.headers
+                      - pattern: self.request.body
+                      - pattern: self.request.path
+                      - pattern: self.request.path_info
+                      - pattern: self.request.get_full_path(...)
+                      - pattern: self.request.get_full_path_info(...)
+                      - pattern: self.request.build_absolute_uri(...)
+                      - pattern: self.args
+                      - pattern: self.kwargs
+              # URL arguments: the parameters after the request of a function-based view, and of
+              # a class-based view's handler method (dispatch() calls get(), post(), ...).
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW(request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., **$PARAM):
+                            ...
+                      - patterns:
+                          - pattern-inside: |
+                              class $CLS(...):
+                                ...
+                          - pattern-either:
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., $PARAM, ...):
+                                    ...
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., *$PARAM, ...):
+                                    ...
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., **$PARAM):
+                                    ...
+                          - metavariable-regex:
+                              metavariable: $VIEW
+                              regex: ^(get|post|put|patch|delete|head|options|trace|dispatch)$
+                  - focus-metavariable: $PARAM
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+      # An allow-list: a lookup in a dict literal of literal keys and values (strings, numbers,
+      # True/False/None) assigned to an upper-case (constant) name, which the module never
+      # changes (item assignment, update(), setdefault(), |=, assigning the name again). A get()
+      # default must be a literal or a constant too.
+      - patterns:
+          - pattern-inside: |
+              $ALLOWED = $LITERAL
+              ...
+          - metavariable-regex:
+              metavariable: $ALLOWED
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $LITERAL
+              regex: ^\{(\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*:\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*,)*(\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*:\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*)?\s*\}$
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED[$KEY] = $VALUE
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED.update(...)
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED.setdefault(...)
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED |= $VALUE
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED = $OTHER
+              ...
+          - pattern-either:
+              - pattern: $ALLOWED.get($LOOKUP)
+              - pattern: $ALLOWED[$LOOKUP]
+              - patterns:
+                  - pattern: $ALLOWED.get($LOOKUP, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None|[A-Z][A-Z0-9_]*(\[("[^"\\\n]*"|'[^'\\\n]*')\])?)$
+      # psycopg SQL composition quotes identifiers and values itself.
+      - pattern: psycopg2.sql.Identifier(...)
+      - pattern: psycopg2.sql.Literal(...)
+      - pattern: psycopg.sql.Identifier(...)
+      - pattern: psycopg.sql.Literal(...)
+    pattern-sinks:
+      # PEP 249: a cursor from Connection.cursor(), or a connection from a driver's connect()
+      # (sqlite3 and psycopg 3 connections have execute() too), obtained in the same function.
+      # Django's `with connection.cursor() as cursor:` is such a cursor.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $C = $CON.cursor(...)
+                  ...
+              - pattern-inside: |
+                  with $CON.cursor(...) as $C:
+                    ...
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $C = $DRIVER.connect(...)
+                          ...
+                      - pattern-inside: |
+                          with $DRIVER.connect(...) as $C:
+                            ...
+                  - metavariable-regex:
+                      metavariable: $DRIVER
+                      regex: ^(sqlite3|psycopg2|psycopg|pymysql|MySQLdb|mysql\.connector|oracledb|cx_Oracle|pyodbc|pymssql)$
+          - pattern-either:
+              - pattern: $C.execute($SQL, ...)
+              - pattern: $C.executemany($SQL, ...)
+          - focus-metavariable: $SQL
+      - patterns:
+          - pattern-either:
+              - pattern: $CON.cursor(...).execute($SQL, ...)
+              - pattern: $CON.cursor(...).executemany($SQL, ...)
+          - focus-metavariable: $SQL
+      # Any other execute() (or Django manager raw()) whose query text is visibly SQL (a
+      # connection from a helper such as the Flask tutorial's get_db()), written in place or
+      # assigned to a variable first.
+      - patterns:
+          - pattern-either:
+              - pattern: $X.execute($SQL, ...)
+              - pattern: $X.executemany($SQL, ...)
+              - pattern: $X.raw($SQL, ...)
+          - metavariable-regex:
+              metavariable: $SQL
+              regex: (?i)^[rbuf]{0,2}("""|'''|"|')\s*\(?\s*(select|insert|update|delete|replace|merge|upsert|with|create|alter|drop|truncate|pragma|exec|execute|call|explain)\b
+          - focus-metavariable: $SQL
+      - patterns:
+          - pattern-inside: |
+              $SQL = $TEXT
+              ...
+          - metavariable-regex:
+              metavariable: $TEXT
+              regex: (?i)^[rbuf]{0,2}("""|'''|"|')\s*\(?\s*(select|insert|update|delete|replace|merge|upsert|with|create|alter|drop|truncate|pragma|exec|execute|call|explain)\b
+          - pattern-either:
+              - pattern: $X.execute($SQL, ...)
+              - pattern: $X.executemany($SQL, ...)
+              - pattern: $X.raw($SQL, ...)
+          - focus-metavariable: $SQL
+      - patterns:
+          - pattern: $X.executescript($SQL)
+          - focus-metavariable: $SQL
+      # Django: Manager.raw() on a model's default manager, QuerySet.extra() (its where, select
+      # and tables are SQL text; params and select_params are bound) and the RawSQL expression.
+      - patterns:
+          - pattern-either:
+              - pattern: $MODEL.objects.raw($SQL, ...)
+              - pattern: django.db.models.expressions.RawSQL($SQL, ...)
+              - pattern: django.db.models.RawSQL($SQL, ...)
+          - focus-metavariable: $SQL
+      # extra() on a QuerySet: a chain from a model's default manager or from a view's
+      # get_queryset(), written in place or assigned to a variable first in the function.
+      - patterns:
+          - pattern-either:
+              - pattern: $MODEL.objects.extra(..., $KW=$SQL, ...)
+              - pattern: $MODEL.objects. ... .extra(..., $KW=$SQL, ...)
+              - pattern: $VIEW.get_queryset().extra(..., $KW=$SQL, ...)
+              - pattern: $VIEW.get_queryset(). ... .extra(..., $KW=$SQL, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $QS = $MODEL.objects.$METHOD(...)
+                          ...
+                      - pattern-inside: |
+                          $QS = $MODEL.objects. ... .$METHOD(...)
+                          ...
+                      - pattern-inside: |
+                          $QS = $VIEW.get_queryset(...)
+                          ...
+                      - pattern-inside: |
+                          $QS = $VIEW.get_queryset(). ... .$METHOD(...)
+                          ...
+                  - pattern: $QS.extra(..., $KW=$SQL, ...)
+          - metavariable-regex:
+              metavariable: $KW
+              regex: ^(where|select|tables)$
+          - focus-metavariable: $SQL
+      # SQLAlchemy textual SQL; select/insert/update/delete statements bind their values.
+      - patterns:
+          - pattern-either:
+              - pattern: sqlalchemy.text($SQL, ...)
+              - pattern: sqlalchemy.sql.text($SQL, ...)
+              - pattern: sqlalchemy.sql.expression.text($SQL, ...)
+              - pattern: $X.exec_driver_sql($SQL, ...)
+          - focus-metavariable: $SQL
+      # psycopg composition: the template passed to sql.SQL() is SQL text.
+      - patterns:
+          - pattern-either:
+              - pattern: psycopg2.sql.SQL($SQL)
+              - pattern: psycopg.sql.SQL($SQL)
+          - focus-metavariable: $SQL

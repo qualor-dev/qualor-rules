@@ -1,0 +1,413 @@
+rules:
+  - id: python.template-injection
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request becomes the source of a Jinja or Django template
+      (render_template_string(), jinja2.Template(), Environment.from_string(), Django Template() or
+      engines[...].from_string()). Template code can read the app's objects and settings and, with
+      Jinja, run Python code on the server. Keep the template constant and pass request values as
+      context (`render_template_string(PAGE, name=value)`), pick the template from a fixed
+      allow-list, or render untrusted templates only in Jinja's SandboxedEnvironment (it still
+      lets a template use much CPU and memory, so pass it only the data it needs).
+    metadata:
+      title: Template source built from HTTP request data (Python)
+      cwe: ['CWE-1336', 'CWE-94']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [flask, django, fastapi, jinja2]
+      sources:
+        - https://cwe.mitre.org/data/definitions/1336.html
+        - https://cwe.mitre.org/data/definitions/94.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Injection_Prevention_Cheat_Sheet.html
+        - https://top10.owasp.org/2025/A05_2025-Injection
+        - https://top10.owasp.org/2021/A03_2021-Injection
+        - https://flask.palletsprojects.com/en/stable/api/#flask.render_template_string
+        - https://flask.palletsprojects.com/en/stable/api/#flask.stream_template_string
+        - https://flask.palletsprojects.com/en/stable/api/#flask.Flask.jinja_env
+        - https://flask.palletsprojects.com/en/stable/templating/
+        - https://jinja.palletsprojects.com/en/stable/api/
+        - https://jinja.palletsprojects.com/en/stable/sandbox/
+        - https://jinja.palletsprojects.com/en/stable/nativetypes/
+        - https://docs.djangoproject.com/en/stable/topics/templates/
+        - https://docs.djangoproject.com/en/stable/ref/templates/api/
+        - https://www.starlette.dev/templates/
+        - https://fastapi.tiangolo.com/advanced/templates/
+        - https://docs.python.org/3/library/string.html#template-strings
+        - https://peps.python.org/pep-0008/#constants
+        - https://flask.palletsprojects.com/en/stable/api/#flask.Request
+        - https://flask.palletsprojects.com/en/stable/quickstart/#variable-rules
+        - https://docs.djangoproject.com/en/stable/ref/request-response/
+        - https://docs.djangoproject.com/en/stable/topics/http/urls/
+        - https://docs.djangoproject.com/en/stable/ref/class-based-views/base/
+        - https://fastapi.tiangolo.com/tutorial/body/
+        - https://fastapi.tiangolo.com/advanced/using-request-directly/
+      since: 2026.10.1
+    # Known limits (each has a `todo` line in the test file):
+    # - OpenGrep does not carry taint through a slice (`request.args["tpl"][:200]`).
+    # - from_string() is a sink only on an environment the rule can see: jinja2.Environment() or
+    #   NativeEnvironment() called in place or assigned in the module or function, Flask's
+    #   `jinja_env`, the `env` of a Jinja2Templates assigned in the module or function, Django's
+    #   `engines[...]`, Engine() and Engine.get_default(). An environment returned by a helper or
+    #   received as a parameter is missed (todoruleid).
+    # - An allow-list is recognised as a lookup (`.get()` or `[...]`) in a dict literal of literal
+    #   keys and values (also lists or tuples of literals, with comments between the items)
+    #   assigned to an upper-case (constant) name that the module never changes or assigns
+    #   again, with no default or a literal/constant default for get() (an upper-case name
+    #   assigned in the function is not a constant); or as a ternary of constants. A membership
+    #   check (`if x not in ALLOWED: return`) is not, nor is a nested table (todook).
+    # Inherited from the request source block (python.sql-injection), each with a `todook` line:
+    # - A Flask route parameter with a typed converter (`<int:n>`) is still a source.
+    # - A Django URL argument is still a source when its converter (`<int:pk>`, in urls.py) or a
+    #   default value makes it a number.
+    # - A Django-module function whose first parameter is named request is taken for a view: its
+    #   other parameters count as URL arguments, and the request attributes (`headers`, `body`,
+    #   ...) of that parameter count even when it is another library's request object.
+    # - A Flask view parameter annotated int, float or bool is not a source (the FastAPI rule
+    #   below), although Flask passes a str for a rule without a converter (todoruleid).
+    # FastAPI parameters annotated int, float or bool (also `Annotated[int, ...]`), and
+    # dependencies (`= Depends()`, `= Security()`, `Annotated[T, Depends()]` in place or through a
+    # module-level alias) are not sources.
+    pattern-sources:
+      - pattern-either:
+          - pattern: flask.request.args
+          - pattern: flask.request.form
+          - pattern: flask.request.values
+          - pattern: flask.request.headers
+          - pattern: flask.request.cookies
+          - pattern: flask.request.json
+          - pattern: flask.request.get_json(...)
+          - pattern: flask.request.data
+          - pattern: flask.request.get_data(...)
+          - pattern: flask.request.files
+          - pattern: flask.request.view_args
+          - pattern: flask.request.path
+          - pattern: flask.request.full_path
+          - pattern: flask.request.url
+          - pattern: flask.request.query_string
+      # Flask "Variable Rules": the parameters of a view function registered with a URL rule.
+      # FastAPI path operations match too; their parameters annotated int, float or bool are
+      # converted by FastAPI, and those with a Depends()/Security() default are dependencies,
+      # not request data.
+      - patterns:
+          - pattern-inside: |
+              @$APP.$ROUTE(...)
+              def $VIEW(..., $PARAM, ...):
+                ...
+          - metavariable-regex:
+              metavariable: $ROUTE
+              regex: ^(route|get|post|put|patch|delete)$
+          # (A parameter pattern without a type or default also matches a typed one, and one
+          # without a default also matches one with a default.)
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Depends(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Security(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: int, ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: float, ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: bool, ...):
+                ...
+          # The same in FastAPI's Annotated form, written in place or through a module-level
+          # alias (`SettingsDep = Annotated[Settings, Depends(get_settings)]`).
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Depends(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Security(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[int, ...], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[float, ...], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[bool, ...], ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Depends(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Security(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - focus-metavariable: $PARAM
+      # Django, in a module that imports it: the HttpRequest a view receives, the URL arguments
+      # passed to the view after it, and what View.setup() keeps on a class-based view.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      from $DJ import $NAME
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+              - patterns:
+                  - pattern-inside: |
+                      import $DJ
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+          - pattern-either:
+              # The request: the first parameter of a function, the one after self of a method.
+              # The upper-case attributes exist only on Django's HttpRequest; the others count
+              # only on a parameter named request.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW($REQ, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(self, $REQ, ...):
+                            ...
+                  - pattern-either:
+                      - pattern: $REQ.GET
+                      - pattern: $REQ.POST
+                      - pattern: $REQ.COOKIES
+                      - pattern: $REQ.META
+                      - pattern: $REQ.FILES
+                      - patterns:
+                          - pattern-either:
+                              - pattern: $REQ.headers
+                              - pattern: $REQ.body
+                              - pattern: $REQ.path
+                              - pattern: $REQ.path_info
+                              - pattern: $REQ.get_full_path(...)
+                              - pattern: $REQ.get_full_path_info(...)
+                              - pattern: $REQ.build_absolute_uri(...)
+                              - pattern: $REQ.read(...)
+                              - pattern: $REQ.readline(...)
+                              - pattern: $REQ.readlines(...)
+                          - metavariable-regex:
+                              metavariable: $REQ
+                              regex: ^request$
+              # Class-based views: View.setup() keeps the request on self.request and the URL
+              # arguments on self.args and self.kwargs.
+              - patterns:
+                  - pattern-inside: |
+                      class $CLS(...):
+                        ...
+                  - pattern-either:
+                      - pattern: self.request.GET
+                      - pattern: self.request.POST
+                      - pattern: self.request.COOKIES
+                      - pattern: self.request.META
+                      - pattern: self.request.FILES
+                      - pattern: self.request.headers
+                      - pattern: self.request.body
+                      - pattern: self.request.path
+                      - pattern: self.request.path_info
+                      - pattern: self.request.get_full_path(...)
+                      - pattern: self.request.get_full_path_info(...)
+                      - pattern: self.request.build_absolute_uri(...)
+                      - pattern: self.args
+                      - pattern: self.kwargs
+              # URL arguments: the parameters after the request of a function-based view, and of
+              # a class-based view's handler method (dispatch() calls get(), post(), ...).
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW(request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., **$PARAM):
+                            ...
+                      - patterns:
+                          - pattern-inside: |
+                              class $CLS(...):
+                                ...
+                          - pattern-either:
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., $PARAM, ...):
+                                    ...
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., *$PARAM, ...):
+                                    ...
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., **$PARAM):
+                                    ...
+                          - metavariable-regex:
+                              metavariable: $VIEW
+                              regex: ^(get|post|put|patch|delete|head|options|trace|dispatch)$
+                  - focus-metavariable: $PARAM
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+      # An allow-list: a lookup in a dict literal of literal keys and values (strings, numbers,
+      # True/False/None) assigned to an upper-case (constant) name, which the module never
+      # changes (item assignment, update(), setdefault(), |=, assigning the name again). A get()
+      # default must be a literal or a constant too.
+      - patterns:
+          - pattern-inside: |
+              $ALLOWED = $LITERAL
+              ...
+          - metavariable-regex:
+              metavariable: $ALLOWED
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $LITERAL
+              regex: ^\{(\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*:\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*,)*(\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*:\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*)?\s*\}$
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED[$KEY] = $VALUE
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED.update(...)
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED.setdefault(...)
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED |= $VALUE
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED = $OTHER
+              ...
+          - pattern-either:
+              - pattern: $ALLOWED.get($LOOKUP)
+              - pattern: $ALLOWED[$LOOKUP]
+              - patterns:
+                  - pattern: $ALLOWED.get($LOOKUP, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None|[A-Z][A-Z0-9_]*(\[("[^"\\\n]*"|'[^'\\\n]*')\])?)$
+      # An allow-list written as a module table (rule-specific, beside the shared one above): a
+      # dict literal whose keys are literals and whose values are literals or lists/tuples of
+      # literals, with comments allowed between the items, assigned to an upper-case name that
+      # the module never changes or assigns again; a get() default is a literal, a list/tuple of
+      # literals or a module constant; strings may hold backslash escapes.
+      - patterns:
+          - pattern-inside: |
+              $TABLE = $ITEMS
+              ...
+          - metavariable-regex:
+              metavariable: $TABLE
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $ITEMS
+              regex: ^\{(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*)?\}$
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE[$KEY] = $VALUE
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE.update(...)
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE.setdefault(...)
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE |= $VALUE
+              ...
+          - pattern-not-inside: |
+              $TABLE = $ITEMS
+              ...
+              $TABLE = $OTHER
+              ...
+          - pattern-either:
+              - pattern: $TABLE.get($LOOKUP)
+              - pattern: $TABLE[$LOOKUP]
+              - patterns:
+                  - pattern: $TABLE.get($LOOKUP, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\)|[A-Z][A-Z0-9_]*(\[("[^"\\\n]*"|'[^'\\\n]*')\])?)$
+                  # An upper-case name assigned in the function is a local, not a constant.
+                  - pattern-not-inside: |
+                      def $FUNCTION(...):
+                        ...
+                        $DEFAULT = $ANY
+                        ...
+    pattern-sinks:
+      # The template source of Flask's string renderers, jinja2.Template() and Django's Template()
+      # (only the source: keyword arguments are the context).
+      - patterns:
+          - pattern-either:
+              - pattern: flask.render_template_string($TPL, ...)
+              - pattern: flask.render_template_string(..., source=$TPL, ...)
+              - pattern: flask.stream_template_string($TPL, ...)
+              - pattern: flask.stream_template_string(..., source=$TPL, ...)
+              - pattern: jinja2.Template($TPL, ...)
+              - pattern: jinja2.Template(..., source=$TPL, ...)
+              - pattern: django.template.Template($TPL, ...)
+              - pattern: django.template.Template(..., template_string=$TPL, ...)
+          - focus-metavariable: $TPL
+      # from_string() of an environment the rule can see: Jinja's Environment and NativeEnvironment
+      # (not the SandboxedEnvironment, which the Jinja docs offer for untrusted templates), Flask's
+      # app.jinja_env, the env of Starlette/FastAPI Jinja2Templates, Django's engines and Engine.
+      - patterns:
+          - pattern-either:
+              - pattern: $ENV.from_string($TPL, ...)
+              - pattern: $ENV.from_string(..., source=$TPL, ...)
+              - pattern: $ENV.from_string(..., template_code=$TPL, ...)
+          - pattern-either:
+              - pattern: jinja2.Environment(...).from_string(...)
+              - pattern: jinja2.nativetypes.NativeEnvironment(...).from_string(...)
+              - pattern: $APP.jinja_env.from_string(...)
+              - pattern: django.template.engines[$NAME].from_string(...)
+              - pattern: django.template.Engine(...).from_string(...)
+              - pattern: django.template.Engine.get_default().from_string(...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $ENV = jinja2.Environment(...)
+                          ...
+                      - pattern-inside: |
+                          $ENV = jinja2.nativetypes.NativeEnvironment(...)
+                          ...
+                      - pattern-inside: |
+                          $ENV = django.template.engines[$NAME]
+                          ...
+                      - pattern-inside: |
+                          $ENV = django.template.Engine(...)
+                          ...
+                      - pattern-inside: |
+                          $ENV = django.template.Engine.get_default()
+                          ...
+                  - pattern: $ENV.from_string(...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $TEMPLATES = fastapi.templating.Jinja2Templates(...)
+                          ...
+                      - pattern-inside: |
+                          $TEMPLATES = starlette.templating.Jinja2Templates(...)
+                          ...
+                  - pattern: $TEMPLATES.env.from_string(...)
+          - focus-metavariable: $TPL
