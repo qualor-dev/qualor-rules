@@ -20,7 +20,8 @@ images), `task-7-report.md` (fixture, real-tool tests) and `task-11-report.md` (
 ## Hard rules
 
 - Run only when the maintainer asked for it in this conversation.
-- Never push, never add a remote, never tag, never set `QUALOR_RULES_URL` (that publishes).
+- Never push and never tag: the tag `v<version>` publishes the pack, and only the maintainer
+  creates it (or tells you to). qualor-cc's `QUALOR_RULES_URL` stays as it is (set since 2026.10.1).
 - Never merge into qualor-cc `main`, never switch the branch of qualor-cc's main tree (other
   sessions use it): work in the new worktree only.
 - **No pin without a current measurement:** `npm run measure -- --check` must pass (the newest
@@ -36,7 +37,7 @@ images), `task-7-report.md` (fixture, real-tool tests) and `task-11-report.md` (
 ## 1. Preconditions (qualor-rules, main tree)
 
 ```sh
-git status --porcelain && git branch --show-current && git remote -v   # clean, main, no remote
+git status --porcelain && git branch --show-current && git remote -v   # clean, main, origin = qualor-dev/qualor-rules
 grep -c '| in-progress |' BACKLOG.md                                    # must be 0
 npm run test:docker                                                     # green
 npm run probe -- rules                                                  # qualor-cc 0; review new findings
@@ -113,7 +114,9 @@ node -e "for (const r of require('./dist/manifest.json').rules) console.log(r.id
 Edit, in the worktree:
 
 - `tools/analyzers/install.sh`: `QUALOR_RULES_VERSION=<V>` and `QUALOR_RULES_SHA256=<sha256>`.
-  Leave `QUALOR_RULES_URL=` empty.
+  Leave `QUALOR_RULES_URL` as it is. CI downloads the pinned version from that URL, so the pin
+  works in CI only after the tag `v<V>` has published the release; until then only the drop
+  directory has it.
 - `tools/ci.test.ts`: add `'<V>': '<opengrep>'` to `PACK_OPENGREP` (keep the older entries; the
   test needs an entry for every pinned version). If the pack's `opengrep` differs from
   `install.sh`'s `OPENGREP_VERSION`, stop: an OpenGrep upgrade is a toolchain change in qualor-cc
@@ -193,7 +196,7 @@ Measured: MEASUREMENTS.md <date> (rules <sha>): Benchmark <covered categories TP
 qualor-cc: branch rules-pack-<V> in <W>, commit <sha>; images qualor/scanner:rules-<V>, qualor-analyzers:rules-<V>, qualor/scanner-dotnet:rules-<V>.
 Texts: guide section, README lines, Docker Hub, CHANGELOG updated.
 Tests: <host and toolbox results>; fixtures <changed expectations, or none>.
-Waiting for your word to fast-forward qualor-cc main to <sha>. Publishing (tag v<V>, QUALOR_RULES_URL) stays with you.
+Waiting for your word to fast-forward qualor-cc main to <sha>. Publishing (tag v<V>) stays with you, and qualor-cc's CI needs that release before main is pushed.
 ```
 
 On the maintainer's word only: `git -C E:/Personal/qualor/qualor-cc merge --ff-only rules-pack-<V>`
