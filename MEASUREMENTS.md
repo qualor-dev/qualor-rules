@@ -22,6 +22,64 @@ current rules).
   lists is a follow-up.
 - Entries are data, not code: no line of a measured project is quoted here.
 
+## 2026-10-05 rules fa2c6d7fc907a95f98d6400d1e72d895191e287e (js, python, java, go)
+
+OpenGrep 1.30.0; 4 rule directories; results in `.tmp/probe/2026-10-05T21-12-23-028Z`.
+
+### juice-shop (js, 1618a611b173): 15 finding(s), 652 files, 18 error(s)
+
+- js.code-injection: 1
+- js.nosql-injection: 2
+- js.path-traversal: 5
+- js.sql-injection: 6
+- js.ssrf: 1
+
+### nodegoat (js, c5cb68a7084e): 4 finding(s), 51 files, 2 error(s)
+
+- js.code-injection: 3
+- js.open-redirect: 1
+
+### pygoat (python, 19d17cc88748): 10 finding(s), 85 files, 0 error(s)
+
+- python.code-injection: 2
+- python.path-traversal: 1
+- python.sql-injection: 2
+- python.ssrf: 1
+- python.unsafe-deserialization: 3
+- python.xxe: 1
+
+### owasp-benchmark (java, 8b67a88d73b2): 1263 finding(s), 2772 files, 1 error(s)
+
+| Category | CWE | TP | FN | FP | TN | TPR | FPR | Score | FindSecBugs FPR |
+|---|---|---|---|---|---|---|---|---|---|
+| cmdi | 78 | 110 | 16 | 57 | 68 | 87.3% | 45.6% | 41.7% | 88.8% |
+| crypto | 327 | no rule |  |  |  |  |  |  | 0.0% |
+| hash | 328 | no rule |  |  |  |  |  |  | 0.0% |
+| ldapi | 90 | 24 | 3 | 17 | 15 | 88.9% | 53.1% | 35.8% | 84.4% |
+| pathtraver | 22 | 116 | 17 | 88 | 47 | 87.2% | 65.2% | 22.0% | 95.6% |
+| securecookie | 614 | no rule |  |  |  |  |  |  | 0.0% |
+| sqli | 89 | 242 | 30 | 125 | 107 | 89.0% | 53.9% | 35.1% | 90.5% |
+| trustbound | 501 | no rule |  |  |  |  |  |  | 81.4% |
+| weakrand | 330 | no rule |  |  |  |  |  |  | 0.0% |
+| xpathi | 643 | no rule |  |  |  |  |  |  | 95.0% |
+| xss | 79 | 212 | 34 | 100 | 109 | 86.2% | 47.8% | 38.3% | 52.2% |
+| **mean of covered categories** | | | | | | 87.7% | 53.1% | 34.6% | |
+
+§8.4 target (TPR ≥ 60 %, FPR ≤ 50 % of FindSecBugs' FPR) for the covered injection categories: cmdi NOT met (FPR 45.6% > 44.4%); ldapi NOT met (FPR 53.1% > 42.2%); pathtraver NOT met (FPR 65.2% > 47.8%); sqli NOT met (FPR 53.9% > 45.3%); xss NOT met (FPR 47.8% > 26.1%).
+
+- java.command-injection: 196
+- java.ldap-injection: 41
+- java.path-traversal: 204
+- java.sql-injection: 367
+- java.xss: 454
+- java.xxe: 1
+
+### govwa (go, 4058f79f31ee): 9 finding(s), 24 files, 1 error(s)
+
+- go.insecure-cookie: 1
+- go.weak-hash: 3
+- go.xss: 5
+
 ## 2026-10-04 rules 95f5696b1ee85db56719c6311c2f91b9832301a5 (js, python, java, go)
 
 OpenGrep 1.30.0; 4 rule directories; results in `.tmp/probe/2026-10-04T10-25-58-540Z`.
