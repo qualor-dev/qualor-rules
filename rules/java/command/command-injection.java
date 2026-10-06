@@ -25,6 +25,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+// An enum declared before the first class (the shared enum allow-list forms).
+enum EarlierKind {
+    ONE, TWO
+}
+
 // Servlet: Runtime.exec with a command string, shells, a program chosen by the request, the
 // environment of the new process.
 public class DiagnosticsServlet extends HttpServlet {
@@ -588,4 +593,78 @@ class EntityToolController {
         // ok: java.command-injection
         Runtime.getRuntime().exec("ping -c 1 " + entity.getBody());
     }
+}
+
+// The other spellings of the shared request sources and sanitizers.
+@RestController
+class SharedFormsController {
+    private static final Map<String, String> FORMS = Map.of("a", "alpha", "b", "alpha");
+
+    @GetMapping("/shared/forms")
+    String sharedForms(@RequestParam String key, @RequestParam String n) throws IOException {
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + Map.of("a", "alpha", "b", "alpha").get(key));
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + Map.of("a", "alpha").getOrDefault(key, "alpha"));
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + FORMS.get(key));
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + FORMS.getOrDefault(key, "alpha"));
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + String.valueOf(Integer.parseInt(n)));
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + String.valueOf(Long.parseLong(n)));
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + String.valueOf(Integer.valueOf(n)));
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + String.valueOf(Long.valueOf(n)));
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + Enum.valueOf(FormKind.class, key).name());
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + java.lang.Enum.valueOf(FormKind.class, key).name());
+        // An enum declared inside the class.
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + Level.valueOf(key).name());
+        // An enum declared before the first class of the file.
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + EarlierKind.valueOf(key).name());
+        // An enum declared after the class.
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + FormKind.valueOf(key).name());
+        StringBuilder single = new StringBuilder();
+        single.append(key);
+        // A single append, not in a chain.
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + single.toString());
+        return "ok";
+    }
+
+    enum Level {
+        LOW, HIGH
+    }
+
+    // Servlet request types of both namespaces.
+    void jakartaRequest(jakarta.servlet.ServletRequest request) throws IOException {
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + request.getParameter("q"));
+    }
+
+    void javaxRequest(javax.servlet.ServletRequest request) throws IOException {
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + request.getParameter("q"));
+    }
+
+    void javaxHttpRequest(javax.servlet.http.HttpServletRequest request) throws IOException {
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + request.getParameter("q"));
+    }
+
+    void jakartaHttpRequest(jakarta.servlet.http.HttpServletRequest request) throws IOException {
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + request.getParameter("q"));
+    }
+}
+
+enum FormKind {
+    SMALL, LARGE
 }

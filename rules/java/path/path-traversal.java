@@ -36,6 +36,11 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+// An enum declared before the first class (the shared enum allow-list forms).
+enum EarlierKind {
+    ONE, TWO
+}
+
 // Servlet: request parameters into java.io and java.nio paths, uploaded file names.
 public class DownloadServlet extends HttpServlet {
     private static final String BASE = "/srv/files";
@@ -377,4 +382,78 @@ class EntityFileController {
         // ok: java.path-traversal
         new File("/srv/files", entity.getBody()).delete();
     }
+}
+
+// The other spellings of the shared request sources and sanitizers.
+@RestController
+class SharedFormsController {
+    private static final Map<String, String> FORMS = Map.of("a", "alpha.txt", "b", "alpha.txt");
+
+    @GetMapping("/shared/forms")
+    String sharedForms(@RequestParam String key, @RequestParam String n) {
+        // ok: java.path-traversal
+        new File("/srv/files", Map.of("a", "alpha.txt", "b", "alpha.txt").get(key)).delete();
+        // ok: java.path-traversal
+        new File("/srv/files", Map.of("a", "alpha.txt").getOrDefault(key, "alpha.txt")).delete();
+        // ok: java.path-traversal
+        new File("/srv/files", FORMS.get(key)).delete();
+        // ok: java.path-traversal
+        new File("/srv/files", FORMS.getOrDefault(key, "alpha.txt")).delete();
+        // ok: java.path-traversal
+        new File("/srv/files", String.valueOf(Integer.parseInt(n))).delete();
+        // ok: java.path-traversal
+        new File("/srv/files", String.valueOf(Long.parseLong(n))).delete();
+        // ok: java.path-traversal
+        new File("/srv/files", String.valueOf(Integer.valueOf(n))).delete();
+        // ok: java.path-traversal
+        new File("/srv/files", String.valueOf(Long.valueOf(n))).delete();
+        // ok: java.path-traversal
+        new File("/srv/files", Enum.valueOf(FormKind.class, key).name()).delete();
+        // ok: java.path-traversal
+        new File("/srv/files", java.lang.Enum.valueOf(FormKind.class, key).name()).delete();
+        // An enum declared inside the class.
+        // ok: java.path-traversal
+        new File("/srv/files", Level.valueOf(key).name()).delete();
+        // An enum declared before the first class of the file.
+        // ok: java.path-traversal
+        new File("/srv/files", EarlierKind.valueOf(key).name()).delete();
+        // An enum declared after the class.
+        // ok: java.path-traversal
+        new File("/srv/files", FormKind.valueOf(key).name()).delete();
+        StringBuilder single = new StringBuilder();
+        single.append(key);
+        // A single append, not in a chain.
+        // ruleid: java.path-traversal
+        new File("/srv/files", single.toString()).delete();
+        return "ok";
+    }
+
+    enum Level {
+        LOW, HIGH
+    }
+
+    // Servlet request types of both namespaces.
+    void jakartaRequest(jakarta.servlet.ServletRequest request) {
+        // ruleid: java.path-traversal
+        new File("/srv/files", request.getParameter("q")).delete();
+    }
+
+    void javaxRequest(javax.servlet.ServletRequest request) {
+        // ruleid: java.path-traversal
+        new File("/srv/files", request.getParameter("q")).delete();
+    }
+
+    void javaxHttpRequest(javax.servlet.http.HttpServletRequest request) {
+        // ruleid: java.path-traversal
+        new File("/srv/files", request.getParameter("q")).delete();
+    }
+
+    void jakartaHttpRequest(jakarta.servlet.http.HttpServletRequest request) {
+        // ruleid: java.path-traversal
+        new File("/srv/files", request.getParameter("q")).delete();
+    }
+}
+
+enum FormKind {
+    SMALL, LARGE
 }

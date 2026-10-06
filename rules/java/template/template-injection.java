@@ -412,6 +412,19 @@ class SharedLimitsController {
         // An enum declared before the class.
         // ok: java.template-injection
         templateEngine.process("<p>" + EarlierKind.valueOf(key).name() + "</p>", new Context());
+        StringBuilder single = new StringBuilder();
+        single.append(key);
+        // A single append, not in a chain.
+        // ruleid: java.template-injection
+        templateEngine.process(single.toString(), new Context());
+        StringBuilder chained = new StringBuilder();
+        chained.append("<p>").append(key).append("</p>");
+        // ruleid: java.template-injection
+        templateEngine.process(chained.toString(), new Context());
+        StringBuilder fixed = new StringBuilder();
+        fixed.append("<p>").append("Hello").append("</p>");
+        // ok: java.template-injection
+        templateEngine.process(fixed.toString(), new Context());
         return "ok";
     }
 

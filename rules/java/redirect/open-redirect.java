@@ -30,6 +30,11 @@ import org.springframework.web.servlet.ModelAndView;
 import org.springframework.web.servlet.view.RedirectView;
 import org.springframework.web.util.UriComponentsBuilder;
 
+// An enum declared before the first class (the shared enum allow-list forms).
+enum EarlierKind {
+    ONE, TWO
+}
+
 // Servlet: sendRedirect and the Location header.
 public class LoginServlet extends HttpServlet {
     private static final String SITE = "https://www.example.com";
@@ -468,4 +473,78 @@ class EntityLoginController {
         // ok: java.open-redirect
         return "redirect:" + entity.getBody();
     }
+}
+
+// The other spellings of the shared request sources and sanitizers.
+@Controller
+class SharedFormsController {
+    private static final Map<String, String> FORMS = Map.of("a", "/home", "b", "/home");
+
+    @GetMapping("/shared/forms")
+    String sharedForms(@RequestParam String key, @RequestParam String n, HttpServletResponse response) throws IOException {
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + Map.of("a", "/home", "b", "/home").get(key) + "/");
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + Map.of("a", "/home").getOrDefault(key, "/home") + "/");
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + FORMS.get(key) + "/");
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + FORMS.getOrDefault(key, "/home") + "/");
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + String.valueOf(Integer.parseInt(n)) + "/");
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + String.valueOf(Long.parseLong(n)) + "/");
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + String.valueOf(Integer.valueOf(n)) + "/");
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + String.valueOf(Long.valueOf(n)) + "/");
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + Enum.valueOf(FormKind.class, key).name() + "/");
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + java.lang.Enum.valueOf(FormKind.class, key).name() + "/");
+        // An enum declared inside the class.
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + Level.valueOf(key).name() + "/");
+        // An enum declared before the first class of the file.
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + EarlierKind.valueOf(key).name() + "/");
+        // An enum declared after the class.
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + FormKind.valueOf(key).name() + "/");
+        StringBuilder single = new StringBuilder();
+        single.append(key);
+        // A single append, not in a chain.
+        // ruleid: java.open-redirect
+        response.sendRedirect("https://" + single.toString() + "/");
+        return "ok";
+    }
+
+    enum Level {
+        LOW, HIGH
+    }
+
+    // Servlet request types of both namespaces.
+    void jakartaRequest(jakarta.servlet.ServletRequest request, HttpServletResponse response) throws IOException {
+        // ruleid: java.open-redirect
+        response.sendRedirect("https://" + request.getParameter("q") + "/");
+    }
+
+    void javaxRequest(javax.servlet.ServletRequest request, HttpServletResponse response) throws IOException {
+        // ruleid: java.open-redirect
+        response.sendRedirect("https://" + request.getParameter("q") + "/");
+    }
+
+    void javaxHttpRequest(javax.servlet.http.HttpServletRequest request, HttpServletResponse response) throws IOException {
+        // ruleid: java.open-redirect
+        response.sendRedirect("https://" + request.getParameter("q") + "/");
+    }
+
+    void jakartaHttpRequest(jakarta.servlet.http.HttpServletRequest request, HttpServletResponse response) throws IOException {
+        // ruleid: java.open-redirect
+        response.sendRedirect("https://" + request.getParameter("q") + "/");
+    }
+}
+
+enum FormKind {
+    SMALL, LARGE
 }

@@ -36,6 +36,11 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.HtmlUtils;
 
+// An enum declared before the first class (the shared enum allow-list forms).
+enum EarlierKind {
+    ONE, TWO
+}
+
 // Servlet: the response writer and output stream, with no content type or text/html.
 public class SearchServlet extends HttpServlet {
     @Override
@@ -747,4 +752,83 @@ class EntityPageController {
         // ok: java.xss
         response.getWriter().println(entity.getBody());
     }
+}
+
+// The other spellings of the shared request sources and sanitizers.
+@RestController
+class SharedFormsController {
+    private static final Map<String, String> FORMS = Map.of("a", "<b>A</b>", "b", "<b>A</b>");
+
+    @GetMapping("/shared/forms")
+    String sharedForms(@RequestParam String key, @RequestParam String n, HttpServletResponse response) throws IOException {
+        PrintWriter out = response.getWriter();
+        // ok: java.xss
+        out.println("<p>" + Map.of("a", "<b>A</b>", "b", "<b>A</b>").get(key) + "</p>");
+        // ok: java.xss
+        out.println("<p>" + Map.of("a", "<b>A</b>").getOrDefault(key, "<b>A</b>") + "</p>");
+        // ok: java.xss
+        out.println("<p>" + FORMS.get(key) + "</p>");
+        // ok: java.xss
+        out.println("<p>" + FORMS.getOrDefault(key, "<b>A</b>") + "</p>");
+        // ok: java.xss
+        out.println("<p>" + String.valueOf(Integer.parseInt(n)) + "</p>");
+        // ok: java.xss
+        out.println("<p>" + String.valueOf(Long.parseLong(n)) + "</p>");
+        // ok: java.xss
+        out.println("<p>" + String.valueOf(Integer.valueOf(n)) + "</p>");
+        // ok: java.xss
+        out.println("<p>" + String.valueOf(Long.valueOf(n)) + "</p>");
+        // ok: java.xss
+        out.println("<p>" + Enum.valueOf(FormKind.class, key).name() + "</p>");
+        // ok: java.xss
+        out.println("<p>" + java.lang.Enum.valueOf(FormKind.class, key).name() + "</p>");
+        // An enum declared inside the class.
+        // ok: java.xss
+        out.println("<p>" + Level.valueOf(key).name() + "</p>");
+        // An enum declared before the first class of the file.
+        // ok: java.xss
+        out.println("<p>" + EarlierKind.valueOf(key).name() + "</p>");
+        // An enum declared after the class.
+        // ok: java.xss
+        out.println("<p>" + FormKind.valueOf(key).name() + "</p>");
+        StringBuilder single = new StringBuilder();
+        single.append(key);
+        // A single append, not in a chain.
+        // ruleid: java.xss
+        out.println("<p>" + single.toString() + "</p>");
+        return "ok";
+    }
+
+    enum Level {
+        LOW, HIGH
+    }
+
+    // Servlet request types of both namespaces.
+    void jakartaRequest(jakarta.servlet.ServletRequest request, HttpServletResponse response) throws IOException {
+        PrintWriter out = response.getWriter();
+        // ruleid: java.xss
+        out.println("<p>" + request.getParameter("q") + "</p>");
+    }
+
+    void javaxRequest(javax.servlet.ServletRequest request, HttpServletResponse response) throws IOException {
+        PrintWriter out = response.getWriter();
+        // ruleid: java.xss
+        out.println("<p>" + request.getParameter("q") + "</p>");
+    }
+
+    void javaxHttpRequest(javax.servlet.http.HttpServletRequest request, HttpServletResponse response) throws IOException {
+        PrintWriter out = response.getWriter();
+        // ruleid: java.xss
+        out.println("<p>" + request.getParameter("q") + "</p>");
+    }
+
+    void jakartaHttpRequest(jakarta.servlet.http.HttpServletRequest request, HttpServletResponse response) throws IOException {
+        PrintWriter out = response.getWriter();
+        // ruleid: java.xss
+        out.println("<p>" + request.getParameter("q") + "</p>");
+    }
+}
+
+enum FormKind {
+    SMALL, LARGE
 }

@@ -407,6 +407,19 @@ class SharedLimitsController {
         // An enum declared before the class.
         // ok: java.expression-injection
         elp.eval("price * " + EarlierKind.valueOf(key).name());
+        StringBuilder single = new StringBuilder();
+        single.append(key);
+        // A single append, not in a chain.
+        // ruleid: java.expression-injection
+        elp.eval(single.toString());
+        StringBuilder chained = new StringBuilder();
+        chained.append("price * ").append(key);
+        // ruleid: java.expression-injection
+        elp.eval(chained.toString());
+        StringBuilder fixed = new StringBuilder();
+        fixed.append("price * ").append("2");
+        // ok: java.expression-injection
+        elp.eval(fixed.toString());
         return "ok";
     }
 

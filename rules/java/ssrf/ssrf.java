@@ -34,6 +34,11 @@ import org.springframework.web.client.RestTemplate;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
+// An enum declared before the first class (the shared enum allow-list forms).
+enum EarlierKind {
+    ONE, TWO
+}
+
 // Servlet: java.net.URL and java.net.http with a URL, a scheme or a host from the request.
 public class PreviewServlet extends HttpServlet {
     private static final String API = "https://api.example.com";
@@ -362,4 +367,78 @@ class EntityFetchController {
         // ok: java.ssrf
         new URL(entity.getBody()).openStream();
     }
+}
+
+// The other spellings of the shared request sources and sanitizers.
+@RestController
+class SharedFormsController {
+    private static final Map<String, String> FORMS = Map.of("a", "a.example.com", "b", "a.example.com");
+
+    @GetMapping("/shared/forms")
+    String sharedForms(@RequestParam String key, @RequestParam String n) throws IOException {
+        // ok: java.ssrf
+        new URL("https://" + Map.of("a", "a.example.com", "b", "a.example.com").get(key) + "/status").openStream();
+        // ok: java.ssrf
+        new URL("https://" + Map.of("a", "a.example.com").getOrDefault(key, "a.example.com") + "/status").openStream();
+        // ok: java.ssrf
+        new URL("https://" + FORMS.get(key) + "/status").openStream();
+        // ok: java.ssrf
+        new URL("https://" + FORMS.getOrDefault(key, "a.example.com") + "/status").openStream();
+        // ok: java.ssrf
+        new URL("https://" + String.valueOf(Integer.parseInt(n)) + "/status").openStream();
+        // ok: java.ssrf
+        new URL("https://" + String.valueOf(Long.parseLong(n)) + "/status").openStream();
+        // ok: java.ssrf
+        new URL("https://" + String.valueOf(Integer.valueOf(n)) + "/status").openStream();
+        // ok: java.ssrf
+        new URL("https://" + String.valueOf(Long.valueOf(n)) + "/status").openStream();
+        // ok: java.ssrf
+        new URL("https://" + Enum.valueOf(FormKind.class, key).name() + "/status").openStream();
+        // ok: java.ssrf
+        new URL("https://" + java.lang.Enum.valueOf(FormKind.class, key).name() + "/status").openStream();
+        // An enum declared inside the class.
+        // ok: java.ssrf
+        new URL("https://" + Level.valueOf(key).name() + "/status").openStream();
+        // An enum declared before the first class of the file.
+        // ok: java.ssrf
+        new URL("https://" + EarlierKind.valueOf(key).name() + "/status").openStream();
+        // An enum declared after the class.
+        // ok: java.ssrf
+        new URL("https://" + FormKind.valueOf(key).name() + "/status").openStream();
+        StringBuilder single = new StringBuilder();
+        single.append(key);
+        // A single append, not in a chain.
+        // ruleid: java.ssrf
+        new URL("https://" + single.toString() + "/status").openStream();
+        return "ok";
+    }
+
+    enum Level {
+        LOW, HIGH
+    }
+
+    // Servlet request types of both namespaces.
+    void jakartaRequest(jakarta.servlet.ServletRequest request) throws IOException {
+        // ruleid: java.ssrf
+        new URL("https://" + request.getParameter("q") + "/status").openStream();
+    }
+
+    void javaxRequest(javax.servlet.ServletRequest request) throws IOException {
+        // ruleid: java.ssrf
+        new URL("https://" + request.getParameter("q") + "/status").openStream();
+    }
+
+    void javaxHttpRequest(javax.servlet.http.HttpServletRequest request) throws IOException {
+        // ruleid: java.ssrf
+        new URL("https://" + request.getParameter("q") + "/status").openStream();
+    }
+
+    void jakartaHttpRequest(jakarta.servlet.http.HttpServletRequest request) throws IOException {
+        // ruleid: java.ssrf
+        new URL("https://" + request.getParameter("q") + "/status").openStream();
+    }
+}
+
+enum FormKind {
+    SMALL, LARGE
 }

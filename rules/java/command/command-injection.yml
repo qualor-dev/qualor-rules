@@ -86,9 +86,8 @@ rules:
       # (query, path, matrix, header, cookie, form, body, model attribute). Numbers, booleans,
       # UUIDs and dates are converted by the framework and cannot carry injected text.
       - patterns:
-          - pattern-either:
-              - pattern-inside: $RET $M(..., @$ANN $T $P, ...) { ... }
-              - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+          # @$ANN(...) also matches an annotation written without parentheses.
+          - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
           - metavariable-regex:
               metavariable: $ANN
               regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
@@ -98,13 +97,10 @@ rules:
           - pattern: $P
       # Spring MVC: an HttpEntity or RequestEntity parameter holds the request body.
       - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  @$MAP
-                  $RET $M(..., $T $P, ...) { ... }
-              - pattern-inside: |
-                  @$MAP(...)
-                  $RET $M(..., $T $P, ...) { ... }
+          # @$MAP(...) also matches a mapping annotation written without parentheses.
+          - pattern-inside: |
+              @$MAP(...)
+              $RET $M(..., $T $P, ...) { ... }
           - metavariable-regex:
               metavariable: $MAP
               regex: ^(\w+\.)*(Get|Post|Put|Delete|Patch|Request)Mapping$
@@ -157,9 +153,8 @@ rules:
       - pattern: Enum.valueOf(...)
       - pattern: java.lang.Enum.valueOf(...)
       - patterns:
+          # An enum nested in a class is matched by the class-then-enum form too.
           - pattern-either:
-              - pattern-inside: |
-                  class $X { ... enum $E { ... } ... }
               - pattern-inside: |
                   class $X { ... }
                   ...

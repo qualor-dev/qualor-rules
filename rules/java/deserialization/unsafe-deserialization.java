@@ -32,6 +32,11 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
+// An enum declared before the first class (the shared enum allow-list forms).
+enum EarlierKind {
+    ONE, TWO
+}
+
 // Servlet: the request body, a multipart part and a cookie.
 public class SessionServlet extends HttpServlet {
     private static final ObjectInputFilter ALLOWED = ObjectInputFilter.Config.createFilter("com.acme.sessions.Cart;java.base/*;!*");
@@ -403,4 +408,78 @@ class ChainController {
         new ObjectInputStream(new ByteArrayInputStream(entity.getBody())).readObject();
         return "ok";
     }
+}
+
+// The other spellings of the shared request sources and sanitizers.
+@RestController
+class SharedFormsController {
+    private static final Map<String, String> FORMS = Map.of("a", "<java/>", "b", "<java/>");
+
+    @PostMapping("/shared/forms")
+    String sharedForms(@RequestParam String key, @RequestParam String n) throws IOException, ClassNotFoundException {
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(Map.of("a", "<java/>", "b", "<java/>").get(key)).getBytes())).readObject();
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(Map.of("a", "<java/>").getOrDefault(key, "<java/>")).getBytes())).readObject();
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(FORMS.get(key)).getBytes())).readObject();
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(FORMS.getOrDefault(key, "<java/>")).getBytes())).readObject();
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(String.valueOf(Integer.parseInt(n))).getBytes())).readObject();
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(String.valueOf(Long.parseLong(n))).getBytes())).readObject();
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(String.valueOf(Integer.valueOf(n))).getBytes())).readObject();
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(String.valueOf(Long.valueOf(n))).getBytes())).readObject();
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(Enum.valueOf(FormKind.class, key).name()).getBytes())).readObject();
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(java.lang.Enum.valueOf(FormKind.class, key).name()).getBytes())).readObject();
+        // An enum declared inside the class.
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(Level.valueOf(key).name()).getBytes())).readObject();
+        // An enum declared before the first class of the file.
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(EarlierKind.valueOf(key).name()).getBytes())).readObject();
+        // An enum declared after the class.
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(FormKind.valueOf(key).name()).getBytes())).readObject();
+        StringBuilder single = new StringBuilder();
+        single.append(key);
+        // A single append, not in a chain.
+        // ruleid: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(single.toString()).getBytes())).readObject();
+        return "ok";
+    }
+
+    enum Level {
+        LOW, HIGH
+    }
+
+    // Servlet request types of both namespaces.
+    void jakartaRequest(jakarta.servlet.ServletRequest request) throws IOException, ClassNotFoundException {
+        // ruleid: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(request.getParameter("q")).getBytes())).readObject();
+    }
+
+    void javaxRequest(javax.servlet.ServletRequest request) throws IOException, ClassNotFoundException {
+        // ruleid: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(request.getParameter("q")).getBytes())).readObject();
+    }
+
+    void javaxHttpRequest(javax.servlet.http.HttpServletRequest request) throws IOException, ClassNotFoundException {
+        // ruleid: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(request.getParameter("q")).getBytes())).readObject();
+    }
+
+    void jakartaHttpRequest(jakarta.servlet.http.HttpServletRequest request) throws IOException, ClassNotFoundException {
+        // ruleid: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(request.getParameter("q")).getBytes())).readObject();
+    }
+}
+
+enum FormKind {
+    SMALL, LARGE
 }

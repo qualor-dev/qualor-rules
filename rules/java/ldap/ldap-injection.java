@@ -426,6 +426,11 @@ class SharedLimitsController {
         // An enum declared before the class.
         // ok: java.ldap-injection
         ldapTemplate.search("ou=x", "(cn=" + EarlierKind.valueOf(key).name() + ")", CN);
+        StringBuilder single = new StringBuilder();
+        single.append(key);
+        // A single append, not in a chain.
+        // ruleid: java.ldap-injection
+        ldapTemplate.search("ou=x", "(cn=" + single.toString() + ")", CN);
         return "ok";
     }
 

@@ -37,6 +37,11 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+// An enum declared before the first class (the shared enum allow-list forms).
+enum EarlierKind {
+    ONE, TWO
+}
+
 public class OrderServlet extends HttpServlet {
     private Connection connection;
 
@@ -551,4 +556,79 @@ class EntityNotesController {
         // ok: java.sql-injection
         return jdbc.queryForList("SELECT * FROM notes WHERE body = '" + entity.getBody() + "'");
     }
+}
+
+// The other spellings of the shared request sources and sanitizers.
+@RestController
+class SharedFormsController {
+    private static final Map<String, String> FORMS = Map.of("a", "alpha", "b", "alpha");
+    private Connection connection;
+
+    @GetMapping("/shared/forms")
+    String sharedForms(@RequestParam String key, @RequestParam String n) throws SQLException {
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + Map.of("a", "alpha", "b", "alpha").get(key) + "'");
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + Map.of("a", "alpha").getOrDefault(key, "alpha") + "'");
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + FORMS.get(key) + "'");
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + FORMS.getOrDefault(key, "alpha") + "'");
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + String.valueOf(Integer.parseInt(n)) + "'");
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + String.valueOf(Long.parseLong(n)) + "'");
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + String.valueOf(Integer.valueOf(n)) + "'");
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + String.valueOf(Long.valueOf(n)) + "'");
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + Enum.valueOf(FormKind.class, key).name() + "'");
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + java.lang.Enum.valueOf(FormKind.class, key).name() + "'");
+        // An enum declared inside the class.
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + Level.valueOf(key).name() + "'");
+        // An enum declared before the first class of the file.
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + EarlierKind.valueOf(key).name() + "'");
+        // An enum declared after the class.
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + FormKind.valueOf(key).name() + "'");
+        StringBuilder single = new StringBuilder();
+        single.append(key);
+        // A single append, not in a chain.
+        // ruleid: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + single.toString() + "'");
+        return "ok";
+    }
+
+    enum Level {
+        LOW, HIGH
+    }
+
+    // Servlet request types of both namespaces.
+    void jakartaRequest(jakarta.servlet.ServletRequest request) throws SQLException {
+        // ruleid: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + request.getParameter("q") + "'");
+    }
+
+    void javaxRequest(javax.servlet.ServletRequest request) throws SQLException {
+        // ruleid: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + request.getParameter("q") + "'");
+    }
+
+    void javaxHttpRequest(javax.servlet.http.HttpServletRequest request) throws SQLException {
+        // ruleid: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + request.getParameter("q") + "'");
+    }
+
+    void jakartaHttpRequest(jakarta.servlet.http.HttpServletRequest request) throws SQLException {
+        // ruleid: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + request.getParameter("q") + "'");
+    }
+}
+
+enum FormKind {
+    SMALL, LARGE
 }
