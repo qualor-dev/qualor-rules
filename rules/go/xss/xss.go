@@ -3,6 +3,7 @@ package pages
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -426,6 +428,64 @@ func EchoBuffered(c echo.Context) error {
 	receipt.Execute(&buf, c.QueryParam("name"))
 	// ruleid: go.xss
 	return c.HTML(http.StatusOK, buf.String())
+}
+
+// The output of a command. When request data chooses the program, or writes the script of a
+// shell, cmd.exe or PowerShell, go.command-injection reports the command; that flow is not
+// reported a second time here. A fixed program given request data as an argument may print it
+// back (echo, an error message that names the argument), so that output stays request data.
+func CommandOutput(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	dir := r.URL.Query().Get("dir")
+	listing, _ := exec.Command("sh", "-c", "ls -l "+dir).Output()
+	// ok: go.xss
+	w.Write(listing)
+	script := "du -sh " + r.FormValue("path")
+	usage, _ := exec.CommandContext(ctx, "/bin/bash", "-lc", script).CombinedOutput()
+	// ok: go.xss
+	fmt.Fprintf(w, "<pre>%s</pre>", usage)
+	toolName := r.FormValue("tool")
+	prog := exec.Command(toolName)
+	report, _ := prog.Output()
+	// ok: go.xss
+	w.Write(report)
+	tool := exec.Cmd{Path: r.FormValue("tool")}
+	built, _ := tool.Output()
+	// ok: go.xss
+	w.Write(built)
+	win, _ := exec.Command("cmd.exe", "/c", "dir", r.FormValue("dir")).Output()
+	// ok: go.xss
+	w.Write(win)
+	ps, _ := exec.Command("pwsh", "-NoProfile", "-Command", "Get-ChildItem "+r.FormValue("dir")).Output()
+	// ok: go.xss
+	w.Write(ps)
+	job, _ := exec.Command("powershell.exe", "-NoProfile", "-EncodedCommand", r.FormValue("job")).Output()
+	// ok: go.xss
+	w.Write(job)
+	// An argument of a fixed program.
+	echoed, _ := exec.Command("echo", r.URL.Query().Get("msg")).Output()
+	// ruleid: go.xss
+	w.Write(echoed)
+	pinged, _ := exec.CommandContext(ctx, "ping", "-c", "1", r.FormValue("host")).CombinedOutput()
+	// ruleid: go.xss
+	fmt.Fprintf(w, "<pre>%s</pre>", pinged)
+	// A POSIX shell's arguments after the script are positional parameters, not shell code.
+	positional, _ := exec.Command("sh", "-c", `echo "$1"`, "sh", r.FormValue("name")).Output()
+	// ruleid: go.xss
+	w.Write(positional)
+	// The request values themselves are still request data after the command.
+	// ruleid: go.xss
+	fmt.Fprintf(w, "<p>Listing of %s</p>", dir)
+	// ruleid: go.xss
+	fmt.Fprintf(w, "<p>Report of %s</p>", toolName)
+}
+
+func GinCommandOutput(c *gin.Context) {
+	out, _ := exec.Command("bash", "-c", "grep -r "+c.Query("q")+" /srv/docs").Output()
+	// ok: go.xss
+	c.Data(http.StatusOK, "text/html; charset=utf-8", out)
+	files, _ := exec.Command("ls", c.Query("dir")).CombinedOutput()
+	// ruleid: go.xss
+	c.Data(http.StatusOK, "text/html; charset=utf-8", files)
 }
 
 // Routers on net/http: chi and gorilla/mux route variables.

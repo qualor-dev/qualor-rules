@@ -18,6 +18,13 @@ HTTP request data written into an HTML response without escaping:
   is then written to it (its `Bytes()` or `String()`, `WriteTo`, or `io.Copy`; files and other
   readers sent this way are not reported);
 - marked as safe content with an `html/template` conversion such as `template.HTML(x)`.
+
+The output of a command (`exec.Command(...).Output()`) counts as request data when the command
+was given request data as an argument: a program such as `echo` or `ping` may print its
+arguments back. When the request data is the program itself, or part of the script of a shell
+(`sh -c`), `cmd.exe /c` or PowerShell `-Command`, the command is a command injection, which
+[go/command-injection](command-injection.md) reports; what that command prints is not reported a
+second time here, since fixing the injection fixes both.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -125,6 +132,11 @@ func Hello(w http.ResponseWriter, r *http.Request) {
 - <https://pkg.go.dev/strings#Builder>
 - <https://pkg.go.dev/io#Copy>
 - <https://pkg.go.dev/html#EscapeString>
+- <https://pkg.go.dev/os/exec>
+- <https://pkg.go.dev/os/exec#Command>
+- <https://pkg.go.dev/os/exec#CommandContext>
+- <https://pkg.go.dev/os/exec#Cmd.Output>
+- <https://pkg.go.dev/os/exec#Cmd.CombinedOutput>
 - <https://pkg.go.dev/net/http#ResponseWriter>
 - <https://pkg.go.dev/net/http#DetectContentType>
 - <https://pkg.go.dev/net/http#Error>

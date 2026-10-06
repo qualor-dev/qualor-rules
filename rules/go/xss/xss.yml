@@ -34,6 +34,11 @@ rules:
         - https://pkg.go.dev/strings#Builder
         - https://pkg.go.dev/io#Copy
         - https://pkg.go.dev/html#EscapeString
+        - https://pkg.go.dev/os/exec
+        - https://pkg.go.dev/os/exec#Command
+        - https://pkg.go.dev/os/exec#CommandContext
+        - https://pkg.go.dev/os/exec#Cmd.Output
+        - https://pkg.go.dev/os/exec#Cmd.CombinedOutput
         - https://pkg.go.dev/net/http#ResponseWriter
         - https://pkg.go.dev/net/http#DetectContentType
         - https://pkg.go.dev/net/http#Error
@@ -83,6 +88,12 @@ rules:
     #   bytes.Buffer: a file, a bufio.Reader or an io.LimitedReader is not a sink. Request data
     #   written into a buffer directly (WriteString, fmt.Fprintf) is not followed into the
     #   response (`todoruleid:`).
+    # - What a command prints (os/exec Cmd.Output, CombinedOutput) is request data only through
+    #   the arguments go.command-injection does not report: the output of a command whose program,
+    #   or whose shell, cmd.exe or PowerShell script, carries request data is that rule's finding
+    #   and is not reported again here (`ok:`, a decision, not a limit). A fixed program given
+    #   request data as an argument (echo, ping, a shell's positional parameters) may print it
+    #   back, so its output is still reported.
     # Inherited from the request source block (go.sql-injection):
     # - The Echo instance's binder (`c.Echo().Binder.Bind(&x, c)`) is not a source (`todoruleid:`).
     # - Numeric fields count as clean only when their type is known in the file: a struct declared
@@ -453,6 +464,44 @@ rules:
       # The content of a file is not request data, even when the request names the file.
       - pattern: os.ReadFile(...)
       - pattern: ioutil.ReadFile(...)
+      # The command arguments that go.command-injection reports (the same shapes as its sinks):
+      # the program, the script after a POSIX shell's -c, everything after cmd.exe's /C or /K,
+      # and PowerShell's -Command or -EncodedCommand. Request data there is that rule's finding;
+      # what the command then prints (os/exec Cmd.Output: its standard output) is not reported a
+      # second time. Other arguments of a fixed program, a shell's positional parameters among
+      # them, still reach the output: the program may print them back.
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command($PROG, ...)
+              - pattern: exec.CommandContext($CTX, $PROG, ...)
+              - pattern: 'exec.Cmd{..., Path: $PROG, ...}'
+          - focus-metavariable: $PROG
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command("=~/^(/usr)?(/local)?(/bin/)?(sh|bash|dash|zsh|ksh|mksh|ash)$/", ..., "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/^(/usr)?(/local)?(/bin/)?(sh|bash|dash|zsh|ksh|mksh|ash)$/", ..., "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $SCRIPT, ...)
+              - pattern: exec.Command("=~/^(/usr)?(/bin/)?env$/", "=~/^(/usr)?(/local)?(/bin/)?(sh|bash|dash|zsh|ksh|mksh|ash)$/", ..., "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/^(/usr)?(/bin/)?env$/", "=~/^(/usr)?(/local)?(/bin/)?(sh|bash|dash|zsh|ksh|mksh|ash)$/", ..., "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $SCRIPT, ...)
+          - focus-metavariable: $SCRIPT
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command("=~/^(.*[^a-zA-Z0-9])?[cC][mM][dD]([.][eE][xX][eE])?$/", ..., "=~/^/[cCkK]$/", ..., $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?[cC][mM][dD]([.][eE][xX][eE])?$/", ..., "=~/^/[cCkK]$/", ..., $SCRIPT, ...)
+          - focus-metavariable: $SCRIPT
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command("=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([cC]|[cC][oO][mM][mM][aA][nN][dD])$/", ..., $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([cC]|[cC][oO][mM][mM][aA][nN][dD])$/", ..., $SCRIPT, ...)
+          - focus-metavariable: $SCRIPT
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command("=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([eE]|[eE][cC]|[eE][nN][cC][oO][dD][eE][dD][cC][oO][mM][mM][aA][nN][dD])$/", $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([eE]|[eE][cC]|[eE][nN][cC][oO][dD][eE][dD][cC][oO][mM][mM][aA][nN][dD])$/", $SCRIPT, ...)
+          - pattern-not: exec.Command($PS, ..., "=~/^-([fF]|[fF][iI][lL][eE])$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/^-([fF]|[fF][iI][lL][eE])$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.Command($PS, ..., "=~/[.][pP][sS]1$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/[.][pP][sS]1$/", ..., $SCRIPT, ...)
+          - focus-metavariable: $SCRIPT
       # URL escaping: the output holds only letters, digits, "-_.~", "%" and "+".
       - pattern: url.QueryEscape(...)
       - pattern: url.PathEscape(...)
