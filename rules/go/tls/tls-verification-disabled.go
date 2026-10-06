@@ -228,6 +228,31 @@ func CheckingCallbacks(addr string, pool *x509.CertPool) {
 	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyConnection: verifyAgainstSystem})
 }
 
+// An empty method of another type named like a package function that verifies: the function is
+// the callback.
+type auditor struct{}
+
+func (a *auditor) checkPeer(tls.ConnectionState) error { return nil }
+
+func Audited(addr string) {
+	// ok: go.tls-verification-disabled
+	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyConnection: checkPeer})
+	// ok: go.tls-verification-disabled
+	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyConnection: inspectPeer})
+}
+
+func (auditor) inspectPeer(tls.ConnectionState) error { return nil }
+
+func checkPeer(cs tls.ConnectionState) error {
+	_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{DNSName: cs.ServerName})
+	return err
+}
+
+func inspectPeer(cs tls.ConnectionState) error {
+	_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{DNSName: cs.ServerName})
+	return err
+}
+
 // Tests: an httptest TLS server has a self-signed certificate; the docs allow skipping
 // verification for testing. Test functions and functions that start such a server are left out
 // (and *_test.go files are excluded by the rule's paths).
@@ -323,6 +348,9 @@ func limits(addr string, base tls.Config) {
 	// An empty method used as the callback is not followed.
 	// todoruleid: go.tls-verification-disabled
 	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyConnection: trustingPeer{}.Check})
+	// An empty package function is not followed when a method of the same name exists.
+	// todoruleid: go.tls-verification-disabled
+	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyConnection: skipPeer})
 	// A function-local variable set to true is not a constant.
 	skip := true
 	// todoruleid: go.tls-verification-disabled
@@ -334,3 +362,7 @@ func sameFileConfig() *tls.Config { return &tls.Config{MinVersion: tls.VersionTL
 type trustingPeer struct{}
 
 func (trustingPeer) Check(tls.ConnectionState) error { return nil }
+
+func skipPeer(tls.ConnectionState) error { return nil }
+
+func (auditor) skipPeer(tls.ConnectionState) error { return nil }

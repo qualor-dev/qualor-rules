@@ -44,7 +44,9 @@ rules:
     #   also `var` and package variables) and a named function of the file, by name: a variable
     #   that held an empty callback and was given a real one later still counts as empty
     #   (`todook:`), and an empty method used as the callback (`T{}.Check`) is not followed
-    #   (`todoruleid:`).
+    #   (`todoruleid:`). Methods are left out of the named-function forms, so an empty method
+    #   of another type does not stand for a package function of the same name; an empty
+    #   package function that shares its name with a method is not followed (`todoruleid:`).
     paths:
       exclude: ['*_test.go']
     patterns:
@@ -165,6 +167,21 @@ rules:
                       func $F(...) { ... }
                       ...
                       func $NOOP(...) error { return nil }
+              # Not a method: a method of that name belongs to another type than the callback.
+              - pattern-not-inside: |
+                  func ($RCV $RT) $NOOP(...) error { return nil }
+                  ...
+              - pattern-not-inside: |
+                  func $F(...) { ... }
+                  ...
+                  func ($RCV $RT) $NOOP(...) error { return nil }
+              - pattern-not-inside: |
+                  func ($RT) $NOOP(...) error { return nil }
+                  ...
+              - pattern-not-inside: |
+                  func $F(...) { ... }
+                  ...
+                  func ($RT) $NOOP(...) error { return nil }
               - pattern-either:
                   - pattern-inside: 'tls.Config{..., VerifyConnection: $NOOP, ...}'
                   - pattern-inside: 'tls.Config{..., VerifyPeerCertificate: $NOOP, ...}'
@@ -198,6 +215,21 @@ rules:
                       func $F(...) { ... }
                       ...
                       func $NOOP(...) error { return nil }
+              # Not a method: a method of that name belongs to another type than the callback.
+              - pattern-not-inside: |
+                  func ($RCV $RT) $NOOP(...) error { return nil }
+                  ...
+              - pattern-not-inside: |
+                  func $F(...) { ... }
+                  ...
+                  func ($RCV $RT) $NOOP(...) error { return nil }
+              - pattern-not-inside: |
+                  func ($RT) $NOOP(...) error { return nil }
+                  ...
+              - pattern-not-inside: |
+                  func $F(...) { ... }
+                  ...
+                  func ($RT) $NOOP(...) error { return nil }
               - pattern-either:
                   - pattern-inside: |
                       $CFG.InsecureSkipVerify = $V

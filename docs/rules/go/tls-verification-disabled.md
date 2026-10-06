@@ -97,7 +97,8 @@ func NewClient() (*http.Client, error) {
   followed; package and function constants are.
 - An empty callback is recognised by its variable or function name: a variable that first held
   an empty callback and later a real check is still reported, and an empty method used as the
-  callback (`VerifyConnection: v.Check`) is not recognised.
+  callback (`VerifyConnection: v.Check`), or an empty function that has the same name as a
+  method in the file, is not recognised.
 <!-- end: known-limits -->
 
 ## References
