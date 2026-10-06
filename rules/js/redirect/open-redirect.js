@@ -465,6 +465,33 @@ app.post('/tx-next', async (req, res) => {
   });
 });
 
+// The value of an awaited call that is given a callback stays stored data, and so does a lookup
+// awaited inside the callback.
+const pageCache = { wrap: async (key, build) => build() };
+const Items = { find: (query) => ({ sort: async (compare) => [] }) };
+app.get('/cached/:key', async (req, res) => {
+  if (req.query.a) {
+    const page = await pageCache.wrap(req.params.key, async () => '/home');
+    // ok: js.open-redirect
+    return res.redirect(page);
+  }
+  if (req.query.b) {
+    const rows = await Items.find({ q: req.query.q }).sort((a, b) => a.n - b.n);
+    // ok: js.open-redirect
+    return res.redirect(rows[0].url);
+  }
+  if (req.query.c) {
+    return txdb.transaction(async (t) => {
+      const user = await t.users.findOne({ id: req.params.key });
+      // ok: js.open-redirect
+      res.redirect(user.home);
+    });
+  }
+  const target = await runStep(res, req.query.step, () => '/done');
+  // ok: js.open-redirect
+  return res.redirect(target);
+});
+
 // A function called through a module object counts as another object's method.
 const helpers = require('./redirect-helpers');
 app.get('/module-next', async (req, res) => {

@@ -86,8 +86,10 @@ to another host.
 - Results of awaited calls on other objects (a database lookup by a request value) are taken for
   stored data, so a helper that returns the request value it is given is missed; so is a function
   called through a module object (`await helpers.nextTarget(req.query.next)`). An awaited helper
-  that is given the response object is taken to write its own answer, unless a function is passed
-  to it.
+  that is given the response object is taken to write its own answer.
+- When a function is passed to one of these awaited calls (`await cache.wrap(key, async () =>
+  ...)`, `await db.transaction(async (t) => { ... })`), only the value of the call is taken for
+  stored data; a redirect written inside the callback is checked as usual.
 - Next.js Server Actions and page props are not request sources.
 - Request handlers are recognised by the name of their second parameter (`res`, `reply`, `ctx`,
   `next`, ...): a handler written as `(request, out)` is not checked.
