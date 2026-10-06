@@ -35,6 +35,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 
 // An enum declared before the first class (the shared enum allow-list forms).
@@ -603,6 +604,21 @@ class SharedFormsController {
         return "ok";
     }
 
+    // A part of a multipart request bound with @RequestPart (text, or a body converted with an
+    // HttpMessageConverter).
+    @org.springframework.web.bind.annotation.PostMapping("/shared/part")
+    String part(@RequestPart("meta") String meta, @org.springframework.web.bind.annotation.RequestPart("note") PartNote note,
+            @RequestPart("count") int count) throws SQLException {
+        // ruleid: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + meta + "'");
+        // ruleid: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + note.getText() + "'");
+        // A part converted to a number cannot carry injected text.
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + String.valueOf(count) + "'");
+        return "ok";
+    }
+
     enum Level {
         LOW, HIGH
     }
@@ -631,4 +647,12 @@ class SharedFormsController {
 
 enum FormKind {
     SMALL, LARGE
+}
+
+class PartNote {
+    private String text;
+
+    String getText() {
+        return text;
+    }
 }

@@ -131,6 +131,8 @@ public class ReportController {
 - <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html>
 - <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html>
 - <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html>
+- <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/multipart-forms.html>
+- <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/bind/annotation/RequestPart.html>
 
 ## Tests
 

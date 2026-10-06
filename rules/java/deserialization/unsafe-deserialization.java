@@ -454,6 +454,21 @@ class SharedFormsController {
         return "ok";
     }
 
+    // A part of a multipart request bound with @RequestPart (text, or a body converted with an
+    // HttpMessageConverter).
+    @org.springframework.web.bind.annotation.PostMapping("/shared/part")
+    String part(@RequestPart("meta") String meta, @org.springframework.web.bind.annotation.RequestPart("note") PartNote note,
+            @RequestPart("count") int count) throws IOException, ClassNotFoundException {
+        // ruleid: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(meta).getBytes())).readObject();
+        // ruleid: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(note.getText()).getBytes())).readObject();
+        // A part converted to a number cannot carry injected text.
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(String.valueOf(count)).getBytes())).readObject();
+        return "ok";
+    }
+
     enum Level {
         LOW, HIGH
     }
@@ -482,4 +497,12 @@ class SharedFormsController {
 
 enum FormKind {
     SMALL, LARGE
+}
+
+class PartNote {
+    private String text;
+
+    String getText() {
+        return text;
+    }
 }

@@ -23,6 +23,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 
 // An enum declared before the first class (the shared enum allow-list forms).
@@ -312,6 +313,14 @@ class ToolController {
         new ProcessBuilder(form.getArguments()).start();
         // ruleid: java.command-injection
         new ProcessBuilder(args).start();
+        return "ok";
+    }
+
+    @PostMapping("/jobs/parts")
+    String parts(@RequestPart("argv") List<String> argv) throws IOException {
+        // A list part passed whole.
+        // ruleid: java.command-injection
+        new ProcessBuilder(argv).start();
         return "ok";
     }
 
@@ -639,6 +648,21 @@ class SharedFormsController {
         return "ok";
     }
 
+    // A part of a multipart request bound with @RequestPart (text, or a body converted with an
+    // HttpMessageConverter).
+    @org.springframework.web.bind.annotation.PostMapping("/shared/part")
+    String part(@RequestPart("meta") String meta, @org.springframework.web.bind.annotation.RequestPart("note") PartNote note,
+            @RequestPart("count") int count) throws IOException {
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + meta);
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + note.getText());
+        // A part converted to a number cannot carry injected text.
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + String.valueOf(count));
+        return "ok";
+    }
+
     enum Level {
         LOW, HIGH
     }
@@ -667,4 +691,12 @@ class SharedFormsController {
 
 enum FormKind {
     SMALL, LARGE
+}
+
+class PartNote {
+    private String text;
+
+    String getText() {
+        return text;
+    }
 }

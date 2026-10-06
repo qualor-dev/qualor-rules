@@ -152,6 +152,8 @@ public class UserController {
 - <https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/pathparam>
 - <https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam>
 - <https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1>
+- <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/multipart-forms.html>
+- <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/bind/annotation/RequestPart.html>
 
 ## Tests
 

@@ -33,6 +33,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -428,6 +429,21 @@ class SharedFormsController {
         return "ok";
     }
 
+    // A part of a multipart request bound with @RequestPart (text, or a body converted with an
+    // HttpMessageConverter).
+    @org.springframework.web.bind.annotation.PostMapping("/shared/part")
+    String part(@RequestPart("meta") String meta, @org.springframework.web.bind.annotation.RequestPart("note") PartNote note,
+            @RequestPart("count") int count) {
+        // ruleid: java.path-traversal
+        new File("/srv/files", meta).delete();
+        // ruleid: java.path-traversal
+        new File("/srv/files", note.getText()).delete();
+        // A part converted to a number cannot carry injected text.
+        // ok: java.path-traversal
+        new File("/srv/files", String.valueOf(count)).delete();
+        return "ok";
+    }
+
     enum Level {
         LOW, HIGH
     }
@@ -456,4 +472,12 @@ class SharedFormsController {
 
 enum FormKind {
     SMALL, LARGE
+}
+
+class PartNote {
+    private String text;
+
+    String getText() {
+        return text;
+    }
 }

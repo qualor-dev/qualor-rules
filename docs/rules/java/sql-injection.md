@@ -15,9 +15,9 @@ SQL text built from HTTP request data (Jakarta Servlet, Spring MVC, Jakarta REST
 - Spring JDBC: `JdbcTemplate`, `NamedParameterJdbcTemplate` and `JdbcClient` methods that take SQL;
 - JPA and Hibernate: `createQuery`, `createNativeQuery` and similar methods that take query text.
 
-Request data means servlet request getters and annotated handler parameters (`@RequestParam`,
-`@PathVariable`, `@RequestHeader`, `@RequestBody` objects, `@QueryParam`, `@PathParam`, ...), and the
-body and headers of a Spring `HttpEntity` or `RequestEntity` parameter.
+Request data means servlet request getters, annotated handler parameters (`@RequestParam`,
+`@PathVariable`, `@RequestHeader`, `@RequestBody` objects, `@RequestPart` parts, `@QueryParam`,
+`@PathParam`, ...), and the body and headers of a Spring `HttpEntity` or `RequestEntity` parameter.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -147,6 +147,8 @@ public class OrderController {
 - <https://jakarta.ee/specifications/persistence/3.1/apidocs/jakarta.persistence/jakarta/persistence/entitymanager>
 - <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html>
 - <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html>
+- <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/multipart-forms.html>
+- <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/bind/annotation/RequestPart.html>
 
 ## Tests
 

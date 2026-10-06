@@ -48,6 +48,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 
 enum EarlierKind {
@@ -434,6 +435,21 @@ class SharedLimitsController {
         return "ok";
     }
 
+    // A part of a multipart request bound with @RequestPart (text, or a body converted with an
+    // HttpMessageConverter).
+    @org.springframework.web.bind.annotation.PostMapping("/shared/part")
+    String part(@RequestPart("meta") String meta, @org.springframework.web.bind.annotation.RequestPart("note") PartNote note,
+            @RequestPart("count") int count) {
+        // ruleid: java.ldap-injection
+        ldapTemplate.search("ou=x", "(cn=" + meta + ")", CN);
+        // ruleid: java.ldap-injection
+        ldapTemplate.search("ou=x", "(cn=" + note.getText() + ")", CN);
+        // A part converted to a number cannot carry injected text.
+        // ok: java.ldap-injection
+        ldapTemplate.search("ou=x", "(cn=" + String.valueOf(count) + ")", CN);
+        return "ok";
+    }
+
     enum Level {
         LOW, HIGH
     }
@@ -488,4 +504,12 @@ class SharedLimitsController {
 
 enum SharedKind {
     SMALL, LARGE
+}
+
+class PartNote {
+    private String text;
+
+    String getText() {
+        return text;
+    }
 }

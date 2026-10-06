@@ -26,6 +26,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.servlet.ModelAndView;
 import org.springframework.web.servlet.view.RedirectView;
 import org.springframework.web.util.UriComponentsBuilder;
@@ -519,6 +520,21 @@ class SharedFormsController {
         return "ok";
     }
 
+    // A part of a multipart request bound with @RequestPart (text, or a body converted with an
+    // HttpMessageConverter).
+    @org.springframework.web.bind.annotation.PostMapping("/shared/part")
+    String part(@RequestPart("meta") String meta, @org.springframework.web.bind.annotation.RequestPart("note") PartNote note,
+            @RequestPart("count") int count, HttpServletResponse response) throws IOException {
+        // ruleid: java.open-redirect
+        response.sendRedirect("https://" + meta + "/");
+        // ruleid: java.open-redirect
+        response.sendRedirect("https://" + note.getText() + "/");
+        // A part converted to a number cannot carry injected text.
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + String.valueOf(count) + "/");
+        return "ok";
+    }
+
     enum Level {
         LOW, HIGH
     }
@@ -547,4 +563,12 @@ class SharedFormsController {
 
 enum FormKind {
     SMALL, LARGE
+}
+
+class PartNote {
+    private String text;
+
+    String getText() {
+        return text;
+    }
 }

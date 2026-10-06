@@ -32,6 +32,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.HtmlUtils;
@@ -799,6 +800,22 @@ class SharedFormsController {
         return "ok";
     }
 
+    // A part of a multipart request bound with @RequestPart (text, or a body converted with an
+    // HttpMessageConverter).
+    @org.springframework.web.bind.annotation.PostMapping("/shared/part")
+    String part(@RequestPart("meta") String meta, @org.springframework.web.bind.annotation.RequestPart("note") PartNote note,
+            @RequestPart("count") int count, HttpServletResponse response) throws IOException {
+        PrintWriter out = response.getWriter();
+        // ruleid: java.xss
+        out.println("<p>" + meta + "</p>");
+        // ruleid: java.xss
+        out.println("<p>" + note.getText() + "</p>");
+        // A part converted to a number cannot carry injected text.
+        // ok: java.xss
+        out.println("<p>" + String.valueOf(count) + "</p>");
+        return "ok";
+    }
+
     enum Level {
         LOW, HIGH
     }
@@ -831,4 +848,12 @@ class SharedFormsController {
 
 enum FormKind {
     SMALL, LARGE
+}
+
+class PartNote {
+    private String text;
+
+    String getText() {
+        return text;
+    }
 }

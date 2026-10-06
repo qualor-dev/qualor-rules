@@ -28,6 +28,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestTemplate;
@@ -413,6 +414,21 @@ class SharedFormsController {
         return "ok";
     }
 
+    // A part of a multipart request bound with @RequestPart (text, or a body converted with an
+    // HttpMessageConverter).
+    @org.springframework.web.bind.annotation.PostMapping("/shared/part")
+    String part(@RequestPart("meta") String meta, @org.springframework.web.bind.annotation.RequestPart("note") PartNote note,
+            @RequestPart("count") int count) throws IOException {
+        // ruleid: java.ssrf
+        new URL("https://" + meta + "/status").openStream();
+        // ruleid: java.ssrf
+        new URL("https://" + note.getText() + "/status").openStream();
+        // A part converted to a number cannot carry injected text.
+        // ok: java.ssrf
+        new URL("https://" + String.valueOf(count) + "/status").openStream();
+        return "ok";
+    }
+
     enum Level {
         LOW, HIGH
     }
@@ -441,4 +457,12 @@ class SharedFormsController {
 
 enum FormKind {
     SMALL, LARGE
+}
+
+class PartNote {
+    private String text;
+
+    String getText() {
+        return text;
+    }
 }

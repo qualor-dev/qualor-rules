@@ -38,6 +38,8 @@ rules:
         - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html
         - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html
         - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/multipart-forms.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/bind/annotation/RequestPart.html
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A handler parameter without an annotation is not a source (the Jakarta REST entity
@@ -73,14 +75,15 @@ rules:
               metavariable: $GET
               regex: ^(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getRequestURL|getPathInfo|getReader|getInputStream|getPart|getParts)$
       # Spring MVC and Jakarta REST: the controller-method parameters bound from the request
-      # (query, path, matrix, header, cookie, form, body, model attribute). Numbers, booleans,
-      # UUIDs and dates are converted by the framework and cannot carry injected text.
+      # (query, path, matrix, header, cookie, form, body, multipart part, model attribute).
+      # Numbers, booleans, UUIDs and dates are converted by the framework and cannot carry
+      # injected text.
       - patterns:
           # @$ANN(...) also matches an annotation written without parentheses.
           - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
           - metavariable-regex:
               metavariable: $ANN
-              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|RequestPart|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
           - metavariable-regex:
               metavariable: $T
               regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)

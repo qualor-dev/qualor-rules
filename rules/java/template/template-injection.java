@@ -35,6 +35,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.thymeleaf.TemplateEngine;
 import org.thymeleaf.TemplateSpec;
@@ -428,6 +429,21 @@ class SharedLimitsController {
         return "ok";
     }
 
+    // A part of a multipart request bound with @RequestPart (text, or a body converted with an
+    // HttpMessageConverter).
+    @org.springframework.web.bind.annotation.PostMapping("/shared/part")
+    String part(@RequestPart("meta") String meta, @org.springframework.web.bind.annotation.RequestPart("note") PartNote note,
+            @RequestPart("count") int count) {
+        // ruleid: java.template-injection
+        templateEngine.process("<p>" + meta + "</p>", new Context());
+        // ruleid: java.template-injection
+        templateEngine.process("<p>" + note.getText() + "</p>", new Context());
+        // A part converted to a number cannot carry injected text.
+        // ok: java.template-injection
+        templateEngine.process("<p>" + String.valueOf(count) + "</p>", new Context());
+        return "ok";
+    }
+
     enum Level {
         LOW, HIGH
     }
@@ -480,4 +496,12 @@ class SharedLimitsController {
 
 enum SharedKind {
     SMALL, LARGE
+}
+
+class PartNote {
+    private String text;
+
+    String getText() {
+        return text;
+    }
 }
