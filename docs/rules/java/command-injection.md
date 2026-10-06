@@ -91,8 +91,8 @@ public class PingController {
 
 <!-- begin: known-limits -->
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
-  Spring MVC simple-type parameter), and enum, `List` or `Optional` parameters still count as
-  request data.
+  Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
+  request body and headers); enum, `List` or `Optional` parameters still count as request data.
 - A shell is recognised when its name is a string literal first in the command, in a list that gets
   a shell literal added, or in a variable assigned a shell literal in the same method; a shell
   chosen by a ternary, or put into an array element by element, is missed.
@@ -127,6 +127,9 @@ public class PingController {
 - <https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/pathparam>
 - <https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam>
 - <https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1>
+- <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html>
+- <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html>
+- <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html>
 
 ## Tests
 

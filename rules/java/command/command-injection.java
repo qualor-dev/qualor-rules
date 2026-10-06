@@ -16,6 +16,8 @@ import jakarta.ws.rs.QueryParam;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import org.springframework.http.RequestEntity;
+import org.springframework.http.HttpEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -533,5 +535,57 @@ class SharedSwitchServlet extends HttpServlet {
         } catch (Exception e) {
             response.sendError(500);
         }
+    }
+}
+
+// The request body of a Spring MVC HttpEntity or RequestEntity parameter, and command text assembled in
+// an append chain (StringBuilder.append(...).append(value)).
+@RestController
+class EntityToolController {
+    @PostMapping("/entity/ping")
+    String ping(HttpEntity<String> entity) throws IOException {
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + entity.getBody());
+        return "ok";
+    }
+
+    @org.springframework.web.bind.annotation.RequestMapping("/entity/trace")
+    String trace(RequestEntity<String> request) throws IOException {
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec("traceroute " + request.getBody());
+        return "ok";
+    }
+
+    @PostMapping
+    String lookup(org.springframework.http.HttpEntity<JobForm> entity) throws IOException {
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec("nslookup " + entity.getHeaders().getFirst("X-Host"));
+        return "ok";
+    }
+
+    @GetMapping("/entity/chain")
+    String chain(@RequestParam String host) throws IOException {
+        StringBuilder command = new StringBuilder();
+        command.append("ping").append(" -c 1 ").append(host);
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec(command.toString());
+        StringBuilder fixed = new StringBuilder();
+        fixed.append("uptime").append(" -p");
+        // ok: java.command-injection
+        Runtime.getRuntime().exec(fixed.toString());
+        return "ok";
+    }
+
+    @PostMapping("/entity/argument")
+    String argument(HttpEntity<String> entity) throws IOException {
+        // ok: java.command-injection
+        new ProcessBuilder("ping", "-c", "1", entity.getBody()).start();
+        return "ok";
+    }
+
+    // Not a handler method: an entity it is given is not request data.
+    void replay(HttpEntity<String> entity) throws IOException {
+        // ok: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + entity.getBody());
     }
 }

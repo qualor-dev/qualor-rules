@@ -19,6 +19,8 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.QueryParam;
+import org.springframework.http.RequestEntity;
+import org.springframework.http.HttpEntity;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -307,5 +309,57 @@ class SharedSwitchServlet extends HttpServlet {
         } catch (Exception e) {
             response.sendError(500);
         }
+    }
+}
+
+// The request body of a Spring MVC HttpEntity or RequestEntity parameter, and URL text assembled in
+// an append chain (StringBuilder.append(...).append(value)).
+@RestController
+class EntityFetchController {
+    @PostMapping("/entity/fetch")
+    String fetch(HttpEntity<String> entity) throws IOException {
+        // ruleid: java.ssrf
+        new URL(entity.getBody()).openStream();
+        return "ok";
+    }
+
+    @org.springframework.web.bind.annotation.RequestMapping("/entity/hook")
+    String hook(RequestEntity<String> request) throws IOException {
+        // ruleid: java.ssrf
+        new URL("https://" + request.getBody() + "/hook").openStream();
+        return "ok";
+    }
+
+    @PostMapping
+    String callback(org.springframework.http.HttpEntity<WebhookForm> entity) throws IOException {
+        // ruleid: java.ssrf
+        new URL(entity.getHeaders().getFirst("X-Callback")).openStream();
+        return "ok";
+    }
+
+    @GetMapping("/entity/chain")
+    String chain(@RequestParam String host) throws IOException {
+        StringBuilder url = new StringBuilder();
+        url.append("https://").append(host).append("/status");
+        // ruleid: java.ssrf
+        new URL(url.toString()).openStream();
+        StringBuilder fixed = new StringBuilder();
+        fixed.append("https://status.example.com").append("/health");
+        // ok: java.ssrf
+        new URL(fixed.toString()).openStream();
+        return "ok";
+    }
+
+    @PostMapping("/entity/path")
+    String path(HttpEntity<String> entity) throws IOException {
+        // ok: java.ssrf
+        new URL("https://api.example.com/items/" + entity.getBody()).openStream();
+        return "ok";
+    }
+
+    // Not a handler method: an entity it is given is not request data.
+    void replay(HttpEntity<String> entity) throws IOException {
+        // ok: java.ssrf
+        new URL(entity.getBody()).openStream();
     }
 }

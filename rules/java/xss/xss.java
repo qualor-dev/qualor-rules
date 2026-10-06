@@ -19,6 +19,8 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.owasp.encoder.Encode;
+import org.springframework.http.RequestEntity;
+import org.springframework.http.HttpEntity;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -699,5 +701,50 @@ class SharedSwitchServlet extends HttpServlet {
         // A switch over a value computed from constants always takes the same branch.
         // todook: java.xss
         response.getWriter().println(chosen);
+    }
+}
+
+// The request body of a Spring MVC HttpEntity or RequestEntity parameter, and HTML assembled in
+// an append chain (StringBuilder.append(...).append(value)).
+@RestController
+class EntityPageController {
+    @PostMapping("/entity/echo")
+    String echo(HttpEntity<String> entity) {
+        // ruleid: java.xss
+        return "<p>" + entity.getBody() + "</p>";
+    }
+
+    @RequestMapping("/entity/preview")
+    String preview(RequestEntity<String> request) {
+        // ruleid: java.xss
+        return "<div>" + request.getBody() + "</div>";
+    }
+
+    @PostMapping
+    String agent(org.springframework.http.HttpEntity<NoteForm> entity) {
+        // ruleid: java.xss
+        return "<em>" + entity.getHeaders().getFirst("User-Agent") + "</em>";
+    }
+
+    @GetMapping("/entity/chain")
+    String chain(@RequestParam String term) {
+        StringBuilder html = new StringBuilder();
+        html.append("<ul>").append("<li>").append(term).append("</li></ul>");
+        // ruleid: java.xss
+        return html.toString();
+    }
+
+    @GetMapping("/entity/fixed")
+    String fixed(@RequestParam String term) {
+        StringBuilder html = new StringBuilder();
+        html.append("<ul>").append("<li>").append(HtmlUtils.htmlEscape(term)).append("</li></ul>");
+        // ok: java.xss
+        return html.toString();
+    }
+
+    // Not a handler method: an entity it is given is not request data.
+    void replay(HttpEntity<String> entity, HttpServletResponse response) throws IOException {
+        // ok: java.xss
+        response.getWriter().println(entity.getBody());
     }
 }

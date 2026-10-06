@@ -114,8 +114,8 @@ public class PreviewController {
   A host constant in the middle of the string and `URI.resolve` on a constant URI are not
   recognised.
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
-  Spring MVC simple-type parameter), and enum, `List` or `Optional` parameters still count as
-  request data.
+  Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
+  request body and headers); enum, `List` or `Optional` parameters still count as request data.
 - Allow-list lookups are recognised only as `Map.of(...)` of constants and as `valueOf` of an enum
   declared in the same file.
 <!-- end: known-limits -->
@@ -136,6 +136,9 @@ public class PreviewController {
 - <https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/pathparam>
 - <https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam>
 - <https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1>
+- <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html>
+- <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html>
+- <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html>
 
 ## Tests
 

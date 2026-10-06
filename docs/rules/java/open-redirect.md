@@ -97,8 +97,8 @@ public class AfterLoginServlet extends HttpServlet {
   path as the base, `UriComponentsBuilder.fromPath(...)` and a `Location` set in a
   `ResponseEntity` headers lambda are not recognised.
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
-  Spring MVC simple-type parameter), and enum, `List` or `Optional` parameters still count as
-  request data.
+  Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
+  request body and headers); enum, `List` or `Optional` parameters still count as request data.
 - Allow-list lookups are recognised only as `Map.of(...)` of constants read with `get` or
   `getOrDefault`, and as `valueOf` of an enum declared in the same file.
 <!-- end: known-limits -->
@@ -123,6 +123,9 @@ public class AfterLoginServlet extends HttpServlet {
 - <https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam>
 - <https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1>
 - <https://url.spec.whatwg.org/>
+- <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html>
+- <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html>
+- <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html>
 
 ## Tests
 

@@ -378,3 +378,29 @@ class SharedLimitsController {
         return "ok";
     }
 }
+
+// XML assembled in an append chain (StringBuilder.append(...).append(value)).
+@RestController
+class ChainController {
+    @PostMapping("/chain/settings")
+    String settings(@RequestBody String body) throws IOException {
+        StringBuilder xml = new StringBuilder();
+        xml.append("<?xml version='1.0'?>").append(body);
+        XMLDecoder decoder = new XMLDecoder(new ByteArrayInputStream(xml.toString().getBytes()));
+        // ruleid: java.unsafe-deserialization
+        decoder.readObject();
+        StringBuilder fixed = new StringBuilder();
+        fixed.append("<?xml version='1.0'?>").append("<java/>");
+        XMLDecoder empty = new XMLDecoder(new ByteArrayInputStream(fixed.toString().getBytes()));
+        // ok: java.unsafe-deserialization
+        empty.readObject();
+        return "ok";
+    }
+
+    // Not a handler method: an entity it is given is not request data.
+    String replay(org.springframework.http.HttpEntity<byte[]> entity) throws IOException, ClassNotFoundException {
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(entity.getBody())).readObject();
+        return "ok";
+    }
+}

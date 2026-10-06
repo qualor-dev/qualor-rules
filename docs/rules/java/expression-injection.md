@@ -101,8 +101,8 @@ public class CalcController {
 
 <!-- begin: known-limits -->
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
-  Spring MVC simple-type parameter), and enum, `List` or `Optional` parameters still count as
-  request data.
+  Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
+  request body and headers); enum, `List` or `Optional` parameters still count as request data.
 - One method is analysed at a time and conditions are not evaluated: a helper of the same class
   that returns a constant still passes request data on, and a wrapper class that reads the request
   is not a source.

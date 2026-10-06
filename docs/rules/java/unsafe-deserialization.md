@@ -131,6 +131,9 @@ public class CartServlet extends HttpServlet {
 - <https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest>
 - <https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1>
 - <https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam>
+- <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html>
+- <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html>
+- <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html>
 
 ## Tests
 

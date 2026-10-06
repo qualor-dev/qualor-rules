@@ -124,8 +124,8 @@ public class GreetingServlet extends HttpServlet {
   (only a label in error messages) is quiet when the reader is visibly a `Reader`; with a reader
   returned by a call, the source name is reported.
 - Sandbox settings do not stop the finding: the FreeMarker FAQ lists other risks as well.
-- A handler parameter without an annotation is not a source, and one method is analysed at a time.
-  Allow-list lookups are recognised only as `Map.of(...)` of constants and as `valueOf` of an enum
+- A handler parameter without an annotation is not a source (except a Spring `HttpEntity` or
+  `RequestEntity`), and one method is analysed at a time. Allow-list lookups are recognised only as `Map.of(...)` of constants and as `valueOf` of an enum
   declared in the same file.
 <!-- end: known-limits -->
 

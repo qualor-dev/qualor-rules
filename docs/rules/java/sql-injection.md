@@ -16,7 +16,8 @@ SQL text built from HTTP request data (Jakarta Servlet, Spring MVC, Jakarta REST
 - JPA and Hibernate: `createQuery`, `createNativeQuery` and similar methods that take query text.
 
 Request data means servlet request getters and annotated handler parameters (`@RequestParam`,
-`@PathVariable`, `@RequestHeader`, `@RequestBody` objects, `@QueryParam`, `@PathParam`, ...).
+`@PathVariable`, `@RequestHeader`, `@RequestBody` objects, `@QueryParam`, `@PathParam`, ...), and the
+body and headers of a Spring `HttpEntity` or `RequestEntity` parameter.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -107,7 +108,8 @@ public class OrderController {
 ## Known limits
 
 <!-- begin: known-limits -->
-- A handler parameter without an annotation is not a source. That misses a Spring MVC simple-type
+- A handler parameter without an annotation is not a source, except a Spring `HttpEntity` or
+  `RequestEntity` (the request body and headers). That misses a Spring MVC simple-type
   parameter (`String term`), which Spring binds from the request, and the Jakarta REST entity
   parameter (the request body).
 - Only scalar types count as safe: an enum, a `List<Long>` or an `Optional<Long>` parameter is
@@ -143,6 +145,8 @@ public class OrderController {
 - <https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam>
 - <https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1>
 - <https://jakarta.ee/specifications/persistence/3.1/apidocs/jakarta.persistence/jakarta/persistence/entitymanager>
+- <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html>
+- <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html>
 
 ## Tests
 

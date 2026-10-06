@@ -13,6 +13,8 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.Response;
+import org.springframework.http.RequestEntity;
+import org.springframework.http.HttpEntity;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -420,5 +422,50 @@ class SharedSwitchServlet extends HttpServlet {
         // A switch over a value computed from constants always takes the same branch.
         // todook: java.open-redirect
         response.sendRedirect(chosen);
+    }
+}
+
+// The request body of a Spring MVC HttpEntity or RequestEntity parameter, and the target assembled in
+// an append chain (StringBuilder.append(...).append(value)).
+@Controller
+class EntityLoginController {
+    @PostMapping("/entity/next")
+    String next(HttpEntity<String> entity) {
+        // ruleid: java.open-redirect
+        return "redirect:" + entity.getBody();
+    }
+
+    @org.springframework.web.bind.annotation.RequestMapping("/entity/back")
+    String back(RequestEntity<String> request) {
+        // ruleid: java.open-redirect
+        return "redirect:" + request.getBody();
+    }
+
+    @PostMapping
+    String referer(org.springframework.http.HttpEntity<LoginForm> entity) {
+        // ruleid: java.open-redirect
+        return "redirect:" + entity.getHeaders().getFirst("Referer");
+    }
+
+    @GetMapping("/entity/chain")
+    String chain(@RequestParam String host) {
+        StringBuilder target = new StringBuilder();
+        target.append("https://").append(host).append("/home");
+        // ruleid: java.open-redirect
+        return "redirect:" + target.toString();
+    }
+
+    @GetMapping("/entity/fixed")
+    String fixed(@RequestParam String host) {
+        StringBuilder target = new StringBuilder();
+        target.append("/account").append("?tab=profile");
+        // ok: java.open-redirect
+        return "redirect:" + target.toString();
+    }
+
+    // Not a handler method: an entity it is given is not request data.
+    String replay(HttpEntity<String> entity) {
+        // ok: java.open-redirect
+        return "redirect:" + entity.getBody();
     }
 }

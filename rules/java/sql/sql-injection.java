@@ -22,6 +22,8 @@ import javax.servlet.http.HttpServlet;
 import javax.sql.DataSource;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import org.springframework.http.RequestEntity;
+import org.springframework.http.HttpEntity;
 import org.springframework.jdbc.core.JdbcOperations;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
@@ -499,5 +501,54 @@ class SharedSwitchServlet extends HttpServlet {
         } catch (Exception e) {
             response.sendError(500);
         }
+    }
+}
+
+// The request body of a Spring MVC HttpEntity or RequestEntity parameter, and SQL text assembled in
+// an append chain (StringBuilder.append(...).append(value)).
+@RestController
+class EntityNotesController {
+    private JdbcTemplate jdbc;
+
+    @PostMapping("/entity/notes")
+    List<Map<String, Object>> notes(HttpEntity<String> entity) {
+        // ruleid: java.sql-injection
+        return jdbc.queryForList("SELECT * FROM notes WHERE body = '" + entity.getBody() + "'");
+    }
+
+    @org.springframework.web.bind.annotation.RequestMapping("/entity/tags")
+    List<Map<String, Object>> tags(RequestEntity<String> request) {
+        // ruleid: java.sql-injection
+        return jdbc.queryForList("SELECT * FROM tags WHERE name = '" + request.getBody() + "'");
+    }
+
+    @PostMapping
+    List<Map<String, Object>> labels(org.springframework.http.HttpEntity<NoteForm> entity) {
+        // ruleid: java.sql-injection
+        return jdbc.queryForList("SELECT * FROM labels WHERE owner = '" + entity.getHeaders().getFirst("X-Owner") + "'");
+    }
+
+    @GetMapping("/entity/chain")
+    List<Map<String, Object>> chain(@RequestParam String term) {
+        StringBuilder sql = new StringBuilder();
+        sql.append("SELECT * FROM notes WHERE title = '").append(term).append("'");
+        // ruleid: java.sql-injection
+        jdbc.queryForList(sql.toString());
+        StringBuilder fixed = new StringBuilder();
+        fixed.append("SELECT * FROM notes WHERE title = ?").append(" ORDER BY title");
+        // ok: java.sql-injection
+        return jdbc.queryForList(fixed.toString(), term);
+    }
+
+    @PostMapping("/entity/bound")
+    List<Map<String, Object>> bound(HttpEntity<String> entity) {
+        // ok: java.sql-injection
+        return jdbc.queryForList("SELECT * FROM notes WHERE body = ?", entity.getBody());
+    }
+
+    // Not a handler method: an entity it is given is not request data.
+    List<Map<String, Object>> replay(HttpEntity<String> entity) {
+        // ok: java.sql-injection
+        return jdbc.queryForList("SELECT * FROM notes WHERE body = '" + entity.getBody() + "'");
     }
 }

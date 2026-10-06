@@ -97,8 +97,8 @@ public class HelloServlet extends HttpServlet {
 - One method is analysed at a time: a helper or inner class that encodes the value still passes the
   request data on. Conditions are not evaluated.
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
-  Spring MVC simple-type parameter), and enum, `List` or `Optional` parameters still count as
-  request data.
+  Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
+  request body and headers); enum, `List` or `Optional` parameters still count as request data.
 <!-- end: known-limits -->
 
 ## References
@@ -127,6 +127,9 @@ public class HelloServlet extends HttpServlet {
 - <https://commons.apache.org/proper/commons-lang/apidocs/org/apache/commons/lang3/StringEscapeUtils.html>
 - <https://commons.apache.org/proper/commons-lang/javadocs/api-2.6/org/apache/commons/lang/StringEscapeUtils.html>
 - <https://quarkus.io/guides/rest>
+- <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html>
+- <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html>
+- <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html>
 
 ## Tests
 

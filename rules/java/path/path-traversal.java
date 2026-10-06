@@ -23,6 +23,8 @@ import jakarta.ws.rs.POST;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.QueryParam;
 import org.apache.commons.io.FilenameUtils;
+import org.springframework.http.RequestEntity;
+import org.springframework.http.HttpEntity;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
@@ -324,4 +326,55 @@ class SharedLimitsController {
 
 enum SharedKind {
     SMALL, LARGE
+}
+
+// The request body of a Spring MVC HttpEntity or RequestEntity parameter, and path text assembled in
+// an append chain (StringBuilder.append(...).append(value)).
+@RestController
+class EntityFileController {
+    @PostMapping("/entity/delete")
+    String delete(HttpEntity<String> entity) {
+        // ruleid: java.path-traversal
+        new File("/srv/files", entity.getBody()).delete();
+        return "ok";
+    }
+
+    @org.springframework.web.bind.annotation.RequestMapping("/entity/read")
+    String read(RequestEntity<String> request) throws IOException {
+        // ruleid: java.path-traversal
+        return Files.readString(Path.of("/srv/files/" + request.getBody()));
+    }
+
+    @PostMapping
+    String touch(org.springframework.http.HttpEntity<ExportForm> entity) throws IOException {
+        // ruleid: java.path-traversal
+        new File("/srv/files/" + entity.getHeaders().getFirst("X-Name")).createNewFile();
+        return "ok";
+    }
+
+    @GetMapping("/entity/chain")
+    String chain(@RequestParam String name) throws IOException {
+        StringBuilder path = new StringBuilder();
+        path.append("/srv/files").append("/").append(name);
+        // ruleid: java.path-traversal
+        new File(path.toString()).delete();
+        StringBuilder fixed = new StringBuilder();
+        fixed.append("/srv/files").append("/index.txt");
+        // ok: java.path-traversal
+        new File(fixed.toString()).delete();
+        return "ok";
+    }
+
+    @PostMapping("/entity/basename")
+    String basename(HttpEntity<String> entity) {
+        // ok: java.path-traversal
+        new File("/srv/files", FilenameUtils.getName(entity.getBody())).delete();
+        return "ok";
+    }
+
+    // Not a handler method: an entity it is given is not request data.
+    void replay(HttpEntity<String> entity) {
+        // ok: java.path-traversal
+        new File("/srv/files", entity.getBody()).delete();
+    }
 }

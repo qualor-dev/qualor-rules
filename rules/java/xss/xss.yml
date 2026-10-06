@@ -42,10 +42,14 @@ rules:
         - https://commons.apache.org/proper/commons-lang/apidocs/org/apache/commons/lang3/StringEscapeUtils.html
         - https://commons.apache.org/proper/commons-lang/javadocs/api-2.6/org/apache/commons/lang/StringEscapeUtils.html
         - https://quarkus.io/guides/rest
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A handler parameter without an annotation is not a source (the Jakarta REST entity
-    #   parameter, a Spring MVC simple-type parameter), and only the scalar types of the source
+    #   parameter, a Spring MVC simple-type parameter), except a Spring MVC HttpEntity or
+    #   RequestEntity (the request body and headers); and only the scalar types of the source
     #   block count as safe: an enum, a `List<Long>` or an `Optional<Long>` parameter is still a
     #   source, as in java.sql-injection.
     # - Conditions are not evaluated: a switch over a value computed from constants still counts
@@ -98,6 +102,22 @@ rules:
           - metavariable-regex:
               metavariable: $T
               regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+          - pattern: $P
+      # Spring MVC: an HttpEntity or RequestEntity parameter holds the request body.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  @$MAP
+                  $RET $M(..., $T $P, ...) { ... }
+              - pattern-inside: |
+                  @$MAP(...)
+                  $RET $M(..., $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $MAP
+              regex: ^(\w+\.)*(Get|Post|Put|Delete|Patch|Request)Mapping$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(org\.springframework\.http\.)?(HttpEntity|RequestEntity)\s*<
           - pattern: $P
     pattern-propagators:
       # HTML assembled with a StringBuilder or StringBuffer.

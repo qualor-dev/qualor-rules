@@ -120,8 +120,8 @@ public class UserController {
 - Spring LDAP filter classes (`EqualsFilter`, `LikeFilter`, ...) count as encoding their value only
   when the attribute name is a literal; `LikeFilter` keeps `*` as a wildcard by design.
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
-  Spring MVC simple-type parameter), and enum, `List` or `Optional` parameters still count as
-  request data.
+  Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
+  request body and headers); enum, `List` or `Optional` parameters still count as request data.
 - One method is analysed at a time and conditions are not evaluated. Allow-list lookups are
   recognised only as `Map.of(...)` of constants and as `valueOf` of an enum declared in the same
   file.

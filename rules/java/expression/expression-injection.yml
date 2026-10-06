@@ -43,7 +43,8 @@ rules:
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A handler parameter without an annotation is not a source (the Jakarta REST entity
-    #   parameter, a Spring MVC simple-type parameter), and only the scalar types of the source
+    #   parameter, a Spring MVC simple-type parameter), except a Spring MVC HttpEntity or
+    #   RequestEntity (the request body and headers); and only the scalar types of the source
     #   block count as safe: an enum, a `List<Long>` or an `Optional<Long>` parameter is still a
     #   source, as in java.sql-injection.
     # - One method is analysed at a time and conditions are not evaluated: a helper method of the

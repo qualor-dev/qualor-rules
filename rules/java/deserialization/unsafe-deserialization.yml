@@ -34,6 +34,9 @@ rules:
         - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest
         - https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1
         - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A handler parameter without an annotation is not a source, except the raw body (an
@@ -119,6 +122,10 @@ rules:
     pattern-propagators:
       # Bytes or text assembled with a StringBuilder or StringBuffer.
       - pattern: $SB.append($X)
+        from: $X
+        to: $SB
+      # ... also later in an append chain.
+      - pattern: $SB.append(...). ... .append($X)
         from: $X
         to: $SB
     pattern-sanitizers:
