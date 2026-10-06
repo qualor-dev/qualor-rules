@@ -19,6 +19,11 @@ api = FastAPI()
 API = "https://api.example.com"
 ALLOWED_HOSTS = {"images.example.com", "cdn.example.com"}
 MIRRORS = {"eu": "https://eu.example.com/feed", "us": "https://us.example.com/feed"}
+STATUS_PAGES = {
+    # Health checks the admin page may run; the request only picks one.
+    "api": r"https://api.example.com/health",
+    "cdn": u"https://cdn.example.com/health",  # a u prefix
+}
 API_BASE = "https://api.example.com"
 API_ROOT = "https://api.example.com/"
 # Changed later by a view, so not an allow-list.
@@ -220,6 +225,8 @@ def user_profile(uid):
 def partner(name):
     # ok: python.ssrf
     requests.post(MIRRORS.get(name, MIRRORS["eu"]))
+    # ok: python.ssrf
+    requests.get(STATUS_PAGES[name], timeout=5)
     # ruleid: python.ssrf
     requests.post(PARTNERS.get(name, "https://acme.example.com/hook"))
     HOOKS = {"custom": request.args["hook"]}

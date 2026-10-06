@@ -70,11 +70,11 @@ rules:
     # - A response whose content type is changed after it is made (`resp.mimetype =
     #   "text/plain"`, `resp.headers["Content-Type"] = ...`) is still taken for HTML.
     # - An allow-list is recognised as a lookup (`.get()` or `[...]`) in a dict literal of literal
-    #   keys and values (also lists or tuples of literals, with comments between the items)
-    #   assigned to an upper-case (constant) name that the module never changes or assigns
-    #   again, with no default or a literal/constant default for get() (an upper-case name
-    #   assigned in the function is not a constant); or as a ternary of constants. A membership
-    #   check (`if x not in ALLOWED: return`) is not, nor is a nested table (todook).
+    #   keys and values (also lists or tuples of literals, with comments between the items, and
+    #   strings with r/b/u prefixes) assigned to an upper-case (constant) name that the module never
+    #   changes or assigns again, with no default or a literal/constant default for get() (an
+    #   upper-case name assigned in the function is not a constant); or as a ternary of constants. A
+    #   membership check (`if x not in ALLOWED: return`) is not, nor is a nested table (todook).
     # Inherited from the request source block (python.sql-injection), each with a `todook` line:
     # - A Flask route parameter with a typed converter (`<int:n>`) is still a source.
     # - A Django URL argument is still a source when its converter (`<int:pk>`, in urls.py) or a
@@ -269,10 +269,12 @@ rules:
     pattern-sanitizers:
       - pattern: int(...)
       - pattern: float(...)
-      # An allow-list: a lookup in a dict literal of literal keys and values (strings, numbers,
-      # True/False/None) assigned to an upper-case (constant) name, which the module never
-      # changes (item assignment, update(), setdefault(), |=, assigning the name again). A get()
-      # default must be a literal or a constant too.
+      # An allow-list: a lookup in a dict literal whose keys are literals and whose values are
+      # literals or lists/tuples of literals (strings with r/b/u prefixes and backslash escapes,
+      # numbers, True/False/None; comments allowed between the items), assigned to an upper-case
+      # (constant) name that the module never changes (item assignment, update(), setdefault(),
+      # |=) or assigns again. A get() default must be a literal, a list/tuple of literals or a
+      # module constant.
       - patterns:
           - pattern-inside: |
               $ALLOWED = $LITERAL
@@ -282,7 +284,7 @@ rules:
               regex: ^[A-Z][A-Z0-9_]*$
           - metavariable-regex:
               metavariable: $LITERAL
-              regex: ^\{(\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*:\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*,)*(\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*:\s*("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None)\s*)?\s*\}$
+              regex: ^\{(\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*)?\}$
           - pattern-not-inside: |
               $ALLOWED = $LITERAL
               ...
@@ -315,55 +317,7 @@ rules:
                   - pattern: $ALLOWED.get($LOOKUP, $DEFAULT)
                   - metavariable-regex:
                       metavariable: $DEFAULT
-                      regex: ^("[^"\\\n]*"|'[^'\\\n]*'|-?\d+(\.\d+)?|True|False|None|[A-Z][A-Z0-9_]*(\[("[^"\\\n]*"|'[^'\\\n]*')\])?)$
-      # An allow-list written as a module table (rule-specific, beside the shared one above): a
-      # dict literal whose keys are literals and whose values are literals or lists/tuples of
-      # literals, with comments allowed between the items, assigned to an upper-case name that
-      # the module never changes or assigns again; a get() default is a literal, a list/tuple of
-      # literals or a module constant; strings may hold backslash escapes.
-      - patterns:
-          - pattern-inside: |
-              $TABLE = $ITEMS
-              ...
-          - metavariable-regex:
-              metavariable: $TABLE
-              regex: ^[A-Z][A-Z0-9_]*$
-          - metavariable-regex:
-              metavariable: $ITEMS
-              regex: ^\{(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*)?\}$
-          - pattern-not-inside: |
-              $TABLE = $ITEMS
-              ...
-              $TABLE[$KEY] = $VALUE
-              ...
-          - pattern-not-inside: |
-              $TABLE = $ITEMS
-              ...
-              $TABLE.update(...)
-              ...
-          - pattern-not-inside: |
-              $TABLE = $ITEMS
-              ...
-              $TABLE.setdefault(...)
-              ...
-          - pattern-not-inside: |
-              $TABLE = $ITEMS
-              ...
-              $TABLE |= $VALUE
-              ...
-          - pattern-not-inside: |
-              $TABLE = $ITEMS
-              ...
-              $TABLE = $OTHER
-              ...
-          - pattern-either:
-              - pattern: $TABLE.get($LOOKUP)
-              - pattern: $TABLE[$LOOKUP]
-              - patterns:
-                  - pattern: $TABLE.get($LOOKUP, $DEFAULT)
-                  - metavariable-regex:
-                      metavariable: $DEFAULT
-                      regex: ^("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(("(\\.|[^"\\\n])*"|'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\)|[A-Z][A-Z0-9_]*(\[("[^"\\\n]*"|'[^'\\\n]*')\])?)$
+                      regex: ^([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\)|[A-Z][A-Z0-9_]*(\[("[^"\\\n]*"|'[^'\\\n]*')\])?)$
                   # An upper-case name assigned in the function is a local, not a constant.
                   - pattern-not-inside: |
                       def $FUNCTION(...):

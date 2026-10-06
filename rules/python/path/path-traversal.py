@@ -26,6 +26,11 @@ api = FastAPI()
 UPLOAD_FOLDER = "/srv/uploads"
 REPORTS = {"daily": "reports/daily.csv", "weekly": "reports/weekly.csv"}
 ALLOWED_NAMES = ("readme.txt", "license.txt")
+DOWNLOADS = {
+    # One fixed file per download name.
+    "manual": r"docs\manual.pdf",
+    "license": "docs/LICENSE.txt",  # plain text
+}
 # Changed later by a view, so not an allow-list.
 EXPORTS = {"latest": "exports/latest.csv"}
 
@@ -181,6 +186,8 @@ def report():
     data = send_file(REPORTS.get(request.args.get("period"), REPORTS["daily"]))
     # ruleid: python.path-traversal
     data = send_file(REPORTS.get(request.args["period"], request.args["period"]))
+    # ok: python.path-traversal
+    data = send_file(DOWNLOADS[request.args["download"]])
     # ruleid: python.path-traversal
     data = send_file(EXPORTS.get(request.args["export"], "exports/latest.csv"))
     CUSTOM = {"mine": request.args["path"]}

@@ -311,6 +311,13 @@ DEFAULT_COLUMN = "name"
 NAMED_COLUMNS = {"name": DEFAULT_COLUMN}
 ALLOWED_TABLES = ("items", "orders")
 RELOADED_COLUMNS = {"name": "name"}
+ORDER_CLAUSES = {
+    # Fixed ORDER BY clauses; the request only picks one.
+    "newest": r"created_at DESC",
+    "name": u"name ASC",  # a u prefix
+    "quoted": "\"name\" ASC",
+}
+COLUMN_SETS = {"short": ("id", "name"), "long": ["id", "name", "price"]}
 
 
 @app.route("/items")
@@ -335,6 +342,14 @@ def items():
     con.execute("SELECT * FROM items ORDER BY " + SORT_COLUMNS.get(request.args["sort"], request.args["sort"]))
     # ruleid: python.sql-injection
     con.execute("SELECT * FROM items ORDER BY " + RELOADED_COLUMNS.get(request.args["sort"], "name"))
+    # ok: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + ORDER_CLAUSES[request.args["o"]])
+    # ok: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + ORDER_CLAUSES.get(request.args["o"], r"id"))
+    # ok: python.sql-injection
+    con.execute("SELECT " + ", ".join(COLUMN_SETS[request.args["cols"]]) + " FROM items")
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + ORDER_CLAUSES.get(request.args["o"], request.args["o"]))
     SORT_COLUMNS = {"name": request.args["fallback"]}
     # ruleid: python.sql-injection
     con.execute("SELECT * FROM items ORDER BY " + SORT_COLUMNS["name"])
