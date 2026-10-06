@@ -76,7 +76,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     }
     const run = spawnSync(
       bin,
-      ['scan', '--json', '--disable-version-check', '--no-rewrite-rule-ids', '--quiet', '--x-ignore-semgrepignore-files', '--no-git-ignore', '--config', 'rules/', dir],
+      // Each example is a few lines: a per-file timeout only measures host load (parallel runs time
+      // out at OpenGrep's default 5 s), so it is generous here.
+      ['scan', '--json', '--disable-version-check', '--no-rewrite-rule-ids', '--quiet', '--x-ignore-semgrepignore-files', '--no-git-ignore', '--timeout', '120', '--config', 'rules/', dir],
       { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
     );
     let result;
