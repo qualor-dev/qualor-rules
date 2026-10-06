@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"text/template"
 	. "text/template"
 	mail "text/template"
@@ -278,12 +279,103 @@ func DotImport(w http.ResponseWriter, r *http.Request) {
 	t.Execute(w, r.FormValue("name"))
 }
 
-// A text/template executed into a buffer that is then written is not followed.
+// A text/template executed into a buffer that is then written to the response.
 func Buffered(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	greeting.Execute(&buf, r.FormValue("name"))
+	// ruleid: go.xss
+	w.Write(buf.Bytes())
+	var sb strings.Builder
+	page := template.Must(template.New("page").Parse("<p>{{.}}</p>"))
+	page.ExecuteTemplate(&sb, "page", r.FormValue("bio"))
+	// ruleid: go.xss
+	io.WriteString(w, sb.String())
+	out := new(bytes.Buffer)
+	receipt.Execute(out, r.FormValue("name"))
+	// ruleid: go.xss
+	out.WriteTo(w)
+	var copied bytes.Buffer
+	greeting.Execute(&copied, map[string]string{"Name": r.FormValue("name")})
+	// ruleid: go.xss
+	io.Copy(w, &copied)
+	// ruleid: go.xss
+	fmt.Fprintf(w, "<main>%s</main>", buf.String())
+	pointer := bytes.NewBuffer(nil)
+	greeting.Execute(pointer, r.FormValue("name"))
+	// ruleid: go.xss
+	io.Copy(w, pointer)
+	// html/template escapes what it writes into a buffer.
+	var safe bytes.Buffer
+	safeGreeting.Execute(&safe, r.FormValue("name"))
+	// ok: go.xss
+	w.Write(safe.Bytes())
+	// ok: go.xss
+	safe.WriteTo(w)
+	// A buffer of text/template output written somewhere else, or holding constant data only.
+	var logged bytes.Buffer
+	greeting.Execute(&logged, r.FormValue("name"))
+	// ok: go.xss
+	os.Stdout.Write(logged.Bytes())
+	var fixed bytes.Buffer
+	greeting.Execute(&fixed, "guest")
+	// ok: go.xss
+	w.Write(fixed.Bytes())
+}
+
+// Request data written into a buffer directly (not by a template) is not followed.
+func BufferedDirect(w http.ResponseWriter, r *http.Request) {
+	var buf bytes.Buffer
+	buf.WriteString("<p>" + r.FormValue("name") + "</p>")
 	// todoruleid: go.xss
 	w.Write(buf.Bytes())
+}
+
+// The buffer sent as plain text.
+func BufferedPlain(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	var buf bytes.Buffer
+	greeting.Execute(&buf, r.FormValue("name"))
+	// ok: go.xss
+	buf.WriteTo(w)
+}
+
+// Templates held in a field or passed as a parameter, executed into a buffer.
+func (n *Notifier) Preview(w http.ResponseWriter, r *http.Request) {
+	var text, html bytes.Buffer
+	n.body.Execute(&text, r.FormValue("name"))
+	// ruleid: go.xss
+	w.Write(text.Bytes())
+	n.page.Execute(&html, r.FormValue("name"))
+	// ok: go.xss
+	w.Write(html.Bytes())
+}
+
+func WithBuffer(t *template.Template) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var buf bytes.Buffer
+		t.Execute(&buf, r.FormValue("name"))
+		// ruleid: go.xss
+		io.Copy(w, &buf)
+	}
+}
+
+// Gin and Echo: the buffer sent as HTML.
+func GinBuffered(c *gin.Context) {
+	var buf bytes.Buffer
+	greeting.Execute(&buf, c.Query("name"))
+	// ruleid: go.xss
+	c.Data(http.StatusOK, "text/html; charset=utf-8", buf.Bytes())
+	var csv bytes.Buffer
+	greeting.Execute(&csv, c.Query("name"))
+	// ok: go.xss
+	c.Data(http.StatusOK, "text/csv", csv.Bytes())
+}
+
+func EchoBuffered(c echo.Context) error {
+	var buf bytes.Buffer
+	receipt.Execute(&buf, c.QueryParam("name"))
+	// ruleid: go.xss
+	return c.HTML(http.StatusOK, buf.String())
 }
 
 // Routers on net/http: chi and gorilla/mux route variables.

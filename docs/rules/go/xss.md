@@ -14,7 +14,8 @@ HTTP request data written into an HTML response without escaping:
   `http.ResponseWriter` (also Gin's `c.Writer` and Echo's `c.Response()`), unless the handler set a
   non-HTML content type first;
 - sent with Gin's `c.Data` or Echo's `c.HTML`, `c.HTMLBlob`, `c.Blob` or `c.Stream` as HTML;
-- executed by a `text/template`, which does not escape;
+- executed by a `text/template`, which does not escape, into the response or into a buffer that
+  is then written to it (its `Bytes()` or `String()`, `WriteTo`, or `io.Copy`);
 - marked as safe content with an `html/template` conversion such as `template.HTML(x)`.
 <!-- end: what-it-finds -->
 
@@ -95,8 +96,9 @@ func Hello(w http.ResponseWriter, r *http.Request) {
   `net/http` sniffs, is not followed.
 - A `text/template` is recognised by its import and must be built in the same function or as a
   package variable, be a parameter, or be a field reached through the method's receiver. Templates
-  built in another file, reached through another variable, imported with a dot, or executed into a
-  buffer that is written later, are missed.
+  built in another file, reached through another variable, or imported with a dot are missed.
+- Request data written into a buffer directly (`buf.WriteString(...)`, `fmt.Fprintf(&buf, ...)`)
+  is not followed when the buffer is written to the response later.
 - The binder of the Echo instance is not a source, and numeric struct fields count as safe only
   when the struct is declared in the same file.
 <!-- end: known-limits -->
@@ -112,6 +114,12 @@ func Hello(w http.ResponseWriter, r *http.Request) {
 - <https://pkg.go.dev/html/template#HTMLEscapeString>
 - <https://pkg.go.dev/html/template#JSEscapeString>
 - <https://pkg.go.dev/text/template>
+- <https://pkg.go.dev/text/template#Template.Execute>
+- <https://pkg.go.dev/bytes#Buffer>
+- <https://pkg.go.dev/bytes#Buffer.WriteTo>
+- <https://pkg.go.dev/bytes#NewBuffer>
+- <https://pkg.go.dev/strings#Builder>
+- <https://pkg.go.dev/io#Copy>
 - <https://pkg.go.dev/html#EscapeString>
 - <https://pkg.go.dev/net/http#ResponseWriter>
 - <https://pkg.go.dev/net/http#DetectContentType>
