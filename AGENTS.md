@@ -3,8 +3,10 @@
 ## Commands
 
 - `npm ci --ignore-scripts`: install the two dev dependencies (ajv, yaml)
-- `npm test`: `npm run check` (rules, `BACKLOG.md`, `REFERENCE.md`), the tools' own tests, and
-  `opengrep scan --test` (needs the pinned OpenGrep)
+- `npm test`: `npm run check` (rules, `BACKLOG.md`, `REFERENCE.md`, the rule pages), the tools' own
+  tests, `opengrep scan --test` and the pages' examples (both need the pinned OpenGrep)
+- `npm run docs`: the rule pages `docs/rules/<lang>/<name>.md` and their index, from the rules
+  (hand-written sections are kept)
 - `npm run test:docker`: the same inside the `qualor/scanner` image (`QUALOR_SCANNER_IMAGE`), for
   hosts without OpenGrep
 - `npm run probe -- <rule>`: the rule on the `REFERENCE.md` projects and qualor-cc;
@@ -35,5 +37,8 @@
    pass `schema/rule-metadata.json`; `sources` names what you read.
 4. The licence is PolyForm Shield 1.0.0 (source-available). Never call the rules "open source".
    Never edit `LICENSE`.
-5. Commits: `git commit -s`, conventional messages, stage by path. No attribution trailers.
-6. Never push, tag a release or publish anything without the maintainer's word.
+5. Every rule has its public page, `docs/rules/<lang>/<name>.md`, written in the same commit as
+   the rule (`npm run docs`, then the hand-written sections; rule-procedure.md step 7). Qualor links
+   findings to these paths: never rename or move a page without its rule.
+6. Commits: `git commit -s`, conventional messages, stage by path. No attribution trailers.
+7. Never push, tag a release or publish anything without the maintainer's word.

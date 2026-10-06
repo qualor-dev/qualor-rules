@@ -206,7 +206,10 @@ If `--ff-only` refuses (`main` moved: another batch merged, or a progress commit
 `git -C "$W" rebase main`, then `npm --prefix "$W" run test:docker`, then merge again.
 Implementers never touch the shared files, so conflicts should not happen; if `BACKLOG.md` or
 `LOG.md` conflicts anyway, keep both sides' rows and, for the same row, the later status
-(`done`/`blocked` over `in-progress` over `todo`). Then:
+(`done`/`blocked` over `in-progress` over `todo`). `docs/rules/README.md`, the generated index of
+the rule pages, does conflict when both sides added rules: rebuild it with
+`npm --prefix "$W" run docs`, then `git -C "$W" add docs/rules/README.md` and
+`git -C "$W" rebase --continue`. Then:
 
 ```sh
 L=python; K=1; D=<yyyymmdd>; W=E:/Personal/qualor/worktrees/qualor-rules-$L-$D-$K
@@ -260,7 +263,7 @@ grep -n '| in-progress |' BACKLOG.md
 ```
 
 Read the "(in progress)" LOG.md entry: its batches and Progress lines. Each rule commit carries
-`Backlog: <id>` in its body (rule-procedure.md step 7). For each `in-progress` row:
+`Backlog: <id>` in its body (rule-procedure.md step 8). For each `in-progress` row:
 
 1. **On `main` and its batch (or the inline range) is recorded as APPROVED:** written; it goes to
    step 7.

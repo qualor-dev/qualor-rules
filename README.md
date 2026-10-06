@@ -17,6 +17,12 @@ decides.
 
 Required Notice: Copyright 2026 The Qualor project (https://qualor.dev)
 
+## Rule documentation
+
+Every rule has a page that says what it finds, why it matters and how to fix it, with an example
+and the rule's known limits: see the [index of the rules](docs/rules/README.md). Qualor links each
+finding to its rule's page, `docs/rules/<lang>/<name>.md`.
+
 ## Layout
 
 - `rules/<lang>/<category>/<name>.yml`: one OpenGrep rule per file. `<lang>` is `js` (JavaScript
@@ -29,16 +35,22 @@ Required Notice: Copyright 2026 The Qualor project (https://qualor.dev)
   `cwe`, `owasp`, `kind` (`issue` for taint and definite misuse, `hotspot` for "review this"),
   `severity`, `confidence`, `frameworks`, `sources` (the documents the rule was written from; see
   [`CLEAN-ROOM.md`](CLEAN-ROOM.md)) and `since` (the pack version that added it).
+- `docs/rules/<lang>/<name>.md`: the rule's public page. `npm run docs` builds its header,
+  frameworks, references and test links from the rule's metadata, and the index
+  `docs/rules/README.md`; the sections between `<!-- begin: ... -->` and `<!-- end: ... -->` are
+  written by hand and kept.
 
 ## Checks
 
 ```sh
 npm ci --ignore-scripts
-npm test          # check (layout, schema, ids, annotations, sources), the tools' tests, opengrep --test
+npm test          # check (layout, schema, ids, annotations, sources, pages), the tools' tests,
+                  # opengrep --test, and the pages' examples
 ```
 
-`npm run test:rules` needs OpenGrep of exactly the version `package.json` names (`"opengrep"`) on
-`PATH`, or its path in `OPENGREP`; `tools/install-opengrep.sh` installs it (Linux x86-64).
+`npm run test:rules` and `npm run test:examples` need OpenGrep of exactly the version
+`package.json` names (`"opengrep"`) on `PATH`, or its path in `OPENGREP`;
+`tools/install-opengrep.sh` installs it (Linux x86-64).
 
 ## Releases
 

@@ -174,12 +174,24 @@ To try a shape quickly, put it in a file under `.tmp/` and run
 - `sources`: every URL from step 1; `npm run check` refuses forbidden hosts.
 - `since`: the version the controller gave you.
 
-## 7. Commit
+## 7. Page
+
+`npm run docs` writes the rule's public page, `docs/rules/<lang>/<name>.md` (Qualor links each
+finding to it), and the index. Replace its TODO sections, between the `begin`/`end` markers, with
+plain English for users: what it finds, why it matters, an example (a minimal `**Noncompliant:**`
+and `**Compliant:**` code block of your own, in the fixture's style), how to fix, and the known
+limits in short (not the YAML comment's wording). The rest is generated from the metadata; rerun
+`npm run docs` after changing the rule. `npm test` fails while a section is unwritten, a page is out
+of date, or the example does not behave as it says (the noncompliant block must get a finding of
+the rule, the compliant block no finding of any rule: `tools/test-examples.mjs`). Maintenance rows:
+update the sections the change affects (usually Known limits).
+
+## 8. Commit
 
 ```sh
 npm run test:docker                      # green
-git status --porcelain                   # only this rule's files
-git add rules/<lang>/<category>/<name>.yml rules/<lang>/<category>/<name>.<ext>
+git status --porcelain                   # only this rule's files, its page and docs/rules/README.md
+git add rules/<lang>/<category>/<name>.yml rules/<lang>/<category>/<name>.<ext> docs/rules/<lang>/<name>.md docs/rules/README.md
 git commit -s -m "feat(<lang>): <name> rule for <frameworks>" -m "Backlog: <id>" -m "<docs used, limits (todo lines), probe counts>"
 ```
 
