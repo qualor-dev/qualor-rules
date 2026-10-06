@@ -210,6 +210,10 @@ def framed():
     pickle.loads(data[4:])
     # todoruleid: python.unsafe-deserialization
     pickle.loads((request.get_data() + b".")[4:])
+    blob = request.get_data()
+    blob = blob.strip()
+    # todoruleid: python.unsafe-deserialization
+    pickle.loads(blob[4:])
     # ruleid: python.unsafe-deserialization
     return str(pickle.loads(request.get_data()[4:]))
 

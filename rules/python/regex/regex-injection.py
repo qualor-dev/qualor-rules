@@ -169,6 +169,10 @@ def short():
     re.search(q[:20], "text")
     # todoruleid: python.regex-injection
     re.compile(("^" + request.args["q"])[:20])
+    trimmed = request.args["q"]
+    trimmed = trimmed.strip()
+    # todoruleid: python.regex-injection
+    re.search(trimmed[:20], "text")
     # ruleid: python.regex-injection
     return str(re.compile(request.args["q"][:20]))
 

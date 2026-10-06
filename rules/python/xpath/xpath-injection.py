@@ -188,6 +188,10 @@ def short():
     catalog.xpath(q[:50])
     # todoruleid: python.xpath-injection
     catalog.xpath(("//item[@id='" + request.args["q"])[:50])
+    trimmed = request.args["q"]
+    trimmed = trimmed.strip()
+    # todoruleid: python.xpath-injection
+    catalog.xpath(trimmed[:50])
     # ruleid: python.xpath-injection
     return str(catalog.xpath(request.args["q"][:50]))
 

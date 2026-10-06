@@ -191,6 +191,10 @@ def short():
     render_template_string(tpl[:200])
     # todoruleid: python.template-injection
     render_template_string(("<p>" + request.args["tpl"])[:200])
+    trimmed = request.args["tpl"]
+    trimmed = trimmed.strip()
+    # todoruleid: python.template-injection
+    render_template_string(trimmed[:200])
     # ruleid: python.template-injection
     return render_template_string(request.args["tpl"][:200])
 

@@ -101,7 +101,8 @@ def orders():
   upper-case name that is never changed, or as a ternary of constants; a membership check is not.
 - A slice is followed when it slices request data in place (`request.args["q"][:50]`),
   a variable assigned request data, or a view parameter; a slice of a value built from request
-  data (`(request.args["q"] + "x")[:50]`) is missed.
+  data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
+  (`q = q.strip()`), is missed.
 <!-- end: known-limits -->
 
 ## References

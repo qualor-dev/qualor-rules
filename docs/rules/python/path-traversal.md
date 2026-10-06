@@ -88,7 +88,8 @@ def report():
   `request` in a Django module is taken for a view.
 - A slice is followed when it slices request data in place (`request.args["f"][:100]`),
   a variable assigned request data, or a view parameter; a slice of a value built from request
-  data (`(request.args["q"] + "x")[:50]`) is missed.
+  data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
+  (`q = q.strip()`), is missed.
 <!-- end: known-limits -->
 
 ## References

@@ -370,6 +370,10 @@ def short():
     subprocess.run(cmd[:100], shell=True)
     # todoruleid: python.command-injection
     os.system(("echo " + request.args["cmd"])[:100])
+    trimmed = request.args["cmd"]
+    trimmed = trimmed.strip()
+    # todoruleid: python.command-injection
+    os.system(trimmed[:100])
     return "ok"
 
 

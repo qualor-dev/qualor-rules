@@ -191,6 +191,14 @@ def short_name():
     data = open(name[:100])
     # todoruleid: python.path-traversal
     data = send_file((request.args["f"] + ".txt")[:100])
+    upload = request.files["f"].filename
+    upload = secure_filename(upload)
+    # ok: python.path-traversal
+    data = send_file(os.path.join(UPLOAD_FOLDER, upload[:64]))
+    stem = request.args["f"]
+    stem = stem.strip()
+    # todoruleid: python.path-traversal
+    data = send_file(stem[:100])
     return data
 
 

@@ -269,6 +269,22 @@ def teaser_sum():
     return "<p>" + (request.args["a"] + request.args["b"])[:50] + "</p>"
 
 
+@app.route("/teaser-escaped")
+def teaser_escaped():
+    text = request.args["text"]
+    text = escape(text)
+    # ok: python.xss
+    return "<p>" + text[:50] + "</p>"
+
+
+@app.route("/teaser-stripped")
+def teaser_stripped():
+    text = request.args["text"]
+    text = text.strip()
+    # todoruleid: python.xss
+    return "<p>" + text[:50] + "</p>"
+
+
 def find_post(slug):
     return None
 

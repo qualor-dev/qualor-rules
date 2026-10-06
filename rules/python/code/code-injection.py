@@ -159,6 +159,10 @@ def short():
     eval(expr[:20])
     # todoruleid: python.code-injection
     eval((request.args["expr"] + " + 0")[:20])
+    trimmed = request.args["expr"]
+    trimmed = trimmed.strip()
+    # todoruleid: python.code-injection
+    eval(trimmed[:20])
     # ruleid: python.code-injection
     return str(eval(request.args["expr"][:20]))
 

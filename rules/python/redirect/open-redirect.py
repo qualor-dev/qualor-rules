@@ -291,6 +291,10 @@ def trimmed():
     response = redirect(target[:200])
     # todoruleid: python.open-redirect
     response = redirect((request.args["next"] + "#top")[:200])
+    trimmed = request.args.get("next", "/")
+    trimmed = trimmed.strip()
+    # todoruleid: python.open-redirect
+    response = redirect(trimmed[:200])
     # ok: python.open-redirect
     response = redirect(request.full_path[:-1])
     # ruleid: python.open-redirect

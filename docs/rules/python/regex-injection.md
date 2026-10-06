@@ -83,7 +83,8 @@ def search():
 <!-- begin: known-limits -->
 - A slice is followed when it slices request data in place (`request.args["q"][:20]`),
   a variable assigned request data, or a view parameter; a slice of a value built from request
-  data (`(request.args["q"] + "x")[:50]`) is missed.
+  data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
+  (`q = q.strip()`), is missed.
 - A pattern first validated by a constant regex (`if not re.fullmatch(r"[\w ]+", x): return`) is
   still reported.
 - An allow-list is recognised only as a lookup in a module-level dict of literals assigned to an

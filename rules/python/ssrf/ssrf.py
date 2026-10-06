@@ -239,6 +239,10 @@ def short_url():
     requests.get(url[:200], timeout=5)
     # todoruleid: python.ssrf
     requests.get((request.args["url"] + "/")[:200])
+    target = request.args["url"]
+    target = target.strip()
+    # todoruleid: python.ssrf
+    requests.get(target[:200])
     return "ok"
 
 

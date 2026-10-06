@@ -1,4 +1,5 @@
 import json
+import urllib.request
 import logging
 import sqlite3
 from typing import Annotated
@@ -400,6 +401,14 @@ def by_prefix(prefix):
     con.execute("SELECT * FROM items ORDER BY " + SORT_COLUMNS.get(request.args["s"], "name")[:5])
     # todoruleid: python.sql-injection
     con.execute("SELECT * FROM items WHERE name LIKE '" + (request.args["q"] + "%")[:50] + "'")
+    order = request.args.get("o", "name")
+    order = SORT_COLUMNS.get(order, "name")
+    # ok: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + order[:10])
+    term = request.args["q"]
+    term = term.strip()
+    # todoruleid: python.sql-injection
+    con.execute("SELECT * FROM items WHERE name LIKE '" + term[:50] + "%'")
     return "ok"
 
 
@@ -515,6 +524,15 @@ def person_prefix(request, slug):
     return HttpResponse("ok")
 
 
+# A local named request in a helper that is not a view: an outgoing urllib request.
+def fetch_remote(url):
+    request = urllib.request.Request(url)
+    with connection.cursor() as cursor:
+        # ok: python.sql-injection
+        cursor.execute("INSERT INTO fetches (agent) VALUES ('" + request.headers["User-Agent"][:20] + "')")
+    return url
+
+
 # path("people/<int:pk>/", views.person_by_id): the int converter hands the view an int, but the
 # URL configuration is in another module, so the rule cannot see it.
 def person_by_id(request, pk):
@@ -534,6 +552,8 @@ class PersonView(View):
             cursor.execute("SELECT * FROM myapp_person WHERE slug = '" + slug + "'")
             # ruleid: python.sql-injection
             cursor.execute("SELECT * FROM myapp_person WHERE slug = '%s'" % self.kwargs["slug"])
+            # ruleid: python.sql-injection
+            cursor.execute("SELECT * FROM myapp_person WHERE last_name LIKE '" + self.request.GET["q"][:20] + "%'")
             # ok: python.sql-injection
             cursor.execute("SELECT * FROM myapp_person WHERE slug = %s", [self.kwargs["slug"]])
         # ruleid: python.sql-injection

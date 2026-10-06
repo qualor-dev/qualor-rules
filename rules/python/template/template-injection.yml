@@ -50,7 +50,9 @@ rules:
     # - OpenGrep does not carry taint through a slice, so a slice of request data is a source
     #   itself: of a request access chain (`request.args["tpl"][:200]`), of a variable assigned one in
     #   the function, or of a view parameter. A slice of a value built from request data
-    #   (`(request.args["q"] + "x")[:50]`) is missed.
+    #   (`(request.args["q"] + "x")[:50]`), or of a variable assigned again in the function after
+    #   the request value (`q = q.strip()`), is missed. Django request chains count in a view
+    #   (first parameter `request`) and `self.request`/`self.kwargs` in a class.
     # - from_string() is a sink only on an environment the rule can see: jinja2.Environment() or
     #   NativeEnvironment() called in place or assigned in the module or function, Flask's
     #   `jinja_env`, the `env` of a Jinja2Templates assigned in the module or function, Django's
@@ -254,10 +256,11 @@ rules:
                               regex: ^(get|post|put|patch|delete|head|options|trace|dispatch)$
                   - focus-metavariable: $PARAM
       # Slices: OpenGrep does not carry taint through a slice (`request.args["q"][:50]`), so a
-      # slice of request data is a source itself: of a request access chain (Flask's request, or
-      # Django's request, self.request, self.args, self.kwargs or json.loads(request.body), with
-      # their subscripts, attributes and method calls), in place or through a variable assigned
-      # one in the function, or of a view parameter (and its attributes).
+      # slice of request data is a source itself: of a request access chain (Flask's request; in
+      # a Django view, its request or json.loads(request.body), and in a class, self.request,
+      # self.args, self.kwargs; with their subscripts, attributes and method calls), in place or
+      # through a variable assigned one in the function and not assigned again (`q =
+      # escape(q)`), or of a view parameter (and its attributes).
       - patterns:
           - pattern-either:
               - pattern: $VALUE[$LOWER:]
@@ -274,9 +277,18 @@ rules:
           - metavariable-pattern:
               metavariable: $VALUE
               pattern: flask.request.$ATTR
+          # Not a local named request (an outgoing urllib request in a helper).
+          - pattern-not-inside: |
+              request = $LOCAL
+              ...
       - patterns:
           - pattern-inside: |
               $VALUE = $INIT
+              ...
+          - pattern-not-inside: |
+              $VALUE = $INIT
+              ...
+              $VALUE = $OTHER
               ...
           - pattern-either:
               - pattern: $VALUE[$LOWER:]
@@ -302,6 +314,10 @@ rules:
           - metavariable-pattern:
               metavariable: $INIT
               pattern: flask.request.$ATTR
+          # Not a local named request (an outgoing urllib request in a helper).
+          - pattern-not-inside: |
+              request = $LOCAL
+              ...
       - patterns:
           - pattern-either:
               - patterns:
@@ -319,6 +335,13 @@ rules:
                       metavariable: $DJ
                       regex: ^django(\.|$)
           - pattern-either:
+              - pattern-inside: |
+                  def $VIEW(request, ...):
+                    ...
+              - pattern-inside: |
+                  def $VIEW(self, request, ...):
+                    ...
+          - pattern-either:
               - pattern: $VALUE[$LOWER:]
               - pattern: $VALUE[:$UPPER]
               - pattern: $VALUE[$LOWER:$UPPER]
@@ -329,7 +352,7 @@ rules:
               - pattern: $VALUE[:]
           - metavariable-regex:
               metavariable: $VALUE
-              regex: &django-request-chain ^((self\.)?request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|self\.(args|kwargs)|json\.loads\((self\.)?request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
+              regex: &django-request-chain ^(request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|json\.loads\(request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
       - patterns:
           - pattern-either:
               - patterns:
@@ -347,7 +370,50 @@ rules:
                       metavariable: $DJ
                       regex: ^django(\.|$)
           - pattern-inside: |
+              class $CLS(...):
+                ...
+          - pattern-either:
+              - pattern: $VALUE[$LOWER:]
+              - pattern: $VALUE[:$UPPER]
+              - pattern: $VALUE[$LOWER:$UPPER]
+              - pattern: $VALUE[::$STEP]
+              - pattern: $VALUE[$LOWER::$STEP]
+              - pattern: $VALUE[:$UPPER:$STEP]
+              - pattern: $VALUE[$LOWER:$UPPER:$STEP]
+              - pattern: $VALUE[:]
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: &django-self-chain ^(self\.request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|self\.(args|kwargs)|json\.loads\(self\.request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      from $DJ import $NAME
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+              - patterns:
+                  - pattern-inside: |
+                      import $DJ
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+          - pattern-either:
+              - pattern-inside: |
+                  def $VIEW(request, ...):
+                    ...
+              - pattern-inside: |
+                  def $VIEW(self, request, ...):
+                    ...
+          - pattern-inside: |
               $VALUE = $INIT
+              ...
+          - pattern-not-inside: |
+              $VALUE = $INIT
+              ...
+              $VALUE = $OTHER
               ...
           - pattern-either:
               - pattern: $VALUE[$LOWER:]
@@ -370,6 +436,54 @@ rules:
           - metavariable-regex:
               metavariable: $INIT
               regex: *django-request-chain
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      from $DJ import $NAME
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+              - patterns:
+                  - pattern-inside: |
+                      import $DJ
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+          - pattern-inside: |
+              class $CLS(...):
+                ...
+          - pattern-inside: |
+              $VALUE = $INIT
+              ...
+          - pattern-not-inside: |
+              $VALUE = $INIT
+              ...
+              $VALUE = $OTHER
+              ...
+          - pattern-either:
+              - pattern: $VALUE[$LOWER:]
+              - pattern: $VALUE[:$UPPER]
+              - pattern: $VALUE[$LOWER:$UPPER]
+              - pattern: $VALUE[::$STEP]
+              - pattern: $VALUE[$LOWER::$STEP]
+              - pattern: $VALUE[:$UPPER:$STEP]
+              - pattern: $VALUE[$LOWER:$UPPER:$STEP]
+              - pattern: $VALUE[:]
+              - pattern: $VALUE[$KEY][$LOWER:]
+              - pattern: $VALUE[$KEY][:$UPPER]
+              - pattern: $VALUE[$KEY][$LOWER:$UPPER]
+              - pattern: $VALUE.$METHOD(...)[$LOWER:]
+              - pattern: $VALUE.$METHOD(...)[:$UPPER]
+              - pattern: $VALUE.$METHOD(...)[$LOWER:$UPPER]
+              - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:]
+              - pattern: $VALUE[$KEY].$METHOD(...)[:$UPPER]
+              - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:$UPPER]
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: *django-self-chain
       # A view parameter: of a route-decorated view (Flask, FastAPI; not a dependency), and the
       # URL arguments of a Django view.
       - patterns:
