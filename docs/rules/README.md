@@ -63,6 +63,7 @@ The key `qualor:<lang>/<name>` is how Qualor names a rule; the rule itself is
 | [`qualor:java/ssrf`](java/ssrf.md) | Server-side request to a URL from HTTP request data (Java) | Issue | High | [CWE-918](https://cwe.mitre.org/data/definitions/918.html) |
 | [`qualor:java/template-injection`](java/template-injection.md) | Template text built from HTTP request data (Java) | Issue | High | [CWE-1336](https://cwe.mitre.org/data/definitions/1336.html), [CWE-94](https://cwe.mitre.org/data/definitions/94.html) |
 | [`qualor:java/unsafe-deserialization`](java/unsafe-deserialization.md) | Java deserialization of HTTP request data | Issue | High | [CWE-502](https://cwe.mitre.org/data/definitions/502.html) |
+| [`qualor:java/xpath-injection`](java/xpath-injection.md) | XPath expression built from HTTP request data (Java) | Issue | High | [CWE-643](https://cwe.mitre.org/data/definitions/643.html) |
 | [`qualor:java/xss`](java/xss.md) | HTML response built from HTTP request data (Java) | Issue | High | [CWE-79](https://cwe.mitre.org/data/definitions/79.html) |
 | [`qualor:java/xxe`](java/xxe.md) | XML parser that resolves external entities (Java) | Issue | High | [CWE-611](https://cwe.mitre.org/data/definitions/611.html), [CWE-776](https://cwe.mitre.org/data/definitions/776.html) |
 | [`qualor:java/zip-slip`](java/zip-slip.md) | Archive entry name used as an extraction path (Java) | Issue | High | [CWE-22](https://cwe.mitre.org/data/definitions/22.html) |
