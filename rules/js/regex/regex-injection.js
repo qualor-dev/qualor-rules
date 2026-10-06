@@ -208,7 +208,13 @@ app.get('/sorted3', (req, res) => {
   }
   // todoruleid: js.regex-injection
   const d = new RegExp(mode);
-  res.json([a, b, c, d].map((r) => r.source));
+  // A destructuring assignment after the check is not seen either.
+  let [term] = [req.query.term];
+  if (!SORT_FIELDS.includes(term)) return res.status(400).end();
+  [term] = [req.query.other];
+  // todoruleid: js.regex-injection
+  const e = new RegExp(term);
+  res.json([a, b, c, d, e].map((r) => r.source));
 });
 
 // An element of a request array reached through a callback parameter is not followed.

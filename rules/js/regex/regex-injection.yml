@@ -51,8 +51,8 @@ rules:
     #   condition of an if around the use (todook), other checks and lists whose strings hold
     #   escaped quotes are not followed.
     #   The check covers the value up to its next assignment in the same block; an assignment
-    #   inside a nested block after the check (`if (x) { q = req.query.other; }`) is not seen, so
-    #   the value stays clean.
+    #   inside a nested block after the check (`if (x) { q = req.query.other; }`) or by
+    #   destructuring (`[q] = [req.query.other]`) is not seen, so the value stays clean.
     # - An element of a request array reached through a callback parameter
     #   (`req.body.filters.map((f) => new RegExp(f.pattern))`) is missed.
     # - An allow-list lookup yields constants only in a table declared const in the file with
