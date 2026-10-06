@@ -289,6 +289,28 @@ app.get('/session-page', async (req, res) => {
   });
 });
 
+// A sink inside a callback given to an awaited method of another object is still a sink.
+const txdb = { transaction: async (work) => work({}) };
+const jobQueue = { run: async (r, jobs) => jobs.map((job) => job()) };
+app.post('/tx-page', async (req, res) => {
+  if (req.query.a) {
+    await txdb.transaction(async (t) => {
+      // ruleid: js.xss
+      res.send('<p>Saved ' + req.body.title + '</p>');
+    });
+  }
+  if (req.query.b) {
+    // ruleid: js.xss
+    await jobQueue.run(res, [() => res.send('<i>' + req.body.c + '</i>')]);
+  }
+  await txdb.transaction({
+    done() {
+      // ruleid: js.xss
+      res.send(`<b>${req.query.step}</b>`);
+    },
+  });
+});
+
 // An awaited sink is still a sink.
 app.get('/await-send', async (req, res) => {
   if (req.query.a) {
