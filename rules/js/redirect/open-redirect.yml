@@ -526,6 +526,11 @@ rules:
           - pattern-not: await $R.json()
           - pattern-not: await $R.formData()
           - pattern-not: await $R.text()
+          # Not when a function is passed to it (`await db.transaction(async (t) => { ... })`):
+          # a sink written inside that callback is still a sink, and the sanitizer would clean
+          # everything inside the call. The function pattern also matches arrow functions.
+          - pattern-not: 'await $OBJ.$M(..., <... function (...) { ... } ...>, ...)'
+          - pattern-not: 'await $OBJ.$M(..., {..., $K(...) { ... }, ...}, ...)'
           - metavariable-regex:
               metavariable: $M
               regex: ^(?!(?:resolve|all|any|race|allSettled|parse|format\w*)$)

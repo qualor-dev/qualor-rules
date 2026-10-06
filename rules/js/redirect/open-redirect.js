@@ -443,6 +443,28 @@ app.get('/session-next', async (req, res) => {
   });
 });
 
+// A sink inside a callback given to an awaited method of another object is still a sink.
+const txdb = { transaction: async (work) => work({}) };
+const jobQueue = { run: async (r, jobs) => jobs.map((job) => job()) };
+app.post('/tx-next', async (req, res) => {
+  if (req.query.a) {
+    await txdb.transaction(async (t) => {
+      // ruleid: js.open-redirect
+      res.redirect(req.body.next);
+    });
+  }
+  if (req.query.b) {
+    // ruleid: js.open-redirect
+    await jobQueue.run(res, [() => res.redirect(req.body.then)]);
+  }
+  await txdb.transaction({
+    done() {
+      // ruleid: js.open-redirect
+      res.redirect(req.query.step);
+    },
+  });
+});
+
 // A function called through a module object counts as another object's method.
 const helpers = require('./redirect-helpers');
 app.get('/module-next', async (req, res) => {
