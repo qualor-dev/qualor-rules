@@ -66,9 +66,11 @@ rules:
     #   to ProxyRequest.SetURL, and the URL or its Host set on the outbound request in a Rewrite
     #   function (a typed *httputil.ProxyRequest, whose In and Out are request data) or in a
     #   Director function literal (in the ReverseProxy literal, assigned to its Director field, or
-    #   held in a variable of the same function first). A Director written as a method or a
-    #   function declared elsewhere is not followed (`todoruleid:`). Other HTTP clients are not
-    #   followed yet.
+    #   held in a variable of the same function first). Out's URL is not request data (SetURL
+    #   may have fixed it). A Director written as a method or a function declared elsewhere is
+    #   not followed, and the inbound Host header (`req.Host`, `pr.In.Host`) is not a source, so a
+    #   proxy that routes by it is missed (`todoruleid:`). Other HTTP clients are not followed
+    #   yet.
     # Inherited from the request source block (go.sql-injection):
     # - The Echo instance's binder (`c.Echo().Binder.Bind(&x, c)`) is not a source (`todoruleid:`).
     # - Numeric fields count as clean only when their type is known in the file: a struct declared
@@ -99,14 +101,17 @@ rules:
               metavariable: $F
               regex: ^(FormValue|PostFormValue|PathValue|Cookie|Cookies|Referer|UserAgent)$
       # The inbound request inside a reverse proxy's Rewrite function (net/http/httputil): In, and
-      # Out, the copy the proxy sends on.
+      # the request data Out copies from it (not its URL, which SetURL may have fixed already).
       - patterns:
-          - pattern-either:
-              - pattern: '($PR : *httputil.ProxyRequest).In.$F'
-              - pattern: '($PR : *httputil.ProxyRequest).Out.$F'
+          - pattern: '($PR : *httputil.ProxyRequest).In.$F'
           - metavariable-regex:
               metavariable: $F
               regex: ^(URL|Form|PostForm|MultipartForm|Header|Body|RequestURI)$
+      - patterns:
+          - pattern: '($PR : *httputil.ProxyRequest).Out.$F'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(Form|PostForm|MultipartForm|Header|Body)$
       - patterns:
           - pattern-either:
               - pattern: '($PR : *httputil.ProxyRequest).In.$F(...)'

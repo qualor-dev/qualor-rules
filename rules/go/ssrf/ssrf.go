@@ -566,6 +566,24 @@ func (g *Gateway) Serve(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
+// The outbound URL after SetURL is the fixed target, and a Director that routes by the Host
+// header is not followed (Host is not a source).
+var versioned = &httputil.ReverseProxy{
+	Rewrite: func(pr *httputil.ProxyRequest) {
+		pr.SetURL(backendURL)
+		// ok: go.ssrf
+		pr.Out.URL = pr.Out.URL.JoinPath("v2")
+	},
+}
+
+var byHostHeader = &httputil.ReverseProxy{
+	Director: func(req *http.Request) {
+		req.URL.Scheme = "http"
+		// todoruleid: go.ssrf
+		req.URL.Host = req.Host
+	},
+}
+
 // Director methods and look-alikes.
 type Balancer struct{ next string }
 

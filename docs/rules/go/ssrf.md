@@ -111,7 +111,8 @@ func Fetch(w http.ResponseWriter, r *http.Request) {
   reported. URLs assembled in a `strings.Builder` or `bytes.Buffer` are judged as a whole, and
   `fmt.Fprintf` into a builder is not followed.
 - A `Director` written as a method or as a function declared elsewhere is not followed (a
-  function literal in the proxy, or held in a variable of the same function, is). HTTP clients
+  function literal in the proxy, or held in a variable of the same function, is), and a proxy
+  that picks its backend from the `Host` header (`req.URL.Host = req.Host`) is missed. HTTP clients
   other than `net/http` are not checked yet.
 - The binder of the Echo instance is not a source, and numeric struct fields count as safe only
   when the struct is declared in the same file.
