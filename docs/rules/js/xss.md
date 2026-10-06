@@ -82,7 +82,8 @@ app.get('/hello', (req, res) => {
   are followed, but a function called through a module object (`await widgets.draw(id)`) counts
   as such a method, and a method named like a function the file imports by name is followed.
 - An awaited helper that is given the response object (`await renderCard(id, res)`) is taken to
-  write its own answer: what it returns is not reported.
+  write its own answer: what it returns is not reported. A sink inside a callback given to such a
+  helper is still reported.
 - `res.send()` of a variable first assigned an object or array is taken for JSON, even if the
   variable later holds a string.
 - A Fastify handler whose reply parameter is named `res` is taken for an Express handler, so a

@@ -254,6 +254,41 @@ app.get('/decorated/:id', async (req, res) => {
   return res.send('<p>' + echoed + '</p>');
 });
 
+// A sink inside a callback given to a helper that also takes the response is still a sink.
+const { withSession, afterUpload, runStep } = require('./session');
+app.get('/session-page', async (req, res) => {
+  if (req.query.a) {
+    await withSession(req, res, async () => {
+      // ruleid: js.xss
+      res.send('<h1>' + req.query.name + '</h1>');
+    });
+  }
+  if (req.query.b) {
+    await afterUpload(req, res, function () {
+      // ruleid: js.xss
+      res.send('<p>' + req.body.title + '</p>');
+    });
+  }
+  if (req.query.c) {
+    // ruleid: js.xss
+    await withSession(req, res, () => res.send('<p>' + req.query.c + '</p>'));
+  }
+  if (req.query.d) {
+    await runStep(res, {
+      done: function () {
+        // ruleid: js.xss
+        res.send('<p>' + req.query.d + '</p>');
+      },
+    });
+  }
+  await runStep(res, {
+    done() {
+      // ruleid: js.xss
+      res.send(`<p>${req.query.step}</p>`);
+    },
+  });
+});
+
 // An awaited sink is still a sink.
 app.get('/await-send', async (req, res) => {
   if (req.query.a) {

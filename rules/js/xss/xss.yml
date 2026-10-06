@@ -323,6 +323,12 @@ rules:
           - metavariable-regex:
               metavariable: $RESARG
               regex: ^(?:res|resp|response|reply|rep|_res|_response)$
+          # Not when a function is passed to it, also as a method or property of an object: a sink
+          # written inside that callback (`await withSession(req, res, async () => { ... })`) is
+          # still a sink, and the sanitizer would clean everything inside the call. The function
+          # pattern also matches arrow functions.
+          - pattern-not: 'await $F(..., <... function (...) { ... } ...>, ...)'
+          - pattern-not: 'await $F(..., {..., $K(...) { ... }, ...}, ...)'
       # Comparisons and negations give booleans, which Express sends as JSON.
       - pattern-either:
           - pattern: $A === $B
