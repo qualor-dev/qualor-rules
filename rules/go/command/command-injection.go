@@ -3,6 +3,8 @@ package tools
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,11 +12,13 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/mux"
 	"github.com/labstack/echo/v4"
+	"golang.org/x/text/encoding/unicode"
 )
 
 // net/http: request data in a shell script, or choosing the program to run.
@@ -83,6 +87,66 @@ func Thumbnail(w http.ResponseWriter, r *http.Request) {
 	// ok: go.command-injection
 	cmd.Run()
 	fmt.Fprintln(w, "ok")
+}
+
+// PowerShell -EncodedCommand (-e, -ec, any case): the argument after it is the command, as
+// Base64 of UTF-16LE text, so request data there, or a script built from it and then encoded,
+// runs as PowerShell code.
+func Encoded(w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.command-injection
+	exec.Command("powershell.exe", "-NoProfile", "-EncodedCommand", r.FormValue("cmd")).Run()
+	// ruleid: go.command-injection
+	exec.Command("pwsh", "-e", r.Header.Get("X-Job")).Run()
+	// ruleid: go.command-injection
+	exec.CommandContext(r.Context(), "/usr/bin/pwsh", "-NonInteractive", "-ec", r.FormValue("job")).Run()
+	// ruleid: go.command-injection
+	exec.Command("PowerShell", "-encodedcommand", toPowerShellBase64("Get-Item "+r.FormValue("name"))).Run()
+	script := "Get-ChildItem " + r.FormValue("dir")
+	units := utf16.Encode([]rune(script))
+	raw := make([]byte, 2*len(units))
+	for i, u := range units {
+		binary.LittleEndian.PutUint16(raw[2*i:], u)
+	}
+	// ruleid: go.command-injection
+	exec.Command("pwsh", "-EncodedCommand", base64.StdEncoding.EncodeToString(raw)).Run()
+	utf16le, _ := unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM).NewEncoder().String("Stop-Service " + r.FormValue("svc"))
+	// ruleid: go.command-injection
+	exec.Command("pwsh", "-EC", base64.StdEncoding.EncodeToString([]byte(utf16le))).Run()
+	// Base64 of request data handed to a shell that decodes and runs it.
+	payload := base64.StdEncoding.EncodeToString([]byte(r.FormValue("cmd")))
+	// ruleid: go.command-injection
+	exec.Command("sh", "-c", "echo "+payload+" | base64 -d | sh").Run()
+	// ruleid: go.command-injection
+	exec.Command("powershell", "-Command", "iex ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('"+payload+"')))").Run()
+	// A fixed encoded command.
+	// ok: go.command-injection
+	exec.Command("pwsh", "-NoProfile", "-EncodedCommand", "RwBlAHQALQBEAGEAdABlAA==").Run()
+	// ok: go.command-injection
+	exec.Command("pwsh", "-EncodedCommand", toPowerShellBase64("Get-Date")).Run()
+	// -e after -File is a parameter of the script, and its value is passed as a literal string.
+	// ok: go.command-injection
+	exec.Command("pwsh", "-File", "deploy.ps1", "-e", r.FormValue("env")).Run()
+	// Other options of PowerShell take request data as a value, not as code.
+	// ok: go.command-injection
+	exec.Command("pwsh", "-NoProfile", "-ExecutionPolicy", r.FormValue("policy"), "-File", "job.ps1").Run()
+	// Base64 text has no shell syntax: decoded into a file, it is not run. Not told apart.
+	// todook: go.command-injection
+	exec.Command("sh", "-c", "echo "+payload+" | base64 -d > upload.bin").Run()
+	// Prefixes of -EncodedCommand other than the documented -e and -ec (such as -enc) are not
+	// followed: the PowerShell docs do not describe them.
+	// todoruleid: go.command-injection
+	exec.Command("powershell", "-enc", r.FormValue("cmd")).Run()
+	fmt.Fprintln(w, "ok")
+}
+
+// toPowerShellBase64 encodes a script for -EncodedCommand: Base64 of its UTF-16LE text.
+func toPowerShellBase64(script string) string {
+	units := utf16.Encode([]rune(script))
+	raw := make([]byte, 2*len(units))
+	for i, u := range units {
+		binary.LittleEndian.PutUint16(raw[2*i:], u)
+	}
+	return base64.StdEncoding.EncodeToString(raw)
 }
 
 // Numbers, allow-lists and constants.

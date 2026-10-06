@@ -11,7 +11,8 @@
 Data from the HTTP request that reaches an operating-system command started with `os/exec`:
 
 - as part of a script that a shell runs (`exec.Command("sh", "-c", script)`, `cmd /C`,
-  `pwsh -Command`), or
+  `pwsh -Command`), including PowerShell's encoded command (`pwsh -EncodedCommand`, `-e`,
+  `-ec`) and a script built from request data and then Base64-encoded, or
 - as the program to run (`exec.Command(r.FormValue("tool"))`).
 
 Request data means query and form values, path parameters, headers, cookies and JSON bodies, read
@@ -70,7 +71,9 @@ func Archive(w http.ResponseWriter, r *http.Request) {
 - Run a fixed program and pass request data as separate arguments:
   `exec.Command("convert", name, "out.png")`. `exec.Command` starts the program directly, so no
   shell parses the arguments.
-- Do not hand request data to `sh -c`, `cmd /C` or `pwsh -Command`.
+- Do not hand request data to `sh -c`, `cmd /C`, `pwsh -Command` or `pwsh -EncodedCommand`.
+  Encoding a script in Base64 does not make it safe: PowerShell or the shell decodes it and runs
+  it.
 - If the program must vary, map the request value to a constant with a `switch` or a map lookup
   (an allow-list), never pass it through.
 - Put `--` before values that could start with a dash, so the program does not read them as
@@ -95,6 +98,10 @@ func Archive(w http.ResponseWriter, r *http.Request) {
 - `os.StartProcess` and `syscall.Exec` are not checked yet.
 - Arguments passed as a slice (`exec.Command("sh", args...)`) and the arguments of a Windows batch
   file are not followed.
+- PowerShell's encoded command is recognised under its documented names (`-EncodedCommand`,
+  `-e`, `-ec`), not under other abbreviations such as `-enc`.
+- Base64 does not count as a sanitizer: request data that is encoded and only decoded into a file
+  by the shell is still reported.
 <!-- end: known-limits -->
 
 ## References
@@ -108,6 +115,11 @@ func Archive(w http.ResponseWriter, r *http.Request) {
 - <https://pubs.opengroup.org/onlinepubs/9799919799/utilities/sh.html>
 - <https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd>
 - <https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh>
+- <https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1>
+- <https://pkg.go.dev/encoding/base64>
+- <https://pkg.go.dev/unicode/utf16#Encode>
+- <https://pkg.go.dev/golang.org/x/text/encoding/unicode>
+- <https://pkg.go.dev/golang.org/x/text/encoding>
 - <https://pkg.go.dev/strings#Builder>
 - <https://pkg.go.dev/bytes#Buffer>
 - <https://pkg.go.dev/net/http#Request>

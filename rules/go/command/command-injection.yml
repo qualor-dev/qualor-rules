@@ -5,9 +5,10 @@ rules:
     severity: ERROR
     message: >-
       Data from the HTTP request reaches an OS command: it is part of a shell script (`sh -c`,
-      `cmd /C`, `pwsh -Command`) or it chooses the program to run. Run a fixed program and pass the
-      request data as separate arguments (`exec.Command("convert", name, "out.png")`), without a
-      shell; if the program must vary, map the request value to a constant from an allow-list.
+      `cmd /C`, `pwsh -Command`, `pwsh -EncodedCommand`) or it chooses the program to run. Run a
+      fixed program and pass the request data as separate arguments
+      (`exec.Command("convert", name, "out.png")`), without a shell; if the program must vary,
+      map the request value to a constant from an allow-list.
     metadata:
       title: OS command built from HTTP request data (Go)
       cwe: ['CWE-78']
@@ -26,6 +27,11 @@ rules:
         - https://pubs.opengroup.org/onlinepubs/9799919799/utilities/sh.html
         - https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd
         - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh
+        - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1
+        - https://pkg.go.dev/encoding/base64
+        - https://pkg.go.dev/unicode/utf16#Encode
+        - https://pkg.go.dev/golang.org/x/text/encoding/unicode
+        - https://pkg.go.dev/golang.org/x/text/encoding
         - https://pkg.go.dev/strings#Builder
         - https://pkg.go.dev/bytes#Buffer
         - https://pkg.go.dev/net/http#Request
@@ -47,6 +53,10 @@ rules:
     # - os.StartProcess and syscall.Exec are not followed yet (`todoruleid:`).
     # - Arguments given as a slice (`exec.Command("sh", args...)`) and the arguments of a batch
     #   file (which cmd.exe parses again) are not followed (`todoruleid:`).
+    # - PowerShell's encoded command is followed under its documented names (`-EncodedCommand`,
+    #   `-e`, `-ec`); other prefixes such as `-enc` are not (`todoruleid:`).
+    # - Base64 is not a sanitizer: request data encoded and decoded by the shell into a file, not
+    #   run, is still reported (`todook:`).
     options:
       # A map lookup keyed by request data (an allow-list of programs) yields the map's values.
       taint_assume_safe_indexes: true
@@ -237,6 +247,16 @@ rules:
           - pattern-either:
               - pattern: exec.Command("=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([cC]|[cC][oO][mM][mM][aA][nN][dD])$/", ..., $SCRIPT, ...)
               - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([cC]|[cC][oO][mM][mM][aA][nN][dD])$/", ..., $SCRIPT, ...)
+          - focus-metavariable: $SCRIPT
+      # PowerShell given an encoded command: the argument after `-EncodedCommand` (`-e`, `-ec`,
+      # any case) is the command, as Base64 of its UTF-16LE text. After `-File`, `-e` is a
+      # parameter of the script instead.
+      - patterns:
+          - pattern-either:
+              - pattern: exec.Command("=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([eE]|[eE][cC]|[eE][nN][cC][oO][dD][eE][dD][cC][oO][mM][mM][aA][nN][dD])$/", $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([eE]|[eE][cC]|[eE][nN][cC][oO][dD][eE][dD][cC][oO][mM][mM][aA][nN][dD])$/", $SCRIPT, ...)
+          - pattern-not: exec.Command($PS, ..., "=~/^-([fF]|[fF][iI][lL][eE])$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/^-([fF]|[fF][iI][lL][eE])$/", ..., $SCRIPT, ...)
           - focus-metavariable: $SCRIPT
       # The program itself: the name or path given to Command or CommandContext, or Cmd.Path.
       - patterns:
