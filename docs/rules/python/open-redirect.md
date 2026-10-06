@@ -13,6 +13,12 @@ Redirects whose target comes from the HTTP request: Flask's and Werkzeug's `redi
 Starlette's `RedirectResponse`, when request data decides the whole target or its scheme and host.
 URLs the application builds for its own views (`url_for()`, `reverse()`) and request data after a
 fixed path or origin are not reported.
+
+In middleware (Django middleware, Flask `before_request` hooks, Starlette and FastAPI middleware)
+the current request's path counts as request data too: middleware runs for every path, also
+`//evil.example/`, so a redirect that starts with the path (`request.path + "/"`) can send the
+browser to another host. A host before the path (`"https://www.example.com" +
+request.get_full_path()`) keeps it on that host and is not reported.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -63,6 +69,9 @@ def after_login():
 - Keep the scheme and host fixed and put request data after a path: `"/items/" + item_id`, or
   `SITE + "/items/" + item_id`.
 - Or pick the target from an allow-list (a module-level dict of constants).
+- In middleware, put the host before the current path (`request.build_absolute_uri()`,
+  `"https://www.example.com" + request.get_full_path()`), or collapse repeated slashes
+  (`re.sub(r"/+", "/", request.path)`) before you redirect to it.
 <!-- end: how-to-fix -->
 
 ## Frameworks and APIs covered
@@ -77,10 +86,13 @@ def after_login():
 ## Known limits
 
 <!-- begin: known-limits -->
-- A fixed origin is recognised as a literal, an upper-case module constant holding a literal URL,
-  or a Django setting, at the start of the URL text. `%`-formatting with a constant origin
-  (`"%s/items/%s" % (SITE, id)`) and long chains of concatenation are not recognised, so such code
-  is reported.
+- A fixed origin is recognised as a literal, an upper-case module constant holding a literal URL
+  with a scheme and a host, or a Django setting, at the start of the URL text. `%`-formatting with
+  a constant origin (`"%s/items/%s" % (SITE, id)`), long chains of concatenation and a constant
+  imported from another module are not recognised, so such code is reported.
+- In middleware, `%`-formatting with a host before the current path (`"https://%s%s" %
+  (request.get_host(), request.path)`) is reported. Collapsing slashes is taken for safe, but a
+  Flask path can still hold a backslash (`/\evil.example`), which browsers read as `//`.
 - A check of the parsed host (`urlparse(x).netloc`) or Django's
   `url_has_allowed_host_and_scheme()` is not recognised.
 - A slice is followed when it slices request data in place (`request.args["next"][:200]`),
@@ -88,8 +100,8 @@ def after_login():
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
   (`q = q.strip()`, also `q = q + request.args["b"]` or a fallback `q = request.form["q"]`), is
   missed.
-- The current request's own path counts as a path on this site, although a path that starts with
-  `//` names another host.
+- In a view, the current request's own path counts as a path on this site, although a catch-all
+  route can receive a path that starts with `//` (or `/\` in Flask), which names another host.
 - Values returned by a database query or another call are taken for stored data, unless the call
   receives request data whole; a request value passed to such a call through a variable is missed.
 - An allow-list is recognised only as a lookup in a module-level dict of literals assigned to an
@@ -129,6 +141,15 @@ def after_login():
 - <https://docs.djangoproject.com/en/stable/ref/class-based-views/base/>
 - <https://fastapi.tiangolo.com/tutorial/body/>
 - <https://fastapi.tiangolo.com/advanced/using-request-directly/>
+- <https://docs.djangoproject.com/en/stable/topics/http/middleware/>
+- <https://docs.djangoproject.com/en/stable/releases/2.0.8/>
+- <https://flask.palletsprojects.com/en/stable/api/#flask.Flask.before_request>
+- <https://werkzeug.palletsprojects.com/en/stable/wrappers/>
+- <https://starlette.dev/middleware/>
+- <https://fastapi.tiangolo.com/tutorial/middleware/>
+- <https://asgi.readthedocs.io/en/latest/specs/www.html>
+- <https://url.spec.whatwg.org/>
+- <https://docs.python.org/3/library/re.html#re.sub>
 
 ## Tests
 

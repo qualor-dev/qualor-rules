@@ -1,3 +1,4 @@
+import re
 from typing import Annotated
 from urllib import parse
 from urllib.parse import urlencode, urlparse, urlsplit
@@ -6,6 +7,7 @@ from django.conf import settings
 from django.http import HttpResponsePermanentRedirect, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect as django_redirect
 from django.urls import reverse
+from django.utils.deprecation import MiddlewareMixin
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.views import View
 from django_hosts.resolvers import reverse as hosts_reverse
@@ -13,7 +15,9 @@ from fastapi import Depends, FastAPI, Path, Query, Request
 from fastapi.responses import RedirectResponse
 from flask import Flask, redirect, request, url_for
 from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
 
+from .config import PORTAL_ROOT
 from .forms import NextForm
 from .models import Article
 
@@ -23,6 +27,7 @@ api = FastAPI()
 SITE = "https://www.example.com"
 SITE_ROOT = "https://www.example.com/"
 OAUTH_ROOT = "https://accounts.example.com/"
+SCHEME = "https:"
 DESTINATIONS = {
     # Partner sites the app may send users to.
     "docs": "https://docs.example.com/",
@@ -190,6 +195,34 @@ def authorize():
     return redirect(SITE_ROOT + "authorize?" + urlencode({"state": request.args["state"]}))
 
 
+# A constant counts as an origin only when the module assigns it a literal with a scheme and a
+# host, and only before a separator: "https:" + "//" + host names any host.
+@app.route("/hop")
+def hop():
+    host = request.args["host"]
+    # ruleid: python.open-redirect
+    a = redirect(SCHEME + "//" + host + "/welcome")
+    # ruleid: python.open-redirect
+    b = redirect(f"{SCHEME}//{host}/welcome")
+    # ruleid: python.open-redirect
+    c = redirect("{}//{}/welcome".format(SCHEME, host))
+    NEXT_URL = request.args["next"]
+    # An upper-case local that holds request data is not a constant.
+    # ruleid: python.open-redirect
+    d = redirect(NEXT_URL + "/done")
+    # ok: python.open-redirect
+    e = redirect(SITE + "?ref=" + host)
+    # ok: python.open-redirect
+    return redirect(SITE + "/hosts/" + host + "/" + request.args["tab"] + "/" + request.args["page"])
+
+
+# A constant imported from another module is not taken for an origin: its value is unknown here.
+@app.route("/portal-item/<item_id>")
+def portal_item(item_id):
+    # todook: python.open-redirect
+    return redirect(PORTAL_ROOT + "/items/" + item_id)
+
+
 # Nested tables and implicitly concatenated values are not recognised as allow-lists; an
 # upper-case local is not a constant.
 NESTED_DESTINATIONS = {"docs": {"en": "https://docs.example.com/en/"}}
@@ -299,6 +332,39 @@ def trimmed():
     response = redirect(request.full_path[:-1])
     # ruleid: python.open-redirect
     return redirect(request.args["next"][:200])
+
+
+# Flask before_request hooks run for every path. Werkzeug drops the leading slashes of
+# request.path but keeps "/\\evil.example" (from "/%5Cevil.example"), which browsers read as
+# "//evil.example", and its redirect() does not escape the backslash: there the current path
+# is request data.
+@app.before_request
+def strip_trailing_slash():
+    if request.path != "/" and request.path.endswith("/"):
+        # ruleid: python.open-redirect
+        return redirect(request.path[:-1])
+    if request.path != request.path.lower():
+        # ruleid: python.open-redirect
+        return redirect(request.full_path.lower())
+    if not request.is_secure:
+        # ok: python.open-redirect
+        return redirect(request.url.replace("http://", "https://", 1))
+    if request.path.startswith("/account/"):
+        # ok: python.open-redirect
+        return redirect("/login?next=" + request.full_path)
+    if "//" in request.path:
+        # Collapsing slashes leaves the backslash in place.
+        # todoruleid: python.open-redirect
+        return redirect(re.sub("/+", "/", request.path))
+    return None
+
+
+# In a view, the current path is taken for a path on this site; a catch-all rule reaches the
+# view with "/\\evil.example" too.
+@app.route("/files/<path:rest>")
+def files_catch_all(rest):
+    # todoruleid: python.open-redirect
+    return redirect(request.path + "/")
 
 
 # Django: redirect(), HttpResponseRedirect and HttpResponsePermanentRedirect.
@@ -429,6 +495,87 @@ def follow_upstream(request):
     return HttpResponseRedirect(request.headers["Location"])
 
 
+# Django middleware sees every request path, also "//evil.example/" (Django keeps the leading
+# slashes; the CVE-2018-14574 class): there the current path is request data, and a redirect
+# that starts with it names another host. After a host, it stays on that host.
+class AppendSlashMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        path = request.path
+        if not path.endswith("/"):
+            # ruleid: python.open-redirect
+            return HttpResponsePermanentRedirect(path + "/")
+        cleaned = re.sub("//+", "/", path)
+        if cleaned != path:
+            # ok: python.open-redirect
+            return HttpResponsePermanentRedirect(cleaned)
+        if request.path.startswith("/old/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect(request.get_full_path().replace("/old/", "/new/", 1))
+        if request.path != request.path.lower():
+            # Doubled slashes collapsed: the path stays on this site.
+            # ok: python.open-redirect
+            return HttpResponsePermanentRedirect(re.sub(r"/+", "/", request.path.lower()))
+        if not request.is_secure():
+            # ok: python.open-redirect
+            return HttpResponsePermanentRedirect(request.build_absolute_uri().replace("http://", "https://", 1))
+        if request.get_host() == "example.com":
+            # ok: python.open-redirect
+            return HttpResponsePermanentRedirect("https://www.example.com" + request.get_full_path())
+        if request.get_host() == "old.example.com":
+            # ok: python.open-redirect
+            return HttpResponsePermanentRedirect(SITE + request.get_full_path())
+        if request.path.startswith("/account/") and not request.user.is_authenticated:
+            # ok: python.open-redirect
+            return HttpResponseRedirect("/login/?next=" + request.get_full_path())
+        if request.path.startswith("/shop/"):
+            # ok: python.open-redirect
+            return HttpResponseRedirect(f"https://{request.get_host()}{request.path}?ref=shop")
+        if request.path.startswith("/blog/"):
+            # ok: python.open-redirect
+            return HttpResponseRedirect("https://" + request.get_host() + request.path.replace("/blog/", "/news/", 1))
+        if request.path.startswith("/next/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("https://" + request.GET["host"] + request.path)
+        if request.path.startswith("/m/"):
+            # %-formatting with a host before the current path is not recognised.
+            # todook: python.open-redirect
+            return HttpResponseRedirect("https://%s%s" % (request.get_host(), request.path[2:]))
+        return self.get_response(request)
+
+
+class LegacyPathMiddleware(MiddlewareMixin):
+    def process_request(self, request):
+        if request.path_info.startswith("/v1/"):
+            # ruleid: python.open-redirect
+            return django_redirect(request.path_info.replace("/v1/", "/v2/", 1))
+        return None
+
+    def process_view(self, request, view_func, view_args, view_kwargs):
+        if request.path.endswith("/index"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect(request.path[:-5])
+        return None
+
+    def process_response(self, request, response):
+        if response.status_code == 404 and not request.path.endswith("/"):
+            # ruleid: python.open-redirect
+            return HttpResponsePermanentRedirect(f"{request.get_full_path()}/")
+        return response
+
+
+def lowercase_middleware(get_response):
+    def middleware(request):
+        if request.path != request.path.lower():
+            # ruleid: python.open-redirect
+            return django_redirect(request.path.lower())
+        return get_response(request)
+
+    return middleware
+
+
 # FastAPI: RedirectResponse, and a path operation with response_class=RedirectResponse.
 class Checkout(BaseModel):
     cart_id: str
@@ -466,6 +613,10 @@ async def home(request: Request, tab: str = ""):
     # ok: python.open-redirect
     a = RedirectResponse(request.url_for("dashboard"))
     # ok: python.open-redirect
+    moved = RedirectResponse(str(request.url.replace(path="/dashboard/" + tab)))
+    # ruleid: python.open-redirect
+    elsewhere = RedirectResponse(str(request.url.replace(netloc=tab)))
+    # ok: python.open-redirect
     b = RedirectResponse(url="/dashboard/" + tab)
     # ok: python.open-redirect
     return RedirectResponse(f"/dashboard?tab={tab}")
@@ -498,3 +649,42 @@ async def portal(
     c = RedirectResponse(legacy.portal_url)
     # ruleid: python.open-redirect
     return RedirectResponse(to)
+
+
+# Starlette and FastAPI middleware see every request path, also "//evil.example/".
+class TrailingSlashMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        if not request.url.path.endswith("/"):
+            # ruleid: python.open-redirect
+            return RedirectResponse(request.url.path + "/")
+        if request.url.path != request.url.path.lower():
+            # ok: python.open-redirect
+            return RedirectResponse(str(request.url.replace(path=request.url.path.lower())))
+        if request.url.scheme == "http":
+            # ok: python.open-redirect
+            return RedirectResponse(str(request.url.replace(scheme="https")))
+        if request.url.path.startswith("/go/"):
+            # ruleid: python.open-redirect
+            return RedirectResponse(str(request.url.replace(netloc=request.url.path.lstrip("/"))))
+        return await call_next(request)
+
+
+@api.middleware("http")
+async def lowercase_paths(request: Request, call_next):
+    if request.url.path != request.url.path.lower():
+        # ruleid: python.open-redirect
+        return RedirectResponse(url=request.url.path.lower())
+    return await call_next(request)
+
+
+class AsgiSlashMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and not scope["path"].endswith("/"):
+            # ruleid: python.open-redirect
+            response = RedirectResponse(scope["path"] + "/")
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
