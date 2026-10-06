@@ -202,6 +202,12 @@ rules:
           - metavariable-type:
               metavariable: $E
               types: [int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool]
+          # A comparison that holds a binder or decoder call (`c.ShouldBindJSON(&x) == nil`,
+          # `errors.Is(c.Bind(&x), ...)`) is a boolean too, but sanitizing it would also clear
+          # the struct the call fills.
+          - pattern-not: <... $CALL(...) == nil ...>
+          - pattern-not: <... $CALL(...) != nil ...>
+          - pattern-not: <... $F(..., &$X, ...) ...>
     pattern-sinks:
       - patterns:
           - pattern-either:

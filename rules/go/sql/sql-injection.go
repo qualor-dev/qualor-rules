@@ -3,6 +3,7 @@ package shop
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -330,6 +331,97 @@ func (h *Handler) GinNewTargets(c *gin.Context) {
 	h.db.Query("SELECT * FROM items WHERE name = '" + query.Name + "'")
 	// ok: go.sql-injection
 	h.db.Query("SELECT * FROM items WHERE name = ?", query.Name)
+}
+
+// A bind or decode call inside a condition (`if c.ShouldBindJSON(&in) == nil`) fills the struct
+// with request data like the `err :=` form. A bound value used only in a comparison does not
+// taint what the branch chooses.
+type SortInput struct {
+	Name string   `json:"name" query:"name"`
+	Sort string   `json:"sort" query:"sort"`
+	Tags []string `json:"tags" query:"tags"`
+}
+
+func (h *Handler) GinBindInCondition(c *gin.Context) {
+	var in SortInput
+	if c.ShouldBindJSON(&in) == nil {
+		// ruleid: go.sql-injection
+		h.db.Query("SELECT * FROM items WHERE name = '" + in.Name + "'")
+	}
+	var query SortInput
+	if c.ShouldBindQuery(&query) != nil {
+		return
+	}
+	// ruleid: go.sql-injection
+	h.db.Query("SELECT * FROM items ORDER BY " + query.Sort)
+	target := new(SortInput)
+	if c.ShouldBind(target) == nil && target.Sort != "" {
+		// ruleid: go.sql-injection
+		h.db.Query("SELECT * FROM items ORDER BY " + target.Sort)
+	}
+	var strict SortInput
+	if errors.Is(c.ShouldBindJSON(&strict), io.EOF) {
+		return
+	}
+	// ruleid: go.sql-injection
+	h.db.Exec("DELETE FROM items WHERE name = '" + strict.Name + "'")
+	var empty SortInput
+	if c.ShouldBindJSON(&empty) == io.EOF {
+		return
+	}
+	// ruleid: go.sql-injection
+	h.db.Exec("DELETE FROM items WHERE name = '" + empty.Name + "'")
+	// The bound values only compared: the branches choose constants.
+	column := "name"
+	if query.Sort == "price" {
+		column = "price"
+	}
+	// ok: go.sql-injection
+	h.db.Query("SELECT * FROM items ORDER BY " + column)
+	descending := in.Sort == "desc" && in.Name != ""
+	// ok: go.sql-injection
+	h.db.Query(fmt.Sprintf("SELECT * FROM items ORDER BY id %s", map[bool]string{true: "DESC", false: "ASC"}[descending]))
+	tagged := in.Tags != nil
+	// ok: go.sql-injection
+	h.db.Query(fmt.Sprintf("SELECT * FROM items WHERE tagged = %t", tagged))
+	switch query.Sort {
+	case "price":
+		// ok: go.sql-injection
+		h.db.Query("SELECT * FROM items ORDER BY price")
+	}
+}
+
+func (h *Handler) EchoBindInCondition(c echo.Context) error {
+	var in SortInput
+	if c.Bind(&in) != nil {
+		return nil
+	}
+	// ruleid: go.sql-injection
+	h.db.Query("SELECT * FROM items WHERE name = '" + in.Name + "'")
+	var filter SortInput
+	if echo.BindQueryParams(c, &filter) == nil {
+		// ruleid: go.sql-injection
+		h.db.Query("SELECT * FROM items ORDER BY " + filter.Sort)
+	}
+	order := "id"
+	if filter.Sort == "name" {
+		order = "name"
+	}
+	// ok: go.sql-injection
+	h.db.Query("SELECT * FROM items ORDER BY " + order)
+	return nil
+}
+
+func (h *Handler) DecodeInCondition(w http.ResponseWriter, r *http.Request) {
+	var in SortInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		return
+	}
+	// ruleid: go.sql-injection
+	h.db.Query("SELECT * FROM items WHERE name = '" + in.Name + "'")
+	tagged := in.Name == "featured"
+	// ok: go.sql-injection
+	h.db.Query(fmt.Sprintf("SELECT * FROM items WHERE featured = %t", tagged))
 }
 
 // A binder held in a struct field, typed as *echo.DefaultBinder.
