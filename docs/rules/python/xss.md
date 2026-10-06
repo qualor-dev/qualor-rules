@@ -89,7 +89,9 @@ def hello(request):
   call through a variable is missed.
 - A Flask view returning the request's JSON whole is taken for JSON. A response whose content type
   is changed after it is made (`resp.mimetype = "text/plain"`) is still taken for HTML.
-- Taint is not carried through a slice (`request.args["q"][:50]`).
+- A slice is followed when it slices request data in place (`request.args["q"][:50]`),
+  a variable assigned request data, or a view parameter; a slice of a value built from request
+  data (`(request.args["q"] + "x")[:50]`) is missed.
 - Request sources are recognised by their shape: a Flask `<int:n>` route parameter and a numeric
   Django URL argument still count as request data, and a function whose first parameter is named
   `request` in a Django module is taken for a view.

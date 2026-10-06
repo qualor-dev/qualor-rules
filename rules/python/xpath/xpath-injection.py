@@ -178,10 +178,17 @@ def sort():
     return str(catalog.xpath("//book/" + key + "/text()"))
 
 
-# OpenGrep does not carry taint through a slice of request data.
+# A slice of request data: OpenGrep does not carry taint through a slice, so the rule takes a
+# slice of a request value (in place or through a variable) or of a view parameter as request
+# data itself. A slice of a value built from request data is missed.
 @app.route("/short")
 def short():
+    q = request.args["q"]
+    # ruleid: python.xpath-injection
+    catalog.xpath(q[:50])
     # todoruleid: python.xpath-injection
+    catalog.xpath(("//item[@id='" + request.args["q"])[:50])
+    # ruleid: python.xpath-injection
     return str(catalog.xpath(request.args["q"][:50]))
 
 

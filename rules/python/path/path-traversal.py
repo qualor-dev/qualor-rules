@@ -179,6 +179,21 @@ def under(name):
     return note_path(name).read_text() + text
 
 
+# A slice of request data: OpenGrep does not carry taint through a slice, so the rule takes a
+# slice of a request value (in place or through a variable) or of a view parameter as request
+# data itself. A slice of a value built from request data is missed.
+@app.route("/short")
+def short_name():
+    # ruleid: python.path-traversal
+    data = send_file(request.args["f"][:100])
+    name = request.args["f"]
+    # ruleid: python.path-traversal
+    data = open(name[:100])
+    # todoruleid: python.path-traversal
+    data = send_file((request.args["f"] + ".txt")[:100])
+    return data
+
+
 # Allow-lists: a lookup in a module-level dict of constants; a membership check is not recognised.
 @app.route("/report")
 def report():

@@ -54,7 +54,10 @@ rules:
     # - A check of the parsed host (`urlparse(x).netloc`) or Django's
     #   `url_has_allowed_host_and_scheme()` (a private API, named in the Django 3.0 release
     #   notes) is not recognised.
-    # - OpenGrep does not carry taint through a slice (`request.args["next"][:200]`).
+    # - OpenGrep does not carry taint through a slice, so a slice of request data is a source
+    #   itself: of a request access chain (`request.args["next"][:200]`), of a variable assigned one in
+    #   the function, or of a view parameter. A slice of a value built from request data
+    #   (`(request.args["q"] + "x")[:50]`) is missed.
     # - The current request's own path or URL is taken for a path on this site; a path that
     #   begins with "//" (`https://site//evil.example/`, reaching a Django catch-all view or a
     #   Starlette `request.url.path`) names another host (todoruleid). The
@@ -264,6 +267,198 @@ rules:
                               metavariable: $VIEW
                               regex: ^(get|post|put|patch|delete|head|options|trace|dispatch)$
                   - focus-metavariable: $PARAM
+      # Slices: OpenGrep does not carry taint through a slice (`request.args["q"][:50]`), so a
+      # slice of request data is a source itself: of a request access chain (Flask's request, or
+      # Django's request, self.request, self.args, self.kwargs or json.loads(request.body), with
+      # their subscripts, attributes and method calls), in place or through a variable assigned
+      # one in the function, or of a view parameter (and its attributes).
+      - patterns:
+          - pattern-either:
+              - pattern: $VALUE[$LOWER:]
+              - pattern: $VALUE[:$UPPER]
+              - pattern: $VALUE[$LOWER:$UPPER]
+              - pattern: $VALUE[::$STEP]
+              - pattern: $VALUE[$LOWER::$STEP]
+              - pattern: $VALUE[:$UPPER:$STEP]
+              - pattern: $VALUE[$LOWER:$UPPER:$STEP]
+              - pattern: $VALUE[:]
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: &flask-request-chain ^((flask\.)?request\.(args|form|values|headers|cookies|json|data|files|view_args|path|full_path|url|query_string|get_json\([^()]*\)|get_data\([^()]*\))|json\.loads\((flask\.)?request\.(data|get_data\([^()]*\))\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
+          - metavariable-pattern:
+              metavariable: $VALUE
+              pattern: flask.request.$ATTR
+      - patterns:
+          - pattern-inside: |
+              $VALUE = $INIT
+              ...
+          - pattern-either:
+              - pattern: $VALUE[$LOWER:]
+              - pattern: $VALUE[:$UPPER]
+              - pattern: $VALUE[$LOWER:$UPPER]
+              - pattern: $VALUE[::$STEP]
+              - pattern: $VALUE[$LOWER::$STEP]
+              - pattern: $VALUE[:$UPPER:$STEP]
+              - pattern: $VALUE[$LOWER:$UPPER:$STEP]
+              - pattern: $VALUE[:]
+              - pattern: $VALUE[$KEY][$LOWER:]
+              - pattern: $VALUE[$KEY][:$UPPER]
+              - pattern: $VALUE[$KEY][$LOWER:$UPPER]
+              - pattern: $VALUE.$METHOD(...)[$LOWER:]
+              - pattern: $VALUE.$METHOD(...)[:$UPPER]
+              - pattern: $VALUE.$METHOD(...)[$LOWER:$UPPER]
+              - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:]
+              - pattern: $VALUE[$KEY].$METHOD(...)[:$UPPER]
+              - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:$UPPER]
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: *flask-request-chain
+          - metavariable-pattern:
+              metavariable: $INIT
+              pattern: flask.request.$ATTR
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      from $DJ import $NAME
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+              - patterns:
+                  - pattern-inside: |
+                      import $DJ
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+          - pattern-either:
+              - pattern: $VALUE[$LOWER:]
+              - pattern: $VALUE[:$UPPER]
+              - pattern: $VALUE[$LOWER:$UPPER]
+              - pattern: $VALUE[::$STEP]
+              - pattern: $VALUE[$LOWER::$STEP]
+              - pattern: $VALUE[:$UPPER:$STEP]
+              - pattern: $VALUE[$LOWER:$UPPER:$STEP]
+              - pattern: $VALUE[:]
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: &django-request-chain ^((self\.)?request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|self\.(args|kwargs)|json\.loads\((self\.)?request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      from $DJ import $NAME
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+              - patterns:
+                  - pattern-inside: |
+                      import $DJ
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+          - pattern-inside: |
+              $VALUE = $INIT
+              ...
+          - pattern-either:
+              - pattern: $VALUE[$LOWER:]
+              - pattern: $VALUE[:$UPPER]
+              - pattern: $VALUE[$LOWER:$UPPER]
+              - pattern: $VALUE[::$STEP]
+              - pattern: $VALUE[$LOWER::$STEP]
+              - pattern: $VALUE[:$UPPER:$STEP]
+              - pattern: $VALUE[$LOWER:$UPPER:$STEP]
+              - pattern: $VALUE[:]
+              - pattern: $VALUE[$KEY][$LOWER:]
+              - pattern: $VALUE[$KEY][:$UPPER]
+              - pattern: $VALUE[$KEY][$LOWER:$UPPER]
+              - pattern: $VALUE.$METHOD(...)[$LOWER:]
+              - pattern: $VALUE.$METHOD(...)[:$UPPER]
+              - pattern: $VALUE.$METHOD(...)[$LOWER:$UPPER]
+              - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:]
+              - pattern: $VALUE[$KEY].$METHOD(...)[:$UPPER]
+              - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:$UPPER]
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: *django-request-chain
+      # A view parameter: of a route-decorated view (Flask, FastAPI; not a dependency), and the
+      # URL arguments of a Django view.
+      - patterns:
+          - pattern-inside: |
+              @$APP.$ROUTE(...)
+              def $VIEW(..., $PARAM, ...):
+                ...
+          - metavariable-regex:
+              metavariable: $ROUTE
+              regex: ^(route|get|post|put|patch|delete)$
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Depends(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Security(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Depends(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Security(...)], ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Depends(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Security(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - pattern-either:
+              - pattern: $PARAM[$LOWER:]
+              - pattern: $PARAM[:$UPPER]
+              - pattern: $PARAM[$LOWER:$UPPER]
+              - pattern: $PARAM.$FIELD[$LOWER:]
+              - pattern: $PARAM.$FIELD[:$UPPER]
+              - pattern: $PARAM.$FIELD[$LOWER:$UPPER]
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      from $DJ import $NAME
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+              - patterns:
+                  - pattern-inside: |
+                      import $DJ
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+          - pattern-either:
+              - pattern-inside: |
+                  def $VIEW(request, ..., $PARAM, ...):
+                    ...
+              - patterns:
+                  - pattern-inside: |
+                      class $CLS(...):
+                        ...
+                  - pattern-inside: |
+                      def $VIEW(self, request, ..., $PARAM, ...):
+                        ...
+                  - metavariable-regex:
+                      metavariable: $VIEW
+                      regex: ^(get|post|put|patch|delete|head|options|trace|dispatch)$
+          - pattern-either:
+              - pattern: $PARAM[$LOWER:]
+              - pattern: $PARAM[:$UPPER]
+              - pattern: $PARAM[$LOWER:$UPPER]
     pattern-sanitizers:
       - pattern: int(...)
       - pattern: float(...)
@@ -448,6 +643,16 @@ rules:
       - pattern: self.request.path
       - pattern: self.request.get_full_path(...)
       - pattern: self.request.build_absolute_uri()
+      # The same, sliced (`request.full_path[:-1]` drops the "?" Flask appends), which the slice
+      # sources would otherwise take for request data.
+      - patterns:
+          - pattern-either:
+              - pattern: $CURRENT[$LOWER:]
+              - pattern: $CURRENT[:$UPPER]
+              - pattern: $CURRENT[$LOWER:$UPPER]
+          - metavariable-regex:
+              metavariable: $CURRENT
+              regex: ^((flask\.)?request\.(url|path|full_path)|(self\.)?request\.(path|path_info|get_full_path\(\)|build_absolute_uri\(\)))$
       - patterns:
           - pattern-either:
               - pattern-inside: |

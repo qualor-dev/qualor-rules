@@ -149,10 +149,17 @@ def op():
     return str(eval("2 " + o + " 3"))
 
 
-# OpenGrep does not carry taint through a slice of request data.
+# A slice of request data: OpenGrep does not carry taint through a slice, so the rule takes a
+# slice of a request value (in place or through a variable) or of a view parameter as request
+# data itself. A slice of a value built from request data is missed.
 @app.route("/short")
 def short():
+    expr = request.args["expr"]
+    # ruleid: python.code-injection
+    eval(expr[:20])
     # todoruleid: python.code-injection
+    eval((request.args["expr"] + " + 0")[:20])
+    # ruleid: python.code-injection
     return str(eval(request.args["expr"][:20]))
 
 

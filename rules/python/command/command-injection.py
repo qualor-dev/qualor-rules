@@ -325,11 +325,18 @@ def check():
     return "ok"
 
 
-# OpenGrep does not carry taint through a slice of request data.
+# A slice of request data: OpenGrep does not carry taint through a slice, so the rule takes a
+# slice of a request value (in place or through a variable) or of a view parameter as request
+# data itself. A slice of a value built from request data is missed.
 @app.route("/short")
 def short():
-    # todoruleid: python.command-injection
+    # ruleid: python.command-injection
     os.system(request.args["cmd"][:100])
+    cmd = request.args["cmd"]
+    # ruleid: python.command-injection
+    subprocess.run(cmd[:100], shell=True)
+    # todoruleid: python.command-injection
+    os.system(("echo " + request.args["cmd"])[:100])
     return "ok"
 
 

@@ -247,11 +247,26 @@ def draft_page(slug):
     return "<h1>" + draft.title + "</h1>"
 
 
-# OpenGrep does not carry taint through a slice of request data.
+# A slice of request data: OpenGrep does not carry taint through a slice, so the rule takes a
+# slice of a request value (in place or through a variable) or of a view parameter as request
+# data itself. A slice of a value built from request data is missed.
 @app.route("/teaser")
 def teaser():
-    # todoruleid: python.xss
+    # ruleid: python.xss
     return "<p>" + request.args["text"][:50] + "</p>"
+
+
+@app.route("/teaser-var")
+def teaser_var():
+    text = request.args["text"]
+    # ruleid: python.xss
+    return "<p>" + text[:50] + "</p>"
+
+
+@app.route("/teaser-sum")
+def teaser_sum():
+    # todoruleid: python.xss
+    return "<p>" + (request.args["a"] + request.args["b"])[:50] + "</p>"
 
 
 def find_post(slug):

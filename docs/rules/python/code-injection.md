@@ -74,7 +74,9 @@ def report():
 ## Known limits
 
 <!-- begin: known-limits -->
-- Taint is not carried through a slice (`request.args["expr"][:20]`), so such code is missed.
+- A slice is followed when it slices request data in place (`request.args["expr"][:20]`),
+  a variable assigned request data, or a view parameter; a slice of a value built from request
+  data (`(request.args["q"] + "x")[:50]`) is missed.
 - An allow-list is recognised only as a lookup in a module-level dict of literals assigned to an
   upper-case name that is never changed, or as a ternary of constants. A membership check
   (`if x not in ALLOWED: return`) and nested tables are not recognised.

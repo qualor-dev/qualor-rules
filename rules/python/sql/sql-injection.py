@@ -269,6 +269,10 @@ def read_item(item_id: int, q: str = "", limit: int = 10, settings: Settings = D
     con.execute("SELECT * FROM items LIMIT %d" % limit)
     # ok: python.sql-injection
     con.execute("SELECT * FROM " + settings.table + " WHERE id = ?", (item_id,))
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items WHERE note LIKE '" + q[:20] + "%'")
+    # ok: python.sql-injection
+    con.execute("SELECT * FROM " + settings.table[:10])
     return {"ok": True}
 
 
@@ -374,6 +378,31 @@ def reload_columns():
     return "ok"
 
 
+# A slice of request data: OpenGrep does not carry taint through a slice, so the rule takes a
+# slice of a request value (in place or through a variable) or of a view parameter as request
+# data itself. A slice of a value built from request data is missed.
+@app.route("/prefix/<prefix>")
+def by_prefix(prefix):
+    con = get_db()
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items WHERE name LIKE '" + request.args["q"][:50] + "%'")
+    q = request.args.get("q", "")
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items WHERE name LIKE '%s%%'" % q[:50])
+    body = request.get_json()
+    # ruleid: python.sql-injection
+    con.execute(f"SELECT * FROM items WHERE note = '{body['note'][1:]}'")
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items WHERE code = '" + prefix[:3] + "'")
+    # ok: python.sql-injection
+    con.execute("SELECT * FROM items LIMIT %d" % int(request.args["n"][:3]))
+    # ok: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + SORT_COLUMNS.get(request.args["s"], "name")[:5])
+    # todoruleid: python.sql-injection
+    con.execute("SELECT * FROM items WHERE name LIKE '" + (request.args["q"] + "%")[:50] + "'")
+    return "ok"
+
+
 # Django: a view receives the HttpRequest first, then the URL parts its path() or re_path()
 # pattern captures as keyword arguments, e.g. path("people/<slug:slug>/", views.person_detail).
 class Person(models.Model):
@@ -471,6 +500,18 @@ def person_detail(request, slug):
     Person.objects.raw(f"SELECT * FROM myapp_person WHERE slug = '{slug}'")
     # ok: python.sql-injection
     Person.objects.raw("SELECT * FROM myapp_person WHERE slug = %s", [slug])
+    return HttpResponse("ok")
+
+
+def person_prefix(request, slug):
+    payload = json.loads(request.body)
+    with connection.cursor() as cursor:
+        # ruleid: python.sql-injection
+        cursor.execute("SELECT * FROM myapp_person WHERE last_name LIKE '" + request.GET["q"][:20] + "%'")
+        # ruleid: python.sql-injection
+        cursor.execute("SELECT * FROM myapp_person WHERE slug = '" + slug[:20] + "'")
+        # ruleid: python.sql-injection
+        cursor.execute("SELECT * FROM myapp_person WHERE note = '%s'" % payload["note"][:100])
     return HttpResponse("ok")
 
 

@@ -83,7 +83,9 @@ def after_login():
   is reported.
 - A check of the parsed host (`urlparse(x).netloc`) or Django's
   `url_has_allowed_host_and_scheme()` is not recognised.
-- Taint is not carried through a slice (`request.args["next"][:200]`).
+- A slice is followed when it slices request data in place (`request.args["next"][:200]`),
+  a variable assigned request data, or a view parameter; a slice of a value built from request
+  data (`(request.args["q"] + "x")[:50]`) is missed.
 - The current request's own path counts as a path on this site, although a path that starts with
   `//` names another host.
 - Values returned by a database query or another call are taken for stored data, unless the call

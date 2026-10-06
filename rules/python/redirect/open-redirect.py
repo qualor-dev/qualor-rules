@@ -280,10 +280,20 @@ def legacy(legacy_host: int):
     return redirect("https://" + legacy_host)
 
 
-# OpenGrep does not carry taint through a slice of request data.
+# A slice of request data: OpenGrep does not carry taint through a slice, so the rule takes a
+# slice of a request value (in place or through a variable) or of a view parameter as request
+# data itself. A slice of a value built from request data is missed.
+# A slice of the current URL or path stays on this site.
 @app.route("/trimmed")
 def trimmed():
+    target = request.args.get("next", "/")
+    # ruleid: python.open-redirect
+    response = redirect(target[:200])
     # todoruleid: python.open-redirect
+    response = redirect((request.args["next"] + "#top")[:200])
+    # ok: python.open-redirect
+    response = redirect(request.full_path[:-1])
+    # ruleid: python.open-redirect
     return redirect(request.args["next"][:200])
 
 

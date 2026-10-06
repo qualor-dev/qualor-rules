@@ -95,6 +95,9 @@ def preview():
 - Request sources are recognised by their shape: a Flask `<int:n>` route parameter and a numeric
   Django URL argument still count as request data, and a function whose first parameter is named
   `request` in a Django module is taken for a view.
+- A slice is followed when it slices request data in place (`request.args["url"][:200]`),
+  a variable assigned request data, or a view parameter; a slice of a value built from request
+  data (`(request.args["q"] + "x")[:50]`) is missed.
 <!-- end: known-limits -->
 
 ## References

@@ -88,7 +88,9 @@ def save_cart():
   since the name could point at an uploaded file.
 - A signature check (`hmac.compare_digest`) before loading is not recognised, so the load is still
   reported.
-- Taint is not carried through a slice (`request.get_data()[4:]`).
+- A slice is followed when it slices request data in place (`request.get_data()[4:]`),
+  a variable assigned request data, or a view parameter; a slice of a value built from request
+  data (`(request.args["q"] + "x")[:50]`) is missed.
 - An allow-list is recognised only as a lookup in a module-level dict of literals assigned to an
   upper-case name that is never changed, or as a ternary of constants.
 - Request sources are recognised by their shape: a Flask `<int:n>` route parameter and a numeric

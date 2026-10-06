@@ -200,10 +200,17 @@ def signed():
     return str(pickle.loads(data))
 
 
-# OpenGrep does not carry taint through a slice of request data.
+# A slice of request data: OpenGrep does not carry taint through a slice, so the rule takes a
+# slice of a request value (in place or through a variable) or of a view parameter as request
+# data itself. A slice of a value built from request data is missed.
 @app.post("/framed")
 def framed():
+    data = request.get_data()
+    # ruleid: python.unsafe-deserialization
+    pickle.loads(data[4:])
     # todoruleid: python.unsafe-deserialization
+    pickle.loads((request.get_data() + b".")[4:])
+    # ruleid: python.unsafe-deserialization
     return str(pickle.loads(request.get_data()[4:]))
 
 

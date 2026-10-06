@@ -75,7 +75,9 @@ def hello():
 ## Known limits
 
 <!-- begin: known-limits -->
-- Taint is not carried through a slice (`request.args["tpl"][:200]`).
+- A slice is followed when it slices request data in place (`request.args["tpl"][:200]`),
+  a variable assigned request data, or a view parameter; a slice of a value built from request
+  data (`(request.args["q"] + "x")[:50]`) is missed.
 - `from_string()` is checked only on an environment the rule can see: `jinja2.Environment()` or
   `NativeEnvironment()` made in the module or function, Flask's `jinja_env`, a `Jinja2Templates`
   made in the module or function, and Django's `engines[...]` and `Engine`. An environment returned

@@ -159,10 +159,17 @@ def word():
     return str(re.compile(r"\b" + w + r"\b"))
 
 
-# OpenGrep does not carry taint through a slice of request data.
+# A slice of request data: OpenGrep does not carry taint through a slice, so the rule takes a
+# slice of a request value (in place or through a variable) or of a view parameter as request
+# data itself. A slice of a value built from request data is missed.
 @app.route("/short")
 def short():
+    q = request.args["q"]
+    # ruleid: python.regex-injection
+    re.search(q[:20], "text")
     # todoruleid: python.regex-injection
+    re.compile(("^" + request.args["q"])[:20])
+    # ruleid: python.regex-injection
     return str(re.compile(request.args["q"][:20]))
 
 

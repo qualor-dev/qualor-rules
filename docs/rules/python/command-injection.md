@@ -95,7 +95,9 @@ def ping():
 <!-- begin: known-limits -->
 - An allow-list check before the call (`if tool not in ("uptime", "df"): return`) is not
   recognised; a lookup in a module-level dict of constants is.
-- Taint is not carried through a slice (`request.args["cmd"][:100]`), so such code is missed.
+- A slice is followed when it slices request data in place (`request.args["cmd"][:100]`),
+  a variable assigned request data, or a view parameter; a slice of a value built from request
+  data (`(request.args["q"] + "x")[:50]`) is missed.
 - With `shell=True`, only the first element of an argument list is taken for shell code, as on
   POSIX; on Windows the other elements reach `cmd.exe` too. `shlex.quote()` is accepted as
   escaping also in a `cmd /c` command.

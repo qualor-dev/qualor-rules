@@ -99,6 +99,9 @@ def orders():
   whose first parameter is named `request` is taken for a view.
 - An allow-list is recognised only as a lookup in a module-level dict of literals assigned to an
   upper-case name that is never changed, or as a ternary of constants; a membership check is not.
+- A slice is followed when it slices request data in place (`request.args["q"][:50]`),
+  a variable assigned request data, or a view parameter; a slice of a value built from request
+  data (`(request.args["q"] + "x")[:50]`) is missed.
 <!-- end: known-limits -->
 
 ## References

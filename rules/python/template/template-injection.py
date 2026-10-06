@@ -181,10 +181,17 @@ def theme():
     return render_template_string("<body class='" + t + "'>{{ body }}</body>", body="x")
 
 
-# OpenGrep does not carry taint through a slice of request data.
+# A slice of request data: OpenGrep does not carry taint through a slice, so the rule takes a
+# slice of a request value (in place or through a variable) or of a view parameter as request
+# data itself. A slice of a value built from request data is missed.
 @app.route("/short")
 def short():
+    tpl = request.args["tpl"]
+    # ruleid: python.template-injection
+    render_template_string(tpl[:200])
     # todoruleid: python.template-injection
+    render_template_string(("<p>" + request.args["tpl"])[:200])
+    # ruleid: python.template-injection
     return render_template_string(request.args["tpl"][:200])
 
 
