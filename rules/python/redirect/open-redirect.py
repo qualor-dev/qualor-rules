@@ -4,11 +4,12 @@ from urllib import parse
 from urllib.parse import urlencode, urlparse, urlsplit
 
 from django.conf import settings
-from django.http import HttpResponsePermanentRedirect, HttpResponseRedirect
+from django.core.exceptions import PermissionDenied
+from django.http import HttpResponseBadRequest, HttpResponsePermanentRedirect, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, redirect as django_redirect
 from django.urls import reverse
 from django.utils.deprecation import MiddlewareMixin
-from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.http import is_safe_url, url_has_allowed_host_and_scheme
 from django.views import View
 from django_hosts.resolvers import reverse as hosts_reverse
 from fastapi import Depends, FastAPI, Path, Query, Request
@@ -17,6 +18,7 @@ from flask import Flask, redirect, request, url_for
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from . import links
 from .config import PORTAL_ROOT
 from .forms import NextForm
 from .models import Article
@@ -462,13 +464,163 @@ def django_catch_all(request, rest):
     return HttpResponsePermanentRedirect(request.path + "/")
 
 
-# Django's url_has_allowed_host_and_scheme() check (a private API) is not recognised.
+# Django's url_has_allowed_host_and_scheme() check (is_safe_url() before Django 3.0): the
+# redirect inside the checked branch, after an early return or raise, or after the value is
+# replaced with a fixed one, stays on an allowed host.
 def django_next(request):
     next_url = request.GET.get("next", "")
     if not url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}):
         next_url = "/"
-    # todook: python.open-redirect
+    # ok: python.open-redirect
     return HttpResponseRedirect(next_url)
+
+
+def django_guarded(request):
+    next_url = request.GET.get("next", "")
+    if url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}):
+        # ok: python.open-redirect
+        return HttpResponseRedirect(next_url)
+    return django_redirect("home")
+
+
+def django_guarded_and(request):
+    next_url = request.POST.get("next")
+    if next_url and url_has_allowed_host_and_scheme(
+        url=next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        # ok: python.open-redirect
+        return django_redirect(next_url)
+    return django_redirect("home")
+
+
+def django_early_return(request):
+    target = request.POST.get("next", "")
+    if not url_has_allowed_host_and_scheme(target, allowed_hosts={request.get_host()}):
+        return HttpResponseBadRequest("unsafe next")
+    # ok: python.open-redirect
+    return HttpResponseRedirect(target)
+
+
+def django_early_raise(request):
+    target = request.GET["next"]
+    if not target or not url_has_allowed_host_and_scheme(target, {request.get_host()}):
+        raise PermissionDenied
+    # ok: python.open-redirect
+    return django_redirect(target)
+
+
+def django_checked_then_more(request):
+    target = request.GET.get("next", "")
+    if not url_has_allowed_host_and_scheme(target, allowed_hosts=None):
+        return HttpResponseRedirect("/")
+    if not request.user.is_staff:
+        # ok: python.open-redirect
+        return HttpResponseRedirect(target)
+    return HttpResponseRedirect("/staff/")
+
+
+def django_ternary(request):
+    target = request.GET.get("next", "")
+    # ok: python.open-redirect
+    return HttpResponseRedirect(target if url_has_allowed_host_and_scheme(target, allowed_hosts=None) else "/")
+
+
+def django_stored_check(request):
+    redirect_to = request.POST.get("next", "")
+    url_is_safe = url_has_allowed_host_and_scheme(
+        url=redirect_to, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    )
+    # ok: python.open-redirect
+    a = HttpResponseRedirect(redirect_to if url_is_safe else "/")
+    if url_is_safe:
+        # ok: python.open-redirect
+        return HttpResponseRedirect(redirect_to)
+    return HttpResponseRedirect("/")
+
+
+def django_old_check(request):
+    target = request.GET.get("next", "")
+    if is_safe_url(target, allowed_hosts={request.get_host()}):
+        # ok: python.open-redirect
+        return HttpResponseRedirect(target)
+    return HttpResponseRedirect("/")
+
+
+# The check guards only what it checks, only where it holds.
+def django_inverted_check(request):
+    target = request.GET.get("next", "")
+    if url_has_allowed_host_and_scheme(target, allowed_hosts=None):
+        return HttpResponseRedirect("/")
+    else:
+        # ruleid: python.open-redirect
+        return HttpResponseRedirect(target)
+
+
+def django_wrong_branch(request):
+    target = request.GET.get("next", "")
+    if not url_has_allowed_host_and_scheme(target, allowed_hosts=None):
+        # ruleid: python.open-redirect
+        return HttpResponseRedirect(target)
+    return HttpResponseRedirect("/")
+
+
+def django_redirect_before_check(request):
+    target = request.GET.get("next", "")
+    safe = url_has_allowed_host_and_scheme(target, allowed_hosts=None)
+    # ruleid: python.open-redirect
+    response = HttpResponseRedirect(target)
+    if not safe:
+        return HttpResponseRedirect("/")
+    return response
+
+
+def django_check_without_exit(request):
+    target = request.GET["next"]
+    if not url_has_allowed_host_and_scheme(target, allowed_hosts=None):
+        print("unsafe next", target)
+    # ruleid: python.open-redirect
+    return django_redirect(target)
+
+
+def django_checked_other(request):
+    target = request.GET["next"]
+    fallback = request.GET["fallback"]
+    if url_has_allowed_host_and_scheme(target, allowed_hosts=None):
+        # ruleid: python.open-redirect
+        return django_redirect(fallback)
+    return django_redirect("home")
+
+
+def django_ternary_fallback(request):
+    target = request.GET.get("next", "")
+    # ruleid: python.open-redirect
+    return HttpResponseRedirect(target if url_has_allowed_host_and_scheme(target, None) else request.GET["back"])
+
+
+def django_replaced_with_request(request):
+    target = request.GET.get("next", "")
+    if not url_has_allowed_host_and_scheme(target, allowed_hosts=None):
+        target = request.GET["back"]
+    # ruleid: python.open-redirect
+    return HttpResponseRedirect(target)
+
+
+def django_own_check(request):
+    target = request.GET.get("next", "")
+    if links.is_safe_url(target):
+        # Another library's (or the project's own) check is not Django's.
+        # ruleid: python.open-redirect
+        return HttpResponseRedirect(target)
+    return HttpResponseRedirect("/")
+
+
+# allowed_hosts taken from the request lets that host through; not recognised.
+def django_hosts_from_query(request):
+    target = request.GET.get("next", "")
+    if url_has_allowed_host_and_scheme(target, allowed_hosts={request.GET["host"]}):
+        # todoruleid: python.open-redirect
+        return HttpResponseRedirect(target)
+    return HttpResponseRedirect("/")
 
 
 # path("pages/<int:pk>/", views.django_page): the converter is in urls.py.

@@ -69,6 +69,9 @@ def after_login():
 - Keep the scheme and host fixed and put request data after a path: `"/items/" + item_id`, or
   `SITE + "/items/" + item_id`.
 - Or pick the target from an allow-list (a module-level dict of constants).
+- In Django, check a `next` URL with `url_has_allowed_host_and_scheme(url,
+  allowed_hosts={request.get_host()})` and redirect only where the check holds; fall back to a
+  fixed URL otherwise.
 - In middleware, put the host before the current path (`request.build_absolute_uri()`,
   `"https://www.example.com" + request.get_full_path()`), or collapse repeated slashes
   (`re.sub(r"/+", "/", request.path)`) before you redirect to it.
@@ -93,8 +96,11 @@ def after_login():
 - In middleware, `%`-formatting with a host before the current path (`"https://%s%s" %
   (request.get_host(), request.path)`) is reported. Collapsing slashes is taken for safe, but a
   Flask path can still hold a backslash (`/\evil.example`), which browsers read as `//`.
-- A check of the parsed host (`urlparse(x).netloc`) or Django's
-  `url_has_allowed_host_and_scheme()` is not recognised.
+- A check of the parsed host (`urlparse(x).netloc`) is not recognised. Django's
+  `url_has_allowed_host_and_scheme()` (`is_safe_url()` before Django 3.0) is recognised in the
+  branch where it holds, after a failing branch that returns, raises or sets a fixed value, and in
+  a ternary; `allowed_hosts` taken from request data is not checked, and a project's own function
+  of the same name does not count.
 - A slice is followed when it slices request data in place (`request.args["next"][:200]`),
   a variable assigned request data, or a view parameter; a slice of a value built from request
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
@@ -150,6 +156,7 @@ def after_login():
 - <https://asgi.readthedocs.io/en/latest/specs/www.html>
 - <https://url.spec.whatwg.org/>
 - <https://docs.python.org/3/library/re.html#re.sub>
+- <https://docs.djangoproject.com/en/stable/topics/auth/default/#django.contrib.auth.views.LoginView>
 
 ## Tests
 
