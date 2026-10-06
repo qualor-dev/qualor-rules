@@ -25,6 +25,8 @@ rules:
         - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/RegExp
         - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/escape
         - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_expressions
+        - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Regular_expressions/Character_escape
+        - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replace
         - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/match
         - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/includes
         - https://lodash.com/docs/4.17.15#escapeRegExp
@@ -41,9 +43,13 @@ rules:
     #   `text.matchAll(x)`, `text.search(x)`) are not sinks: their receivers have no type, and
     #   match/search are common method names of other libraries. A MongoDB `$regex` query operator
     #   is not a sink either.
-    # - A pattern first validated by a constant pattern (`if (!/^[\w ]+$/.test(word)) return`), a
-    #   value stripped of everything but letters and digits (`q.replace(/[^a-z0-9]/gi, '')`) and a
-    #   hand-written escaping replace() or function are still reported (MDN advises
+    # - A pattern first validated by a constant pattern (`if (!/^[\w ]+$/.test(word)) return`) and
+    #   a value stripped of everything but letters and digits (`q.replace(/[^a-z0-9]/gi, '')`) are
+    #   still reported. Hand-written escaping is recognised only in its common form (a global
+    #   replace() or replaceAll() with one character class that holds every syntax character, and
+    #   the "\\$&" replacement), inline or in a local helper whose body only returns it, declared
+    #   before the call; a helper declared after the call, a replacement function, a pattern held
+    #   in a constant and helpers of other modules are still reported (MDN advises
     #   RegExp.escape() over hand-written escaping).
     # - A check against a literal allow-list is followed only with an early return or throw
     #   (`if (!LIST.includes(x)) return ...;`, also has() on a Set) on a const array or Set of
@@ -365,6 +371,54 @@ rules:
       # Escaping: RegExp.escape() (ES2025), lodash escapeRegExp (the lodash and lodash-es packages,
       # lodash/escapeRegExp, lodash.escaperegexp) and escape-string-regexp, bound to their imports.
       - pattern: RegExp.escape(...)
+      # The common hand-written escape, `s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')` (also
+      # replaceAll): a global regular expression that is one character class, not negated, holding
+      # each syntax character (^ $ \ . * + ? ( ) [ ] { } |) as itself or escaped, and the
+      # replacement "\\$&" (a backslash before the whole match). The class is read token by
+      # token (`\` and the next character, or one character other than `]`), so a character
+      # counts only where the class really holds it; range ends count too, since a range
+      # holds its ends.
+      - patterns:
+          - pattern: $TEXT.$REPLACE($SPECIAL, $INSERT)
+          - metavariable-regex:
+              metavariable: $REPLACE
+              regex: ^(?:replace|replaceAll)$
+          - metavariable-regex:
+              metavariable: $SPECIAL
+              regex: >-
+                ^/\[(?!\^)(?=(?:[^\]\\]|\\.)*?\\?\^)(?=(?:[^\]\\]|\\.)*?\\?\$)(?=(?:[^\]\\]|\\.)*?\\\\)(?=(?:[^\]\\]|\\.)*?\\?\.)(?=(?:[^\]\\]|\\.)*?\\?\*)(?=(?:[^\]\\]|\\.)*?\\?\+)(?=(?:[^\]\\]|\\.)*?\\?\?)(?=(?:[^\]\\]|\\.)*?\\?\()(?=(?:[^\]\\]|\\.)*?\\?\))(?=(?:[^\]\\]|\\.)*?\\?\[)(?=(?:[^\]\\]|\\.)*?\\\])(?=(?:[^\]\\]|\\.)*?\\?\{)(?=(?:[^\]\\]|\\.)*?\\?\})(?=(?:[^\]\\]|\\.)*?\\?\|)(?:[^\]\\]|\\.)+\]/(?=[a-z]*g)[a-z]*$
+          - metavariable-regex:
+              metavariable: $INSERT
+              regex: ^(["'`])\\\\\$&\1$
+      # The same escape in a local helper that only returns it: a function declaration, a const
+      # arrow function or a function expression, declared before the call. (A declaration after
+      # the call, `...` then the function, made the rule about four times slower on large files:
+      # the leading `...` is tried from every statement.)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  function $HELPER(...) { return $TEXT.$REPLACE($SPECIAL, $INSERT); }
+                  ...
+              - pattern-inside: |
+                  const $HELPER = (...) => $TEXT.$REPLACE($SPECIAL, $INSERT);
+                  ...
+              - pattern-inside: |
+                  const $HELPER = (...) => { return $TEXT.$REPLACE($SPECIAL, $INSERT); };
+                  ...
+              - pattern-inside: |
+                  const $HELPER = function (...) { return $TEXT.$REPLACE($SPECIAL, $INSERT); };
+                  ...
+          - pattern: $HELPER(...)
+          - metavariable-regex:
+              metavariable: $REPLACE
+              regex: ^(?:replace|replaceAll)$
+          - metavariable-regex:
+              metavariable: $SPECIAL
+              regex: >-
+                ^/\[(?!\^)(?=(?:[^\]\\]|\\.)*?\\?\^)(?=(?:[^\]\\]|\\.)*?\\?\$)(?=(?:[^\]\\]|\\.)*?\\\\)(?=(?:[^\]\\]|\\.)*?\\?\.)(?=(?:[^\]\\]|\\.)*?\\?\*)(?=(?:[^\]\\]|\\.)*?\\?\+)(?=(?:[^\]\\]|\\.)*?\\?\?)(?=(?:[^\]\\]|\\.)*?\\?\()(?=(?:[^\]\\]|\\.)*?\\?\))(?=(?:[^\]\\]|\\.)*?\\?\[)(?=(?:[^\]\\]|\\.)*?\\\])(?=(?:[^\]\\]|\\.)*?\\?\{)(?=(?:[^\]\\]|\\.)*?\\?\})(?=(?:[^\]\\]|\\.)*?\\?\|)(?:[^\]\\]|\\.)+\]/(?=[a-z]*g)[a-z]*$
+          - metavariable-regex:
+              metavariable: $INSERT
+              regex: ^(["'`])\\\\\$&\1$
       - patterns:
           - pattern-either:
               - pattern-inside: |

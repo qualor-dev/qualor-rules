@@ -79,8 +79,15 @@ app.get('/search', (req, res) => {
 <!-- begin: known-limits -->
 - `text.match(x)`, `text.matchAll(x)` and `text.search(x)`, which turn a string into a pattern,
   are not checked, and neither is MongoDB's `$regex` operator.
-- A pattern first validated by a constant pattern, a value stripped down to letters and digits, and
-  hand-written escaping are still reported (MDN advises `RegExp.escape()` instead).
+- A pattern first validated by a constant pattern and a value stripped down to letters and digits
+  are still reported.
+- Hand-written escaping is recognised in its common form only:
+  `value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')` (also `replaceAll`), whose character class holds
+  every syntax character `^ $ \ . * + ? ( ) [ ] { } |`, written in place or in a helper of the
+  same file that only returns it and is declared before the call. An escape that misses a
+  character or the `g` flag is reported, as it should be; a helper declared after the call, a
+  replacement function, a pattern kept in a constant and helpers of other modules are reported
+  too. MDN advises `RegExp.escape()` over hand-written escaping.
 - An allow-list check is recognised only as an early `return` or `throw` after `includes()` or
   `has()` on a constant list of string literals; the same check as the condition of an `if` around
   the use is not. The check covers the value up to its next assignment; an assignment inside a
@@ -103,6 +110,8 @@ app.get('/search', (req, res) => {
 - <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/RegExp>
 - <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/RegExp/escape>
 - <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_expressions>
+- <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Regular_expressions/Character_escape>
+- <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/replace>
 - <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/match>
 - <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/includes>
 - <https://lodash.com/docs/4.17.15#escapeRegExp>

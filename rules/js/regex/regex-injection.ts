@@ -44,6 +44,21 @@ export async function POST(request: NextRequest) {
   return Response.json({ re: re.source, escaped: escaped.source });
 }
 
+// A typed local helper with the common hand-written escape.
+function escapePattern(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+const escapeTerm = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+app.get('/ts/escaped', (req: Request, res: Response) => {
+  // ok: js.regex-injection
+  const a = new RegExp(escapePattern(String(req.query.q)));
+  // ok: js.regex-injection
+  const b = new RegExp(`^${escapeTerm(String(req.query.q))}$`);
+  // ruleid: js.regex-injection
+  const c = new RegExp(String(req.query.q).replace(/[.*+?^${}()|[\]\\]/, '\\$&'));
+  res.json([a.source, b.source, c.source]);
+});
+
 // A helper with a request-like parameter that is not a route handler.
 export function compile(request: { pattern: string }) {
   // ok: js.regex-injection

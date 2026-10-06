@@ -285,9 +285,11 @@ app.get('/stored/:id', async (req, res) => {
   res.json([a, b, c, d, e].map((r) => r.source));
 });
 
-// A pattern validated first by a constant pattern, a pattern stripped to letters and digits, and
-// a hand-written escaping function (MDN advises RegExp.escape() instead) are not followed: the
-// value is still reported.
+// A pattern validated first by a constant pattern and a pattern stripped to letters and digits are
+// not followed: the value is still reported. The common hand-written escape is escaping: a global
+// replace() whose character class holds every syntax character of regular expressions
+// (^ $ \ . * + ? ( ) [ ] { } |), with the "\\$&" replacement (a backslash before the whole match),
+// inline or in a local helper that only returns it.
 function escapeForPattern(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -300,11 +302,91 @@ app.get('/checked', (req, res) => {
   const a = new RegExp(`\\b${word}\\b`);
   // todook: js.regex-injection
   const b = new RegExp(req.query.q.replace(/[^a-z0-9]/gi, ''));
-  // todook: js.regex-injection
+  // ok: js.regex-injection
   const c = new RegExp(String(req.query.q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  // todook: js.regex-injection
+  // ok: js.regex-injection
   const d = new RegExp(escapeForPattern(req.query.q));
   res.json([a, b, c, d].map((r) => r.source));
+});
+
+const quoteForPattern = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const literalPattern = function (value) {
+  return `${value}`.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
+const wordPattern = (value) => {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
+app.get('/escaped', (req, res) => {
+  // ok: js.regex-injection
+  const a = new RegExp(`^${quoteForPattern(req.query.q)}$`, 'i');
+  // ok: js.regex-injection
+  const b = new RegExp(literalPattern(req.query.q) + '$');
+  // ok: js.regex-injection
+  const c = new RegExp(`\\b${wordPattern(req.query.q)}\\b`);
+  // A helper declared after its use is not followed.
+  // todook: js.regex-injection
+  const d = new RegExp(escapeDeclaredLater(req.query.q));
+  // The characters in another order, escaped inside the class, with more characters, and with
+  // other flags and quotes.
+  // ok: js.regex-injection
+  const e = new RegExp(req.query.q.replace(/[\\^$.*+?()[\]{}|\-\/]/gu, "\\$&"));
+  // ok: js.regex-injection
+  const f = new RegExp(req.query.q.replaceAll(/[\|\\\{\}\(\)\[\]\^\$\+\*\?\.]/g, `\\$&`));
+  res.json([a, b, c, d, e, f].map((r) => r.source));
+});
+function escapeDeclaredLater(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// An escape that misses a syntax character, replaces only the first match, uses a negated class
+// or another replacement, and a helper that may return the value unescaped are no escaping.
+function escapeSome(value) {
+  return value.replace(/[.*+?^$]/g, '\\$&');
+}
+const searchTools = { escapeForPattern: (value) => value.trim() };
+function escapeLong(value) {
+  if (value.length < 3) return value;
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+app.get('/half-escaped', (req, res) => {
+  // ruleid: js.regex-injection
+  const a = new RegExp(req.query.q.replace(/[.*+?^${}()|[\]]/g, '\\$&'));
+  // ruleid: js.regex-injection
+  const b = new RegExp(req.query.q.replace(/[.*+?^${}()[\]\\]/g, '\\$&'));
+  // ruleid: js.regex-injection
+  const c = new RegExp(req.query.q.replace(/[.*+?^${}()|[\]\\]/, '\\$&'));
+  // ruleid: js.regex-injection
+  const d = new RegExp(req.query.q.replace(/[^.*+?${}()|[\]\\]/g, '\\$&'));
+  // ruleid: js.regex-injection
+  const e = new RegExp(req.query.q.replace(/[.*+?^${}()|[\]\\]/g, '$&'));
+  // ruleid: js.regex-injection
+  const f = new RegExp(req.query.q.replace(/[.*+?^${}()|[\]\\]/g, '\\$1'));
+  // ruleid: js.regex-injection
+  const g = new RegExp(escapeSome(req.query.q));
+  // ruleid: js.regex-injection
+  const h = new RegExp(escapeLong(req.query.q));
+  // ruleid: js.regex-injection
+  const i = new RegExp(req.query.q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + req.query.tail);
+  // ruleid: js.regex-injection
+  const j = new RegExp(req.query.q.replace(/[.*+?^${}()|[\]\\]x/g, '\\$&'));
+  // A method of another object named like the local helper is not the helper.
+  // ruleid: js.regex-injection
+  const k = new RegExp(searchTools.escapeForPattern(req.query.q));
+  res.json([a, b, c, d, e, f, g, h, i, j, k].map((r) => r.source));
+});
+
+// Other ways to write the same escape are not recognised: a replacement function, a pattern held
+// in a constant, and a helper of another module.
+const SPECIAL = /[.*+?^${}()|[\]\\]/g;
+const { escapeText } = require('./regex-text');
+app.get('/escaped-otherwise', (req, res) => {
+  // todook: js.regex-injection
+  const a = new RegExp(req.query.q.replace(/[.*+?^${}()|[\]\\]/g, (m) => '\\' + m));
+  // todook: js.regex-injection
+  const b = new RegExp(req.query.q.replace(SPECIAL, '\\$&'));
+  // todook: js.regex-injection
+  const c = new RegExp(escapeText(req.query.q));
+  res.json([a, b, c].map((r) => r.source));
 });
 
 // String methods that turn a string argument into a pattern (match, matchAll, search) are not
