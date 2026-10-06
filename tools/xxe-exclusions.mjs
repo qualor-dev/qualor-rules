@@ -7,10 +7,11 @@
 // builder ($F), in any order when `anyOrder` is set. Each row becomes a `pattern-not-inside`
 // for every POSITION: before the use in the same block, in a try block before it, and, for a
 // field, in a static block, a constructor or a method of the class. The settings are per factory:
-// SETTINGS hold for the parsers, builders, readers and transformers, SCHEMA_SETTINGS for a
-// SchemaFactory, which reads external schemas (xs:import, xs:include, schemaLocation) under
-// ACCESS_EXTERNAL_SCHEMA and external DTDs under ACCESS_EXTERNAL_DTD, so it needs both. Each
-// table fills its own block (BLOCKS). Reviewers review the tables and the templates;
+// SETTINGS hold for the parsers, builders, readers and transformers. A SchemaFactory, which reads
+// external schemas (xs:import, xs:include, schemaLocation) under ACCESS_EXTERNAL_SCHEMA and
+// external DTDs under ACCESS_EXTERNAL_DTD, must meet every one of the SCHEMA_REQUIREMENTS: each is
+// one statement, so each must be set unconditionally (a statement inside an if covers only that
+// block). Each table fills its own block (BLOCKS). Reviewers review the tables and the templates;
 // tools/xxe-exclusions.test.mjs fails when the YAML drifts from them.
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -48,17 +49,24 @@ const ACCESS_DTD = ['javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD', '"http://javax
 const ACCESS_SCHEMA = ['javax.xml.XMLConstants.ACCESS_EXTERNAL_SCHEMA', '"http://javax.xml.XMLConstants/property/accessExternalSchema"'];
 
 /**
- * Safe settings of a SchemaFactory: external DTDs and external schemas both denied, in any order,
- * each property named by its constant or its name. The rows of SETTINGS do not apply to it (a
+ * What a SchemaFactory needs: external DTDs and external schemas both denied. Each requirement
+ * is met by one statement (the property named by its constant or its name) in one of the five
+ * positions; the two may be in different places and in any order. The use is reported when a
+ * requirement is unmet: the block is a pattern-either with one branch per requirement. A
+ * requirement of two statements in one pattern (`A; ... B; ...`) would let B sit inside an if
+ * block, which is why each is a single statement. The rows of SETTINGS do not apply here (a
  * refused DOCTYPE or only ACCESS_EXTERNAL_DTD still lets xs:import and schemaLocation fetch).
  */
-export const SCHEMA_SETTINGS = Object.freeze(
-  ACCESS_DTD.flatMap((dtd) => ACCESS_SCHEMA.map((schema) => ({
-    name: `external DTD and schema access denied (${dtd}, ${schema})`,
-    anyOrder: true,
-    stmts: [`R.setProperty(${dtd}, "");`, `R.setProperty(${schema}, "");`],
-  }))),
-);
+export const SCHEMA_REQUIREMENTS = Object.freeze([
+  {
+    name: 'external DTDs and entity references denied (ACCESS_EXTERNAL_DTD "")',
+    rows: ACCESS_DTD.map((key) => ({ stmts: [`R.setProperty(${key}, "");`] })),
+  },
+  {
+    name: 'external schemas denied (ACCESS_EXTERNAL_SCHEMA "")',
+    rows: ACCESS_SCHEMA.map((key) => ({ stmts: [`R.setProperty(${key}, "");`] })),
+  },
+]);
 
 const permutations = (xs) => (xs.length <= 1 ? [xs] : xs.flatMap((x, i) => permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map((p) => [x, ...p])));
 /** The statement sequences of a row on receiver `r`. */
@@ -75,16 +83,16 @@ export const POSITIONS = Object.freeze({
 });
 
 const notInside = (body) => `- pattern-not-inside: |\n${body.split('\n').map((l) => (l ? `    ${l}` : l)).join('\n')}\n`;
-const indent = (s) => s.split('\n').map((l) => (l ? `      ${l}` : l)).join('\n');
 
 /** The `pattern-not-inside` entries of one block, unindented. */
 function exclusions(settings, { secureProcessing, parserForms }) {
   let out = '';
   for (const [where, template] of Object.entries(POSITIONS)) {
-    out += `# Set on the factory, reader or builder: ${where}.\n`;
+    if (settings.length === 0) break;
+    out +=`# Set on the factory, reader or builder: ${where}.\n`;
     for (const row of settings) for (const s of sequences(row, '$F')) out += notInside(template(s));
   }
-  out += '# Secure processing set explicitly on a built-in JDK factory (newDefaultInstance), which\n# then denies external access.\n';
+  if (secureProcessing.length > 0) out += '# Secure processing set explicitly on a built-in JDK factory (newDefaultInstance), which\n# then denies external access.\n';
   for (const make of secureProcessing) {
     for (const fsp of ['javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING', '"http://javax.xml.XMLConstants/feature/secure-processing"']) {
       const set = [`$F.setFeature(${fsp}, true);`];
@@ -104,6 +112,25 @@ function exclusions(settings, { secureProcessing, parserForms }) {
   return out;
 }
 
+/** Shifts every non-empty line of `text` right by `pad`. */
+const shift = (text, pad) => text.split('\n').map((l) => (l ? pad + l : l)).join('\n');
+
+/**
+ * The entries of a block with requirements, unindented: secure processing (which meets them all)
+ * at the top level, then a pattern-either with one branch per requirement that keeps the use
+ * when that requirement is unmet.
+ */
+function requirementExclusions(requirements, { secureProcessing, use }) {
+  let out = exclusions([], { secureProcessing, parserForms: false });
+  out += '- pattern-either:\n';
+  for (const req of requirements) {
+    let branch = `# Reported unless ${req.name}.\n- patterns:\n    - pattern: ${use}\n`;
+    branch += shift(exclusions(req.rows, { secureProcessing: [], parserForms: false }), '    ');
+    out += shift(branch, '    ');
+  }
+  return out;
+}
+
 const PAD = '          ';
 /** The generated blocks of xxe.yml, each between its own markers. */
 export const BLOCKS = Object.freeze([
@@ -116,16 +143,16 @@ export const BLOCKS = Object.freeze([
   },
   {
     name: 'SchemaFactory',
-    settings: SCHEMA_SETTINGS,
-    begin: `${PAD}# BEGIN generated by tools/xxe-exclusions.mjs from its SCHEMA_SETTINGS table; do not edit by hand.`,
-    end: `${PAD}# END generated by tools/xxe-exclusions.mjs from its SCHEMA_SETTINGS table`,
-    options: { secureProcessing: ['newDefaultInstance'], parserForms: false },
+    requirements: SCHEMA_REQUIREMENTS,
+    begin: `${PAD}# BEGIN generated by tools/xxe-exclusions.mjs from its SCHEMA_REQUIREMENTS table; do not edit by hand.`,
+    end: `${PAD}# END generated by tools/xxe-exclusions.mjs from its SCHEMA_REQUIREMENTS table`,
+    options: { secureProcessing: ['newDefaultInstance'], use: '$F.newSchema(...)' },
   },
 ]);
 
 /** The generated text of `block`, markers included. */
 export function generate(block) {
-  const body = exclusions(block.settings, block.options)
+  const body = (block.requirements ? requirementExclusions(block.requirements, block.options) : exclusions(block.settings, block.options))
     .split('\n')
     .map((l) => (l ? `${PAD}${l}` : l))
     .join('\n');
@@ -148,7 +175,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const next = regenerate(text);
   if (process.argv.includes('--check')) {
     if (next !== text) {
-      console.error('xxe-exclusions: rules/java/xxe/xxe.yml differs from the SETTINGS or SCHEMA_SETTINGS table; run node tools/xxe-exclusions.mjs');
+      console.error('xxe-exclusions: rules/java/xxe/xxe.yml differs from the SETTINGS or SCHEMA_REQUIREMENTS table; run node tools/xxe-exclusions.mjs');
       process.exit(1);
     }
     console.log('xxe-exclusions: ok');

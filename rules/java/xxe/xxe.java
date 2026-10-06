@@ -193,6 +193,19 @@ class DomImports {
         return factory.newDocumentBuilder().parse(in);
     }
 
+    // Of a row of several settings (the three features), only the first must be set
+    // unconditionally: a later one made only under a condition still counts.
+    Document thirdFeatureOnlyIfStrict(InputStream in, boolean strict) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        if (strict) {
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        }
+        // todoruleid: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
     // A builder handed to the caller is parsed with elsewhere.
     DocumentBuilder handedOut() throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -629,6 +642,50 @@ class SchemaImports {
         } catch (org.xml.sax.SAXException e) {
             throw new IllegalStateException(e);
         }
+        // ok: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    // A property set only under a condition is not hardening: each one must be set unconditionally.
+    Schema schemaDeniedOnlyIfStrict(InputStream xsd, boolean strict) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        factory.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        if (strict) {
+            factory.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        }
+        // ruleid: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    Schema dtdDeniedOnlyIfStrict(InputStream xsd, boolean strict) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        factory.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+        if (strict) {
+            factory.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+        }
+        // ruleid: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    Schema bothDeniedOnlyIfStrict(InputStream xsd, boolean strict) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        if (strict) {
+            factory.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            factory.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        }
+        // ruleid: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    // Each property may be set in its own place: one in a try block, the other after it.
+    Schema deniedInTwoPlaces(InputStream xsd) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        try {
+            factory.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        } catch (org.xml.sax.SAXException e) {
+            throw new IllegalStateException(e);
+        }
+        factory.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
         // ok: java.xxe
         return factory.newSchema(new StreamSource(xsd));
     }
