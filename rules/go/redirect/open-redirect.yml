@@ -80,13 +80,20 @@ rules:
     #   does (a signed URL of a storage service, say) (`todook:`). Documented URL producers with a
     #   fixed host are followed: a url.URL literal with a non-empty Host (its Path, RawPath,
     #   RawQuery, Fragment, RawFragment and User), the same fields assigned to a url.URL built
-    #   with such a host or parsed from a fixed origin or a configuration variable or field,
-    #   JoinPath elements, the arguments of an oauth2 Config's AuthCodeURL, the object name and
-    #   parameters of minio's PresignedGetObject/HeadObject, and every field but Bucket of an s3
+    #   with such a host or parsed from a fixed origin (scheme and a host, no "@" first) or a
+    #   configuration variable or field, JoinPath elements of url.JoinPath and of a net/url URL
+    #   (typed, or parsed or built in the function), and, in a file that imports the library,
+    #   the arguments of an oauth2 Config's AuthCodeURL, the object name and parameters of
+    #   minio's PresignedGetObject/HeadObject, and every field but Bucket of an s3
     #   GetObjectInput/HeadObjectInput. A host, scheme, opaque part, bucket, JoinPath base or
-    #   Config from the request is still reported. Not followed: a url.URL declared empty and
-    #   given its host field by field, and an oauth2 Config field whose name a local variable
-    #   also has (OpenGrep 1.30.0 gives the field the local's type) (`todook:`).
+    #   Config from the request is still reported, and so is a JoinPath method of another type.
+    #   Not followed: a url.URL declared empty and given its host field by field, a copy of the
+    #   request's URL given a fixed scheme and host (`u := *r.URL; u.Host = ...`), the real
+    #   minio package imported under another name, and an oauth2 Config field whose name a local
+    #   variable also has (OpenGrep 1.30.0 gives the field the local's type) (`todook:`); an s3
+    #   input field read back as the target (`*in.Key`), and a package of another path whose
+    #   last element is oauth2, minio or s3 imported under an alias in a file that also imports
+    #   the real one, count as clean (`todoruleid:`).
     # - The request's own path (`r.URL.Path`, `RequestURI()`) after a base, and anything after a
     #   literal "?" or "#", are clean; `r.URL.Path` at the start of the target is not, since it
     #   can start with "//".
@@ -316,10 +323,10 @@ rules:
                         - pattern: $HOST
                         - pattern-not: '""'
               - pattern-inside: |
-                  $U, $E := url.Parse("=~/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\/?#\\]+/")
+                  $U, $E := url.Parse("=~/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\/?#\\@]+/")
                   ...
               - pattern-inside: |
-                  $U, $E = url.Parse("=~/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\/?#\\]+/")
+                  $U, $E = url.Parse("=~/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\/?#\\@]+/")
                   ...
               - patterns:
                   - pattern-either:
@@ -342,10 +349,28 @@ rules:
               regex: ^(Path|RawPath|RawQuery|Fragment|RawFragment|User)$
           - pattern: $X
       # Path elements given to JoinPath (net/url: joined, cleaned of ../ and repeated "/", and
-      # escaped), but not the base of url.JoinPath.
+      # escaped), but not the base of url.JoinPath. The method's receiver is a net/url URL: typed,
+      # or parsed or built in the same function.
       - patterns:
           - pattern-not-inside: url.JoinPath(...)
-          - pattern-inside: $U.JoinPath(..., $ELEM, ...)
+          - pattern-either:
+              - pattern-inside: '($U : *url.URL).JoinPath(..., $ELEM, ...)'
+              - pattern-inside: '($U : url.URL).JoinPath(..., $ELEM, ...)'
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $U, $E := url.Parse(...)
+                          ...
+                      - pattern-inside: |
+                          $U, $E = url.Parse(...)
+                          ...
+                      - pattern-inside: |
+                          $U := &url.URL{...}
+                          ...
+                      - pattern-inside: |
+                          $U := url.URL{...}
+                          ...
+                  - pattern-inside: $U.JoinPath(..., $ELEM, ...)
           - pattern: $ELEM
       - patterns:
           - pattern-inside: url.JoinPath($BASE, ..., $ELEM, ...)
@@ -353,6 +378,9 @@ rules:
       # The OAuth 2.0 provider's consent page (golang.org/x/oauth2): the state and the options only
       # go into its query; the provider's address comes from the Config.
       - patterns:
+          - pattern-inside: |
+              import "golang.org/x/oauth2"
+              ...
           - pattern-either:
               - pattern-inside: '($CONF : *oauth2.Config).AuthCodeURL(..., $A, ...)'
               - pattern-inside: '($CONF : oauth2.Config).AuthCodeURL(..., $A, ...)'
@@ -360,6 +388,9 @@ rules:
       # Presigned storage URLs for an object named by the request. The bucket stays request data:
       # in virtual-host style it is part of the host, and anyone can create a bucket.
       - patterns:
+          - pattern-inside: |
+              import "github.com/minio/minio-go/v7"
+              ...
           - pattern-either:
               - pattern-inside: '($S : *minio.Client).$PRESIGN(...)'
               - patterns:
@@ -379,6 +410,9 @@ rules:
               regex: ^Presigned(Get|Head)Object$
           - focus-metavariable: $A
       - patterns:
+          - pattern-inside: |
+              import "github.com/aws/aws-sdk-go-v2/service/s3"
+              ...
           - pattern-inside: 's3.$INPUT{..., $FIELD: $V, ...}'
           - metavariable-regex:
               metavariable: $INPUT

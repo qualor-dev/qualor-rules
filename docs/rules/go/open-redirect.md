@@ -117,9 +117,12 @@ enough either: browsers read `/\evil.example` as `//evil.example`.
   your own host, even when the variable holds request data.
 - Request data passed through any function is assumed to reach its result, so a URL produced from
   it by your own code (a signed URL of your storage layer, say) is reported. Only the URL
-  producers named above are recognised; a `url.URL` declared empty and given its host field by
-  field is not, and neither is an `oauth2.Config` field that has the same name as a local
-  variable of the function.
+  producers named above are recognised, and the libraries only when the file imports them; a
+  `url.URL` declared empty and given its host field by field, a copy of the request's URL given
+  a fixed host (`u := *r.URL; u.Host = siteHost`), minio imported under another name, and an
+  `oauth2.Config` field that has the same name as a local variable of the function are not.
+  An s3 input field read back as the target (`*in.Key`) counts as clean, and so does a package
+  of your own named `oauth2`, `minio` or `s3` imported under an alias next to the real one.
 - The binder of the Echo instance (`c.Echo().Binder.Bind(&x, c)`) is not a source.
 - Numeric struct fields count as safe only when the struct is declared in the same file; a named
   numeric type (`type Status int`) still counts as request data.

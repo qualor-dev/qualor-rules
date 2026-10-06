@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"example.com/shop/models"
+	ssoclient "example.com/shop/oauth2"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/labstack/echo/v4"
 	"github.com/minio/minio-go/v7"
+	objstore "github.com/minio/minio-go/v7"
 	"golang.org/x/oauth2"
 )
 
@@ -632,9 +634,48 @@ func (l *Links) UnsafeProducers(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fixed.ResolveReference(ref).String(), http.StatusFound)
 }
 
+// Look-alikes of the producers: a JoinPath method of another type, and a fixed origin with an
+// empty host after "@".
+type pathJoiner struct{ base string }
+
+func (j pathJoiner) JoinPath(parts ...string) string { return j.base + strings.Join(parts, "/") }
+
+func (l *Links) ProducerLookAlikes(w http.ResponseWriter, r *http.Request) {
+	var j pathJoiner
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, j.JoinPath(r.FormValue("p")), http.StatusFound)
+	noHostAfterAt, _ := url.Parse("https://@")
+	noHostAfterAt.Path = r.FormValue("p")
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, noHostAfterAt.String(), http.StatusFound)
+}
+
 // Producers that are not followed.
 func (l *Links) UnfollowedProducers(w http.ResponseWriter, r *http.Request) {
 	p := r.FormValue("p")
+	// The request's own URL copied, with a fixed scheme and host (an HTTPS upgrade).
+	upgrade := *r.URL
+	upgrade.Scheme = "https"
+	upgrade.Host = siteDomain
+	// todook: go.open-redirect
+	http.Redirect(w, r, upgrade.String(), http.StatusMovedPermanently)
+	// The real minio client imported under another name is not recognised.
+	var store *objstore.Client
+	aliased, err := store.PresignedGetObject(r.Context(), "downloads", p, time.Hour, nil)
+	if err != nil {
+		return
+	}
+	// todook: go.open-redirect
+	http.Redirect(w, r, aliased.String(), http.StatusTemporaryRedirect)
+	// A field of an s3 input read back as the target counts as clean.
+	in := s3.GetObjectInput{Bucket: aws.String("downloads"), Key: aws.String(p)}
+	// todoruleid: go.open-redirect
+	http.Redirect(w, r, *in.Key, http.StatusFound)
+	// A package of another path whose last element is also oauth2, imported under an alias in a
+	// file that imports golang.org/x/oauth2, is taken for it.
+	var own *ssoclient.Config
+	// todoruleid: go.open-redirect
+	http.Redirect(w, r, own.AuthCodeURL(p), http.StatusFound)
 	// A url.URL declared empty and given its host field by field.
 	var u url.URL
 	u.Scheme = "https"
