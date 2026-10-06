@@ -95,7 +95,7 @@ public class HelloServlet extends HttpServlet {
   negotiated). Under an XML or SVG type only markup the code builds is reported: a `String` return,
   or an entity that is a concatenation or `String.format` (in place or in a variable). Request text
   sent as it is, or markup from a call such as a `StringBuilder`, is missed; a serialiser's output
-  returned as a `String` is still reported.
+  returned as a `String`, or concatenated with constant text, is still reported.
 - One method is analysed at a time: a helper or inner class that encodes the value still passes the
   request data on. Conditions are not evaluated.
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a

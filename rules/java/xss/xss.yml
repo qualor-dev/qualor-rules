@@ -64,13 +64,14 @@ rules:
     #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
     #   and valueOf of an enum from another file still pass the request data on.
     # - Under a Jakarta REST XML or SVG type, only markup the code builds is a sink (a String
-    #   return, or a Response entity that is a concatenation or String.format, in place or in a
-    #   variable the method assigns one of them or appends to with +=); a DTO entity is written
-    #   escaped by JAXB or JSON-B, and a serialiser's output kept in a variable
+    #   return, or a Response entity that is a concatenation or String.format in place, or a
+    #   variable the method assigns one of them or a String.concat, or appends to with +=); a DTO
+    #   entity is written escaped by JAXB or JSON-B, and a serialiser's output kept in a variable
     #   (`String xml = xmlMapper.writeValueAsString(dto)`) is not reported. Request text sent as
     #   an XML entity as it is (in place or through a variable) and a String from a call (a
     #   StringBuilder's toString) are not reported either, while a String return counts as
-    #   markup even when it is a serialiser's output.
+    #   markup even when it is a serialiser's output, and so does a concatenation of constant
+    #   text with a serialiser's output (an XML declaration put in front of it).
     # - A Jakarta REST String or Response without @Produces (method or class) and without an
     #   explicit type is not reported: its media type is negotiated (the specification lets a
     #   browser's Accept header pick text/html; Quarkus REST picks text/plain for a String).
@@ -457,9 +458,9 @@ rules:
               regex: (?i)[\s\S]*html
           - focus-metavariable: $X
       # Jakarta REST, XML and SVG (a browser runs scripts in XHTML-namespaced XML and in SVG):
-      # only markup the code builds itself, a String return or an entity that is a String
-      # variable, a concatenation or String.format. A DTO entity is written escaped by JAXB or
-      # JSON-B.
+      # only markup the code builds itself: a String return, or an entity that is a concatenation
+      # or String.format in place, or a variable the method assigns one (or String.concat, or
+      # appends to with +=). A DTO entity is written escaped by JAXB or JSON-B.
       - patterns:
           - pattern-inside: |
               @$PRODUCES($...P)
@@ -480,8 +481,9 @@ rules:
                       - pattern: Response.ok($X, ...)
                       - pattern: Response.$F(...). ... .entity($X, ...)
                   - pattern-either:
-                      # A variable the method assigns built markup (a concatenation or String.format,
-                      # or appends to with +=); a serialiser's output in a variable is written escaped.
+                      # A variable the method assigns built markup (a concatenation, String.format or
+                      # String.concat, or appends to with +=); a serialiser's output in a variable is
+                      # written escaped.
                       - patterns:
                           - pattern-inside: |
                               $X = $INIT;
@@ -491,6 +493,7 @@ rules:
                               pattern-either:
                                 - pattern: $A + $B
                                 - pattern: String.format(...)
+                                - pattern: $S.concat(...)
                       - pattern-inside: |
                           $X += $INIT;
                           ...
@@ -535,8 +538,9 @@ rules:
                       - pattern: Response.ok($X, ...)
                       - pattern: Response.$F(...). ... .entity($X, ...)
                   - pattern-either:
-                      # A variable the method assigns built markup (a concatenation or String.format,
-                      # or appends to with +=); a serialiser's output in a variable is written escaped.
+                      # A variable the method assigns built markup (a concatenation, String.format or
+                      # String.concat, or appends to with +=); a serialiser's output in a variable is
+                      # written escaped.
                       - patterns:
                           - pattern-inside: |
                               $X = $INIT;
@@ -546,6 +550,7 @@ rules:
                               pattern-either:
                                 - pattern: $A + $B
                                 - pattern: String.format(...)
+                                - pattern: $S.concat(...)
                       - pattern-inside: |
                           $X += $INIT;
                           ...
@@ -574,8 +579,9 @@ rules:
               metavariable: $TYPE
               regex: (?i)[\s\S]*(xml|svg)
           - pattern-either:
-              # A variable the method assigns built markup (a concatenation or String.format,
-              # or appends to with +=); a serialiser's output in a variable is written escaped.
+              # A variable the method assigns built markup (a concatenation, String.format or
+              # String.concat, or appends to with +=); a serialiser's output in a variable is
+              # written escaped.
               - patterns:
                   - pattern-inside: |
                       $X = $INIT;
@@ -585,6 +591,7 @@ rules:
                       pattern-either:
                         - pattern: $A + $B
                         - pattern: String.format(...)
+                        - pattern: $S.concat(...)
               - pattern-inside: |
                   $X += $INIT;
                   ...

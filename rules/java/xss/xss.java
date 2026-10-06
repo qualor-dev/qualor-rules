@@ -616,6 +616,23 @@ class ItemResource {
         return Response.ok(body, MediaType.APPLICATION_XML).build();
     }
 
+    @GET
+    @Path("/concatenated/{name}")
+    public Response concatenated(@PathParam("name") String name) {
+        String body = "<item>".concat(name).concat("</item>");
+        // ruleid: java.xss
+        return Response.ok(body, MediaType.APPLICATION_XML).build();
+    }
+
+    // Constant text joined to a serialiser's output counts as markup the method builds.
+    @GET
+    @Path("/declared/{name}")
+    public Response declared(@PathParam("name") String name) throws Exception {
+        String xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" + xmlMapper.writeValueAsString(new ItemView(name));
+        // todook: java.xss
+        return Response.ok(xml, MediaType.APPLICATION_XML).build();
+    }
+
     // Request text sent as an XML entity as it is (in place or through a variable) is not
     // markup the method builds, and is not reported.
     @GET
