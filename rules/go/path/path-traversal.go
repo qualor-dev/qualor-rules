@@ -259,9 +259,9 @@ func EchoFiles(c echo.Context) error {
 	return c.File(filepath.Join(baseDir, filepath.Base(c.Param("name"))))
 }
 
-// Test support: a handler inside a function that takes a *testing.T, *testing.B, *testing.F or
-// testing.TB serves only the requests of its own test (an httptest server, a subtest), in a
-// _test.go file or in a helper package.
+// Test support: a handler inside a function that takes a *testing.T, *testing.B, *testing.F,
+// *testing.M or testing.TB serves only the requests of its own test (an httptest server, a
+// subtest, TestMain), in a _test.go file or in a helper package.
 func NewFixtureServer(t *testing.T, dir string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
