@@ -5,9 +5,9 @@ rules:
     severity: ERROR
     message: >-
       Data from the HTTP request reaches an operating system command: run through a shell (exec,
-      execSync, the shell option of spawn and execFile, or a shell program such as `sh -c`), its
-      shell metacharacters can start other
-      commands, and as the program name it runs whatever the client names. Run a fixed program with
+      execSync, the shell option of spawn and execFile, or a shell program such as `sh -c` or
+      `pwsh -Command`), its shell metacharacters can start other commands, and as the program
+      name it runs whatever the client names. Run a fixed program with
       an argument array and no shell (`execFile('git', ['log', ref])`), and check values against an
       allow-list.
     metadata:
@@ -22,6 +22,8 @@ rules:
         - https://cwe.mitre.org/data/definitions/78.html
         - https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html
         - https://nodejs.org/api/child_process.html
+        - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh
+        - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1
         - https://expressjs.com/en/4x/api.html#req
         - https://expressjs.com/en/5x/api.html#req
         - https://nextjs.org/docs/app/api-reference/file-conventions/route
@@ -39,6 +41,9 @@ rules:
     #   modules are not recognised, so their lookups are reported.
     # - A shell program's command is followed when the argument array is written in the call
     #   (`spawn('sh', ['-c', cmd])`); an array built before the call is not.
+    # - PowerShell parameters are recognised by the names about_pwsh lists (-Command/-c,
+    #   -CommandWithArgs/-cwa, -EncodedCommand/-e/-ec, -File/-f; any case), for pwsh and
+    #   powershell.exe alike; other shortened names (`-Comm`, `-enc`) are not.
     # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
     #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
     #   source, and a one-parameter callback given to get/post/... after a path literal (also on
@@ -274,10 +279,9 @@ rules:
               metavariable: $SHELL
               regex: ^(?!false$|undefined$|null$|0$|""$|''$)
           - focus-metavariable: $ARGS
-      # The command given to a shell program (sh, bash, cmd.exe, PowerShell) after its command
-      # flag (-c, also in a flag cluster such as -lc, /c, -Command): the shell runs it as a
-      # command line. Later arguments are only
-      # positional parameters ($1, ...) of that command.
+      # A shell program given its command in the argument array. The shapes are string-regex
+      # patterns ("=~/.../"): they match the string's text as written in the source (escapes
+      # not decoded) and, unlike metavariable-regex, keep OpenGrep's prefilter small.
       - patterns:
           - pattern-either:
               - patterns:
@@ -291,7 +295,7 @@ rules:
                       - pattern-inside: |
                           import $CP from $M;
                           ...
-                  - pattern: '$CP.$FN($SHELLPROG, [..., $FLAG, $SCRIPT, ...], ...)'
+                  - pattern: '$CP.$FN($SHELLPROG, $SHELLARGS, ...)'
               - patterns:
                   - pattern-either:
                       - pattern-inside: |
@@ -300,20 +304,32 @@ rules:
                       - pattern-inside: |
                           import {..., $FN, ...} from $M;
                           ...
-                  - pattern: '$FN($SHELLPROG, [..., $FLAG, $SCRIPT, ...], ...)'
-              - pattern: 'require($M).$FN($SHELLPROG, [..., $FLAG, $SCRIPT, ...], ...)'
+                  - pattern: '$FN($SHELLPROG, $SHELLARGS, ...)'
+              - pattern: 'require($M).$FN($SHELLPROG, $SHELLARGS, ...)'
           - metavariable-regex:
               metavariable: $M
               regex: ^["'`]?(node:)?child_process["'`]?$
           - metavariable-regex:
               metavariable: $FN
               regex: ^(execFile|execFileSync|spawn|spawnSync)$
-          - metavariable-regex:
-              metavariable: $SHELLPROG
-              regex: (?i)^["'`]((/usr)?(/local)?/bin/)?(sh|bash|zsh|dash|ksh|ash|cmd|cmd\.exe|powershell|powershell\.exe|pwsh)["'`]$
-          - metavariable-regex:
-              metavariable: $FLAG
-              regex: ^["'`](-[A-Za-z]*c[A-Za-z]*|/c|/C|-Command|-command)["'`]$
+          - pattern-either:
+              # A POSIX shell after its command flag (-c, also in a flag cluster such as -lc): the
+              # next element is the command line; later ones are only its positional parameters
+              # ($0, $1, ...). cmd.exe after /c.
+              - pattern: '$CALL("=~/^((/usr)?(/local)?/bin/)?(sh|bash|zsh|dash|ksh|ash)$/", [..., "=~/^-[A-Za-z]*c[A-Za-z]*$/", $SCRIPT, ...], ...)'
+              - pattern: '$CALL("=~/(?i)^cmd(\.exe)?$/", [..., "=~/^/[cC]$/", $SCRIPT, ...], ...)'
+              # PowerShell (pwsh, powershell.exe, any path; parameter names in any case): every
+              # element after -Command (-c) is part of the command; the first element after
+              # -CommandWithArgs (-cwa) and the element after -EncodedCommand (-e, -ec) are the
+              # command; the element after -File (-f) is the script to run. Not after -File (all
+              # later elements are the script's parameters) or, for pwsh, after a .ps1 script
+              # given without it (File is pwsh's default parameter).
+              - patterns:
+                  - pattern-either:
+                      - pattern: '$CALL("=~/(?i)^([a-z]:)?(.*[/\\])?(pwsh|powershell)(\.exe)?$/", [..., "=~/(?i)^-(c|command)$/", ..., $SCRIPT, ...], ...)'
+                      - pattern: '$CALL("=~/(?i)^([a-z]:)?(.*[/\\])?(pwsh|powershell)(\.exe)?$/", [..., "=~/(?i)^-(cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", $SCRIPT, ...], ...)'
+                  - pattern-not: '$CALL($PS, [..., "=~/(?i)^-(f|file)$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...], ...)'
+                  - pattern-not: '$CALL("=~/(?i)^([a-z]:)?(.*[/\\])?pwsh(\.exe)?$/", [..., "=~/(?i)\.ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...], ...)'
           - focus-metavariable: $SCRIPT
       # util.promisify() of exec or execFile, as in the Node.js documentation.
       - patterns:

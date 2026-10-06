@@ -14,8 +14,9 @@ Fastify, Next.js):
 - the command of `exec()` and `execSync()`, which a shell runs;
 - the program of `execFile()`, `spawn()`, `fork()` and their `Sync` forms;
 - the arguments of `execFile()` and `spawn()` when the `shell` option is set;
-- the script given to a shell program (`spawn('sh', ['-c', cmd])`, `cmd.exe /c`, PowerShell
-  `-Command`).
+- the command given to a shell program: the element after `sh -c` (or `bash -lc`, ...) or
+  `cmd.exe /c`; for PowerShell (`pwsh`, `powershell.exe`), every element after `-Command`, the
+  command after `-CommandWithArgs` or `-EncodedCommand`, and the script after `-File`.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -87,6 +88,10 @@ app.get('/log', (req, res) => {
   values) is.
 - A shell's script is followed when the argument array is written in the call
   (`spawn('sh', ['-c', cmd])`), not when it is built before.
+- PowerShell parameters are recognised by the names its documentation lists (`-Command`/`-c`,
+  `-CommandWithArgs`/`-cwa`, `-EncodedCommand`/`-e`/`-ec`, `-File`/`-f`, in any case); other
+  shortened names (`-Comm`, `-enc`) are not. Request data after `-File` and its script is a
+  parameter of the script, and is not reported.
 - `child_process` functions are recognised through `require()` and `import`, destructured or not,
   and `util.promisify()`; renamed imports (`exec as run`) are not.
 - Request handlers are recognised by the name of their second parameter (`res`, `reply`, `ctx`,
@@ -98,6 +103,8 @@ app.get('/log', (req, res) => {
 - <https://cwe.mitre.org/data/definitions/78.html>
 - <https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html>
 - <https://nodejs.org/api/child_process.html>
+- <https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh>
+- <https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1>
 - <https://expressjs.com/en/4x/api.html#req>
 - <https://expressjs.com/en/5x/api.html#req>
 - <https://nextjs.org/docs/app/api-reference/file-conventions/route>

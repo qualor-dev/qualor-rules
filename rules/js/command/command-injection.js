@@ -225,6 +225,54 @@ app.get('/script', (req, res) => {
   res.end();
 });
 
+// PowerShell (pwsh, powershell.exe; parameter names in any case): every element after -Command
+// (-c) is part of the command; the first string after -CommandWithArgs (-cwa) is the command and
+// the later ones fill $args; the element after -EncodedCommand (-e, -ec) is the command in
+// Base64; the element after -File (-f) is the script to run. After -File and its script, or
+// after a .ps1 script given to pwsh without it (File is pwsh's default parameter), the elements
+// are the script's parameters.
+app.get('/pwsh', (req, res) => {
+  // ruleid: js.command-injection
+  spawn('pwsh', ['-NoProfile', '-Command', 'Get-ChildItem', req.query.path]);
+  // ruleid: js.command-injection
+  execFile('pwsh.exe', ['-c', 'Get-Item', '-Path', req.query.path], () => {});
+  // ruleid: js.command-injection
+  spawnSync('powershell', ['-NonInteractive', '-COMMAND', `Get-Item ${req.query.item}`]);
+  // ruleid: js.command-injection
+  childProcess.spawn('C:\\Program Files\\PowerShell\\7\\pwsh.exe', ['-NoLogo', '-Command', req.query.cmd]);
+  // ruleid: js.command-injection
+  spawn('pwsh', ['-CommandWithArgs', req.query.script, 'first']);
+  const encoded = Buffer.from('Get-Item ' + req.query.item, 'utf16le').toString('base64');
+  // ruleid: js.command-injection
+  spawn('powershell.exe', ['-NoProfile', '-EncodedCommand', encoded]);
+  // ruleid: js.command-injection
+  spawnSync('pwsh', ['-ec', Buffer.from(req.query.script, 'utf16le').toString('base64')]);
+  // ruleid: js.command-injection
+  spawn('pwsh', ['-NoProfile', '-File', req.query.script]);
+  // ok: js.command-injection
+  spawn('pwsh', ['-cwa', '$args | ForEach-Object { Get-Item -LiteralPath $_ }', req.query.path]);
+  // ok: js.command-injection
+  spawn('pwsh', ['-NoProfile', '-File', './scripts/report.ps1', '-Name', req.query.name]);
+  // ok: js.command-injection
+  spawn('powershell.exe', ['-File', 'C:\\scripts\\report.ps1', '-c', req.query.name]);
+  // ok: js.command-injection
+  spawn('pwsh', ['-f', './scripts/report.ps1', '-Command', req.query.name, '-e', req.query.env]);
+  // ok: js.command-injection
+  spawn('pwsh', ['-NoProfile', './scripts/rotate.ps1', '-e', req.query.env, '-c', req.query.name]);
+  // ok: js.command-injection
+  spawn('powershell', ['-ExecutionPolicy', req.query.policy, '-File', './scripts/tool.ps1']);
+  // ok: js.command-injection
+  spawn('pwsh', ['-WorkingDirectory', req.query.dir, '-Command', 'Get-ChildItem']);
+  // ok: js.command-injection
+  spawn('pwsh', ['-NoProfile', '-Command', 'Get-Date']);
+  // Shortened parameter names that the documentation does not list are not recognised.
+  // todoruleid: js.command-injection
+  spawn('pwsh', ['-Comm', req.query.cmd]);
+  // todoruleid: js.command-injection
+  spawn('powershell', ['-enc', req.query.encoded]);
+  res.end();
+});
+
 // Sources are the request block of the SQL rule: a handler is recognised by the name of its
 // second parameter, and a one-parameter callback after a path literal is taken for a route.
 app.get('/archive', (request, out) => {
