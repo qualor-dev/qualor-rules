@@ -183,6 +183,20 @@ class DomImports {
         }
     }
 
+    // A try block with a finally clause (with or without catch) is not recognised.
+    Document disallowedInTryFinally(InputStream in) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try {
+            factory.setFeature(DISALLOW_DOCTYPE, true);
+        } catch (ParserConfigurationException e) {
+            throw new IllegalStateException(e);
+        } finally {
+            factory.setNamespaceAware(true);
+        }
+        // todook: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
     // The fixed order of the three features does not matter.
     Document featuresInOtherOrder(InputStream in) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
@@ -674,6 +688,19 @@ class SchemaImports {
             factory.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
         }
         // ruleid: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    // A try block with a finally clause (with or without catch) is not recognised.
+    Schema deniedInTryFinally(InputStream xsd) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        try {
+            factory.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            factory.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        } finally {
+            factory.setErrorHandler(null);
+        }
+        // todook: java.xxe
         return factory.newSchema(new StreamSource(xsd));
     }
 

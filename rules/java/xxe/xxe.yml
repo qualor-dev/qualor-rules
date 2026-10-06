@@ -49,8 +49,10 @@ rules:
     #   with it; a builder returned or stored and used elsewhere is not followed.
     # - A rejecting EntityResolver or XMLResolver is not recognised as a safe form, nor is a
     #   feature or property name held in a constant of a class in another file.
-    # - A setting is recognised before the use in the same block, or in a try block that ends
-    #   before it (a setting made only under a condition is not hardening and is reported); for
+    # - A setting is recognised before the use in the same block, or in a try block with catch
+    #   clauses and no finally that ends before it (a try block with a finally clause is not
+    #   recognised, so a setting made there is reported; a setting made only under a condition
+    #   is not hardening and is reported); for
     #   a field initialised at its declaration, anywhere in a static block, constructor or method.
     #   Of the three entity features, only the first in the code must be unconditional: a later
     #   one made only under a condition still counts. Each SchemaFactory property is checked on
