@@ -217,6 +217,26 @@ app.get('/sorted3', (req, res) => {
   res.json([a, b, c, d, e].map((r) => r.source));
 });
 
+// A sink inside a callback given to an awaited method of another object is still a sink.
+const txdb = { transaction: async (work) => work({}) };
+const jobQueue = { run: async (r, jobs) => jobs.map((job) => job()) };
+app.get('/tx-search', async (req, res) => {
+  const found = [];
+  await txdb.transaction(async (t) => {
+    // ruleid: js.regex-injection
+    found.push(new RegExp(req.query.q).source);
+  });
+  // ruleid: js.regex-injection
+  await jobQueue.run(res, [() => found.push(new RegExp(req.query.r).source)]);
+  await txdb.transaction({
+    done() {
+      // ruleid: js.regex-injection
+      found.push(new RegExp(req.query.s).source);
+    },
+  });
+  res.json(found);
+});
+
 // An element of a request array reached through a callback parameter is not followed.
 app.post('/filters', (req, res) => {
   // todoruleid: js.regex-injection
