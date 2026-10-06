@@ -24,6 +24,7 @@ rules:
         - https://nodejs.org/api/child_process.html
         - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh
         - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1
+        - https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd
         - https://expressjs.com/en/4x/api.html#req
         - https://expressjs.com/en/5x/api.html#req
         - https://nextjs.org/docs/app/api-reference/file-conventions/route
@@ -316,9 +317,11 @@ rules:
           - pattern-either:
               # A POSIX shell after its command flag (-c, also in a flag cluster such as -lc): the
               # next element is the command line; later ones are only its positional parameters
-              # ($0, $1, ...). cmd.exe after /c.
+              # ($0, $1, ...).
               - pattern: '$CALL("=~/^((/usr)?(/local)?/bin/)?(sh|bash|zsh|dash|ksh|ash)$/", [..., "=~/^-[A-Za-z]*c[A-Za-z]*$/", $SCRIPT, ...], ...)'
-              - pattern: '$CALL("=~/(?i)^cmd(\.exe)?$/", [..., "=~/^/[cC]$/", $SCRIPT, ...], ...)'
+              # cmd.exe (any path and case) after /c or /k, also after other switches: every
+              # later element is part of the command line it runs.
+              - pattern: '$CALL("=~/(?i)^([a-z]:)?(.*[/\\])?cmd(\.exe)?$/", [..., "=~/^/[cCkK]$/", ..., $SCRIPT, ...], ...)'
               # PowerShell (pwsh, powershell.exe, any path; parameter names in any case): every
               # element after -Command (-c) is part of the command; the first element after
               # -CommandWithArgs (-cwa) and the element after -EncodedCommand (-e, -ec) are the

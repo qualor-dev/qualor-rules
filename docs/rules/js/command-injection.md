@@ -14,9 +14,10 @@ Fastify, Next.js):
 - the command of `exec()` and `execSync()`, which a shell runs;
 - the program of `execFile()`, `spawn()`, `fork()` and their `Sync` forms;
 - the arguments of `execFile()` and `spawn()` when the `shell` option is set;
-- the command given to a shell program: the element after `sh -c` (or `bash -lc`, ...) or
-  `cmd.exe /c`; for PowerShell (`pwsh`, `powershell.exe`), every element after `-Command`, the
-  command after `-CommandWithArgs` or `-EncodedCommand`, and the script after `-File`.
+- the command given to a shell program: the element after `sh -c` (or `bash -lc`, ...); every
+  element after `cmd.exe /c` or `/k`; for PowerShell (`pwsh`, `powershell.exe`), every element
+  after `-Command`, the command after `-CommandWithArgs` or `-EncodedCommand`, and the script
+  after `-File`.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -106,6 +107,7 @@ app.get('/log', (req, res) => {
 - <https://nodejs.org/api/child_process.html>
 - <https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh>
 - <https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1>
+- <https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd>
 - <https://expressjs.com/en/4x/api.html#req>
 - <https://expressjs.com/en/5x/api.html#req>
 - <https://nextjs.org/docs/app/api-reference/file-conventions/route>

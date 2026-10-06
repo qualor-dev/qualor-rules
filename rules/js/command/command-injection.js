@@ -256,6 +256,26 @@ app.get('/script', (req, res) => {
   res.end();
 });
 
+// cmd.exe runs everything after /c (or /k) as one command line, also after other switches such
+// as /d and /s, so request data in any later element is part of the command.
+app.get('/cmd', (req, res) => {
+  // ruleid: js.command-injection
+  spawn('cmd.exe', ['/c', 'dir', req.query.folder]);
+  // ruleid: js.command-injection
+  spawn('cmd', ['/d', '/s', '/c', 'type', req.query.file]);
+  // ruleid: js.command-injection
+  execFileSync('C:\\Windows\\System32\\cmd.exe', ['/C', 'echo', req.query.msg]);
+  // ruleid: js.command-injection
+  spawnSync('CMD.EXE', ['/k', 'cd', '/d', req.query.dir]);
+  // ruleid: js.command-injection
+  childProcess.spawn('cmd.exe', ['/c', 'convert.bat', req.query.input, 'out.png']);
+  // ok: js.command-injection
+  spawn('cmd.exe', ['/c', 'my.bat']);
+  // ok: js.command-injection
+  spawn('cmdtool', ['/c', req.query.folder]);
+  res.end();
+});
+
 // PowerShell (pwsh, powershell.exe; parameter names in any case): every element after -Command
 // (-c) is part of the command; the first string after -CommandWithArgs (-cwa) is the command and
 // the later ones fill $args; the element after -EncodedCommand (-e, -ec) is the command in
