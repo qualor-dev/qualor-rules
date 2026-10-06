@@ -408,6 +408,68 @@ app.get('/await-sink', async (req, res) => {
   await res.redirect(req.query.url);
 });
 
+// A sink inside a callback given to a helper that also takes the response is still a sink.
+const { withSession, afterUpload, runStep } = require('./session');
+app.get('/session-next', async (req, res) => {
+  if (req.query.a) {
+    await withSession(req, res, async () => {
+      // ruleid: js.open-redirect
+      res.redirect(req.query.next);
+    });
+  }
+  if (req.query.b) {
+    await afterUpload(req, res, function () {
+      // ruleid: js.open-redirect
+      res.redirect(req.body.next);
+    });
+  }
+  if (req.query.c) {
+    // ruleid: js.open-redirect
+    await withSession(req, res, () => res.redirect(req.query.c));
+  }
+  if (req.query.d) {
+    await runStep(res, {
+      done: function () {
+        // ruleid: js.open-redirect
+        res.redirect(req.query.d);
+      },
+    });
+  }
+  await runStep(res, {
+    done() {
+      // ruleid: js.open-redirect
+      res.redirect(req.query.step);
+    },
+  });
+});
+
+// A function called through a module object counts as another object's method.
+const helpers = require('./redirect-helpers');
+app.get('/module-next', async (req, res) => {
+  const target = await helpers.nextTarget(req.query.next);
+  // todoruleid: js.open-redirect
+  return res.redirect(target);
+});
+
+// Location headers built from templates.
+app.get('/header-templates/:host', (req, res) => {
+  if (req.query.a) {
+    // ruleid: js.open-redirect
+    return res.setHeader('Location', `https://${req.query.host}/home`).end();
+  }
+  if (req.query.b) {
+    // ruleid: js.open-redirect
+    return res.set('Location', `//${req.params.host}`).end();
+  }
+  if (req.query.c) {
+    // ruleid: js.open-redirect
+    return res.writeHead(302, { Location: `https://${req.query.host}/` }).end();
+  }
+  // ok: js.open-redirect
+  res.setHeader('Location', `/users/${req.query.id}`);
+  return res.end();
+});
+
 // Checks before the call are not followed: the checked value is still reported, also a check in
 // the argument itself.
 app.get('/included', (req, res) => {

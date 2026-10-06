@@ -76,10 +76,11 @@ rules:
     #   promise helpers, parsers, formatters, request.json()/formData()/text(), methods of the
     #   response and functions imported by name; another method that returns the request value it
     #   is given is missed. So is an awaited helper that is given the response object
-    #   (`await beginSignIn(provider, returnTo, res)`) and returns a request value.
+    #   (`await beginSignIn(provider, returnTo, res)`) and returns a request value (not when a
+    #   function is passed to it: a sink inside that callback is reported).
     #   A function called through a module object (`import * as links`, `const helpers =
-    #   require(...)`, then `await links.next(req.query.next)`) counts as such a method and is
-    #   missed too (recorded from review, no test line).
+    #   require(...)`, then `await helpers.nextTarget(req.query.next)`) counts as such a method
+    #   and is missed too.
     # - Next.js Server Functions (Server Actions) and the props of pages are not request sources,
     #   so `redirect(formData.get('next'))` in a Server Action is missed.
     # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
@@ -550,6 +551,12 @@ rules:
           - metavariable-regex:
               metavariable: $RESARG
               regex: ^(?:res|resp|response|reply|rep|_res|_response)$
+          # Not when a function is passed to it, also as a method or property of an object: a sink
+          # written inside that callback (`await withSession(req, res, async () => { ... })`) is
+          # still a sink, and the sanitizer would clean everything inside the call. The function
+          # pattern also matches arrow functions.
+          - pattern-not: 'await $F(..., <... function (...) { ... } ...>, ...)'
+          - pattern-not: 'await $F(..., {..., $K(...) { ... }, ...}, ...)'
     # Performance: OpenGrep's prefilter (skip a file that lacks the rule's words) gives up when the
     # sinks, as a formula in conjunctive normal form, grow past 50,000 clauses, and every
     # metavariable-regex inside a branch of a pattern-either doubles them. So the conditions on
@@ -915,13 +922,13 @@ rules:
                           - pattern: '$OBJ.$M($H, `${$PART}...`)'
                       - patterns:
                           - metavariable-regex:
-                              metavariable: $H
+                              metavariable: $TXT
                               regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                           - pattern-either:
                               - patterns:
-                                  - pattern: '$OBJ.$M($H, `$H${$PART}...`)'
+                                  - pattern: '$OBJ.$M($H, `$TXT${$PART}...`)'
                               - patterns:
-                                  - pattern: '$OBJ.$M($H, `$H${$A}${$PART}...`)'
+                                  - pattern: '$OBJ.$M($H, `$TXT${$A}${$PART}...`)'
                       - patterns:
                           - pattern: '$OBJ.$M($H, `${$P}${$PART}...`)'
                       - patterns:
@@ -1039,13 +1046,13 @@ rules:
                           - pattern: '$OBJ.$M(..., {..., $H: `${$PART}...`, ...}, ...)'
                       - patterns:
                           - metavariable-regex:
-                              metavariable: $H
+                              metavariable: $TXT
                               regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                           - pattern-either:
                               - patterns:
-                                  - pattern: '$OBJ.$M(..., {..., $H: `$H${$PART}...`, ...}, ...)'
+                                  - pattern: '$OBJ.$M(..., {..., $H: `$TXT${$PART}...`, ...}, ...)'
                               - patterns:
-                                  - pattern: '$OBJ.$M(..., {..., $H: `$H${$A}${$PART}...`, ...}, ...)'
+                                  - pattern: '$OBJ.$M(..., {..., $H: `$TXT${$A}${$PART}...`, ...}, ...)'
                       - patterns:
                           - pattern: '$OBJ.$M(..., {..., $H: `${$P}${$PART}...`, ...}, ...)'
                       - patterns:
@@ -1423,13 +1430,13 @@ rules:
                   - pattern: 'new $NR(..., {..., headers: {..., $H: `${$PART}...`, ...}, ...})'
               - patterns:
                   - metavariable-regex:
-                      metavariable: $H
+                      metavariable: $TXT
                       regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                   - pattern-either:
                       - patterns:
-                          - pattern: 'new $NR(..., {..., headers: {..., $H: `$H${$PART}...`, ...}, ...})'
+                          - pattern: 'new $NR(..., {..., headers: {..., $H: `$TXT${$PART}...`, ...}, ...})'
                       - patterns:
-                          - pattern: 'new $NR(..., {..., headers: {..., $H: `$H${$A}${$PART}...`, ...}, ...})'
+                          - pattern: 'new $NR(..., {..., headers: {..., $H: `$TXT${$A}${$PART}...`, ...}, ...})'
               - patterns:
                   - pattern: 'new $NR(..., {..., headers: {..., $H: `${$P}${$PART}...`, ...}, ...})'
               - patterns:

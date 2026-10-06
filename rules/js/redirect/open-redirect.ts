@@ -105,6 +105,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     // ruleid: js.open-redirect
     return NextResponse.redirect(new URL('/login', request.nextUrl.searchParams.get('base') ?? ''));
   }
+  if (mode === 't') {
+    // ruleid: js.open-redirect
+    return new Response(null, { status: 302, headers: { Location: `https://${next}/` } });
+  }
   // ok: js.open-redirect
   return NextResponse.redirect(new URL(`/posts/${encodeURIComponent(slug)}`, request.url));
 }

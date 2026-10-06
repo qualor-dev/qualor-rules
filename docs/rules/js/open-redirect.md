@@ -84,7 +84,10 @@ to another host.
   fixed origin or path (an upper-case constant, `process.env`, a config object, a `const` literal);
   concatenations of more than six parts are not checked.
 - Results of awaited calls on other objects (a database lookup by a request value) are taken for
-  stored data, so a helper that returns the request value it is given is missed.
+  stored data, so a helper that returns the request value it is given is missed; so is a function
+  called through a module object (`await helpers.nextTarget(req.query.next)`). An awaited helper
+  that is given the response object is taken to write its own answer, unless a function is passed
+  to it.
 - Next.js Server Actions and page props are not request sources.
 - Request handlers are recognised by the name of their second parameter (`res`, `reply`, `ctx`,
   `next`, ...): a handler written as `(request, out)` is not checked.
