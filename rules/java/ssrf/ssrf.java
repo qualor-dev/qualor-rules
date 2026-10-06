@@ -466,3 +466,47 @@ class PartNote {
         return text;
     }
 }
+
+// The URL Standard reads "\" as "/" in http(s) URLs, so "/\host" is a network-path reference
+// like "//host" on clients that follow it (Spring's WhatWG parser); and a "\" right after an
+// origin is not a path separator on every client ("\@other" may become user info).
+@RestController
+class BackslashController {
+    private static final String ORIGIN = "https://api.example.com";
+    private RestTemplate restTemplate;
+    private RestClient restClient;
+
+    @GetMapping("/backslash/{id}")
+    String backslash(@RequestParam String host, @PathVariable String id) throws IOException {
+        // ruleid: java.ssrf
+        restClient.get().uri("/\\" + host + "/status").retrieve().body(String.class);
+        // ruleid: java.ssrf
+        restClient.get().uri("//" + host + "/status").retrieve().body(String.class);
+        // ruleid: java.ssrf
+        restClient.get().uri(String.format("/\\%s/status", host)).retrieve().body(String.class);
+        // ruleid: java.ssrf
+        new URL(new URL("https://api.example.com/"), "/\\" + host + "/status").openStream();
+        // ruleid: java.ssrf
+        new URL("https://api.example.com\\" + host).openStream();
+        // ruleid: java.ssrf
+        new URL(String.format("https://api.example.com\\%s", host)).openStream();
+        // ruleid: java.ssrf
+        restTemplate.getForObject(ORIGIN + "\\" + host, String.class);
+        // A "\" right after the host is not taken as the end of the host.
+        // ruleid: java.ssrf
+        new URL("https://api.example.com\\/" + host).openStream();
+        // ruleid: java.ssrf
+        new URL(String.format("https://api.example.com\\/%s", host)).openStream();
+        // ok: java.ssrf
+        restClient.get().uri("/items/" + id).retrieve().body(String.class);
+        // ok: java.ssrf
+        restClient.get().uri(String.format("/items/%s", id)).retrieve().body(String.class);
+        // ok: java.ssrf
+        new URL(new URL("https://api.example.com/"), "/items/" + id).openStream();
+        // ok: java.ssrf
+        restTemplate.getForObject(ORIGIN + "/items/" + id, String.class);
+        // ok: java.ssrf
+        new URL("https://api.example.com/items\\" + id).openStream();
+        return "ok";
+    }
+}

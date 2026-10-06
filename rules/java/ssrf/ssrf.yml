@@ -37,6 +37,8 @@ rules:
         - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html
         - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/multipart-forms.html
         - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/bind/annotation/RequestPart.html
+        - https://url.spec.whatwg.org/
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/util/UriComponentsBuilder.ParserType.html
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A handler parameter without an annotation is not a source (the Jakarta REST entity
@@ -56,6 +58,8 @@ rules:
     #   eight calls), or a relative "/path" literal (resolved
     #   against a RestClient or WebClient baseUrl). A host constant in the middle of the string
     #   ("https://" + HOST + "/" + path) and URI.resolve on a constant URI are not recognised.
+    #   A "\" is never taken as the separator after a literal host, and a relative path that
+    #   starts with "//" or "/\" is reported (the URL Standard reads "\" as "/").
     # - A UriComponentsBuilder chain from a constant base is recognised up to eight calls; a
     #   longer chain is reported.
     # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
@@ -115,17 +119,18 @@ rules:
       - pattern: Long.valueOf(...)
       # A URL whose text starts with a fixed origin ("https://host/...") or a relative path
       # ("/path", resolved against a fixed baseUrl): the request data only reaches the path or
-      # the query.
+      # the query. The URL Standard reads "\" as "/" in http(s) URLs, so "/\" starts a host like
+      # "//", and a "\" never counts as the separator after the host.
       - patterns:
           - pattern: $A + $B
           - metavariable-regex:
               metavariable: $A
-              regex: ^("[A-Za-z][A-Za-z0-9+.-]*://[^/?#"\s]+[/?#]|"/[^/"])
+              regex: ^("[A-Za-z][A-Za-z0-9+.-]*://[^/?#"\s\\]+[/?#]|"/[^/\\"])
       - patterns:
           - pattern: String.format("$FMT", ...)
           - metavariable-regex:
               metavariable: $FMT
-              regex: ^([A-Za-z][A-Za-z0-9+.-]*://[^/?#%\s]+[/?#]|/[^/%])
+              regex: ^([A-Za-z][A-Za-z0-9+.-]*://[^/?#%\s\\]+[/?#]|/[^/\\%])
       # A base URL held in a static final String field (a literal origin) or set from Spring
       # configuration (@Value), followed by a literal that starts with "/", "?" or "#": the
       # request data only reaches the path or the query. A base that is followed directly by
@@ -351,8 +356,9 @@ rules:
       # against a literal base URL.
       - pattern: new URL("...", "...", ...)
       - pattern: new java.net.URL("...", "...", ...)
-      # An absolute spec ("https://other/") or a network-path spec ("//other/") would replace the
-      # base's host, so the spec must start with a literal relative path ("items/", "/items").
+      # An absolute spec ("https://other/") or a network-path spec ("//other/", "/\other/") would
+      # replace the base's host, so the spec must start with a literal relative path ("items/",
+      # "/items").
       - patterns:
           - pattern-either:
               - pattern: new URL(new URL("$ORIGIN"), "$REL" + $X)
@@ -366,7 +372,7 @@ rules:
               regex: ^[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"]+[/?#]
           - metavariable-regex:
               metavariable: $REL
-              regex: ^(/[^/]|[?#]|[^/:?#\\]+[/?#])
+              regex: ^(/[^/\\]|[?#]|[^/:?#\\]+[/?#])
       # A UriComponentsBuilder started from a literal URL, or given a literal scheme and host,
       # unless a later call sets the scheme, host, port, user info or the whole URI.
       - patterns:

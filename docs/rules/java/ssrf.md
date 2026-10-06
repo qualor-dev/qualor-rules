@@ -112,7 +112,9 @@ public class PreviewController {
   a literal, a `"%s/..."` format, `URL` constructors with literals, a `UriComponentsBuilder` chain
   of up to eight calls from such a base, or a relative path given to a client with a fixed base URL.
   A host constant in the middle of the string and `URI.resolve` on a constant URI are not
-  recognised.
+  recognised. A `\` never counts as the separator after the host, and a relative path that
+  starts with `//` or `/\` is reported: browsers and URL Standard parsers read `\` as `/`, so
+  the request would choose the host.
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
   Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
   request body and headers); enum, `List` or `Optional` parameters still count as request data.
@@ -141,6 +143,8 @@ public class PreviewController {
 - <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html>
 - <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/multipart-forms.html>
 - <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/bind/annotation/RequestPart.html>
+- <https://url.spec.whatwg.org/>
+- <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/util/UriComponentsBuilder.ParserType.html>
 
 ## Tests
 
