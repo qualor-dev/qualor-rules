@@ -42,6 +42,7 @@ rules:
         - https://commons.apache.org/proper/commons-lang/apidocs/org/apache/commons/lang3/StringEscapeUtils.html
         - https://commons.apache.org/proper/commons-lang/javadocs/api-2.6/org/apache/commons/lang/StringEscapeUtils.html
         - https://quarkus.io/guides/rest
+        - https://github.com/FasterXML/jackson-dataformat-xml
         - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html
         - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html
         - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html
@@ -63,12 +64,13 @@ rules:
     #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
     #   and valueOf of an enum from another file still pass the request data on.
     # - Under a Jakarta REST XML or SVG type, only markup the code builds is a sink (a String
-    #   return, or a Response entity that is a String variable, a concatenation or
-    #   String.format); a DTO entity is written escaped by JAXB or JSON-B, and a String from a
-    #   call (a StringBuilder's toString) is not reported. Any String variable counts as built
-    #   markup, so a serialiser's escaped output kept in a variable
-    #   (`String xml = xmlMapper.writeValueAsString(dto)`, then sent with an XML type) is still
-    #   reported.
+    #   return, or a Response entity that is a concatenation or String.format, in place or in a
+    #   variable the method assigns one of them or appends to with +=); a DTO entity is written
+    #   escaped by JAXB or JSON-B, and a serialiser's output kept in a variable
+    #   (`String xml = xmlMapper.writeValueAsString(dto)`) is not reported. Request text sent as
+    #   an XML entity as it is (in place or through a variable) and a String from a call (a
+    #   StringBuilder's toString) are not reported either, while a String return counts as
+    #   markup even when it is a serialiser's output.
     # - A Jakarta REST String or Response without @Produces (method or class) and without an
     #   explicit type is not reported: its media type is negotiated (the specification lets a
     #   browser's Accept header pick text/html; Quarkus REST picks text/plain for a String).
@@ -478,8 +480,19 @@ rules:
                       - pattern: Response.ok($X, ...)
                       - pattern: Response.$F(...). ... .entity($X, ...)
                   - pattern-either:
+                      # A variable the method assigns built markup (a concatenation or String.format,
+                      # or appends to with +=); a serialiser's output in a variable is written escaped.
+                      - patterns:
+                          - pattern-inside: |
+                              $X = $INIT;
+                              ...
+                          - metavariable-pattern:
+                              metavariable: $INIT
+                              pattern-either:
+                                - pattern: $A + $B
+                                - pattern: String.format(...)
                       - pattern-inside: |
-                          String $X = $INIT;
+                          $X += $INIT;
                           ...
                       - patterns:
                           - pattern: Response.$G(..., $X, ...)
@@ -522,8 +535,19 @@ rules:
                       - pattern: Response.ok($X, ...)
                       - pattern: Response.$F(...). ... .entity($X, ...)
                   - pattern-either:
+                      # A variable the method assigns built markup (a concatenation or String.format,
+                      # or appends to with +=); a serialiser's output in a variable is written escaped.
+                      - patterns:
+                          - pattern-inside: |
+                              $X = $INIT;
+                              ...
+                          - metavariable-pattern:
+                              metavariable: $INIT
+                              pattern-either:
+                                - pattern: $A + $B
+                                - pattern: String.format(...)
                       - pattern-inside: |
-                          String $X = $INIT;
+                          $X += $INIT;
                           ...
                       - patterns:
                           - pattern: Response.$G(..., $X, ...)
@@ -550,8 +574,19 @@ rules:
               metavariable: $TYPE
               regex: (?i)[\s\S]*(xml|svg)
           - pattern-either:
+              # A variable the method assigns built markup (a concatenation or String.format,
+              # or appends to with +=); a serialiser's output in a variable is written escaped.
+              - patterns:
+                  - pattern-inside: |
+                      $X = $INIT;
+                      ...
+                  - metavariable-pattern:
+                      metavariable: $INIT
+                      pattern-either:
+                        - pattern: $A + $B
+                        - pattern: String.format(...)
               - pattern-inside: |
-                  String $X = $INIT;
+                  $X += $INIT;
                   ...
               - patterns:
                   - pattern: Response.$G(..., $X, ...)

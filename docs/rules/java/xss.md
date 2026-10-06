@@ -92,8 +92,10 @@ public class HelloServlet extends HttpServlet {
 - Spring MVC: `@ResponseBody` on a `@Controller` class, a `ResponseEntity<Object>` body and a
   content type set through an `HttpHeaders` object are not seen. XML and SVG types count as HTML.
 - Jakarta REST: a `String` without `@Produces` or an explicit type is not reported (its type is
-  negotiated); under an XML or SVG type only markup the code builds is reported, and a serialiser's
-  escaped output kept in a `String` variable is still reported.
+  negotiated). Under an XML or SVG type only markup the code builds is reported: a `String` return,
+  or an entity that is a concatenation or `String.format` (in place or in a variable). Request text
+  sent as it is, or markup from a call such as a `StringBuilder`, is missed; a serialiser's output
+  returned as a `String` is still reported.
 - One method is analysed at a time: a helper or inner class that encodes the value still passes the
   request data on. Conditions are not evaluated.
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
@@ -127,6 +129,7 @@ public class HelloServlet extends HttpServlet {
 - <https://commons.apache.org/proper/commons-lang/apidocs/org/apache/commons/lang3/StringEscapeUtils.html>
 - <https://commons.apache.org/proper/commons-lang/javadocs/api-2.6/org/apache/commons/lang/StringEscapeUtils.html>
 - <https://quarkus.io/guides/rest>
+- <https://github.com/FasterXML/jackson-dataformat-xml>
 - <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html>
 - <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html>
 - <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html>

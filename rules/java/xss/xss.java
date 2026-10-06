@@ -553,6 +553,92 @@ class ItemResource {
         // todoruleid: java.xss
         return Response.ok(markup.toString()).build();
     }
+
+    private final com.fasterxml.jackson.dataformat.xml.XmlMapper xmlMapper = new com.fasterxml.jackson.dataformat.xml.XmlMapper();
+
+    // A serialiser's output kept in a String variable: the mapper escapes the DTO's text.
+    @GET
+    @Path("/mapped/{name}")
+    public Response mapped(@PathParam("name") String name) throws Exception {
+        String xml = xmlMapper.writeValueAsString(new ItemView(name));
+        // ok: java.xss
+        return Response.ok(xml, MediaType.APPLICATION_XML).build();
+    }
+
+    @GET
+    @Path("/mapped-entity/{name}")
+    public Response mappedEntity(@PathParam("name") String name) throws Exception {
+        String xml = xmlMapper.writeValueAsString(new ItemView(name));
+        // ok: java.xss
+        return Response.status(200).entity(xml).type(MediaType.APPLICATION_XML_TYPE).build();
+    }
+
+    @GET
+    @Path("/mapped-plain/{name}")
+    public Response mappedPlain(@PathParam("name") String name) throws Exception {
+        String xml = xmlMapper.writeValueAsString(new ItemView(name));
+        // ok: java.xss
+        return Response.ok(xml).build();
+    }
+
+    // Markup the method builds in a String variable: a concatenation or String.format.
+    @GET
+    @Path("/joined/{name}")
+    public Response joined(@PathParam("name") String name) {
+        String body = "<item>" + name + "</item>";
+        // ruleid: java.xss
+        return Response.ok(body).build();
+    }
+
+    @GET
+    @Path("/joined-entity/{name}")
+    public Response joinedEntity(@PathParam("name") String name) {
+        String body = "<item>" + name + "</item>";
+        // ruleid: java.xss
+        return Response.status(201).entity(body).type(MediaType.APPLICATION_XML_TYPE).build();
+    }
+
+    @GET
+    @Path("/formatted/{name}")
+    public Response formatted(@PathParam("name") String name) {
+        String body;
+        body = String.format("<item>%s</item>", name);
+        // ruleid: java.xss
+        return Response.ok(body).build();
+    }
+
+    @GET
+    @Path("/appended/{name}")
+    public Response appended(@PathParam("name") String name) {
+        String body = "<item>";
+        body += name;
+        // ruleid: java.xss
+        return Response.ok(body, MediaType.APPLICATION_XML).build();
+    }
+
+    // Request text sent as an XML entity as it is (in place or through a variable) is not
+    // markup the method builds, and is not reported.
+    @GET
+    @Path("/as-is/{name}")
+    public Response asIs(@PathParam("name") String name) {
+        String body = name;
+        // todoruleid: java.xss
+        return Response.ok(body, MediaType.APPLICATION_XML).build();
+    }
+}
+
+// A String return under an XML type counts as markup, also when it is a serialiser's output.
+@Path("/mapped-items")
+class MappedItemResource {
+    private final com.fasterxml.jackson.dataformat.xml.XmlMapper xmlMapper = new com.fasterxml.jackson.dataformat.xml.XmlMapper();
+
+    @GET
+    @Path("/{name}")
+    @Produces(MediaType.APPLICATION_XML)
+    public String item(@PathParam("name") String name) throws Exception {
+        // todook: java.xss
+        return xmlMapper.writeValueAsString(new ItemView(name));
+    }
 }
 
 class ItemView {
