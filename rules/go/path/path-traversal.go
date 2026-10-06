@@ -8,12 +8,14 @@ import (
 	"io/fs"
 	"io/ioutil"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
@@ -255,6 +257,112 @@ func EchoFiles(c echo.Context) error {
 	c.Attachment(filepath.Join(baseDir, "report.pdf"), c.QueryParam("name"))
 	// ok: go.path-traversal
 	return c.File(filepath.Join(baseDir, filepath.Base(c.Param("name"))))
+}
+
+// Test support: a handler inside a function that takes a *testing.T, *testing.B, *testing.F or
+// testing.TB serves only the requests of its own test (an httptest server, a subtest), in a
+// _test.go file or in a helper package.
+func NewFixtureServer(t *testing.T, dir string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.path-traversal
+		data, _ := os.ReadFile(filepath.Join(dir, r.URL.Path))
+		w.Write(data)
+	}))
+}
+
+func recordingServer(tb testing.TB, dir string) (*httptest.Server, error) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		// ok: go.path-traversal
+		os.WriteFile(filepath.Join(dir, r.Method+"-"+string(body)), body, 0o644)
+	}))
+	return srv, nil
+}
+
+func TestDownload(t *testing.T) {
+	t.Run("served", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// ok: go.path-traversal
+			http.ServeFile(w, r, filepath.Join("testdata", r.FormValue("name")))
+		}))
+		defer srv.Close()
+	})
+}
+
+func BenchmarkGinFiles(b *testing.B) {
+	router := gin.New()
+	router.GET("/files/:name", func(c *gin.Context) {
+		// ok: go.path-traversal
+		c.File(filepath.Join("testdata", c.Param("name")))
+	})
+}
+
+func FuzzEchoFiles(f *testing.F) {
+	e := echo.New()
+	e.GET("/files/:name", func(c echo.Context) error {
+		// ok: go.path-traversal
+		return c.File(filepath.Join("testdata", c.Param("name")))
+	})
+}
+
+var fixtureCase = func(t *testing.T) {
+	http.HandleFunc("/cases/", func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.path-traversal
+		os.Open(filepath.Join("testdata", r.FormValue("case")))
+	})
+}
+
+func TestMain(m *testing.M) {
+	http.HandleFunc("/fixtures/", func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.path-traversal
+		http.ServeFile(w, r, filepath.Join("testdata", r.URL.Query().Get("name")))
+	})
+	os.Exit(m.Run())
+}
+
+type fixtureSuite struct{ root string }
+
+func (s *fixtureSuite) handler(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.path-traversal
+		f, _ := os.Open(filepath.Join(s.root, r.URL.Query().Get("name")))
+		defer f.Close()
+	}
+}
+
+// The same handlers outside test support are reported: a parameter of another type named T, or
+// a handler whose name starts with Test, is not a test.
+type Theme struct{ T string }
+
+func Preview(t *Theme, w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.path-traversal
+	os.ReadFile(filepath.Join(baseDir, t.T, r.URL.Query().Get("name")))
+}
+
+func TestPage(w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.path-traversal
+	os.ReadFile(filepath.Join(baseDir, r.URL.Path))
+}
+
+func ServeFixtures(dir string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ruleid: go.path-traversal
+		data, _ := os.ReadFile(filepath.Join(dir, r.URL.Path))
+		w.Write(data)
+	}))
+}
+
+// A handler declared at the top level of a test file, outside any function that takes a testing
+// parameter, is still reported.
+func fixtureHandler(w http.ResponseWriter, r *http.Request) {
+	// todook: go.path-traversal
+	os.ReadFile(filepath.Join("testdata", r.URL.Path))
+}
+
+func TestFixtureHandler(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(fixtureHandler))
+	defer srv.Close()
 }
 
 // Look-alikes: an Open method of another type, and a function that is not a handler.

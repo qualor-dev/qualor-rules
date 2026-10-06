@@ -12,6 +12,10 @@ Data from the HTTP request that reaches the path of a file the server opens, cre
 removes or serves: `os.Open`, `os.OpenFile`, `os.Create`, `os.ReadFile`, `os.WriteFile`,
 `os.Remove`, `http.ServeFile`, and the file helpers of Gin and Echo, among others. Request data is
 followed through `net/http`, Gin, Echo, chi and gorilla/mux, including JSON bodies.
+
+Code inside a test (a function or method that takes a `*testing.T`, `*testing.B`, `*testing.F`,
+`*testing.M` or `testing.TB`, such as the handler of an `httptest` server a test helper starts) is
+not reported: it only serves the test's own requests.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -99,6 +103,8 @@ func Download(w http.ResponseWriter, r *http.Request) {
 - Request data passed to a function value (a callback) is assumed to reach its result.
 - `os.Mkdir`, `os.MkdirAll`, `os.Rename`, `os.Link`, `os.Symlink`, `os.Chmod` and `os.Stat` are not
   checked yet.
+- Tests are recognised by a testing parameter of the enclosing function only: a handler declared
+  on its own in a test file is still reported.
 <!-- end: known-limits -->
 
 ## References
@@ -134,6 +140,8 @@ func Download(w http.ResponseWriter, r *http.Request) {
 - <https://echo.labstack.com/guide/response/>
 - <https://pkg.go.dev/github.com/go-chi/chi/v5>
 - <https://pkg.go.dev/github.com/gorilla/mux>
+- <https://pkg.go.dev/testing>
+- <https://pkg.go.dev/net/http/httptest>
 
 ## Tests
 

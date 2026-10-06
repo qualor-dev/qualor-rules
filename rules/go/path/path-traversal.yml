@@ -48,6 +48,8 @@ rules:
         - https://echo.labstack.com/guide/response/
         - https://pkg.go.dev/github.com/go-chi/chi/v5
         - https://pkg.go.dev/github.com/gorilla/mux
+        - https://pkg.go.dev/testing
+        - https://pkg.go.dev/net/http/httptest
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A check before the call (`filepath.IsLocal`, `fs.ValidPath`, `strings.Contains(name, "..")`)
@@ -61,6 +63,8 @@ rules:
     # - Request data passed to a function value (a callback) counts as reaching its result,
     #   whatever the function does with it (`todook:`).
     # - os.Mkdir, MkdirAll, Rename, Link, Symlink, Chmod and Stat are not sinks yet (`todoruleid:`).
+    # - Test support is skipped only inside a function that takes a testing parameter: a handler
+    #   declared at the top level of a test file and only served by a test is reported (`todook:`).
     options:
       # A map lookup keyed by request data (an allow-list of files) yields the map's values.
       taint_assume_safe_indexes: true
@@ -222,6 +226,17 @@ rules:
       - patterns:
           - pattern-inside: http.ServeFile($W, $REQ, ...)
           - pattern: $REQ.URL.Path
+      # Test support (shared by the Go request taint rules): request data inside a function or
+      # method that takes a *testing.T, *testing.B, *testing.F, *testing.M or testing.TB (a test,
+      # a subtest, TestMain, a test helper in any file) comes from the test's own requests, such
+      # as those of an httptest server it starts.
+      - patterns:
+          - pattern-inside: |
+              func $FN(..., $TP $TY, ...) { ... }
+          - metavariable-regex:
+              metavariable: $TY
+              regex: ^(\*testing\.(T|B|F|M)|testing\.TB)$
+          - pattern: $X
     pattern-sinks:
       # The os package: the name of the file opened, read, written, created or removed.
       - patterns:
