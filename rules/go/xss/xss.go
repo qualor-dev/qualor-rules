@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -326,6 +327,38 @@ func Buffered(w http.ResponseWriter, r *http.Request) {
 func BufferedDirect(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	buf.WriteString("<p>" + r.FormValue("name") + "</p>")
+	// todoruleid: go.xss
+	w.Write(buf.Bytes())
+}
+
+// Files and other readers sent with WriteTo or io.Copy are not buffers of template output.
+func Download(w http.ResponseWriter, r *http.Request) {
+	doc, err := os.Open(filepath.Join("/srv/docs", filepath.Base(r.FormValue("doc"))))
+	if err != nil {
+		return
+	}
+	defer doc.Close()
+	// ok: go.xss
+	doc.WriteTo(w)
+	// ok: go.xss
+	bufio.NewReader(doc).WriteTo(w)
+	limited := io.LimitedReader{R: doc, N: 1 << 20}
+	// ok: go.xss
+	io.Copy(w, &limited)
+	// A text/template executed into a file: the file is not the response.
+	log, err := os.Create("/var/log/shop/greeting.html")
+	if err != nil {
+		return
+	}
+	greeting.Execute(log, r.FormValue("name"))
+	// ok: go.xss
+	fmt.Fprintf(w, "<p>saved %s</p>", log.Name())
+}
+
+// A template built and executed in one expression is not recognised.
+func InlineTemplate(w http.ResponseWriter, r *http.Request) {
+	var buf bytes.Buffer
+	template.Must(template.New("inline").Parse("<p>{{.}}</p>")).Execute(&buf, r.FormValue("name"))
 	// todoruleid: go.xss
 	w.Write(buf.Bytes())
 }

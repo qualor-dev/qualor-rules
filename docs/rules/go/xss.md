@@ -15,7 +15,8 @@ HTTP request data written into an HTML response without escaping:
   non-HTML content type first;
 - sent with Gin's `c.Data` or Echo's `c.HTML`, `c.HTMLBlob`, `c.Blob` or `c.Stream` as HTML;
 - executed by a `text/template`, which does not escape, into the response or into a buffer that
-  is then written to it (its `Bytes()` or `String()`, `WriteTo`, or `io.Copy`);
+  is then written to it (its `Bytes()` or `String()`, `WriteTo`, or `io.Copy`; files and other
+  readers sent this way are not reported);
 - marked as safe content with an `html/template` conversion such as `template.HTML(x)`.
 <!-- end: what-it-finds -->
 
@@ -94,9 +95,12 @@ func Hello(w http.ResponseWriter, r *http.Request) {
   HTML, as a literal or one of Echo's JSON, JavaScript, text and binary constants. Other constants
   (Gin's `binding.MIME*`, say) are not recognised, and the order of writes, which decides the type
   `net/http` sniffs, is not followed.
-- A `text/template` is recognised by its import and must be built in the same function or as a
-  package variable, be a parameter, or be a field reached through the method's receiver. Templates
-  built in another file, reached through another variable, or imported with a dot are missed.
+- A `text/template` is recognised by its import and must be assigned to a variable in the same
+  function or package, be a parameter, or be a field reached through the method's receiver.
+  Templates built and executed in one expression (`template.Must(...).Execute(...)`), built in
+  another file, reached through another variable, or imported with a dot are missed. A buffer
+  counts only when it is a `bytes.Buffer` or `strings.Builder` declared in the handler (or made
+  with `bytes.NewBuffer`).
 - Request data written into a buffer directly (`buf.WriteString(...)`, `fmt.Fprintf(&buf, ...)`)
   is not followed when the buffer is written to the response later.
 - The binder of the Echo instance is not a source, and numeric struct fields count as safe only

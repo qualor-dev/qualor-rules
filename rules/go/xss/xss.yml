@@ -67,18 +67,21 @@ rules:
     #   (`todook:`).
     # - A template is a text/template when its spelling says so: in a file that imports
     #   text/template without an alias (and html/template, if at all, under another name), the
-    #   name "template"; otherwise the alias of text/template. It must be built in the same
-    #   function or as a package variable, be a parameter, or be a field of that type reached
+    #   name "template"; otherwise the alias of text/template. It must be assigned to a variable
+    #   in the same function or package, be a parameter, or be a field of that type reached
     #   through the receiver of a method of its struct. Not followed: a field reached through
     #   another variable (`todoruleid:`), a field whose name is also used by a struct declared
     #   later in the file (OpenGrep 1.30.0 then misses it) (`todoruleid:`), a dot import
-    #   (`todoruleid:`), a template built in another file of the package, and a local variable
-    #   named "template".
-    # - Such a template executed into a buffer (or any other writer) taints it: the buffer is
-    #   reported where it reaches the response (Write of its Bytes or String, WriteTo, io.Copy of
-    #   `&buf` or of a *bytes.Buffer, Gin's c.Data, Echo's c.HTML). Request data written into a
-    #   buffer directly (WriteString, fmt.Fprintf) is not followed into the response
-    #   (`todoruleid:`).
+    #   (`todoruleid:`), a template built and executed in one expression
+    #   (`template.Must(...).Execute(...)`) (`todoruleid:`), a template built in another file of
+    #   the package, and a local variable named "template".
+    # - Such a template executed into a bytes.Buffer or strings.Builder (typed in the file, or
+    #   made with bytes.NewBuffer(String) in the function) taints it: the buffer is reported
+    #   where it reaches the response (Write of its Bytes or String, WriteTo, io.Copy of the
+    #   buffer, Gin's c.Data, Echo's c.HTML). WriteTo and io.Copy count only for such a
+    #   bytes.Buffer: a file, a bufio.Reader or an io.LimitedReader is not a sink. Request data
+    #   written into a buffer directly (WriteString, fmt.Fprintf) is not followed into the
+    #   response (`todoruleid:`).
     # Inherited from the request source block (go.sql-injection):
     # - The Echo instance's binder (`c.Echo().Binder.Bind(&x, c)`) is not a source (`todoruleid:`).
     # - Numeric fields count as clean only when their type is known in the file: a struct declared
@@ -225,9 +228,8 @@ rules:
       - pattern: json.Unmarshal($R, &$X)
         from: $R
         to: $X
-      # A text/template (recognised as in the sinks below) executed into a buffer or any other
-      # writer: the data reaches what it writes, so a buffer written to the response later is
-      # reported there. html/template escapes, so its output stays clean.
+      # A text/template (recognised as in the sinks below) executed into a buffer: the data
+      # reaches what it writes, so the buffer written to the response later is reported there. html/template escapes, so its output stays clean.
       - patterns:
           - pattern-either:
               - patterns:
@@ -395,6 +397,25 @@ rules:
                               - pattern: $RECV.$FLD.Execute($OUT, $DATA)
                               - pattern: $RECV.$FLD.ExecuteTemplate(&$OUT, $NAME, $DATA)
                               - pattern: $RECV.$FLD.ExecuteTemplate($OUT, $NAME, $DATA)
+          # The writer is a bytes.Buffer or strings.Builder: typed, or made with
+          # bytes.NewBuffer(String) in the same function.
+          - pattern-either:
+              - pattern-inside: '$X.$M(..., &($OUT : bytes.Buffer), ...)'
+              - pattern-inside: '$X.$M(..., &($OUT : strings.Builder), ...)'
+              - pattern-inside: '$X.$M(..., ($OUT : *bytes.Buffer), ...)'
+              - pattern-inside: '$X.$M(..., ($OUT : *strings.Builder), ...)'
+              - pattern-inside: |
+                  $OUT := bytes.NewBuffer(...)
+                  ...
+              - pattern-inside: |
+                  $OUT := bytes.NewBufferString(...)
+                  ...
+              - pattern-inside: |
+                  $OUT = bytes.NewBuffer(...)
+                  ...
+              - pattern-inside: |
+                  $OUT = bytes.NewBufferString(...)
+                  ...
         from: $DATA
         to: $OUT
     pattern-sanitizers:
@@ -482,32 +503,44 @@ rules:
               - pattern-inside: '($C : *echo.Context).Response().$WRITE($DATA)'
               - pattern-inside: '($C : echo.Context).Response().Writer.$WRITE($DATA)'
               - pattern-inside: '($C : *echo.Context).Response().Writer.$WRITE($DATA)'
-              # A buffer (or other reader) that writes itself to the response, or is copied to it.
-              - pattern-inside: '$DATA.WriteTo(($W : http.ResponseWriter))'
-              - pattern-inside: '$DATA.WriteTo(($C : *gin.Context).Writer)'
-              - pattern-inside: '$DATA.WriteTo(($C : echo.Context).Response())'
-              - pattern-inside: '$DATA.WriteTo(($C : *echo.Context).Response())'
-              - pattern-inside: 'io.Copy(($W : http.ResponseWriter), &$DATA)'
-              - pattern-inside: 'io.Copy(($C : *gin.Context).Writer, &$DATA)'
-              - pattern-inside: 'io.Copy(($C : echo.Context).Response(), &$DATA)'
-              - pattern-inside: 'io.Copy(($C : *echo.Context).Response(), &$DATA)'
-              - pattern-inside: 'io.Copy(($W : http.ResponseWriter), ($DATA : *bytes.Buffer))'
+              # A bytes.Buffer that writes itself to the response, or is copied to it: typed in the
+              # file, or made with new, a literal or bytes.NewBuffer(String) in the same function.
+              # Other readers (a file, a bufio.Reader, an io.LimitedReader) are not sinks.
               - patterns:
                   - pattern-either:
-                      - pattern-inside: |
-                          $DATA := bytes.$NEWBUF(...)
-                          ...
-                      - pattern-inside: |
-                          $DATA = bytes.$NEWBUF(...)
-                          ...
-                  - metavariable-regex:
-                      metavariable: $NEWBUF
-                      regex: ^(NewBuffer|NewBufferString)$
-                  - pattern-either:
+                      - pattern-inside: '$DATA.WriteTo(($W : http.ResponseWriter))'
+                      - pattern-inside: '$DATA.WriteTo(($C : *gin.Context).Writer)'
+                      - pattern-inside: '$DATA.WriteTo(($C : echo.Context).Response())'
+                      - pattern-inside: '$DATA.WriteTo(($C : *echo.Context).Response())'
+                      - pattern-inside: 'io.Copy(($W : http.ResponseWriter), &$DATA)'
+                      - pattern-inside: 'io.Copy(($C : *gin.Context).Writer, &$DATA)'
+                      - pattern-inside: 'io.Copy(($C : echo.Context).Response(), &$DATA)'
+                      - pattern-inside: 'io.Copy(($C : *echo.Context).Response(), &$DATA)'
                       - pattern-inside: 'io.Copy(($W : http.ResponseWriter), $DATA)'
                       - pattern-inside: 'io.Copy(($C : *gin.Context).Writer, $DATA)'
                       - pattern-inside: 'io.Copy(($C : echo.Context).Response(), $DATA)'
                       - pattern-inside: 'io.Copy(($C : *echo.Context).Response(), $DATA)'
+                  - pattern-either:
+                      - pattern-inside: '($DATA : bytes.Buffer)'
+                      - pattern-inside: '($DATA : *bytes.Buffer)'
+                      - pattern-inside: |
+                          $DATA := new(bytes.Buffer)
+                          ...
+                      - pattern-inside: |
+                          $DATA := &bytes.Buffer{...}
+                          ...
+                      - pattern-inside: |
+                          $DATA := bytes.NewBuffer(...)
+                          ...
+                      - pattern-inside: |
+                          $DATA := bytes.NewBufferString(...)
+                          ...
+                      - pattern-inside: |
+                          $DATA = bytes.NewBuffer(...)
+                          ...
+                      - pattern-inside: |
+                          $DATA = bytes.NewBufferString(...)
+                          ...
               # A text/template (no escaping) executed into the response. Go names an unaliased
               # import after its package, so in a file that imports text/template without an alias
               # (and html/template, if at all, under another name) the spelling "template" is
