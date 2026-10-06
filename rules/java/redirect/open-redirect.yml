@@ -28,6 +28,7 @@ rules:
         - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/ResponseEntity.HeadersBuilder.html
         - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/HttpHeaders.html
         - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-uri-building.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/util/UriComponentsBuilder.html
         - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestparam.html
         - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-requestmapping.html
         - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestbody.html
@@ -56,10 +57,11 @@ rules:
     #   String origin followed by such a literal (or a static final origin that ends with one),
     #   or a Spring @Value base followed by a local path or "?" / "#" (a configured value may
     #   have no host); a format string that starts the same way or puts such a base
-    #   first; and the UriComponentsBuilder and URL forms of java.ssrf. A host constant in the
-    #   middle of the string, a static final local path ("/app") as the base, a
-    #   UriComponentsBuilder.fromPath(...) target and a Location set in a ResponseEntity headers
-    #   lambda are not recognised.
+    #   first; a static final local path ("/app", not "/" alone, "//" or "/\") followed by
+    #   anything; a UriComponentsBuilder chain started from a literal local or relative path
+    #   (fromPath) that does not replace the path or set the host; and the UriComponentsBuilder
+    #   and URL forms of java.ssrf. A host constant in the middle of the string, a builder kept in
+    #   a variable, and a Location set in a ResponseEntity headers lambda are not recognised.
     # - A StringBuilder or StringBuffer counts as fixed only when it is created with such a
     #   literal, or gets one in the append right after it is created (a builder given its start
     #   later, edited with setLength, delete, replace, insert or setCharAt, or assigned again after
@@ -266,6 +268,33 @@ rules:
               - pattern: $BASE + $X + $Y
               - pattern: $BASE + $X + $Y + $Z
               - pattern: $BASE + $X + $Y + $Z + $W
+      # A local path ("/app", not "/" alone, "//" or "/\") held in a static final String field:
+      # whatever follows it stays a path on this site, also after "redirect:" and as the first
+      # value of a format string that starts with it.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final String $BASE = "$ORIGIN"; ... }
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^/[^/\\]
+          - pattern-either:
+              - pattern: $BASE + $X
+              - pattern: $BASE + $X + $Y
+              - pattern: $BASE + $X + $Y + $Z
+              - pattern: $BASE + $X + $Y + $Z + $W
+              - pattern: '"redirect:" + $BASE + $X'
+              - pattern: '"redirect:" + $BASE + $X + $Y'
+              - pattern: '"redirect:" + $BASE + $X + $Y + $Z'
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final String $BASE = "$ORIGIN"; ... }
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^/[^/\\]
+          - pattern: String.format("$FMT", $BASE, ...)
+          - metavariable-regex:
+              metavariable: $FMT
+              regex: ^(redirect:)?%s
       # A format string that puts such a base first and a separator right after it (for a
       # configured base, a local path or "?" / "#").
       - patterns:
@@ -481,6 +510,19 @@ rules:
           - metavariable-regex:
               metavariable: $UB
               regex: (?s)^(?!.*\.\s*(host|scheme|uri|port|userInfo|uriComponents)\s*\((?!\s*"[^"]*"\s*\)))(org\.springframework\.web\.util\.)?UriComponentsBuilder\s*\.\s*((fromHttpUrl|fromUriString)\(\s*"[A-Za-z][A-Za-z0-9+.-]*://[^/?#"{\s]+([/?#][^"]*)?"\s*\)|newInstance\(\)\s*\.\s*scheme\(\s*"[A-Za-z]+"\s*\)\s*\.\s*host\(\s*"[^"{]+"\s*\))
+      # A UriComponentsBuilder started from a literal local path (fromPath("/search"), not "/"
+      # alone, "//", "/\" or a template variable right after the "/") or a relative path with a
+      # separator, unless a later call replaces the path or sets the scheme, host, port, user info,
+      # scheme-specific part or the whole URI. Appended paths are normalised to one leading "/".
+      - patterns:
+          - pattern-either:
+              - pattern: $UB.toUriString()
+              - pattern: $UB.toUri()
+              - pattern: $UB.build(...)
+              - pattern: $UB.buildAndExpand(...)
+          - metavariable-regex:
+              metavariable: $UB
+              regex: (?s)^(?!.*\.\s*(host|scheme|uri|port|userInfo|uriComponents|replacePath|schemeSpecificPart)\s*\((?!\s*"[^"]*"\s*\)))(org\.springframework\.web\.util\.)?UriComponentsBuilder\s*\.\s*fromPath\(\s*"(/[^/\\"{]|[^/:?#\\"{\s]+[/?#])
       # Allow-list lookups yield only values the code holds: Map.of(...) of literals and constants,
       # in a static final field or in place, looked up with get(key) or getOrDefault(key, a
       # literal or constant), and constants of an enum declared in this file. A map filled from

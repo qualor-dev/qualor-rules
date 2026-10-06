@@ -262,17 +262,17 @@ class LoginController {
         response.sendRedirect(contextPath + "?next=" + next);
     }
 
-    // A local path held in a static final field is not recognised as a base.
+    // A local path held in a static final field: whatever follows stays on this site.
     @GetMapping("/home-base")
     String homeBase(@RequestParam String next) {
-        // todook: java.open-redirect
+        // ok: java.open-redirect
         return "redirect:" + HOME + "/" + next;
     }
 
-    // A local path built with UriComponentsBuilder.fromPath is not recognised.
+    // A local path built with UriComponentsBuilder.fromPath: the request data is a query value.
     @GetMapping("/from-path")
     String fromPath(@RequestParam String q) {
-        // todook: java.open-redirect
+        // ok: java.open-redirect
         return "redirect:" + UriComponentsBuilder.fromPath("/search").queryParam("q", q).toUriString();
     }
 
@@ -281,6 +281,84 @@ class LoginController {
     ResponseEntity<Void> headersLambda(@RequestParam String next) {
         // todoruleid: java.open-redirect
         return ResponseEntity.status(HttpStatus.FOUND).headers(h -> h.setLocation(URI.create(next))).build();
+    }
+}
+
+// Static final local-path bases and UriComponentsBuilder.fromPath targets.
+@Controller
+class LocalBaseController {
+    private static final String APP = "/app/";
+    private static final String HOME = "/home";
+    private static final String ROOT = "/";
+    private static final String NETWORK = "//cdn.example.com";
+    private static final String BACKSLASH = "/\\";
+
+    @GetMapping("/local/base")
+    void base(@RequestParam String next, HttpServletResponse response) throws IOException {
+        // ok: java.open-redirect
+        response.sendRedirect(APP + next);
+        // ok: java.open-redirect
+        response.sendRedirect(HOME + next);
+        // ok: java.open-redirect
+        response.sendRedirect(HOME + "?next=" + next);
+        // ok: java.open-redirect
+        response.sendRedirect(String.format("%s/%s", HOME, next));
+        // "/" + "/evil.example" is a network-path reference to another host.
+        // ruleid: java.open-redirect
+        response.sendRedirect(ROOT + next);
+        // ruleid: java.open-redirect
+        response.sendRedirect(String.format("%s%s", ROOT, next));
+        // "//cdn.example.com" + "@evil.example" names another host.
+        // ruleid: java.open-redirect
+        response.sendRedirect(NETWORK + next);
+        // ruleid: java.open-redirect
+        response.sendRedirect(BACKSLASH + next);
+    }
+
+    @GetMapping("/local/view")
+    String view(@RequestParam String next) {
+        // ok: java.open-redirect
+        return "redirect:" + HOME + next;
+    }
+
+    @GetMapping("/local/root-view")
+    String rootView(@RequestParam String next) {
+        // ruleid: java.open-redirect
+        return "redirect:" + ROOT + next;
+    }
+
+    @GetMapping("/local/from-path")
+    void fromPath(@RequestParam String q, @RequestParam String id, HttpServletResponse response) throws IOException {
+        // ok: java.open-redirect
+        response.sendRedirect(UriComponentsBuilder.fromPath("/orders/").path(id).toUriString());
+        // ok: java.open-redirect
+        response.sendRedirect(UriComponentsBuilder.fromPath("/search").queryParam("q", q).fragment(id).build().toUriString());
+        // ok: java.open-redirect
+        response.sendRedirect(UriComponentsBuilder.fromPath("orders/").pathSegment(id).toUriString());
+        // ok: java.open-redirect
+        response.sendRedirect(UriComponentsBuilder.fromPath("/orders/{id}").buildAndExpand(id).toUriString());
+        // The request chooses the path, the host or the whole target.
+        // ruleid: java.open-redirect
+        response.sendRedirect(UriComponentsBuilder.fromPath(q).toUriString());
+        // ruleid: java.open-redirect
+        response.sendRedirect(UriComponentsBuilder.fromPath("/search").replacePath(q).toUriString());
+        // ruleid: java.open-redirect
+        response.sendRedirect(UriComponentsBuilder.fromPath("/search").host(q).toUriString());
+        // ruleid: java.open-redirect
+        response.sendRedirect(UriComponentsBuilder.fromPath("/search").schemeSpecificPart(q).toUriString());
+        // A template variable right after the leading "/" can start the path with "//".
+        // ruleid: java.open-redirect
+        response.sendRedirect(UriComponentsBuilder.fromPath("/{target}").buildAndExpand(q).toUriString());
+        // ruleid: java.open-redirect
+        response.sendRedirect(UriComponentsBuilder.fromPath("/").path(q).toUriString());
+    }
+
+    // A builder kept in a variable is not followed.
+    @GetMapping("/local/from-path-variable")
+    void fromPathVariable(@RequestParam String q, HttpServletResponse response) throws IOException {
+        UriComponentsBuilder target = UriComponentsBuilder.fromPath("/search").queryParam("q", q);
+        // todook: java.open-redirect
+        response.sendRedirect(target.toUriString());
     }
 }
 

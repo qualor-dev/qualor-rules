@@ -73,7 +73,9 @@ public class AfterLoginServlet extends HttpServlet {
 
 <!-- begin: how-to-fix -->
 - Redirect only to local paths or to URLs built from a fixed origin: `"/orders/" + id`,
-  `"redirect:/orders/" + id`, `BASE_URL + "/orders/" + id`.
+  `"redirect:/orders/" + id`, `BASE_URL + "/orders/" + id`, `HOME + id` with a `static final`
+  local path such as `"/app/"`, or
+  `UriComponentsBuilder.fromPath("/search").queryParam("q", q).toUriString()`.
 - Or map the request value to a target from an allow-list (a `Map.of(...)` of constants or an
   enum).
 - A path taken from the request must not start with `//` or `/\`, which browsers read as another
@@ -92,10 +94,12 @@ public class AfterLoginServlet extends HttpServlet {
 - Conditions are not evaluated: a check that the target is a local path (starts with `/` and not
   `//` or `/\`) does not stop the finding.
 - A fixed target is recognised when its text starts with a literal origin followed by `/`, `?` or
-  `#`, a local path, a relative path with a separator, or a `static final` or Spring `@Value` base
-  followed by such a literal. A host constant in the middle of the string, a `static final` local
-  path as the base, `UriComponentsBuilder.fromPath(...)` and a `Location` set in a
-  `ResponseEntity` headers lambda are not recognised.
+  `#`, a local path, a relative path with a separator, a `static final` or Spring `@Value` base
+  followed by such a literal, or a `static final` local path (`"/app"`, not `"/"` alone, `//` or
+  `/\`). A `UriComponentsBuilder.fromPath(...)` target counts when the chain starts from a literal
+  local or relative path and does not replace the path or set the host. A host constant in the
+  middle of the string, a builder kept in a variable and a `Location` set in a `ResponseEntity`
+  headers lambda are not recognised.
 - A `StringBuilder` or `StringBuffer` counts as fixed only when it is created with such a literal
   (or a `static final` field holding one) or gets one in its first append. A builder given its
   start later, edited afterwards (`setLength`, `delete`, `replace`, `insert`, `setCharAt`) or
@@ -121,6 +125,7 @@ public class AfterLoginServlet extends HttpServlet {
 - <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/ResponseEntity.HeadersBuilder.html>
 - <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/HttpHeaders.html>
 - <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-uri-building.html>
+- <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/util/UriComponentsBuilder.html>
 - <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestparam.html>
 - <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-requestmapping.html>
 - <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestbody.html>
