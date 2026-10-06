@@ -555,6 +555,25 @@ func harden(c *http.Cookie) {
 	c.HttpOnly = true
 }
 
+// Helpers are matched by name: a flagless method of one type makes a same-named method of another
+// type, which sets both flags, count as flagless.
+type debugJar struct{}
+
+func (debugJar) visitor(id string) *http.Cookie {
+	return &http.Cookie{Name: "visitor", Value: id}
+}
+
+type liveJar struct{}
+
+func (liveJar) visitor(id string) *http.Cookie {
+	return &http.Cookie{Name: "visitor", Value: id, Secure: true, HttpOnly: true}
+}
+
+func SameNamedHelpers(w http.ResponseWriter, r *http.Request, jar liveJar) {
+	// todook: go.insecure-cookie
+	http.SetCookie(w, jar.visitor(newToken()))
+}
+
 func GinLimits(c *gin.Context) {
 	// Flags set by a helper are not followed.
 	ck := &http.Cookie{Name: "session", Value: newToken()}

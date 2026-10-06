@@ -100,6 +100,8 @@ func newSessionToken() string { return "generated" }
   second cookie, setting a flag between two calls, setting it inside a closure, or assigning
   `false` later can hide an unsafe cookie.
 - Flags set by a helper function (`harden(c)`) are not seen, so such a cookie is reported.
+- Cookie helpers are recognised by name: if two types in the file have methods of the same name
+  and one of them leaves a flag out, calls of the other are reported too.
 - A cookie deleted with another negative `MaxAge` than `-1`, or with an expiry in the past other
   than the epoch, is reported.
 <!-- end: known-limits -->

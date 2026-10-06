@@ -63,6 +63,8 @@ rules:
     #   decided value (`todoruleid:`).
     # - Flags set by a helper function (`harden(c)`) are not followed, so the cookie is reported
     #   (`todook:`).
+    # - Cookie helpers are matched by name, not by type: when two types have methods of the same
+    #   name, a flagless one makes the call of the other reported too (`todook:`).
     # - A cookie deleted with another negative MaxAge than -1, or expired at another past time
     #   than the epoch, is reported (`todook:`).
     paths:
