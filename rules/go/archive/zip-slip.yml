@@ -37,6 +37,12 @@ rules:
         - https://pkg.go.dev/path/filepath#Localize
         - https://pkg.go.dev/path/filepath#Base
         - https://pkg.go.dev/path/filepath#Clean
+        - https://pkg.go.dev/log#Fatal
+        - https://pkg.go.dev/log#Panic
+        - https://pkg.go.dev/log#Logger.Fatal
+        - https://pkg.go.dev/os#Exit
+        - https://go.dev/ref/spec#Break_statements
+        - https://go.dev/ref/spec#Continue_statements
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A prefix check on the joined path (`strings.HasPrefix(target, dst+sep)`) is not followed:
@@ -48,6 +54,10 @@ rules:
     #   (`if !filepath.IsLocal(n) || ...`), one in the if's init statement (`if ok := ...; !ok`), a
     #   guard body of more than three statements, and the true branch of an if that has an else.
     #   A guard that leaves only on some paths, and the else branch, stay reported (`ruleid:`).
+    # - A guard's exit is read from the text of its last statement: a `defer` of an exit counts as
+    #   one although it runs after the write, and so does a `Fatal` of a value that shadows the log
+    #   package (`todoruleid:`); a *log.Logger's Fatal/Panic counts only when the logger is typed in
+    #   the file (a parameter or field), not one from `log.Default()` in a `:=` (`todook:`).
     # - Ad hoc string checks (`strings.Contains(name, "..")`) are not followed: no official doc
     #   describes them, and ".." alone does not cover an absolute name used without a join
     #   (`todook:`).
@@ -115,9 +125,36 @@ rules:
                     $EXIT
                   }
                   ...
+          # An exit: return, continue or break (with or without a label), panic, os.Exit, and the
+          # log package's Fatal* (Print, then os.Exit(1)) and Panic* (Print, then panic).
           - metavariable-regex:
               metavariable: $EXIT
-              regex: ^(return\b|continue\s*$|break\s*$|panic\()
+              regex: ^(return\b|(continue|break)(\s+[A-Za-z_]\w*)?\s*$|panic\(|os\.Exit\(|log\.(Fatal|Fatalf|Fatalln|Panic|Panicf|Panicln)\()
+          - pattern: $X
+      # The same guard ending in the Fatal* or Panic* method of a *log.Logger (typed in the file).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  if !filepath.IsLocal($X) {
+                    ($L : *log.Logger).$M(...)
+                  }
+                  ...
+              - pattern-inside: |
+                  if !filepath.IsLocal($X) {
+                    $S1
+                    ($L : *log.Logger).$M(...)
+                  }
+                  ...
+              - pattern-inside: |
+                  if !filepath.IsLocal($X) {
+                    $S1
+                    $S2
+                    ($L : *log.Logger).$M(...)
+                  }
+                  ...
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Fatal|Fatalf|Fatalln|Panic|Panicf|Panicln)$
           - pattern: $X
       - patterns:
           - pattern-inside: |

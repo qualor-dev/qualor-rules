@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -235,6 +236,87 @@ func checked(zr *zip.Reader, tr *tar.Reader, dst string) error {
 	return nil
 }
 
+// Guards that end the program (log.Fatal*, os.Exit), panic through log.Panic*, or leave the loop
+// by its label.
+func exits(zr *zip.Reader, dst string, logger *log.Logger) {
+	for _, f := range zr.File {
+		if !filepath.IsLocal(f.Name) {
+			log.Fatal("unsafe entry name")
+		}
+		// ok: go.zip-slip
+		os.Create(filepath.Join(dst, f.Name))
+	}
+	for _, f := range zr.File {
+		if !filepath.IsLocal(f.Name) {
+			log.Fatalf("unsafe entry name %q", f.Name)
+		}
+		// ok: go.zip-slip
+		os.MkdirAll(filepath.Join(dst, f.Name), 0o755)
+	}
+	for _, f := range zr.File {
+		if !filepath.IsLocal(f.Name) {
+			fmt.Println("refusing the archive")
+			log.Fatalln("unsafe entry name", f.Name)
+		}
+		// ok: go.zip-slip
+		os.Create(filepath.Join(dst, f.Name))
+	}
+	for _, f := range zr.File {
+		if !filepath.IsLocal(f.Name) {
+			log.Panicf("unsafe entry name %q", f.Name)
+		}
+		// ok: go.zip-slip
+		os.Create(filepath.Join(dst, f.Name))
+	}
+	for _, f := range zr.File {
+		if !filepath.IsLocal(f.Name) {
+			fmt.Println("unsafe entry name", f.Name)
+			os.Exit(2)
+		}
+		// ok: go.zip-slip
+		os.Create(filepath.Join(dst, f.Name))
+	}
+	for _, f := range zr.File {
+		if !filepath.IsLocal(f.Name) {
+			logger.Fatalf("unsafe entry name %q", f.Name)
+		}
+		// ok: go.zip-slip
+		os.Create(filepath.Join(dst, f.Name))
+	}
+entries:
+	for _, f := range zr.File {
+		if !filepath.IsLocal(f.Name) {
+			continue entries
+		}
+		// ok: go.zip-slip
+		os.Create(filepath.Join(dst, f.Name))
+	}
+names:
+	for _, f := range zr.File {
+		if !filepath.IsLocal(f.Name) {
+			fmt.Println("stopping at", f.Name)
+			break names
+		}
+		// ok: go.zip-slip
+		os.Create(filepath.Join(dst, f.Name))
+	}
+	// Logging alone does not leave the loop.
+	for _, f := range zr.File {
+		if !filepath.IsLocal(f.Name) {
+			log.Printf("unsafe entry name %q", f.Name)
+		}
+		// ruleid: go.zip-slip
+		os.Create(filepath.Join(dst, f.Name))
+	}
+	for _, f := range zr.File {
+		if !filepath.IsLocal(f.Name) {
+			logger.Println("unsafe entry name", f.Name)
+		}
+		// ruleid: go.zip-slip
+		os.Create(filepath.Join(dst, f.Name))
+	}
+}
+
 // filepath.Localize returns a local path or an error; filepath.Base and FileInfo().Name() keep
 // only the last element of the name.
 func localized(zr *zip.Reader, dst string) {
@@ -375,6 +457,25 @@ func limits(zr *zip.Reader, dst string) error {
 		// todook: go.zip-slip
 		os.Create(filepath.Join(dst, f.Name))
 	}
+	for _, f := range zr.File {
+		// A *log.Logger the rule cannot type (from log.New or log.Default in a := declaration) is
+		// not taken as exiting.
+		std := log.Default()
+		if !filepath.IsLocal(f.Name) {
+			std.Fatal("unsafe entry name")
+		}
+		// todook: go.zip-slip
+		os.Create(filepath.Join(dst, f.Name))
+	}
+	for _, f := range zr.File {
+		// A deferred exit runs only when the function returns, after the file is created, but the
+		// rule takes it as an exit.
+		if !filepath.IsLocal(f.Name) {
+			defer os.Exit(1)
+		}
+		// todoruleid: go.zip-slip
+		os.Create(filepath.Join(dst, f.Name))
+	}
 	// zip.OpenReader returns ErrInsecurePath only with GODEBUG zipinsecurepath=0 (a //go:debug
 	// line or go.mod); the rule cannot see that setting, so the entries stay reported.
 	r, err := zip.OpenReader("in.zip")
@@ -395,4 +496,19 @@ func limits(zr *zip.Reader, dst string) error {
 		os.Create(filepath.Join(dst, f.Name))
 	}
 	return nil
+}
+
+// A value named log that is not the log package: its Fatal is taken as an exit by its name.
+type auditTrail struct{ lines []string }
+
+func (a *auditTrail) Fatal(v ...any) { a.lines = append(a.lines, fmt.Sprint(v...)) }
+
+func shadowedLog(zr *zip.Reader, dst string, log *auditTrail) {
+	for _, f := range zr.File {
+		if !filepath.IsLocal(f.Name) {
+			log.Fatal("unsafe entry name")
+		}
+		// todoruleid: go.zip-slip
+		os.Create(filepath.Join(dst, f.Name))
+	}
 }

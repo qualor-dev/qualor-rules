@@ -118,6 +118,11 @@ func Unzip(src, dst string) error {
 - An `IsLocal` check is recognised only as a simple guard (`if !filepath.IsLocal(n) { continue }`
   with a short body); one combined with other conditions, written in the `if`'s init statement, or
   in the true branch of an `if` with an `else`, is not, so the code is still reported.
+- The guard must end by leaving: `return`, `continue` or `break` (also with a label), `panic`,
+  `os.Exit`, or `log.Fatal`/`log.Panic` and their `f`/`ln` forms. The same methods of a
+  `*log.Logger` count only when the logger's type is visible in the file (a parameter or a field);
+  one taken from `log.Default()` is still reported. The rule reads the exit by its name, so a
+  deferred `os.Exit`, or a `Fatal` method of another value called `log`, is taken as an exit.
 - A program built with `GODEBUG=zipinsecurepath=0` (where the reader rejects such names) is still
   reported.
 - `os.Chmod`, `os.Chtimes`, `os.Chown` and `os.Lchown` on the entry's path are not checked.
@@ -145,6 +150,12 @@ func Unzip(src, dst string) error {
 - <https://pkg.go.dev/path/filepath#Localize>
 - <https://pkg.go.dev/path/filepath#Base>
 - <https://pkg.go.dev/path/filepath#Clean>
+- <https://pkg.go.dev/log#Fatal>
+- <https://pkg.go.dev/log#Panic>
+- <https://pkg.go.dev/log#Logger.Fatal>
+- <https://pkg.go.dev/os#Exit>
+- <https://go.dev/ref/spec#Break_statements>
+- <https://go.dev/ref/spec#Continue_statements>
 
 ## Tests
 
