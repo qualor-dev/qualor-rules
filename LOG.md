@@ -34,6 +34,7 @@ Entry format:
 - python-1 (python.command-injection, python.sql-injection#allow-list-unify, python.sql-injection#slices, python.ssrf#origin-chain): APPROVED after 1 fix round (python.command-injection shipped, F8 shapes quiet); merged f6e9ccb..05016d4
 - js-1 (js.open-redirect#performance, js.xss#awaited-call-sanitizer, js.prototype-pollution#then-block-only, js.regex-injection#reassign-after-check): APPROVED after 3 fix rounds (open-redirect three.js ~300 s to ~15 s with identical findings; Location-header templates now match); merged ce241c2..11c8cbd
 - go-2 (go.open-redirect#url-producers, go.ssrf#reverse-proxy, go.xss#text-template-buffer, go.weak-cipher#tls-cipher-suites): APPROVED after 2 fix rounds (rulings G2: weak-cipher follows crypto/tls InsecureCipherSuites; G3: oauth2/minio/s3 sanitizers bound to the real import); merged 21ab94c..14d5d89
+- java-2 (java.xss#serialiser-string-var, java.xxe#schema-access, java.open-redirect#local-path-base, java.xpath-injection): APPROVED after 1 fix round (ruling J1: java.xpath-injection ships at Benchmark xpathi FPR 50.0 %, one case over the 47.5 % target, one-method precedent)
 
 ## 2026-10-06: release 2026.10.1 (`/release-pack`)
 
