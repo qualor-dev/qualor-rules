@@ -360,16 +360,155 @@ func EchoV5Login(c *echov5.Context) error {
 	return nil
 }
 
+// A helper of the same file that returns the cookie literal (*http.Cookie or http.Cookie): its
+// flags are read from the literal it returns.
+func newSessionCookie(token string) *http.Cookie {
+	return &http.Cookie{Name: "session", Value: token, Path: "/"}
+}
+
+func themeCookie(theme string) http.Cookie {
+	return http.Cookie{Name: "theme", Value: theme, HttpOnly: true}
+}
+
+func hardenedCookie(token string) *http.Cookie {
+	return &http.Cookie{Name: "session", Value: token, Secure: true, HttpOnly: true}
+}
+
+func configuredCookie(token string) *http.Cookie {
+	return &http.Cookie{Name: "session", Value: token, Secure: cfg.SecureCookies, HttpOnly: cfg.SecureCookies}
+}
+
+func expiredCookie(name string) *http.Cookie {
+	return &http.Cookie{Name: name, Path: "/", MaxAge: -1}
+}
+
+func builtCookie(token string) *http.Cookie {
+	c := &http.Cookie{Name: "session", Value: token}
+	c.Secure = true
+	c.HttpOnly = true
+	return c
+}
+
+type cookieFactory struct{ path string }
+
+func (f cookieFactory) session(token string) *http.Cookie {
+	return &http.Cookie{Name: "session", Value: token, Path: f.path}
+}
+
+func (f cookieFactory) hardened(token string) *http.Cookie {
+	return &http.Cookie{Name: "session", Value: token, Path: f.path, Secure: true, HttpOnly: true}
+}
+
+func Helpers(w http.ResponseWriter, r *http.Request, f cookieFactory) {
+	// ruleid: go.insecure-cookie
+	http.SetCookie(w, newSessionCookie(newToken()))
+	ck := newSessionCookie(newToken())
+	// ruleid: go.insecure-cookie
+	http.SetCookie(w, ck)
+	theme := themeCookie("dark")
+	// ruleid: go.insecure-cookie
+	http.SetCookie(w, &theme)
+	// ruleid: go.insecure-cookie
+	http.SetCookie(w, f.session(newToken()))
+	viaMethod := f.session(newToken())
+	// ruleid: go.insecure-cookie
+	http.SetCookie(w, viaMethod)
+	partly := newSessionCookie(newToken())
+	partly.HttpOnly = true
+	// ruleid: go.insecure-cookie
+	http.SetCookie(w, partly)
+	// ok: go.insecure-cookie
+	http.SetCookie(w, hardenedCookie(newToken()))
+	// ok: go.insecure-cookie
+	http.SetCookie(w, configuredCookie(newToken()))
+	// ok: go.insecure-cookie
+	http.SetCookie(w, expiredCookie("session"))
+	// ok: go.insecure-cookie
+	http.SetCookie(w, builtCookie(newToken()))
+	// ok: go.insecure-cookie
+	http.SetCookie(w, f.hardened(newToken()))
+	// Flags set on the helper's cookie before the call, and a deletion.
+	later := newSessionCookie(newToken())
+	later.Secure = true
+	later.HttpOnly = true
+	// ok: go.insecure-cookie
+	http.SetCookie(w, later)
+	themed := themeCookie("light")
+	themed.Secure = cfg.SecureCookies
+	// ok: go.insecure-cookie
+	http.SetCookie(w, &themed)
+	gone := newSessionCookie("")
+	gone.MaxAge = -1
+	// ok: go.insecure-cookie
+	http.SetCookie(w, gone)
+	// A client-side cookie built by a helper is not set on the response.
+	req, _ := http.NewRequest("GET", "https://api.example.com/", nil)
+	// ok: go.insecure-cookie
+	req.AddCookie(newSessionCookie(newToken()))
+}
+
+// A helper declared after the function that uses it.
+func RememberMe(w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.insecure-cookie
+	http.SetCookie(w, rememberCookie(newToken()))
+}
+
+func rememberCookie(token string) *http.Cookie {
+	return &http.Cookie{
+		Name:     "remember",
+		Value:    token,
+		MaxAge:   30 * 24 * 3600,
+		HttpOnly: true,
+	}
+}
+
+func GinHelpers(c *gin.Context) {
+	// ruleid: go.insecure-cookie
+	c.SetCookieData(newSessionCookie(newToken()))
+	ck := newSessionCookie(newToken())
+	// ruleid: go.insecure-cookie
+	c.SetCookieData(ck)
+	// ok: go.insecure-cookie
+	c.SetCookieData(hardenedCookie(newToken()))
+}
+
+func EchoHelpers(c echo.Context) error {
+	ck := newSessionCookie(newToken())
+	// ruleid: go.insecure-cookie
+	c.SetCookie(ck)
+	// ok: go.insecure-cookie
+	c.SetCookie(hardenedCookie(newToken()))
+	return nil
+}
+
+func EchoV5Helpers(c *echov5.Context) error {
+	// ruleid: go.insecure-cookie
+	c.SetCookie(newSessionCookie(newToken()))
+	return nil
+}
+
 // Known limits.
 
 func sessionCookie(token string) *http.Cookie {
-	return &http.Cookie{Name: "session", Value: token}
+	c := &http.Cookie{Name: "session", Value: token}
+	return c
+}
+
+func cookieOrError(token string) (*http.Cookie, error) {
+	return &http.Cookie{Name: "session", Value: token}, nil
 }
 
 func Limits(w http.ResponseWriter, r *http.Request) {
-	// A cookie built by another function is not followed.
+	// A cookie built by a function of another file or package is not followed, nor one a helper
+	// of this file builds in a variable before returning it.
+	// todoruleid: go.insecure-cookie
+	http.SetCookie(w, store.NewSessionCookie(newToken()))
 	// todoruleid: go.insecure-cookie
 	http.SetCookie(w, sessionCookie(newToken()))
+	// A helper that returns the cookie with an error is not followed.
+	withErr, _ := cookieOrError(newToken())
+	// todoruleid: go.insecure-cookie
+	http.SetCookie(w, withErr)
 	// A Set-Cookie header written by hand is not parsed.
 	// todoruleid: go.insecure-cookie
 	w.Header().Add("Set-Cookie", "session="+newToken()+"; Path=/")

@@ -14,7 +14,8 @@
 Cookies set without the `Secure` flag, without the `HttpOnly` flag, or without both:
 
 - an `http.Cookie` handed to `http.SetCookie` (also through Echo's `c.SetCookie`) whose `Secure`
-  or `HttpOnly` field is missing or `false`;
+  or `HttpOnly` field is missing or `false`, built in the call, in a variable, or by a helper
+  function of the same file that returns the cookie (`http.SetCookie(w, newSessionCookie(token))`);
 - Gin's `c.SetCookie(name, value, maxAge, path, domain, secure, httpOnly)` with `secure` or
   `httpOnly` set to `false`.
 
@@ -92,7 +93,8 @@ func newSessionToken() string { return "generated" }
 ## Known limits
 
 <!-- begin: known-limits -->
-- Cookies built in another function (`http.SetCookie(w, newCookie())`) or passed in as a parameter,
+- Cookies built by a function of another file or package, by a helper that fills a variable
+  before returning it or returns the cookie together with an error, or passed in as a parameter,
   and `Set-Cookie` headers written by hand, are not checked.
 - Flags set on a variable after the literal are tracked only roughly: reusing one variable for a
   second cookie, setting a flag between two calls, setting it inside a closure, or assigning

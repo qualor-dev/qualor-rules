@@ -34,9 +34,11 @@ rules:
     # A hotspot: what the cookie holds decides whether the missing flag matters. Reported where
     # the cookie is set: http.SetCookie, Gin's Context.SetCookie and Context.SetCookieData, and
     # Echo's Context.SetCookie, with the cookie built in the call or in a variable of the same
-    # function (a literal, new(http.Cookie) or `var c http.Cookie`). A flag counts as set when
-    # the literal, or an assignment before the call at any depth (if, else, switch, loop), gives
-    # it any value but the literal false: a value from configuration or from the request is
+    # function (a literal, new(http.Cookie) or `var c http.Cookie`), or returned by a helper of
+    # the same file (a function or method returning a cookie literal, declared before or after
+    # its use: its literal's flags count, and flags assigned by the caller too). A flag counts as
+    # set when the literal, or an assignment before the call at any depth (if, else, switch,
+    # loop), gives it any value but the literal false: a value from configuration or from the request is
     # reviewed where it is decided. A cookie that deletes itself (MaxAge: -1 in the literal or
     # assigned in the same block before the call, Gin's maxAge -1, or Expires at the epoch,
     # time.Unix(0, 0)) holds nothing and is not reported; a deletion on one path only (inside an
@@ -44,8 +46,9 @@ rules:
     # import and type: v4 with echo.Context, v5 with *echo.Context. Test code (*_test.go) is left
     # out.
     # Known limits (each has a `todo` line in the test file):
-    # - A cookie built by another function (`http.SetCookie(w, newCookie())`) or passed in as a
-    #   parameter is not followed (`todoruleid:`).
+    # - A cookie built by a function of another file or package, by a helper of this file that
+    #   builds it in a variable before returning it, or by one that returns it with an error, or
+    #   passed in as a parameter, is not followed (`todoruleid:`).
     # - A Set-Cookie header written by hand (`w.Header().Add("Set-Cookie", ...)`) is not parsed
     #   (`todoruleid:`).
     # - A variable reused for a second cookie keeps what its first literal set: flags or a
@@ -91,6 +94,67 @@ rules:
                   - pattern: '($E : *echo.Context).SetCookie(&$CK)'
           - metavariable-pattern:
               metavariable: $CK
+              patterns:
+                - pattern: http.Cookie{...}
+                - pattern-either:
+                    - pattern: 'http.Cookie{..., Secure: false, ...}'
+                    - pattern: 'http.Cookie{..., HttpOnly: false, ...}'
+                    - patterns:
+                        - pattern: http.Cookie{...}
+                        - pattern-not: 'http.Cookie{..., Secure: $SV, ...}'
+                    - patterns:
+                        - pattern: http.Cookie{...}
+                        - pattern-not: 'http.Cookie{..., HttpOnly: $HV, ...}'
+                - pattern-not: 'http.Cookie{..., MaxAge: -1, ...}'
+                - pattern-not: 'http.Cookie{..., Expires: time.Unix(0, 0), ...}'
+      # The cookie returned by a helper of the same file (a function or a method, declared before
+      # or after its use) that returns a cookie literal: the flags are read from that literal.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      import "net/http"
+                      ...
+                  - pattern-either:
+                      - pattern: http.SetCookie($W, $HELPER(...))
+                      - pattern: http.SetCookie($W, $OBJ.$HELPER(...))
+              - patterns:
+                  - pattern-inside: |
+                      import "github.com/gin-gonic/gin"
+                      ...
+                  - pattern-either:
+                      - pattern: '($G : *gin.Context).SetCookieData($HELPER(...))'
+                      - pattern: '($G : *gin.Context).SetCookieData($OBJ.$HELPER(...))'
+              - patterns:
+                  - pattern-inside: |
+                      import "github.com/labstack/echo/v4"
+                      ...
+                  - pattern-either:
+                      - pattern: '($E : echo.Context).SetCookie($HELPER(...))'
+                      - pattern: '($E : echo.Context).SetCookie($OBJ.$HELPER(...))'
+              - patterns:
+                  - pattern-inside: |
+                      import "github.com/labstack/echo/v5"
+                      ...
+                  - pattern-either:
+                      - pattern: '($E : *echo.Context).SetCookie($HELPER(...))'
+                      - pattern: '($E : *echo.Context).SetCookie($OBJ.$HELPER(...))'
+          - pattern-either: &helper-decl
+              - pattern-inside: |
+                  func $HELPER(...) $RET {
+                    ...
+                    return $RL
+                  }
+                  ...
+              - pattern-inside: |
+                  func $F(...) { ... }
+                  ...
+                  func $HELPER(...) $RET {
+                    ...
+                    return $RL
+                  }
+          - metavariable-pattern:
+              metavariable: $RL
               patterns:
                 - pattern: http.Cookie{...}
                 - pattern-either:
@@ -186,6 +250,27 @@ rules:
                       - pattern-inside: |
                           var $CK http.Cookie
                           ...
+                      # From a helper of the file whose literal leaves Secure unset or false.
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $CK = $HELPER(...)
+                                  ...
+                              - pattern-inside: |
+                                  $CK = $OBJ.$HELPER(...)
+                                  ...
+                          - pattern-either: *helper-decl
+                          - metavariable-pattern:
+                              metavariable: $RL
+                              patterns:
+                                - pattern: http.Cookie{...}
+                                - pattern-either:
+                                    - pattern: 'http.Cookie{..., Secure: false, ...}'
+                                    - patterns:
+                                        - pattern: http.Cookie{...}
+                                        - pattern-not: 'http.Cookie{..., Secure: $SV, ...}'
+                                - pattern-not: 'http.Cookie{..., MaxAge: -1, ...}'
+                                - pattern-not: 'http.Cookie{..., Expires: time.Unix(0, 0), ...}'
                   # Secure set before the call, at any depth (if, else, switch, loop).
                   - pattern-not-inside: |
                       $CK = $INIT
@@ -255,6 +340,27 @@ rules:
                       - pattern-inside: |
                           var $CK http.Cookie
                           ...
+                      # From a helper of the file whose literal leaves HttpOnly unset or false.
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $CK = $HELPER(...)
+                                  ...
+                              - pattern-inside: |
+                                  $CK = $OBJ.$HELPER(...)
+                                  ...
+                          - pattern-either: *helper-decl
+                          - metavariable-pattern:
+                              metavariable: $RL
+                              patterns:
+                                - pattern: http.Cookie{...}
+                                - pattern-either:
+                                    - pattern: 'http.Cookie{..., HttpOnly: false, ...}'
+                                    - patterns:
+                                        - pattern: http.Cookie{...}
+                                        - pattern-not: 'http.Cookie{..., HttpOnly: $HV, ...}'
+                                - pattern-not: 'http.Cookie{..., MaxAge: -1, ...}'
+                                - pattern-not: 'http.Cookie{..., Expires: time.Unix(0, 0), ...}'
                   # HttpOnly set before the call, at any depth (if, else, switch, loop).
                   - pattern-not-inside: |
                       $CK = $INIT
