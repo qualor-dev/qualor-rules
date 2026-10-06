@@ -650,9 +650,15 @@ func (l *Links) ProducerLookAlikes(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, noHostAfterAt.String(), http.StatusFound)
 }
 
+// A base URL parsed in a var declaration (here at package level) is not recognised as a
+// JoinPath receiver.
+var publicBase, _ = url.Parse(siteRoot)
+
 // Producers that are not followed.
 func (l *Links) UnfollowedProducers(w http.ResponseWriter, r *http.Request) {
 	p := r.FormValue("p")
+	// todook: go.open-redirect
+	http.Redirect(w, r, publicBase.JoinPath("items", p).String(), http.StatusFound)
 	// The request's own URL copied, with a fixed scheme and host (an HTTPS upgrade).
 	upgrade := *r.URL
 	upgrade.Scheme = "https"

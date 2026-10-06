@@ -82,18 +82,20 @@ rules:
     #   RawQuery, Fragment, RawFragment and User), the same fields assigned to a url.URL built
     #   with such a host or parsed from a fixed origin (scheme and a host, no "@" first) or a
     #   configuration variable or field, JoinPath elements of url.JoinPath and of a net/url URL
-    #   (typed, or parsed or built in the function), and, in a file that imports the library,
-    #   the arguments of an oauth2 Config's AuthCodeURL, the object name and parameters of
-    #   minio's PresignedGetObject/HeadObject, and every field but Bucket of an s3
-    #   GetObjectInput/HeadObjectInput. A host, scheme, opaque part, bucket, JoinPath base or
-    #   Config from the request is still reported, and so is a JoinPath method of another type.
-    #   Not followed: a url.URL declared empty and given its host field by field, a copy of the
-    #   request's URL given a fixed scheme and host (`u := *r.URL; u.Host = ...`), the real
-    #   minio package imported under another name, and an oauth2 Config field whose name a local
-    #   variable also has (OpenGrep 1.30.0 gives the field the local's type) (`todook:`); an s3
-    #   input field read back as the target (`*in.Key`), and a package of another path whose
-    #   last element is oauth2, minio or s3 imported under an alias in a file that also imports
-    #   the real one, count as clean (`todoruleid:`).
+    #   (typed, or parsed or built in the function with `:=` or `=`), and, in a file that
+    #   imports the library, the arguments of an oauth2 Config's AuthCodeURL, the object name
+    #   and parameters of minio's PresignedGetObject/HeadObject, and every field but Bucket of
+    #   an s3 GetObjectInput/HeadObjectInput. A host, scheme, opaque part, bucket, JoinPath base
+    #   or Config from the request is still reported, and so is a JoinPath method of another
+    #   type. Not followed: a URL parsed in a `var u, err = url.Parse(...)` declaration (package
+    #   or function level; OpenGrep 1.30.0 does not match the declaration as a sequence) and
+    #   used as a JoinPath receiver, a url.URL declared empty and given its host field by field,
+    #   a copy of the request's URL given a fixed scheme and host (`u := *r.URL; u.Host = ...`),
+    #   the real minio package imported under another name, and an oauth2 Config field whose
+    #   name a local variable also has (OpenGrep 1.30.0 gives the field the local's type)
+    #   (`todook:`); an s3 input field read back as the target (`*in.Key`), and a package of
+    #   another path whose last element is oauth2, minio or s3 imported under an alias in a
+    #   file that also imports the real one, count as clean (`todoruleid:`).
     # - The request's own path (`r.URL.Path`, `RequestURI()`) after a base, and anything after a
     #   literal "?" or "#", are clean; `r.URL.Path` at the start of the target is not, since it
     #   can start with "//".
