@@ -2,7 +2,7 @@
 
 # Qualor security rules
 
-The security rules of Qualor's `qualor` engine, 51 in all. Each page says what the rule finds, why
+The security rules of Qualor's `qualor` engine, 52 in all. Each page says what the rule finds, why
 it matters, how to fix it, what the rule misses or may wrongly report, and shows a short example.
 Qualor links every finding to its page.
 
@@ -59,6 +59,7 @@ The key `qualor:<lang>/<name>` is how Qualor names a rule; the rule itself is
 | [`qualor:java/ldap-injection`](java/ldap-injection.md) | LDAP search filter built from HTTP request data (Java) | Issue | High | [CWE-90](https://cwe.mitre.org/data/definitions/90.html) |
 | [`qualor:java/open-redirect`](java/open-redirect.md) | Redirect to a URL from HTTP request data (Java) | Issue | Medium | [CWE-601](https://cwe.mitre.org/data/definitions/601.html) |
 | [`qualor:java/path-traversal`](java/path-traversal.md) | File path built from HTTP request data (Java) | Issue | High | [CWE-22](https://cwe.mitre.org/data/definitions/22.html) |
+| [`qualor:java/regex-injection`](java/regex-injection.md) | Regular expression built from HTTP request data (Java) | Issue | Medium | [CWE-1333](https://cwe.mitre.org/data/definitions/1333.html), [CWE-400](https://cwe.mitre.org/data/definitions/400.html) |
 | [`qualor:java/sql-injection`](java/sql-injection.md) | SQL statement built from HTTP request data (Java) | Issue | High | [CWE-89](https://cwe.mitre.org/data/definitions/89.html) |
 | [`qualor:java/ssrf`](java/ssrf.md) | Server-side request to a URL from HTTP request data (Java) | Issue | High | [CWE-918](https://cwe.mitre.org/data/definitions/918.html) |
 | [`qualor:java/template-injection`](java/template-injection.md) | Template text built from HTTP request data (Java) | Issue | High | [CWE-1336](https://cwe.mitre.org/data/definitions/1336.html), [CWE-94](https://cwe.mitre.org/data/definitions/94.html) |

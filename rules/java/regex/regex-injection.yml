@@ -1,0 +1,179 @@
+rules:
+  - id: java.regex-injection
+    mode: taint
+    languages: [java]
+    severity: WARNING
+    message: >-
+      Data from the HTTP request is used as a regular expression (Pattern.compile, Pattern.matches,
+      or the String methods matches, replaceAll, replaceFirst, split and splitWithDelimiters). A
+      crafted pattern such as `(a+)+$` can make java.util.regex backtrack for an exponential time
+      and tie up the server (ReDoS), or match more than intended. Quote request text with
+      Pattern.quote() (or compile it with the Pattern.LITERAL flag), pick the pattern from a fixed
+      allow-list, or match the request data against a constant pattern instead.
+    metadata:
+      title: Regular expression built from HTTP request data (Java)
+      cwe: ['CWE-1333', 'CWE-400']
+      owasp: []
+      kind: issue
+      severity: medium
+      confidence: high
+      frameworks: [servlet, spring-mvc, jax-rs]
+      sources:
+        - https://cwe.mitre.org/data/definitions/1333.html
+        - https://cwe.mitre.org/data/definitions/400.html
+        - https://owasp.org/www-community/attacks/Regular_expression_Denial_of_Service_-_ReDoS
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/regex/Pattern.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/regex/Matcher.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/String.html
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/servletrequest
+        - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/arguments.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestparam.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestbody.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html
+        - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/multipart-forms.html
+        - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/bind/annotation/RequestPart.html
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/pathparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/apidocs/jakarta.ws.rs/jakarta/ws/rs/queryparam
+        - https://jakarta.ee/specifications/restful-ws/3.1/jakarta-restful-ws-spec-3.1
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html
+      since: 2026.10.2
+    # Known limits (each has a `todo` line in the test file):
+    # - A handler parameter without an annotation is not a source (the Jakarta REST entity
+    #   parameter, a Spring MVC simple-type parameter), except a Spring MVC HttpEntity or
+    #   RequestEntity (the request body and headers); and only the scalar types of the source
+    #   block count as safe: an enum, a `List<Long>` or an `Optional<Long>` parameter is still a
+    #   source, as in java.sql-injection.
+    # - One method is analysed at a time and conditions are not evaluated: a helper method of the
+    #   same class that returns a constant still passes the request data on, and a switch over a
+    #   constant still counts its request-data branch; a wrapper class that reads the request (in
+    #   this file or another) is not a source.
+    # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
+    #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
+    #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
+    #   and valueOf of an enum from another file still pass the request data on. An enum of this
+    #   file counts only when a class comes before it or after it (or contains it and another
+    #   class comes before): an enum nested in a file's only class is not recognised.
+    # - A pattern first checked against a constant pattern (`if (!q.matches("[\\w ]+")) return;`)
+    #   is still reported.
+    # - The String methods are sinks only on a receiver whose type is visible as String (a typed
+    #   variable, parameter or field, a literal): on a `var` or a call result they are missed,
+    #   because matches, split and replaceAll are also method names of other libraries.
+    # - Other APIs that take a pattern as text (java.util.Scanner's findInLine, hasNext, next,
+    #   skip and useDelimiter; regex helpers of other libraries) are not checked.
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.servlet.ServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.ServletRequest $R).$GET(...)
+              - pattern: (javax.servlet.http.HttpServletRequest $R).$GET(...)
+              - pattern: (jakarta.servlet.http.HttpServletRequest $R).$GET(...)
+          - metavariable-regex:
+              metavariable: $GET
+              regex: ^(getParameter|getParameterValues|getParameterMap|getParameterNames|getHeader|getHeaders|getHeaderNames|getQueryString|getCookies|getRequestURI|getRequestURL|getPathInfo|getReader|getInputStream|getPart|getParts)$
+      # Spring MVC and Jakarta REST: the controller-method parameters bound from the request
+      # (query, path, matrix, header, cookie, form, body, multipart part, model attribute).
+      # Numbers, booleans, UUIDs and dates are converted by the framework and cannot carry
+      # injected text.
+      - patterns:
+          # @$ANN(...) also matches an annotation written without parentheses.
+          - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $ANN
+              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|RequestPart|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+          - pattern: $P
+      # Spring MVC: an HttpEntity or RequestEntity parameter holds the request body.
+      - patterns:
+          # @$MAP(...) also matches a mapping annotation written without parentheses.
+          - pattern-inside: |
+              @$MAP(...)
+              $RET $M(..., $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $MAP
+              regex: ^(\w+\.)*(Get|Post|Put|Delete|Patch|Request)Mapping$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(org\.springframework\.http\.)?(HttpEntity|RequestEntity)\s*<
+          - pattern: $P
+    pattern-propagators:
+      # Pattern text assembled with a StringBuilder or StringBuffer.
+      - pattern: $SB.append($X)
+        from: $X
+        to: $SB
+      # ... also later in an append chain.
+      - pattern: $SB.append(...). ... .append($X)
+        from: $X
+        to: $SB
+    pattern-sanitizers:
+      - pattern: Integer.parseInt(...)
+      - pattern: Long.parseLong(...)
+      - pattern: Integer.valueOf(...)
+      - pattern: Long.valueOf(...)
+      # Allow-list lookups yield only values the code holds: Map.of(...) of literals and constants,
+      # in a static final field or in place, looked up with get(key) or getOrDefault(key, a
+      # literal or constant), and constants of an enum declared in this file. A map filled from
+      # request data, or a lookup whose fallback is request data, stays tainted.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final $MT $MAP = $INIT; ... }
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+          - pattern-either:
+              - pattern: $MAP.get($K)
+              - patterns:
+                  - pattern: $MAP.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+      - patterns:
+          - pattern-either:
+              - pattern: $INIT.get($K)
+              - patterns:
+                  - pattern: $INIT.getOrDefault($K, $D)
+                  - metavariable-regex:
+                      metavariable: $D
+                      regex: ^("([^"\\]|\\.)*"|-?\d+(\.\d+)?|true|false|null|[A-Z][A-Z0-9_]*|([A-Z]\w*\.)+[A-Z][A-Z0-9_]*)$
+          - metavariable-regex:
+              metavariable: $INIT
+              regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
+      - pattern: Enum.valueOf(...)
+      - pattern: java.lang.Enum.valueOf(...)
+      - patterns:
+          # An enum nested in a class is matched by the class-then-enum form too.
+          - pattern-either:
+              - pattern-inside: |
+                  class $X { ... }
+                  ...
+                  enum $E { ... }
+              - pattern-inside: |
+                  enum $E { ... }
+                  ...
+                  class $X { ... }
+          - pattern: $E.valueOf(...)
+      # Pattern.quote makes the text a literal pattern.
+      - pattern: java.util.regex.Pattern.quote(...)
+    pattern-sinks:
+      # The pattern argument of Pattern.compile and Pattern.matches, unless compiled with the
+      # LITERAL flag (metacharacters have no special meaning then).
+      - patterns:
+          - pattern-either:
+              - pattern: java.util.regex.Pattern.compile($RE, ...)
+              - pattern: java.util.regex.Pattern.matches($RE, $INPUT)
+          - pattern-not: java.util.regex.Pattern.compile($RE, <... java.util.regex.Pattern.LITERAL ...>)
+          - focus-metavariable: $RE
+      # The regex argument of the String methods that compile one (String javadoc: equivalent to
+      # Pattern.matches, Pattern.compile(regex).matcher(str).replaceAll, ... and split). The
+      # receiver must be a String: other libraries have methods with these names.
+      - patterns:
+          - pattern-either:
+              - pattern: (String $S).$M($RE, ...)
+              - pattern: (java.lang.String $S).$M($RE, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(matches|replaceAll|replaceFirst|split|splitWithDelimiters)$
+          - focus-metavariable: $RE
