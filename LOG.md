@@ -32,7 +32,7 @@ Entry format:
 - go-1 (go.command-injection#encoded-command, go.path-traversal#test-support, go.sql-injection#bind-in-comparison, go.open-redirect#validator-guard): APPROVED after 1 fix round (ruling G1: prefix checks without a backslash check stay reported); merged f64739c..4cc19dd
 - java-1 (java.sql-injection#source-block-align, java.sql-injection#source-block-trim, java.sql-injection#request-part, java.ssrf#backslash): APPROVED after 2 fix rounds (Benchmark unchanged); merged efcec39..4391a36
 - python-1 (python.command-injection, python.sql-injection#allow-list-unify, python.sql-injection#slices, python.ssrf#origin-chain): APPROVED after 1 fix round (python.command-injection shipped, F8 shapes quiet); merged f6e9ccb..05016d4
-- js-1 (js.open-redirect#performance, js.xss#awaited-call-sanitizer, js.prototype-pollution#then-block-only, js.regex-injection#reassign-after-check): APPROVED after 3 fix rounds (open-redirect three.js ~300 s to ~15 s with identical findings; Location-header templates now match)
+- js-1 (js.open-redirect#performance, js.xss#awaited-call-sanitizer, js.prototype-pollution#then-block-only, js.regex-injection#reassign-after-check): APPROVED after 3 fix rounds (open-redirect three.js ~300 s to ~15 s with identical findings; Location-header templates now match); merged ce241c2..11c8cbd
 
 ## 2026-10-06: release 2026.10.1 (`/release-pack`)
 
