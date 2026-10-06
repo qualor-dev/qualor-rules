@@ -389,6 +389,20 @@ func (h *Handler) GinBindInCondition(c *gin.Context) {
 		// ok: go.sql-injection
 		h.db.Query("SELECT * FROM items ORDER BY price")
 	}
+	// Other comparisons with nil, and calls that fill a variable, stay booleans.
+	multi := c.QueryArray("color") != nil
+	// ok: go.sql-injection
+	h.db.Query(fmt.Sprintf("SELECT * FROM items WHERE colored = %t", multi))
+	var stock int
+	known := h.db.QueryRow("SELECT stock FROM items WHERE name = ?", c.Query("item")).Scan(&stock) == nil
+	// ok: go.sql-injection
+	h.db.Exec(fmt.Sprintf("UPDATE lookups SET found = %t", known))
+	// The success flag of a bind call is reported: the comparison holds the bind call, and
+	// the call's result counts as request data.
+	var draft SortInput
+	parsed := c.ShouldBindJSON(&draft) == nil
+	// todook: go.sql-injection
+	h.db.Exec(fmt.Sprintf("UPDATE drafts SET valid = %t", parsed))
 }
 
 func (h *Handler) EchoBindInCondition(c echo.Context) error {

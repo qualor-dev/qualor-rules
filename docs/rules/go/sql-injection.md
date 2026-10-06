@@ -109,6 +109,8 @@ func (h *Handler) Orders(w http.ResponseWriter, r *http.Request) {
 - Numeric struct fields count as safe only when the struct is declared in the same file; a named
   numeric type (`type Status int`) still counts as request data, and a number turned back into a
   character (`string(rune(n))`) is missed.
+- The success flag of a bind or decode call (`ok := c.ShouldBindJSON(&x) == nil`) still counts
+  as request data, so formatting it into a query is reported.
 <!-- end: known-limits -->
 
 ## References
