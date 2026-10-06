@@ -50,7 +50,9 @@ rules:
     #   (`import * as widgets`, then `await widgets.drawWidget(req.params.id)`). An awaited helper
     #   that is given the response object (`await renderCard(id, res)`) is clean, also when it
     #   returns the request value. A method named like a function the file imports by name stays
-    #   request data.
+    #   request data. When a function is passed to such a call (`await cache.wrap(key, async ()
+    #   => ...)`, `await db.transaction(async (t) => { ... })`), only the value of the call is
+    #   clean: what is written inside the callback is checked as usual.
     # - res.send() of a variable first assigned an object or array literal is taken for JSON, also
     #   when the variable is later given a string.
     # - A Fastify handler whose reply parameter is named res is taken for an Express handler, so a
@@ -321,6 +323,32 @@ rules:
           - pattern-not-inside: |
               const {..., $M: $ALIAS, ...} = require($FROM);
               ...
+      # The same results when a function is passed to the call (`await cache.wrap(key, async () =>
+      # build())`, `await Item.find({...}).sort((a, b) => a.n - b.n)`): only the value of the call
+      # itself is clean (exact), so a sink written inside the callback is still reported.
+      - exact: true
+        patterns:
+          - pattern-either:
+              - pattern: 'await $OBJ.$M(..., <... function (...) { ... } ...>, ...)'
+              - pattern: 'await $OBJ.$M(..., {..., $K(...) { ... }, ...}, ...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(?!(?:render\w*|parse|compile\w*|html\w*|toHtml|markdown\w*|format\w*|template\w*|translate|t|resolve|all|any|race|allSettled)$)
+          - metavariable-regex:
+              metavariable: $OBJ
+              regex: ^(?!(?:res|resp|response|reply|rep|_res|_response)\b)
+          - pattern-not-inside: |
+              import {..., $M, ...} from $FROM;
+              ...
+          - pattern-not-inside: |
+              import {$M as $ALIAS} from $FROM;
+              ...
+          - pattern-not-inside: |
+              const {..., $M, ...} = require($FROM);
+              ...
+          - pattern-not-inside: |
+              const {..., $M: $ALIAS, ...} = require($FROM);
+              ...
       # An awaited helper that is given the handler's response object writes its own answer
       # (`await renderProfile(user, res)`): its result is not sent as HTML by the handler.
       - patterns:
@@ -334,6 +362,17 @@ rules:
           # pattern also matches arrow functions.
           - pattern-not: 'await $F(..., <... function (...) { ... } ...>, ...)'
           - pattern-not: 'await $F(..., {..., $K(...) { ... }, ...}, ...)'
+      # The same helper when a function is passed to it: only the value of the call itself is
+      # clean (exact), so a sink written inside the callback is still reported.
+      - exact: true
+        patterns:
+          - pattern-either:
+              - pattern: 'await $F(..., <... function (...) { ... } ...>, ...)'
+              - pattern: 'await $F(..., {..., $K(...) { ... }, ...}, ...)'
+          - pattern: await $F(..., $RESARG, ...)
+          - metavariable-regex:
+              metavariable: $RESARG
+              regex: ^(?:res|resp|response|reply|rep|_res|_response)$
       # Comparisons and negations give booleans, which Express sends as JSON.
       - pattern-either:
           - pattern: $A === $B

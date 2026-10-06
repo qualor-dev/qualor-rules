@@ -311,6 +311,27 @@ app.post('/tx-page', async (req, res) => {
   });
 });
 
+// The value of an awaited call that is given a callback stays stored data, and so does a lookup
+// awaited inside the callback.
+const pageCache = { wrap: async (key, build) => build() };
+const Items = { find: (query) => ({ sort: async (compare) => [] }) };
+app.get('/cached/:key', async (req, res) => {
+  const page = await pageCache.wrap(req.params.key, async () => '<p>built</p>');
+  // ok: js.xss
+  res.send(page);
+  const rows = await Items.find({ q: req.query.q }).sort((a, b) => a.n - b.n);
+  // ok: js.xss
+  res.send('<ul>' + rows.join('') + '</ul>');
+  await txdb.transaction(async (t) => {
+    const user = await t.users.findOne({ id: req.params.key });
+    // ok: js.xss
+    res.send('<p>' + user.bio + '</p>');
+  });
+  const card = await runStep(res, req.query.step, () => 'done');
+  // ok: js.xss
+  res.send(card);
+});
+
 // An awaited sink is still a sink.
 app.get('/await-send', async (req, res) => {
   if (req.query.a) {
