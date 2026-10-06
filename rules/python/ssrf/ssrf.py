@@ -31,6 +31,7 @@ API_ROOT = "https://api.example.com/"
 API_V2 = "https://api.example.com/v2/"
 API_HOST = "api.example.com"
 SCHEME = "https:"
+ROOT_PATH = "/"
 ENV_API_URL = os.environ.get("API_URL", "https://api.example.com")
 # Changed later by a view, so not an allow-list.
 PARTNERS = {"acme": "https://acme.example.com/hook"}
@@ -311,6 +312,16 @@ def chains(uid):
     requests.get(f"{API_BASE}{uid}/posts")
     # ruleid: python.ssrf
     requests.get(SCHEME + "//" + uid + "/avatar")
+    # A constant that holds only a scheme, or only "/", is no origin: the request value sets the
+    # host (uid = "/evil.example").
+    # ruleid: python.ssrf
+    requests.get(SCHEME + "/" + uid)
+    # ruleid: python.ssrf
+    requests.get(f"{SCHEME}/{uid}")
+    # ruleid: python.ssrf
+    requests.get("{}/{}".format(SCHEME, uid))
+    # ruleid: python.ssrf
+    requests.get(ROOT_PATH + "/" + uid)
     # A longer chain than the rule models.
     # todook: python.ssrf
     requests.get(API_ROOT + "a/" + uid + "/" + page + "/" + page + "/" + page)

@@ -89,8 +89,8 @@ def preview():
 <!-- begin: known-limits -->
 - A `requests.Session`, `httpx.Client` or `aiohttp.ClientSession` is checked only when it is made
   in the same function; a client from a helper, a parameter or a module global is not followed.
-- A fixed origin is recognised as a literal URL, an upper-case constant (also one imported from a
-  configuration module) followed by a literal `/`, `?` or `#`, a constant whose value already
+- A fixed origin is recognised as a literal URL, an upper-case constant (a literal with a scheme
+  and a host, or one imported from a configuration module) followed by a literal `/`, `?` or `#`, a constant whose value already
   has a `/` after the host, a Django setting, or `urljoin()` of one of these and a relative
   literal; concatenations are followed up to seven parts. A longer chain, `%`-formatting with a
   constant origin and `"https://" + HOST + ...` are reported.
