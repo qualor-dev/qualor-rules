@@ -1,0 +1,617 @@
+rules:
+  - id: python.command-injection
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches an operating system command: run by a shell (os.system,
+      os.popen, `shell=True`, create_subprocess_shell, or a shell program such as `sh -c`), its
+      shell metacharacters can start other commands, and as the program it runs whatever the
+      client names. Run a fixed program with an argument list and no shell
+      (`subprocess.run(["git", "log", ref])`), pick values from an allow-list, and quote what must
+      go into a shell command with `shlex.quote()`.
+    metadata:
+      title: OS command built from HTTP request data (Python)
+      cwe: ['CWE-78']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [flask, django, fastapi, subprocess, asyncio]
+      sources:
+        - https://cwe.mitre.org/data/definitions/78.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html
+        - https://top10.owasp.org/2025/A05_2025-Injection/
+        - https://top10.owasp.org/2021/A03_2021-Injection/
+        - https://docs.python.org/3/library/subprocess.html
+        - https://docs.python.org/3/library/subprocess.html#security-considerations
+        - https://docs.python.org/3/library/subprocess.html#subprocess.getstatusoutput
+        - https://docs.python.org/3/library/os.html#os.system
+        - https://docs.python.org/3/library/os.html#os.popen
+        - https://docs.python.org/3/library/asyncio-subprocess.html
+        - https://docs.python.org/3/library/asyncio-eventloop.html#running-subprocesses
+        - https://docs.python.org/3/library/shlex.html
+        - https://pubs.opengroup.org/onlinepubs/9799919799/utilities/sh.html
+        - https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd
+        - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh
+        - https://peps.python.org/pep-0008/#constants
+        - https://flask.palletsprojects.com/en/stable/api/#flask.Request
+        - https://flask.palletsprojects.com/en/stable/quickstart/#variable-rules
+        - https://docs.djangoproject.com/en/stable/ref/request-response/
+        - https://docs.djangoproject.com/en/stable/topics/http/urls/
+        - https://docs.djangoproject.com/en/stable/ref/class-based-views/base/
+        - https://fastapi.tiangolo.com/tutorial/body/
+        - https://fastapi.tiangolo.com/tutorial/query-params-str-validations/
+        - https://fastapi.tiangolo.com/advanced/using-request-directly/
+      since: 2026.10.2
+    # Known limits (each has a `todo` line in the test file):
+    # - An allow-list check before the call (`if tool not in ("uptime", "df"): return`) is not
+    #   recognised. An allow-list is a lookup (`.get()` or `[...]`) in a dict literal of literal
+    #   keys and values (strings, numbers, True/False/None, lists or tuples of them; comments
+    #   allowed) assigned to an upper-case (constant) name that the module never changes or
+    #   assigns again, with no default or a literal/constant default for get(); or a ternary of
+    #   constants.
+    # - OpenGrep does not carry taint through a slice (`request.args["cmd"][:100]`).
+    # - With shell=True, only the first element of an argument list is taken for shell code, as
+    #   on POSIX (the others are the shell's $0, $1, ...); on Windows the list is joined into one
+    #   command line for cmd.exe. shlex.quote() counts as escaping also in a `cmd /c` command,
+    #   although it escapes for POSIX shells only.
+    # - A shell program's command (`sh -c`, `cmd /c`, `powershell -Command`) is followed when the
+    #   argument list is written in the call; a list built before the call is not.
+    # - Without a shell, a program string is recognised when it is visibly a string (it starts or
+    #   ends with a string literal, or is built with str() or os.path.join()), a request value
+    #   itself (`request.args["p"]`, a JSON body field, `shlex.split()` or `.split()` of one), a
+    #   parameter of the view or one of its attributes, or a variable assigned one of these in the
+    #   function. A program concatenated from names only (`TOOL_DIR + tool`) is missed. A variable
+    #   that held request data and then an argument list with a fixed program is still taken for
+    #   the request value; with a shell, a helper's argument list is taken for a command string.
+    # - os.exec*() and os.spawn*() are not covered.
+    # - Sources are the Python SQL rule's block. A Flask route parameter with a typed converter
+    #   (`<int:n>`) is still a source: the converter is in the URL rule, not in the function.
+    #   FastAPI parameters annotated int, float or bool (also `Annotated[int, ...]`), and
+    #   dependencies (`= Depends()`, `= Security()`, `Annotated[T, Depends()]` in place or through
+    #   a module-level alias) are not sources; so a Flask view parameter annotated int is not one
+    #   either, although Flask passes a str for a rule without a converter.
+    # - Django views are recognised in a module that imports Django, by their signature (a
+    #   function whose first parameter is named `request`, or a class's get()/post()/... method
+    #   taking `(self, request, ...)`). An `<int:pk>` argument (its converter is in urls.py) and a
+    #   parameter with a default value are still sources; a helper whose first parameter is named
+    #   `request` has its other parameters taken for URL arguments, and the request attributes
+    #   (`headers`, `body`, ...) of such a parameter count even when it is another library's
+    #   request object.
+    pattern-sources:
+      - pattern-either:
+          - pattern: flask.request.args
+          - pattern: flask.request.form
+          - pattern: flask.request.values
+          - pattern: flask.request.headers
+          - pattern: flask.request.cookies
+          - pattern: flask.request.json
+          - pattern: flask.request.get_json(...)
+          - pattern: flask.request.data
+          - pattern: flask.request.get_data(...)
+          - pattern: flask.request.files
+          - pattern: flask.request.view_args
+          - pattern: flask.request.path
+          - pattern: flask.request.full_path
+          - pattern: flask.request.url
+          - pattern: flask.request.query_string
+      # Flask "Variable Rules": the parameters of a view function registered with a URL rule.
+      # FastAPI path operations match too; their parameters annotated int, float or bool are
+      # converted by FastAPI, and those with a Depends()/Security() default are dependencies,
+      # not request data.
+      - patterns:
+          - pattern-inside: |
+              @$APP.$ROUTE(...)
+              def $VIEW(..., $PARAM, ...):
+                ...
+          - metavariable-regex:
+              metavariable: $ROUTE
+              regex: ^(route|get|post|put|patch|delete)$
+          # (A parameter pattern without a type or default also matches a typed one, and one
+          # without a default also matches one with a default.)
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Depends(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM = fastapi.Security(...), ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: int, ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: float, ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: bool, ...):
+                ...
+          # The same in FastAPI's Annotated form, written in place or through a module-level
+          # alias (`SettingsDep = Annotated[Settings, Depends(get_settings)]`).
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Depends(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[$TYPE, fastapi.Security(...)], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[int, ...], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[float, ...], ...):
+                ...
+          - pattern-not-inside: |
+              def $VIEW(..., $PARAM: typing.Annotated[bool, ...], ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Depends(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - pattern-not-inside: |
+              $ALIAS = typing.Annotated[$TYPE, fastapi.Security(...)]
+              ...
+              @$DECORATOR(...)
+              def $VIEW(..., $PARAM: $ALIAS, ...):
+                ...
+          - focus-metavariable: $PARAM
+      # Django, in a module that imports it: the HttpRequest a view receives, the URL arguments
+      # passed to the view after it, and what View.setup() keeps on a class-based view.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      from $DJ import $NAME
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+              - patterns:
+                  - pattern-inside: |
+                      import $DJ
+                      ...
+                  - metavariable-regex:
+                      metavariable: $DJ
+                      regex: ^django(\.|$)
+          - pattern-either:
+              # The request: the first parameter of a function, the one after self of a method.
+              # The upper-case attributes exist only on Django's HttpRequest; the others count
+              # only on a parameter named request.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW($REQ, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(self, $REQ, ...):
+                            ...
+                  - pattern-either:
+                      - pattern: $REQ.GET
+                      - pattern: $REQ.POST
+                      - pattern: $REQ.COOKIES
+                      - pattern: $REQ.META
+                      - pattern: $REQ.FILES
+                      - patterns:
+                          - pattern-either:
+                              - pattern: $REQ.headers
+                              - pattern: $REQ.body
+                              - pattern: $REQ.path
+                              - pattern: $REQ.path_info
+                              - pattern: $REQ.get_full_path(...)
+                              - pattern: $REQ.get_full_path_info(...)
+                              - pattern: $REQ.build_absolute_uri(...)
+                              - pattern: $REQ.read(...)
+                              - pattern: $REQ.readline(...)
+                              - pattern: $REQ.readlines(...)
+                          - metavariable-regex:
+                              metavariable: $REQ
+                              regex: ^request$
+              # Class-based views: View.setup() keeps the request on self.request and the URL
+              # arguments on self.args and self.kwargs.
+              - patterns:
+                  - pattern-inside: |
+                      class $CLS(...):
+                        ...
+                  - pattern-either:
+                      - pattern: self.request.GET
+                      - pattern: self.request.POST
+                      - pattern: self.request.COOKIES
+                      - pattern: self.request.META
+                      - pattern: self.request.FILES
+                      - pattern: self.request.headers
+                      - pattern: self.request.body
+                      - pattern: self.request.path
+                      - pattern: self.request.path_info
+                      - pattern: self.request.get_full_path(...)
+                      - pattern: self.request.get_full_path_info(...)
+                      - pattern: self.request.build_absolute_uri(...)
+                      - pattern: self.args
+                      - pattern: self.kwargs
+              # URL arguments: the parameters after the request of a function-based view, and of
+              # a class-based view's handler method (dispatch() calls get(), post(), ...).
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW(request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., **$PARAM):
+                            ...
+                      - patterns:
+                          - pattern-inside: |
+                              class $CLS(...):
+                                ...
+                          - pattern-either:
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., $PARAM, ...):
+                                    ...
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., *$PARAM, ...):
+                                    ...
+                              - pattern-inside: |
+                                  def $VIEW(self, request, ..., **$PARAM):
+                                    ...
+                          - metavariable-regex:
+                              metavariable: $VIEW
+                              regex: ^(get|post|put|patch|delete|head|options|trace|dispatch)$
+                  - focus-metavariable: $PARAM
+    pattern-sanitizers:
+      - pattern: int(...)
+      - pattern: float(...)
+      # An allow-list: a lookup in a dict literal whose keys are literals and whose values are
+      # literals or lists/tuples of literals (strings with r/b/u prefixes and backslash escapes,
+      # numbers, True/False/None; comments allowed between the items), assigned to an upper-case
+      # (constant) name that the module never changes (item assignment, update(), setdefault(),
+      # |=) or assigns again. A get() default must be a literal, a list/tuple of literals or a
+      # module constant.
+      - patterns:
+          - pattern-inside: |
+              $ALLOWED = $LITERAL
+              ...
+          - metavariable-regex:
+              metavariable: $ALLOWED
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $LITERAL
+              regex: ^\{(\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*)?\}$
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED[$KEY] = $VALUE
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED.update(...)
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED.setdefault(...)
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED |= $VALUE
+              ...
+          - pattern-not-inside: |
+              $ALLOWED = $LITERAL
+              ...
+              $ALLOWED = $OTHER
+              ...
+          - pattern-either:
+              - pattern: $ALLOWED.get($LOOKUP)
+              - pattern: $ALLOWED[$LOOKUP]
+              - patterns:
+                  - pattern: $ALLOWED.get($LOOKUP, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\)|[A-Z][A-Z0-9_]*(\[("[^"\\\n]*"|'[^'\\\n]*')\])?)$
+                  # An upper-case name assigned in the function is a local, not a constant.
+                  - pattern-not-inside: |
+                      def $FUNCTION(...):
+                        ...
+                        $DEFAULT = $ANY
+                        ...
+      # shlex quotes for POSIX shells: a quoted value is one word, and join() quotes each item.
+      - pattern: shlex.quote(...)
+      - pattern: shlex.join(...)
+    pattern-sinks:
+      # A command string that a shell runs.
+      - patterns:
+          - pattern-either:
+              - pattern: os.system($CMD)
+              - pattern: os.popen($CMD, ...)
+              - pattern: subprocess.getoutput($CMD, ...)
+              - pattern: subprocess.getstatusoutput($CMD, ...)
+              - pattern: asyncio.create_subprocess_shell($CMD, ...)
+              - pattern: asyncio.get_running_loop().subprocess_shell($FACTORY, $CMD, ...)
+              - pattern: asyncio.get_event_loop().subprocess_shell($FACTORY, $CMD, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $LOOP = asyncio.get_running_loop()
+                          ...
+                      - pattern-inside: |
+                          $LOOP = asyncio.get_event_loop()
+                          ...
+                  - pattern: $LOOP.subprocess_shell($FACTORY, $CMD, ...)
+          - focus-metavariable: $CMD
+      # subprocess with a shell (shell= anything but False, 0 or None): a command string is shell
+      # code. Of an argument list only the first element is (the program sink below).
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FUNC($CMD, ..., shell=$SHELL, ...)
+              - pattern: subprocess.$FUNC(..., args=$CMD, ..., shell=$SHELL, ...)
+              - pattern: subprocess.$FUNC(..., shell=$SHELL, ..., args=$CMD, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: &subprocess-functions ^(run|call|check_call|check_output|Popen)$
+          - metavariable-regex:
+              metavariable: $SHELL
+              regex: ^(?!(False|0|None)$)
+          - pattern-not: subprocess.$FUNC([...], ...)
+          - pattern-not: subprocess.$FUNC(($ITEM, ...), ...)
+          - pattern-not: subprocess.$FUNC(..., args=[...], ...)
+          - pattern-not: subprocess.$FUNC(..., args=($ITEM, ...), ...)
+          - pattern-not-inside: |
+              $CMD = [...]
+              ...
+          - pattern-not-inside: |
+              $CMD = ($ITEM, ...)
+              ...
+          - focus-metavariable: $CMD
+      # The program: the first element of an argument list (with a shell, the command string),
+      # the executable= replacement, and the program of asyncio's exec functions.
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FUNC([$PROGRAM, ...], ...)
+              - pattern: subprocess.$FUNC(($PROGRAM, ...), ...)
+              - pattern: subprocess.$FUNC([$PROGRAM, ...] + $REST, ...)
+              - pattern: subprocess.$FUNC(..., args=[$PROGRAM, ...], ...)
+              - pattern: subprocess.$FUNC(..., args=($PROGRAM, ...), ...)
+              - pattern: subprocess.$FUNC(..., executable=$PROGRAM, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - focus-metavariable: $PROGRAM
+      - patterns:
+          - pattern-either:
+              - pattern: asyncio.create_subprocess_exec($PROGRAM, ...)
+              - pattern: asyncio.get_running_loop().subprocess_exec($FACTORY, $PROGRAM, ...)
+              - pattern: asyncio.get_event_loop().subprocess_exec($FACTORY, $PROGRAM, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $LOOP = asyncio.get_running_loop()
+                          ...
+                      - pattern-inside: |
+                          $LOOP = asyncio.get_event_loop()
+                          ...
+                  - pattern: $LOOP.subprocess_exec($FACTORY, $PROGRAM, ...)
+          - pattern-not: asyncio.create_subprocess_exec(*$ARGS, ...)
+          - pattern-not: $ANY.subprocess_exec($FACTORY, *$ARGS, ...)
+          - focus-metavariable: $PROGRAM
+      # A POSIX shell program anywhere in an argument list (also after sudo or env): the element
+      # after -c is shell code; the later ones are the shell's $0, $1, ...
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FUNC([..., $SH, ..., $FLAG, $CMD, ...], ...)
+              - pattern: subprocess.$FUNC((..., $SH, ..., $FLAG, $CMD, ...), ...)
+              - pattern: subprocess.$FUNC(..., args=[..., $SH, ..., $FLAG, $CMD, ...], ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - metavariable-regex:
+              metavariable: $SH
+              regex: &posix-shell ^[rRbBuU]{0,2}["']((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)["']$
+          - metavariable-regex:
+              metavariable: $FLAG
+              regex: &posix-flag ^[rRbBuU]{0,2}["']-[a-zA-Z]*c[a-zA-Z]*["']$
+          - focus-metavariable: $CMD
+      - patterns:
+          - pattern: asyncio.create_subprocess_exec(..., $SH, ..., $FLAG, $CMD, ...)
+          - metavariable-regex:
+              metavariable: $SH
+              regex: *posix-shell
+          - metavariable-regex:
+              metavariable: $FLAG
+              regex: *posix-flag
+          - focus-metavariable: $CMD
+      # cmd /c (or /k) and PowerShell -Command (or -EncodedCommand), anywhere in an argument list:
+      # every element after the flag is part of the command.
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FUNC([..., $SH, ..., $FLAG, ..., $CMD, ...], ...)
+              - pattern: subprocess.$FUNC((..., $SH, ..., $FLAG, ..., $CMD, ...), ...)
+              - pattern: subprocess.$FUNC(..., args=[..., $SH, ..., $FLAG, ..., $CMD, ...], ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - metavariable-regex:
+              metavariable: $SH
+              regex: &windows-shell (?i)^[rbu]{0,2}["']([a-z]:)?([^"']*[\\/])?(cmd|powershell|pwsh)(\.exe)?["']$
+          - metavariable-regex:
+              metavariable: $FLAG
+              regex: &windows-flag (?i)^[rbu]{0,2}["'](/c|/k|-c|-command|-e|-ec|-encodedcommand)["']$
+          - focus-metavariable: $CMD
+      - patterns:
+          - pattern: asyncio.create_subprocess_exec(..., $SH, ..., $FLAG, ..., $CMD, ...)
+          - metavariable-regex:
+              metavariable: $SH
+              regex: *windows-shell
+          - metavariable-regex:
+              metavariable: $FLAG
+              regex: *windows-flag
+          - focus-metavariable: $CMD
+      # Without a shell, the whole args value as the program (a string) or the whole argument
+      # vector: only when it is visibly a string or a request value (not an argument list built
+      # by the code): a string literal at either end, str(), os.path.join(), a request value with
+      # its subscripts and methods, or shlex.split() of a request value; in place, ...
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FUNC($ARGS, ...)
+              - pattern: subprocess.$FUNC(..., args=$ARGS, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - metavariable-regex:
+              metavariable: $ARGS
+              regex: &visible-value ^(([rRbBuUfF]{0,2}["']|str\(|os\.path\.join\()|.*["']\s*$|(\(\s*)?(await\s+)?(flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[|shlex\.split\(\s*(\(\s*)?(await\s+)?((flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[))
+          - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - focus-metavariable: $ARGS
+      # ... or through a variable assigned such a value in the function, ...
+      - patterns:
+          - pattern-inside: |
+              $ARGS = $VALUE
+              ...
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: *visible-value
+          - pattern-either:
+              - pattern: subprocess.$FUNC($ARGS, ...)
+              - pattern: subprocess.$FUNC(..., args=$ARGS, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - focus-metavariable: $ARGS
+      # ... or a subscript, method or shlex.split() of a variable assigned a request value (a JSON
+      # body, request.args, ...), in place or through another variable, ...
+      - patterns:
+          - pattern-inside: |
+              $VAR = $VALUE
+              ...
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: &request-value ^((\(\s*)?(await\s+)?(flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[)
+          - pattern-either:
+              - pattern: subprocess.$FUNC($VAR[$KEY], ...)
+              - pattern: subprocess.$FUNC($VAR[$KEY].$METHOD(...), ...)
+              - pattern: subprocess.$FUNC($VAR.$METHOD(...), ...)
+              - pattern: subprocess.$FUNC($VAR.$METHOD(...).$THEN(...), ...)
+              - pattern: subprocess.$FUNC(shlex.split($VAR), ...)
+              - pattern: subprocess.$FUNC(shlex.split($VAR[$KEY]), ...)
+              - pattern: subprocess.$FUNC(shlex.split($VAR.$METHOD(...)), ...)
+              - pattern: subprocess.$FUNC(..., args=$VAR[$KEY], ...)
+              - pattern: subprocess.$FUNC(..., args=$VAR[$KEY].$METHOD(...), ...)
+              - pattern: subprocess.$FUNC(..., args=$VAR.$METHOD(...), ...)
+              - pattern: subprocess.$FUNC(..., args=shlex.split($VAR), ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - focus-metavariable: $VAR
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $VAR = $VALUE
+                  ...
+                  $ARGS = $VAR[$KEY]
+                  ...
+              - pattern-inside: |
+                  $VAR = $VALUE
+                  ...
+                  $ARGS = $VAR[$KEY].$METHOD(...)
+                  ...
+              - pattern-inside: |
+                  $VAR = $VALUE
+                  ...
+                  $ARGS = $VAR.$METHOD(...)
+                  ...
+              - pattern-inside: |
+                  $VAR = $VALUE
+                  ...
+                  $ARGS = $VAR.$METHOD(...).$THEN(...)
+                  ...
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: *request-value
+          - pattern-either:
+              - pattern: subprocess.$FUNC($ARGS, ...)
+              - pattern: subprocess.$FUNC($ARGS.$SPLIT(...), ...)
+              - pattern: subprocess.$FUNC(shlex.split($ARGS), ...)
+              - pattern: subprocess.$FUNC(..., args=$ARGS, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - focus-metavariable: $ARGS
+      # ... or a parameter of the view (a route parameter, a FastAPI body model and its fields),
+      # in place or through a variable.
+      - patterns:
+          - pattern-inside: |
+              def $VIEW(..., $PARAM, ...):
+                ...
+          - pattern-either:
+              - pattern: subprocess.$FUNC($PARAM, ...)
+              - pattern: subprocess.$FUNC($PARAM.$ATTR, ...)
+              - pattern: subprocess.$FUNC($PARAM[$KEY], ...)
+              - pattern: subprocess.$FUNC($PARAM.$METHOD(...), ...)
+              - pattern: subprocess.$FUNC(shlex.split($PARAM), ...)
+              - pattern: subprocess.$FUNC(shlex.split($PARAM.$ATTR), ...)
+              - pattern: subprocess.$FUNC(..., args=$PARAM, ...)
+              - pattern: subprocess.$FUNC(..., args=$PARAM.$ATTR, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - focus-metavariable: $PARAM
+      - patterns:
+          - pattern-inside: |
+              def $VIEW(..., $PARAM, ...):
+                ...
+          - pattern-inside: |
+              $ARGS = $PARAM.$ATTR
+              ...
+          - pattern-either:
+              - pattern: subprocess.$FUNC($ARGS, ...)
+              - pattern: subprocess.$FUNC(..., args=$ARGS, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - focus-metavariable: $ARGS
+      # The same for the argument vector unpacked into asyncio.create_subprocess_exec(*argv).
+      - patterns:
+          - pattern: asyncio.create_subprocess_exec(*$ARGS, ...)
+          - metavariable-regex:
+              metavariable: $ARGS
+              regex: &request-vector ^((\(\s*)?(await\s+)?(flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[|shlex\.split\(\s*(\(\s*)?(await\s+)?((flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[))
+          - focus-metavariable: $ARGS
+      - patterns:
+          - pattern-inside: |
+              $ARGS = $VALUE
+              ...
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: *request-vector
+          - pattern: asyncio.create_subprocess_exec(*$ARGS, ...)
+          - focus-metavariable: $ARGS
+      - patterns:
+          - pattern-inside: |
+              $VAR = $VALUE
+              ...
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: *request-value
+          - pattern-either:
+              - pattern: asyncio.create_subprocess_exec(*$VAR[$KEY], ...)
+              - pattern: asyncio.create_subprocess_exec(*$VAR.$METHOD(...), ...)
+              - pattern: asyncio.create_subprocess_exec(*shlex.split($VAR), ...)
+              - pattern: asyncio.create_subprocess_exec(*shlex.split($VAR[$KEY]), ...)
+          - focus-metavariable: $VAR
+      - patterns:
+          - pattern-inside: |
+              def $VIEW(..., $PARAM, ...):
+                ...
+          - pattern-either:
+              - pattern: asyncio.create_subprocess_exec(*$PARAM, ...)
+              - pattern: asyncio.create_subprocess_exec(*$PARAM.$ATTR, ...)
+              - pattern: asyncio.create_subprocess_exec(*$PARAM.$METHOD(...), ...)
+              - pattern: asyncio.create_subprocess_exec(*shlex.split($PARAM), ...)
+              - pattern: asyncio.create_subprocess_exec(*shlex.split($PARAM.$ATTR), ...)
+          - focus-metavariable: $PARAM

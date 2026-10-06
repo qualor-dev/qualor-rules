@@ -2,7 +2,7 @@
 
 # Qualor security rules
 
-The security rules of Qualor's `qualor` engine, 49 in all. Each page says what the rule finds, why
+The security rules of Qualor's `qualor` engine, 50 in all. Each page says what the rule finds, why
 it matters, how to fix it, what the rule misses or may wrongly report, and shows a short example.
 Qualor links every finding to its page.
 
@@ -37,6 +37,7 @@ The key `qualor:<lang>/<name>` is how Qualor names a rule; the rule itself is
 | Rule | Title | Kind | Severity | CWE |
 |---|---|---|---|---|
 | [`qualor:python/code-injection`](python/code-injection.md) | Python code built from HTTP request data | Issue | High | [CWE-94](https://cwe.mitre.org/data/definitions/94.html), [CWE-95](https://cwe.mitre.org/data/definitions/95.html) |
+| [`qualor:python/command-injection`](python/command-injection.md) | OS command built from HTTP request data (Python) | Issue | High | [CWE-78](https://cwe.mitre.org/data/definitions/78.html) |
 | [`qualor:python/open-redirect`](python/open-redirect.md) | Redirect to a URL from HTTP request data (Python) | Issue | Medium | [CWE-601](https://cwe.mitre.org/data/definitions/601.html) |
 | [`qualor:python/path-traversal`](python/path-traversal.md) | File path built from HTTP request data (Python) | Issue | High | [CWE-22](https://cwe.mitre.org/data/definitions/22.html) |
 | [`qualor:python/regex-injection`](python/regex-injection.md) | Regular expression built from HTTP request data (Python) | Issue | Medium | [CWE-1333](https://cwe.mitre.org/data/definitions/1333.html), [CWE-400](https://cwe.mitre.org/data/definitions/400.html) |
