@@ -11,6 +11,7 @@
   "opengrep": "1.30.0",
   "scripts": {
     "check": "node tools/check.mjs && node tools/backlog.mjs",
+    "docs": "node tools/docs.mjs",
     "test:tools": "node --test \"tools/*.test.mjs\"",
     "test:rules": "node tools/test-rules.mjs",
     "test": "npm run check && npm run test:tools && npm run test:rules",
