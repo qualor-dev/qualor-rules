@@ -115,6 +115,10 @@ public class PreviewController {
   recognised. A `\` never counts as the separator after the host, and a relative path that
   starts with `//` or `/\` is reported: browsers and URL Standard parsers read `\` as `/`, so
   the request would choose the host.
+- A `StringBuilder` or `StringBuffer` counts as fixed only when it is created with a literal
+  origin or relative path (or a `static final` field holding one), or gets one in its first
+  append; a builder given its origin later, or
+  cut with `setLength` or `delete`, is reported.
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
   Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
   request body and headers); enum, `List` or `Optional` parameters still count as request data.

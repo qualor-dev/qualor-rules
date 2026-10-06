@@ -60,6 +60,9 @@ rules:
     #   ("https://" + HOST + "/" + path) and URI.resolve on a constant URI are not recognised.
     #   A "\" is never taken as the separator after a literal host, and a relative path that
     #   starts with "//" or "/\" is reported (the URL Standard reads "\" as "/").
+    # - A StringBuilder or StringBuffer counts as fixed only when it is created with a literal
+    #   origin or relative path, or gets one in the append right after it is created (a builder
+    #   given its origin later, or cut with setLength or delete, is reported).
     # - A UriComponentsBuilder chain from a constant base is recognised up to eight calls; a
     #   longer chain is reported.
     # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
@@ -117,6 +120,36 @@ rules:
       - pattern: Long.parseLong(...)
       - pattern: Integer.valueOf(...)
       - pattern: Long.valueOf(...)
+      # A StringBuilder or StringBuffer whose text starts with a fixed origin or a relative path
+      # (the forms above): created with it, or given it by its first append right after it is
+      # created (alone or at the start of an append chain). Request data appended later only
+      # reaches the path or the query. A builder that is cut afterwards (setLength, delete) is not
+      # trusted.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $SB = new $B("$ORIGIN");
+                          ...
+                      - pattern-inside: |
+                          $SB = new $B();
+                          $SB.append("$ORIGIN");
+                          ...
+                  - pattern-not-inside: |
+                      $SB.setLength(...);
+                      ...
+                  - pattern-not-inside: |
+                      $SB.delete(...);
+                      ...
+                  - pattern: $SB.toString()
+              - pattern: new $B("$ORIGIN"). ... .toString()
+          - metavariable-regex:
+              metavariable: $B
+              regex: ^(java\.lang\.)?(StringBuilder|StringBuffer)$
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^([A-Za-z][A-Za-z0-9+.-]*://[^/?#"\s\\]+[/?#]|/[^/\\"])
       # A URL whose text starts with a fixed origin ("https://host/...") or a relative path
       # ("/path", resolved against a fixed baseUrl): the request data only reaches the path or
       # the query. The URL Standard reads "\" as "/" in http(s) URLs, so "/\" starts a host like

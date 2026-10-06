@@ -572,3 +572,79 @@ class PartNote {
         return text;
     }
 }
+
+// Targets assembled with a StringBuilder or StringBuffer: a builder that starts with a fixed
+// origin or a local path keeps the request data in the path or the query.
+@Controller
+class BuilderLoginController {
+    private static final String ITEMS = "/items/";
+
+    @GetMapping("/builders/next")
+    void next(@RequestParam String id, @RequestParam String next, HttpServletResponse response) throws IOException {
+        StringBuilder chained = new StringBuilder();
+        chained.append("/items/").append(id);
+        // ok: java.open-redirect
+        response.sendRedirect(chained.toString());
+        StringBuilder single = new StringBuilder();
+        single.append("https://www.example.com/items/");
+        single.append(id);
+        // ok: java.open-redirect
+        response.sendRedirect(single.toString());
+        StringBuilder created = new StringBuilder("/orders/");
+        created.append(id).append("?tab=summary");
+        // ok: java.open-redirect
+        response.sendRedirect(created.toString());
+        var buffer = new StringBuffer("/search?q=");
+        buffer.append(id);
+        // ok: java.open-redirect
+        response.sendRedirect(buffer.toString());
+        // ok: java.open-redirect
+        response.sendRedirect(new StringBuilder("/items/").append(id).toString());
+
+        // A builder started from a static final origin (OpenGrep propagates the constant).
+        StringBuilder fromConstant = new StringBuilder(ITEMS);
+        fromConstant.append(id);
+        // ok: java.open-redirect
+        response.sendRedirect(fromConstant.toString());
+
+        StringBuilder slash = new StringBuilder("/");
+        slash.append(next);
+        // ruleid: java.open-redirect
+        response.sendRedirect(slash.toString());
+        StringBuilder open = new StringBuilder("https://");
+        open.append(next).append("/home");
+        // ruleid: java.open-redirect
+        response.sendRedirect(open.toString());
+        StringBuilder later = new StringBuilder();
+        later.append(next);
+        later.append("/home");
+        // ruleid: java.open-redirect
+        response.sendRedirect(later.toString());
+        StringBuilder mixed = new StringBuilder();
+        mixed.append(next).append("/home");
+        // ruleid: java.open-redirect
+        response.sendRedirect(mixed.toString());
+        StringBuilder netpath = new StringBuilder("/\\");
+        netpath.append(next);
+        // ruleid: java.open-redirect
+        response.sendRedirect(netpath.toString());
+        StringBuilder reset = new StringBuilder("/items/");
+        reset.setLength(0);
+        reset.append(next);
+        // ruleid: java.open-redirect
+        response.sendRedirect(reset.toString());
+        StringBuilder cut = new StringBuilder("/items/");
+        cut.delete(0, 7);
+        cut.append(next);
+        // ruleid: java.open-redirect
+        response.sendRedirect(cut.toString());
+    }
+
+    @GetMapping("/builders/view")
+    String view(@RequestParam String id) {
+        StringBuilder path = new StringBuilder("/items/");
+        path.append(id);
+        // ok: java.open-redirect
+        return "redirect:" + path.toString();
+    }
+}

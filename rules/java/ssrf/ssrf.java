@@ -510,3 +510,81 @@ class BackslashController {
         return "ok";
     }
 }
+
+// URLs assembled with a StringBuilder or StringBuffer: a builder that starts with a fixed origin
+// (or a relative path for a client with a base URL) keeps the request data in the path or query.
+@RestController
+class BuilderController {
+    private static final String ITEMS = "https://api.example.com/items/";
+
+    private RestTemplate restTemplate;
+    private RestClient restClient;
+
+    @GetMapping("/builders")
+    String builders(@RequestParam String id, @RequestParam String host) throws IOException {
+        StringBuilder chained = new StringBuilder();
+        chained.append("https://api.example.com/items/").append(id);
+        // ok: java.ssrf
+        restTemplate.getForObject(chained.toString(), String.class);
+        StringBuilder single = new StringBuilder();
+        single.append("https://api.example.com/items/");
+        single.append(id);
+        // ok: java.ssrf
+        restTemplate.getForObject(single.toString(), String.class);
+        StringBuilder created = new StringBuilder("https://api.example.com/items/");
+        created.append(id).append("?full=true");
+        // ok: java.ssrf
+        new URL(created.toString()).openStream();
+        var buffer = new StringBuffer("https://api.example.com/search?q=");
+        buffer.append(id);
+        // ok: java.ssrf
+        new URL(buffer.toString()).openStream();
+        // ok: java.ssrf
+        new URL(new StringBuilder("https://api.example.com/items/").append(id).toString()).openStream();
+        StringBuilder relative = new StringBuilder("/items/");
+        relative.append(id);
+        // ok: java.ssrf
+        restClient.get().uri(relative.toString()).retrieve().body(String.class);
+
+        // A builder started from a static final origin (OpenGrep propagates the constant).
+        StringBuilder fromConstant = new StringBuilder(ITEMS);
+        fromConstant.append(id);
+        // ok: java.ssrf
+        new URL(fromConstant.toString()).openStream();
+
+        StringBuilder open = new StringBuilder("https://");
+        open.append(host).append("/status");
+        // ruleid: java.ssrf
+        new URL(open.toString()).openStream();
+        StringBuilder bare = new StringBuilder("https://api.example.com");
+        bare.append(host);
+        // ruleid: java.ssrf
+        new URL(bare.toString()).openStream();
+        StringBuilder later = new StringBuilder();
+        later.append(host);
+        later.append("https://api.example.com/");
+        // ruleid: java.ssrf
+        new URL(later.toString()).openStream();
+        StringBuilder mixed = new StringBuilder();
+        mixed.append(host).append("https://api.example.com/");
+        // ruleid: java.ssrf
+        new URL(mixed.toString()).openStream();
+        StringBuilder netpath = new StringBuilder("/\\");
+        netpath.append(host);
+        // ruleid: java.ssrf
+        restClient.get().uri(netpath.toString()).retrieve().body(String.class);
+        // ruleid: java.ssrf
+        new URL(new StringBuilder("//").append(host).toString()).openStream();
+        StringBuilder reset = new StringBuilder("https://api.example.com/items/");
+        reset.setLength(0);
+        reset.append(host);
+        // ruleid: java.ssrf
+        new URL(reset.toString()).openStream();
+        StringBuilder cut = new StringBuilder("https://api.example.com/items/");
+        cut.delete(0, 30);
+        cut.append(host);
+        // ruleid: java.ssrf
+        new URL(cut.toString()).openStream();
+        return "ok";
+    }
+}

@@ -60,6 +60,9 @@ rules:
     #   middle of the string, a static final local path ("/app") as the base, a
     #   UriComponentsBuilder.fromPath(...) target and a Location set in a ResponseEntity headers
     #   lambda are not recognised.
+    # - A StringBuilder or StringBuffer counts as fixed only when it is created with such a
+    #   literal, or gets one in the append right after it is created (a builder given its start
+    #   later, or cut with setLength or delete, is reported).
     # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
     #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
     #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
@@ -115,6 +118,36 @@ rules:
       - pattern: Long.parseLong(...)
       - pattern: Integer.valueOf(...)
       - pattern: Long.valueOf(...)
+      # A StringBuilder or StringBuffer whose text starts with a fixed target (the forms above:
+      # an origin, a local path, a relative path or a query): created with it, or given it by its
+      # first append right after it is created (alone or at the start of an append chain).
+      # Request data appended later only reaches the path or the query. A builder that is cut
+      # afterwards (setLength, delete) is not trusted.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $SB = new $B("$ORIGIN");
+                          ...
+                      - pattern-inside: |
+                          $SB = new $B();
+                          $SB.append("$ORIGIN");
+                          ...
+                  - pattern-not-inside: |
+                      $SB.setLength(...);
+                      ...
+                  - pattern-not-inside: |
+                      $SB.delete(...);
+                      ...
+                  - pattern: $SB.toString()
+              - pattern: new $B("$ORIGIN"). ... .toString()
+          - metavariable-regex:
+              metavariable: $B
+              regex: ^(java\.lang\.)?(StringBuilder|StringBuffer)$
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^(redirect:)?([A-Za-z][A-Za-z0-9+.-]*://[^/?#"\s\\]+[/?#]|/[^/\\"]|[?#]|[^/:?#\\"\s]+[/?#])
       # A target whose text starts with a fixed origin ("https://host/..."), a local path ("/path",
       # but not "//" or "/\", which a browser reads as another host), a relative path with a
       # separator ("orders/", "page?x=") or a query or fragment, also after Spring's "redirect:"
