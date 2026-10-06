@@ -10,7 +10,9 @@
 <!-- begin: what-it-finds -->
 `tls.Config` values with `InsecureSkipVerify: true`, written in a literal or assigned later
 (`cfg.InsecureSkipVerify = true`), including through a constant, unless the same config also sets
-`VerifyConnection` to check the certificates itself.
+`VerifyConnection` to check the certificates itself. A callback that only returns `nil` checks
+nothing, so it does not count: written in place, held in a variable, or declared as a function of
+the same file.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -93,6 +95,9 @@ func NewClient() (*http.Client, error) {
   (`cfg := makeConfig(); cfg.InsecureSkipVerify = true`) is not recognised as a `tls.Config`.
 - A local variable set to `true` (`skip := true` and then `InsecureSkipVerify: skip`) is not
   followed; package and function constants are.
+- An empty callback is recognised by its variable or function name: a variable that first held
+  an empty callback and later a real check is still reported, and an empty method used as the
+  callback (`VerifyConnection: v.Check`) is not recognised.
 <!-- end: known-limits -->
 
 ## References

@@ -40,6 +40,11 @@ rules:
     #   (`todoruleid:`).
     # - A local variable set to true (`skip := true`) is not followed; package and function
     #   constants are (`todoruleid:`).
+    # - An empty callback is followed through a variable (`noop := func(...) error { return nil }`,
+    #   also `var` and package variables) and a named function of the file, by name: a variable
+    #   that held an empty callback and was given a real one later still counts as empty
+    #   (`todook:`), and an empty method used as the callback (`T{}.Check`) is not followed
+    #   (`todoruleid:`).
     paths:
       exclude: ['*_test.go']
     patterns:
@@ -142,6 +147,72 @@ rules:
                       $CFG.VerifyPeerCertificate = func(...) error { return nil }
                   - pattern-inside: |
                       $CFG.VerifyPeerCertificate = func(...) error { return nil }
+                      ...
+                      $CFG.InsecureSkipVerify = $V
+              - pattern: $CFG.InsecureSkipVerify = $V
+          # The same empty callback held in a variable (`:=`, `=`, `var`, also at package level)
+          # or declared as a named function in the file.
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      $NOOP = func(...) error { return nil }
+                      ...
+                  - pattern-inside: |
+                      func $NOOP(...) error { return nil }
+                      ...
+                  # Declared after the function that uses it.
+                  - pattern-inside: |
+                      func $F(...) { ... }
+                      ...
+                      func $NOOP(...) error { return nil }
+              - pattern-either:
+                  - pattern-inside: 'tls.Config{..., VerifyConnection: $NOOP, ...}'
+                  - pattern-inside: 'tls.Config{..., VerifyPeerCertificate: $NOOP, ...}'
+                  - pattern-inside: |
+                      $CFG := &tls.Config{...}
+                      ...
+                      $CFG.VerifyConnection = $NOOP
+                  - pattern-inside: |
+                      $CFG := &tls.Config{...}
+                      ...
+                      $CFG.VerifyPeerCertificate = $NOOP
+                  - pattern-inside: |
+                      $CFG := tls.Config{...}
+                      ...
+                      $CFG.VerifyConnection = $NOOP
+                  - pattern-inside: |
+                      $CFG := tls.Config{...}
+                      ...
+                      $CFG.VerifyPeerCertificate = $NOOP
+              - pattern: 'tls.Config{..., InsecureSkipVerify: $V, ...}'
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      $NOOP = func(...) error { return nil }
+                      ...
+                  - pattern-inside: |
+                      func $NOOP(...) error { return nil }
+                      ...
+                  # Declared after the function that uses it.
+                  - pattern-inside: |
+                      func $F(...) { ... }
+                      ...
+                      func $NOOP(...) error { return nil }
+              - pattern-either:
+                  - pattern-inside: |
+                      $CFG.InsecureSkipVerify = $V
+                      ...
+                      $CFG.VerifyConnection = $NOOP
+                  - pattern-inside: |
+                      $CFG.VerifyConnection = $NOOP
+                      ...
+                      $CFG.InsecureSkipVerify = $V
+                  - pattern-inside: |
+                      $CFG.InsecureSkipVerify = $V
+                      ...
+                      $CFG.VerifyPeerCertificate = $NOOP
+                  - pattern-inside: |
+                      $CFG.VerifyPeerCertificate = $NOOP
                       ...
                       $CFG.InsecureSkipVerify = $V
               - pattern: $CFG.InsecureSkipVerify = $V

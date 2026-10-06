@@ -138,6 +138,96 @@ func EmptyCallbacks(addr string) {
 	tls.Dial("tcp", addr, cfg)
 }
 
+// The same empty callback held in a variable, a package variable or a named function.
+var trustEveryone = func(tls.ConnectionState) error { return nil }
+
+func acceptEverything(tls.ConnectionState) error { return nil }
+
+func NoopCallbacks(addr string) {
+	noop := func(cs tls.ConnectionState) error { return nil }
+	// ruleid: go.tls-verification-disabled
+	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyConnection: noop})
+	var acceptAll = func(raw [][]byte, _ [][]*x509.Certificate) error { return nil }
+	tls.Dial("tcp", addr, &tls.Config{
+		// ruleid: go.tls-verification-disabled
+		InsecureSkipVerify: true,
+		VerifyPeerCertificate: acceptAll,
+	})
+	cfg := &tls.Config{}
+	// ruleid: go.tls-verification-disabled
+	cfg.InsecureSkipVerify = true
+	cfg.VerifyConnection = noop
+	tls.Dial("tcp", addr, cfg)
+	other := tls.Config{}
+	other.VerifyPeerCertificate = acceptAll
+	// ruleid: go.tls-verification-disabled
+	other.InsecureSkipVerify = true
+	built := &tls.Config{
+		// ruleid: go.tls-verification-disabled
+		InsecureSkipVerify: true,
+	}
+	built.VerifyConnection = noop
+	tls.Dial("tcp", addr, built)
+	// ruleid: go.tls-verification-disabled
+	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyConnection: trustEveryone})
+	// ruleid: go.tls-verification-disabled
+	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyConnection: acceptEverything})
+	viaFunc := &tls.Config{}
+	viaFunc.VerifyConnection = acceptEverything
+	// ruleid: go.tls-verification-disabled
+	viaFunc.InsecureSkipVerify = true
+	// Declared further down the file.
+	// ruleid: go.tls-verification-disabled
+	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyPeerCertificate: skipChainCheck})
+	// ruleid: go.tls-verification-disabled
+	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyConnection: allowAnyPeer})
+}
+
+type pool struct{ addr string }
+
+func (p *pool) dial() (*tls.Conn, error) {
+	cfg := &tls.Config{}
+	cfg.VerifyConnection = allowAnyPeer
+	// ruleid: go.tls-verification-disabled
+	cfg.InsecureSkipVerify = true
+	return tls.Dial("tcp", p.addr, cfg)
+}
+
+func skipChainCheck(raw [][]byte, chains [][]*x509.Certificate) error { return nil }
+
+var allowAnyPeer = func(tls.ConnectionState) error { return nil }
+
+// Callbacks held in variables or named functions that do check the certificate.
+func checkLeaf(pool *x509.CertPool) func(tls.ConnectionState) error {
+	return func(cs tls.ConnectionState) error {
+		_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{Roots: pool})
+		return err
+	}
+}
+
+func verifyAgainstSystem(cs tls.ConnectionState) error {
+	_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{DNSName: cs.ServerName})
+	return err
+}
+
+func CheckingCallbacks(addr string, pool *x509.CertPool) {
+	noop := checkLeaf(pool)
+	// ok: go.tls-verification-disabled
+	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyConnection: noop})
+	cfg := &tls.Config{}
+	// ok: go.tls-verification-disabled
+	cfg.InsecureSkipVerify = true
+	cfg.VerifyConnection = verifyAgainstSystem
+	tls.Dial("tcp", addr, cfg)
+	// ok: go.tls-verification-disabled
+	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyConnection: verifyAgainstSystem})
+	// An empty callback assigned to a variable of another name is not the one in use.
+	unused := func(tls.ConnectionState) error { return nil }
+	_ = unused
+	// ok: go.tls-verification-disabled
+	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyConnection: verifyAgainstSystem})
+}
+
 // Tests: an httptest TLS server has a self-signed certificate; the docs allow skipping
 // verification for testing. Test functions and functions that start such a server are left out
 // (and *_test.go files are excluded by the rule's paths).
@@ -224,6 +314,15 @@ func limits(addr string, base tls.Config) {
 	cfg2 := sameFileConfig()
 	// todoruleid: go.tls-verification-disabled
 	cfg2.InsecureSkipVerify = true
+	// A variable that held an empty callback and was then given a real one still counts as
+	// empty.
+	check := func(tls.ConnectionState) error { return nil }
+	check = verifyAgainstSystem
+	// todook: go.tls-verification-disabled
+	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyConnection: check})
+	// An empty method used as the callback is not followed.
+	// todoruleid: go.tls-verification-disabled
+	tls.Dial("tcp", addr, &tls.Config{InsecureSkipVerify: true, VerifyConnection: trustingPeer{}.Check})
 	// A function-local variable set to true is not a constant.
 	skip := true
 	// todoruleid: go.tls-verification-disabled
@@ -231,3 +330,7 @@ func limits(addr string, base tls.Config) {
 }
 
 func sameFileConfig() *tls.Config { return &tls.Config{MinVersion: tls.VersionTLS12} }
+
+type trustingPeer struct{}
+
+func (trustingPeer) Check(tls.ConnectionState) error { return nil }
