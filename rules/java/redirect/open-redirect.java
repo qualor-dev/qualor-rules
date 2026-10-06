@@ -674,6 +674,17 @@ class BuilderLoginController {
         aliased = other;
         // ruleid: java.open-redirect
         response.sendRedirect(aliased.toString());
+        // A builder declared first (null) and created with its fixed start afterwards.
+        StringBuilder declared = null;
+        declared = new StringBuilder("/items/");
+        declared.append(id);
+        // ok: java.open-redirect
+        response.sendRedirect(declared.toString());
+        // Request data inserted into a builder is not followed (insert carries no taint).
+        StringBuilder spliced = new StringBuilder("/items/");
+        spliced.insert(1, next);
+        // todoruleid: java.open-redirect
+        response.sendRedirect(spliced.toString());
         // Two builders with fixed starts: an assignment to one does not count for the other.
         StringBuilder first = new StringBuilder("/items/");
         StringBuilder second = new StringBuilder("/items/");

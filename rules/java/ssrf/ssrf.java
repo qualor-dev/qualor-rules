@@ -621,6 +621,17 @@ class BuilderController {
         aliased = other;
         // ruleid: java.ssrf
         new URL(aliased.toString()).openStream();
+        // A builder declared first (null) and created with its fixed start afterwards.
+        StringBuilder declared = null;
+        declared = new StringBuilder("https://api.example.com/items/");
+        declared.append(id);
+        // ok: java.ssrf
+        new URL(declared.toString()).openStream();
+        // Request data inserted into a builder is not followed (insert carries no taint).
+        StringBuilder spliced = new StringBuilder("https://api.example.com/items/");
+        spliced.insert(8, host);
+        // todoruleid: java.ssrf
+        new URL(spliced.toString()).openStream();
         // Two builders with fixed starts: an assignment to one does not count for the other.
         StringBuilder first = new StringBuilder("https://api.example.com/items/");
         StringBuilder second = new StringBuilder("https://api.example.com/items/");

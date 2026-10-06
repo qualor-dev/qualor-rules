@@ -63,7 +63,8 @@ rules:
     # - A StringBuilder or StringBuffer counts as fixed only when it is created with a literal
     #   origin or relative path, or gets one in the append right after it is created (a builder
     #   given its origin later, edited with setLength, delete, replace, insert or setCharAt, or
-    #   assigned again, is reported).
+    #   assigned again after it is created, is reported when request data is appended to it).
+    #   Request data put in with insert or replace is not followed: these methods carry no taint.
     # - A UriComponentsBuilder chain from a constant base is recognised up to eight calls; a
     #   longer chain is reported.
     # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
@@ -152,9 +153,10 @@ rules:
                   - pattern-not-inside: |
                       $SB.setCharAt(...);
                       ...
-                  # A builder assigned again after its fixed start (the first assignment creates it).
+                  # A builder assigned again after it is created with its fixed start (an assignment
+                  # before the creation, such as a null initialiser, does not count).
                   - pattern-not-inside: |
-                      $SB = $Y;
+                      $SB = new $B(...);
                       ...
                       $SB = $Z;
                       ...
