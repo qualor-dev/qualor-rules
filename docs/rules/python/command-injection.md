@@ -99,7 +99,8 @@ def ping():
 - A slice is followed when it slices request data in place (`request.args["cmd"][:100]`),
   a variable assigned request data, or a view parameter; a slice of a value built from request
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
-  (`q = q.strip()`), is missed.
+  (`q = q.strip()`, also `q = q + request.args["b"]` or a fallback `q = request.form["q"]`), is
+  missed.
 - With `shell=True`, only the first element of an argument list is taken for shell code, as on
   POSIX; on Windows the other elements reach `cmd.exe` too. `shlex.quote()` is accepted as
   escaping also in a `cmd /c` command.

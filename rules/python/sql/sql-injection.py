@@ -409,6 +409,16 @@ def by_prefix(prefix):
     term = term.strip()
     # todoruleid: python.sql-injection
     con.execute("SELECT * FROM items WHERE name LIKE '" + term[:50] + "%'")
+    # The same when the variable is assigned again with more request data.
+    joined = request.args["a"]
+    joined = joined + request.args["b"]
+    # todoruleid: python.sql-injection
+    con.execute("SELECT * FROM items WHERE code = '" + joined[:50] + "'")
+    fallback = request.args.get("f", "")
+    if not fallback:
+        fallback = request.form.get("f", "")
+    # todoruleid: python.sql-injection
+    con.execute("SELECT * FROM items WHERE code = '" + fallback[:50] + "'")
     return "ok"
 
 

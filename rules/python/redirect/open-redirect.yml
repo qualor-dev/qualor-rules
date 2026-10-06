@@ -58,8 +58,10 @@ rules:
     #   itself: of a request access chain (`request.args["next"][:200]`), of a variable assigned one in
     #   the function, or of a view parameter. A slice of a value built from request data
     #   (`(request.args["q"] + "x")[:50]`), or of a variable assigned again in the function after
-    #   the request value (`q = q.strip()`), is missed. Django request chains count in a view
-    #   (first parameter `request`) and `self.request`/`self.kwargs` in a class.
+    #   the request value (`q = q.strip()`, also with more request data: `q = q +
+    #   request.args["b"]`, `if not q: q = request.form["q"]`), is missed. Django request
+    #   chains count in a view (first parameter `request`) and `self.request`/`self.kwargs` in a
+    #   class.
     # - The current request's own path or URL is taken for a path on this site; a path that
     #   begins with "//" (`https://site//evil.example/`, reaching a Django catch-all view or a
     #   Starlette `request.url.path`) names another host (todoruleid). The

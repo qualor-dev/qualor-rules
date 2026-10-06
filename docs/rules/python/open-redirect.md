@@ -86,7 +86,8 @@ def after_login():
 - A slice is followed when it slices request data in place (`request.args["next"][:200]`),
   a variable assigned request data, or a view parameter; a slice of a value built from request
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
-  (`q = q.strip()`), is missed.
+  (`q = q.strip()`, also `q = q + request.args["b"]` or a fallback `q = request.form["q"]`), is
+  missed.
 - The current request's own path counts as a path on this site, although a path that starts with
   `//` names another host.
 - Values returned by a database query or another call are taken for stored data, unless the call

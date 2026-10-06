@@ -91,7 +91,8 @@ def save_cart():
 - A slice is followed when it slices request data in place (`request.get_data()[4:]`),
   a variable assigned request data, or a view parameter; a slice of a value built from request
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
-  (`q = q.strip()`), is missed.
+  (`q = q.strip()`, also `q = q + request.args["b"]` or a fallback `q = request.form["q"]`), is
+  missed.
 - An allow-list is recognised only as a lookup in a module-level dict of literals assigned to an
   upper-case name that is never changed, or as a ternary of constants.
 - Request sources are recognised by their shape: a Flask `<int:n>` route parameter and a numeric

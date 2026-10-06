@@ -83,7 +83,8 @@ def email():
 - A slice is followed when it slices request data in place (`request.args["q"][:50]`),
   a variable assigned request data, or a view parameter; a slice of a value built from request
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
-  (`q = q.strip()`), is missed.
+  (`q = q.strip()`, also `q = q + request.args["b"]` or a fallback `q = request.form["q"]`), is
+  missed.
 - `xpath()` is checked on any receiver in a module that imports lxml at the top level; a module
   that imports lxml only inside `try:` or under `if TYPE_CHECKING:` gets no `xpath()` findings.
 - `find()` and its relatives are checked only on a tree or element the rule can see being parsed or

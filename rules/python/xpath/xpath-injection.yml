@@ -44,8 +44,10 @@ rules:
     #   itself: of a request access chain (`request.args["q"][:50]`), of a variable assigned one in
     #   the function, or of a view parameter. A slice of a value built from request data
     #   (`(request.args["q"] + "x")[:50]`), or of a variable assigned again in the function after
-    #   the request value (`q = q.strip()`), is missed. Django request chains count in a view
-    #   (first parameter `request`) and `self.request`/`self.kwargs` in a class.
+    #   the request value (`q = q.strip()`, also with more request data: `q = q +
+    #   request.args["b"]`, `if not q: q = request.form["q"]`), is missed. Django request
+    #   chains count in a view (first parameter `request`) and `self.request`/`self.kwargs` in a
+    #   class.
     # - xpath() is a sink on any receiver in a module that imports lxml. find(), findall(),
     #   findtext() and iterfind() are sinks only on a tree or element the rule can see: the result
     #   of an lxml, ElementTree or defusedxml parse()/fromstring()/XML()/Element()/... call, in

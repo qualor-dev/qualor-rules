@@ -103,7 +103,8 @@ def preview():
 - A slice is followed when it slices request data in place (`request.args["url"][:200]`),
   a variable assigned request data, or a view parameter; a slice of a value built from request
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
-  (`q = q.strip()`), is missed.
+  (`q = q.strip()`, also `q = q + request.args["b"]` or a fallback `q = request.form["q"]`), is
+  missed.
 <!-- end: known-limits -->
 
 ## References

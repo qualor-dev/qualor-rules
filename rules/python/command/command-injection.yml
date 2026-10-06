@@ -55,8 +55,10 @@ rules:
     #   itself: of a request access chain (`request.args["cmd"][:100]`), of a variable assigned one in
     #   the function, or of a view parameter. A slice of a value built from request data
     #   (`(request.args["q"] + "x")[:50]`), or of a variable assigned again in the function after
-    #   the request value (`q = q.strip()`), is missed. Django request chains count in a view
-    #   (first parameter `request`) and `self.request`/`self.kwargs` in a class.
+    #   the request value (`q = q.strip()`, also with more request data: `q = q +
+    #   request.args["b"]`, `if not q: q = request.form["q"]`), is missed. Django request
+    #   chains count in a view (first parameter `request`) and `self.request`/`self.kwargs` in a
+    #   class.
     # - With shell=True, only the first element of an argument list is taken for shell code, as
     #   on POSIX (the others are the shell's $0, $1, ...); on Windows the list is joined into one
     #   command line for cmd.exe. shlex.quote() counts as escaping also in a `cmd /c` command,
