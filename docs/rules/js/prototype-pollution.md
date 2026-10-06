@@ -82,7 +82,9 @@ app.post('/settings/:section', (req, res) => {
 - A check of the key is recognised only as an allow-list: `includes()` or `has()` on a constant
   array or `Set` of string literals, around the write or as an early return. A deny-list check
   (against `"__proto__"`, `"constructor"`, `"prototype"`) is not recognised, so the write is still
-  reported. A key changed inside the checked block is missed.
+  reported. The check covers the block where the key is known to be in the list (not the `else`
+  branch) up to the next assignment to the key; an assignment inside a nested block after the
+  check (`if (x) { key = req.body.other; }`) is not seen, so later writes are missed.
 - Only writes in one expression are seen. An object first taken into a variable and then written
   to, path setters written as loops, and recursive merge helpers are missed.
 - Fastify's JSON parser rejects `__proto__` and `constructor` keys by default, but the keys of a

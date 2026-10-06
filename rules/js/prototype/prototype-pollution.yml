@@ -36,9 +36,9 @@ rules:
     #   never changes, as the condition of an if around the write or as an early return. A
     #   deny-list check (against "__proto__", "constructor", "prototype"), other checks, and
     #   lists whose strings hold escaped quotes are not followed: the write is still reported.
-    #   The if-form also clears its else branch, where the key is not in the list, and a key
-    #   reassigned with request data inside the checked block (both missed; recorded from
-    #   review, no test line).
+    #   The check covers the then-block or the code after the early return, up to an assignment
+    #   to the key in the same block; an assignment inside a nested block after the check
+    #   (`if (x) { key = req.body.other; }`) is not seen, so later writes stay clean.
     # - Only writes in one expression are seen: an object first taken with a request key into a
     #   variable and then written to, path setters written as loops, and recursive merge helpers
     #   are missed.
@@ -247,6 +247,42 @@ rules:
               metavariable: $CHECK
               regex: ^(?:includes|has)$
           - pattern: $KEY
+          # Not in the else branch of the check, where the key is not (known to be) in the list.
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern: |
+                        if ($LIST.$CHECK($KEY)) $THEN; else $ELSE;
+                    - pattern: |
+                        if ($LIST.$CHECK($KEY) && $OTHER) $THEN; else $ELSE;
+                    - pattern: |
+                        if ($OTHER && $LIST.$CHECK($KEY)) $THEN; else $ELSE;
+                - focus-metavariable: $ELSE
+          # Not after the key is assigned again following the check.
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        if ($LIST.$CHECK($KEY)) { ... }
+                    - pattern-inside: |
+                        if ($LIST.$CHECK($KEY) && $OTHER) { ... }
+                    - pattern-inside: |
+                        if ($OTHER && $LIST.$CHECK($KEY)) { ... }
+                    - pattern-inside: |
+                        if (!$LIST.$CHECK($KEY)) return ...;
+                        ...
+                    - pattern-inside: |
+                        if (!$LIST.$CHECK($KEY)) { return ...; }
+                        ...
+                    - pattern-inside: |
+                        if (!$LIST.$CHECK($KEY)) throw $ERR;
+                        ...
+                    - pattern-inside: |
+                        if (!$LIST.$CHECK($KEY)) { throw $ERR; }
+                        ...
+                - pattern: |
+                    $KEY = $NEW;
+                    ...
           - pattern-not-inside: |
               const $LIST = $DECL;
               ...

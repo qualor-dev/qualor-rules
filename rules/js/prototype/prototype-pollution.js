@@ -137,6 +137,62 @@ app.post('/allowed', (req, res) => {
   return res.end();
 });
 
+// The check covers the key only where it is known to be in the list: the then-block or the code
+// after an early return, up to a reassignment of the key. Not the else branch.
+app.post('/allowed-branches', (req, res) => {
+  let section = req.body.section;
+  if (ALLOWED_KEYS.includes(section)) {
+    // ok: js.prototype-pollution
+    settings[section].value = req.body.value;
+  } else {
+    // ruleid: js.prototype-pollution
+    settings[section].value = req.body.value;
+  }
+  if (ALLOWED_KEYS.includes(section) && req.body.value) {
+    // ok: js.prototype-pollution
+    settings[section].value = req.body.value;
+  } else {
+    // ruleid: js.prototype-pollution
+    settings[section].value = null;
+  }
+  if (ALLOWED_KEYS.includes(section)) {
+    let note = req.body.note;
+    note = String(note);
+    // ok: js.prototype-pollution
+    settings[section].note = note;
+    if (SECTION_SET.has(req.body.area)) {
+      // ok: js.prototype-pollution
+      settings[section].area = req.body.area;
+    } else {
+      // ok: js.prototype-pollution
+      settings[section].area = 'ui';
+    }
+    section = req.body.other;
+    // ruleid: js.prototype-pollution
+    settings[section].value = req.body.value;
+  }
+  let area = req.body.area;
+  if (!SECTION_SET.has(area)) return res.status(400).end();
+  // ok: js.prototype-pollution
+  settings[area].enabled = true;
+  area = req.body.other;
+  // ruleid: js.prototype-pollution
+  settings[area].enabled = true;
+  // A key normalised before the check stays checked.
+  let lang = req.body.lang;
+  lang = lang.trim();
+  if (!ALLOWED_KEYS.includes(lang)) throw new Error('unknown key');
+  // ok: js.prototype-pollution
+  settings[lang].value = req.body.value;
+  // A reassignment inside a nested block (an if or a loop after the check) is not seen.
+  if (req.body.override) {
+    lang = req.body.override;
+  }
+  // todoruleid: js.prototype-pollution
+  settings[lang].value = req.body.value;
+  res.end();
+});
+
 // A lookup with a fallback taken from the request is no allow-list.
 app.post('/fallback', (req, res) => {
   // ruleid: js.prototype-pollution
