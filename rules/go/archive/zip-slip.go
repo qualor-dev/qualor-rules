@@ -14,6 +14,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	auditlog "log"
 )
 
 var errUnsafe = errors.New("unsafe entry name")
@@ -474,6 +476,15 @@ func limits(zr *zip.Reader, dst string) error {
 			defer os.Exit(1)
 		}
 		// todoruleid: go.zip-slip
+		os.Create(filepath.Join(dst, f.Name))
+	}
+	for _, f := range zr.File {
+		// The log package imported under another name is not taken as exiting (nor the Fatal of a
+		// third-party logger or of testing.T).
+		if !filepath.IsLocal(f.Name) {
+			auditlog.Fatalf("unsafe entry name %q", f.Name)
+		}
+		// todook: go.zip-slip
 		os.Create(filepath.Join(dst, f.Name))
 	}
 	// zip.OpenReader returns ErrInsecurePath only with GODEBUG zipinsecurepath=0 (a //go:debug

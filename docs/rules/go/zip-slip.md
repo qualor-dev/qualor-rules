@@ -121,7 +121,8 @@ func Unzip(src, dst string) error {
 - The guard must end by leaving: `return`, `continue` or `break` (also with a label), `panic`,
   `os.Exit`, or `log.Fatal`/`log.Panic` and their `f`/`ln` forms. The same methods of a
   `*log.Logger` count only when the logger's type is visible in the file (a parameter or a field);
-  one taken from `log.Default()` is still reported. The rule reads the exit by its name, so a
+  one taken from `log.Default()` is still reported, and so are guards that exit through the
+  `log` package imported under another name, a third-party logger's `Fatal`, or `t.Fatal`. The rule reads the exit by its name, so a
   deferred `os.Exit`, or a `Fatal` method of another value called `log`, is taken as an exit.
 - A program built with `GODEBUG=zipinsecurepath=0` (where the reader rejects such names) is still
   reported.

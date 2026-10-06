@@ -58,6 +58,9 @@ rules:
     #   one although it runs after the write, and so does a `Fatal` of a value that shadows the log
     #   package (`todoruleid:`); a *log.Logger's Fatal/Panic counts only when the logger is typed in
     #   the file (a parameter or field), not one from `log.Default()` in a `:=` (`todook:`).
+    #   Other exiting calls are not recognised either, so their guards stay reported: the log
+    #   package imported under another name (`todook:`), a third-party logger's Fatal (logrus,
+    #   zap) and testing.T's Fatal/FailNow.
     # - Ad hoc string checks (`strings.Contains(name, "..")`) are not followed: no official doc
     #   describes them, and ".." alone does not cover an absolute name used without a join
     #   (`todook:`).
