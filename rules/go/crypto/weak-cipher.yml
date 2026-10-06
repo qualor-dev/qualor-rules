@@ -38,7 +38,8 @@ rules:
     #   exchange, CBC with SHA-256), named by their tls constant in the CipherSuites list of a
     #   tls.Config literal, a list assigned to a config's CipherSuites field (or appended to it),
     #   or a list held in a variable (`:=` or `var`, in the function or the package) that such a
-    #   literal or assignment uses, directly or spread into an append. Not followed: suite IDs written as numbers, and lists filled from
+    #   literal or assignment uses, directly or spread into an append (`append(x, v...)`); a list
+    #   handed to another function (a filter that removes the suites it names) does not count. Not followed: suite IDs written as numbers, and lists filled from
     #   `tls.InsecureCipherSuites()` in a loop (`todoruleid:`), lists passed through functions or
     #   struct fields of the program.
     # - A local variable that shadows the package name (`des := ...; des.NewCipher(k)`), and a
@@ -69,19 +70,35 @@ rules:
               - pattern-inside: |
                   $V := $LIST
                   ...
-                  <... tls.Config{..., CipherSuites: <... $V ...>, ...} ...>
+                  <... tls.Config{..., CipherSuites: $V, ...} ...>
               - pattern-inside: |
                   $V := $LIST
                   ...
-                  $CFG.CipherSuites = <... $V ...>
+                  <... tls.Config{..., CipherSuites: append($A, $V...), ...} ...>
+              - pattern-inside: |
+                  $V := $LIST
+                  ...
+                  $CFG.CipherSuites = $V
+              - pattern-inside: |
+                  $V := $LIST
+                  ...
+                  $CFG.CipherSuites = append($A, $V...)
               - pattern-inside: |
                   var $V = $LIST
                   ...
-                  <... tls.Config{..., CipherSuites: <... $V ...>, ...} ...>
+                  <... tls.Config{..., CipherSuites: $V, ...} ...>
               - pattern-inside: |
                   var $V = $LIST
                   ...
-                  $CFG.CipherSuites = <... $V ...>
+                  <... tls.Config{..., CipherSuites: append($A, $V...), ...} ...>
+              - pattern-inside: |
+                  var $V = $LIST
+                  ...
+                  $CFG.CipherSuites = $V
+              - pattern-inside: |
+                  var $V = $LIST
+                  ...
+                  $CFG.CipherSuites = append($A, $V...)
           # Only inside the list itself, not elsewhere in the region.
           - pattern-inside: $LIST
           - pattern: tls.$SUITE

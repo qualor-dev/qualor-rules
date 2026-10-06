@@ -9,6 +9,7 @@ import (
 	"crypto/rc4"
 	"crypto/tls"
 	"io"
+	"slices"
 
 	vendorrc4 "example.com/legacy/rc4"
 	"golang.org/x/crypto/chacha20poly1305"
@@ -242,6 +243,31 @@ func Fallback(cfg *tls.Config) {
 		tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
 	}
 	cfg.CipherSuites = append(cfg.CipherSuites, extra...)
+}
+
+// A deny-list handed to a filter names the suites it removes.
+var refused = []uint16{
+	// ok: go.weak-cipher
+	tls.TLS_RSA_WITH_RC4_128_SHA,
+}
+
+func dropSuites(all, drop []uint16) []uint16 {
+	var kept []uint16
+	for _, id := range all {
+		if !slices.Contains(drop, id) {
+			kept = append(kept, id)
+		}
+	}
+	return kept
+}
+
+func Hardened(cfg *tls.Config, defaults []uint16) *tls.Config {
+	blocked := []uint16{
+		// ok: go.weak-cipher
+		tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,
+	}
+	cfg.CipherSuites = dropSuites(defaults, blocked)
+	return &tls.Config{CipherSuites: dropSuites(defaults, refused)}
 }
 
 // The safe forms: the suites CipherSuites lists, the default list, TLS 1.3 only, and the

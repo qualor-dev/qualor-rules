@@ -14,7 +14,8 @@ under another name.
 
 It also finds TLS cipher suites that `crypto/tls` lists in `InsecureCipherSuites` (RC4, 3DES, RSA
 key exchange, and CBC with SHA-256) enabled in the `CipherSuites` of a `tls.Config`: in the
-literal, assigned to the field (also with `append`), or in a list variable used there.
+literal, assigned to the field (also with `append`), or in a list variable used there. A list
+handed to a function that filters suites out (a deny-list) is not reported.
 <!-- end: what-it-finds -->
 
 ## Why it matters
