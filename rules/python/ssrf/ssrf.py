@@ -1,11 +1,13 @@
 import json
+import os
 from typing import Annotated
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import quote, urljoin, urlparse
 
 import aiohttp
 import httpx
 import requests
+from config import CONFIG_API_URL
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
 from django.views import View
@@ -26,6 +28,10 @@ STATUS_PAGES = {
 }
 API_BASE = "https://api.example.com"
 API_ROOT = "https://api.example.com/"
+API_V2 = "https://api.example.com/v2/"
+API_HOST = "api.example.com"
+SCHEME = "https:"
+ENV_API_URL = os.environ.get("API_URL", "https://api.example.com")
 # Changed later by a view, so not an allow-list.
 PARTNERS = {"acme": "https://acme.example.com/hook"}
 
@@ -252,30 +258,110 @@ def partner(name):
     return "ok"
 
 
-# A function-local variable that shadows the module constant is still taken for the constant.
+# Chains after a fixed origin: concatenations, urljoin() of a fixed origin and a relative
+# literal, f-strings and format(). Request data before the separator, or as urljoin()'s
+# reference, can still change the host.
+@app.route("/chains/<uid>")
+def chains(uid):
+    page = request.args["page"]
+    # ok: python.ssrf
+    requests.get(API_ROOT + "users/" + uid)
+    # ok: python.ssrf
+    requests.get(API_ROOT + "users/" + uid + "/posts/" + page)
+    # ok: python.ssrf
+    requests.get(API_BASE + "/users/" + uid + "/posts/" + page)
+    # ok: python.ssrf
+    requests.get(API_V2 + "users/" + quote(uid) + "?page=" + page)
+    # ok: python.ssrf
+    requests.get(API_BASE + "?user=" + uid)
+    url = API_ROOT + "users/" + uid
+    # ok: python.ssrf
+    requests.get(url)
+    # ok: python.ssrf
+    requests.get(urljoin(API_ROOT, "users/") + uid)
+    # ok: python.ssrf
+    requests.get(urljoin(API_ROOT, "users/" + uid))
+    # ok: python.ssrf
+    requests.get(urljoin(API_BASE, "/users/" + uid))
+    # ok: python.ssrf
+    requests.get(urljoin("https://api.example.com/", "users/" + uid))
+    # ok: python.ssrf
+    requests.get(urljoin(settings.UPSTREAM_URL, "items/") + uid)
+    # ok: python.ssrf
+    requests.get(f"{API_ROOT}users/{uid}/posts/{page}")
+    # ok: python.ssrf
+    requests.get("{}/users/{}/{}".format(API_BASE, uid, page))
+    # ok: python.ssrf
+    requests.get(settings.UPSTREAM_URL + "/items/" + uid + "/stock")
+    # ruleid: python.ssrf
+    requests.get(urljoin(API_ROOT, uid))
+    # ruleid: python.ssrf
+    requests.get(urljoin(API_ROOT, uid) + "/" + page)
+    # ruleid: python.ssrf
+    requests.get(urljoin(API_BASE, "/" + uid))
+    # ruleid: python.ssrf
+    requests.get(urljoin("https://api.example.com/", uid))
+    # ruleid: python.ssrf
+    requests.get(API_BASE + uid + "/posts")
+    # ruleid: python.ssrf
+    requests.get(f"{API_BASE}{uid}/posts")
+    # ruleid: python.ssrf
+    requests.get(SCHEME + "//" + uid + "/avatar")
+    # A longer chain than the rule models.
+    # todook: python.ssrf
+    requests.get(API_ROOT + "a/" + uid + "/" + page + "/" + page + "/" + page)
+    # A literal scheme followed by a host constant.
+    # todook: python.ssrf
+    requests.get("https://" + API_HOST + "/users/" + uid)
+    return "ok"
+
+
+# A constant imported from a configuration module (or read from the environment) is a fixed
+# origin too; an upper-case local that holds request data is not.
+@app.route("/config/<uid>")
+def config_origin(uid):
+    # ok: python.ssrf
+    requests.get(CONFIG_API_URL + "/users/" + uid)
+    # ok: python.ssrf
+    requests.get(f"{ENV_API_URL}/users/{uid}")
+    TARGET = request.args["target"]
+    # ruleid: python.ssrf
+    requests.get(TARGET + "/users/" + uid)
+    return "ok"
+
+
+# A function-local variable that shadows the module constant is not the constant.
 @app.route("/shadow/<uid>")
 def shadow(uid):
     API_BASE = request.args["base"]
-    # todoruleid: python.ssrf
+    # ruleid: python.ssrf
     return requests.get(API_BASE + "/users/" + uid).text
 
 
-# A module constant assigned again through `global` in another view: taint is not followed
-# through module globals, so the request URL set there is not seen here.
+# A module constant that a view assigns again (through `global`) is not a fixed origin, before
+# or after that view.
 UPSTREAM = "https://upstream.example.com"
+MIRROR = "https://mirror.example.com"
 
 
 @app.route("/upstream/<uid>")
 def upstream(uid):
-    # todoruleid: python.ssrf
+    # ruleid: python.ssrf
     return requests.get(UPSTREAM + "/users/" + uid).text
 
 
 @app.post("/upstream")
 def set_upstream():
-    global UPSTREAM
+    global UPSTREAM, MIRROR
     UPSTREAM = request.form["url"]
+    MIRROR = request.form["mirror"]
     return "ok"
+
+
+@app.route("/mirror/<uid>")
+def mirror(uid):
+    # ruleid: python.ssrf
+    return requests.get(MIRROR + "/users/" + uid).text
 
 
 @app.post("/partners")

@@ -66,6 +66,9 @@ def preview():
 - Keep the scheme and host fixed: `"https://api.example.com/" + path`, or a module constant
   (`API = "https://api.example.com"`) followed by a literal that starts with `/`. Quote path
   segments with `urllib.parse.quote(x, safe="")`.
+- With `urljoin()`, join a fixed base with a fixed relative path and add the request value
+  after it (`urljoin(API, "users/") + quote(uid, safe="")`): a request value as the reference
+  itself can be an absolute URL that replaces the host.
 - If the client must choose the server, map its value to a URL from an allow-list, or check the
   parsed host against a list of allowed servers before sending.
 - Block private and link-local addresses at the network level as well.
@@ -86,11 +89,13 @@ def preview():
 <!-- begin: known-limits -->
 - A `requests.Session`, `httpx.Client` or `aiohttp.ClientSession` is checked only when it is made
   in the same function; a client from a helper, a parameter or a module global is not followed.
-- A fixed origin is recognised as a literal, an upper-case module constant holding a literal URL,
-  or a Django setting; `%`-formatting with a constant origin is not, so it is reported. A local
-  variable that shadows such a constant is still taken for it.
-- A relative URL must start with `/` followed by a character other than `/`: `"/" + x` can become
-  `//host/...`, another host.
+- A fixed origin is recognised as a literal URL, an upper-case constant (also one imported from a
+  configuration module) followed by a literal `/`, `?` or `#`, a constant whose value already
+  has a `/` after the host, a Django setting, or `urljoin()` of one of these and a relative
+  literal; concatenations are followed up to seven parts. A longer chain, `%`-formatting with a
+  constant origin and `"https://" + HOST + ...` are reported.
+- A relative URL must start with `/` followed by a character other than `/` or `\`, with `?` or
+  `#`, or with a path segment and `/`: `"/" + x` can become `//host/...`, another host.
 - A check of the parsed host against an allow-list is not recognised.
 - Request sources are recognised by their shape: a Flask `<int:n>` route parameter and a numeric
   Django URL argument still count as request data, and a function whose first parameter is named

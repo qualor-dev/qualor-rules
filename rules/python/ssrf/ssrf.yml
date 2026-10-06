@@ -39,14 +39,18 @@ rules:
     # - A requests Session, httpx Client or aiohttp ClientSession is a sink only when it is made
     #   in the function (assigned, in a with block, or called in place): a client from a helper,
     #   a parameter or a module global is not followed.
-    # - A fixed origin is recognised as a literal, an upper-case module constant assigned a
-    #   literal URL, or a Django setting, at the start of the URL text (concatenation, format(),
-    #   f-string); %-formatting with a constant origin (`"%s/users/%s" % (API, uid)`) is not. A
-    #   function-local variable that shadows the constant is still taken for it, and a constant
-    #   that another view assigns from the request through `global` is not followed (taint
-    #   does not flow through module globals).
-    # - A relative URL literal must start with "/" and a character other than "/", a quote,
-    #   "{" or "%": `"/" + x` can become a network-path reference `//host/...`.
+    # - A fixed origin is recognised at the start of the URL text: a literal URL with a host; a
+    #   relative literal; an upper-case name (a module constant, also one imported or read from
+    #   the environment) that the function does not assign and the module does not assign
+    #   again, followed by a literal that starts with "/", "?" or "#" (or a module constant
+    #   whose literal value has one after the host); a Django setting followed by "/"; and
+    #   urljoin() of a fixed origin and a non-empty relative literal. Concatenation chains are
+    #   followed up to seven operands, and format() and f-strings too. A longer chain,
+    #   %-formatting with a constant origin (`"%s/users/%s" % (API, uid)`) and a literal scheme
+    #   followed by a host constant (`"https://" + HOST + "/users/" + uid`) are not recognised.
+    # - A relative URL literal must start with "/" and a character other than "/", "\", a
+    #   quote, "{" or "%" (`"/" + x` can become a network-path reference `//host/...`), with
+    #   "?" or "#", or with a path segment and "/" (`"users/" + uid`).
     # - A check of the parsed host against an allow-list is not recognised.
     # - OpenGrep does not carry taint through a slice, so a slice of request data is a source
     #   itself: of a request access chain (`request.args["url"][:200]`), of a variable assigned one in
@@ -500,12 +504,18 @@ rules:
                         $DEFAULT = $ANY
                         ...
       # A URL whose text starts with a fixed origin keeps request data out of the scheme and host:
-      # - a literal scheme, host and "/" (or a literal "/" path, relative to a client's fixed
-      #   base_url), in concatenation, %-formatting, str.format() and f-strings; the host part
-      #   holds no placeholder (%, {});
-      # - a module constant (upper-case name assigned a literal "scheme://host...") or a Django
-      #   setting, followed by a literal that starts with "/" (or a constant that itself ends
-      #   with "host/"), in concatenation, str.format() and f-strings.
+      # - a literal scheme, host and "/", in concatenation (also a longer chain), %-formatting,
+      #   str.format() and f-strings; the host part holds no placeholder (%, {});
+      # - a relative literal, which keeps a client's fixed base_url (or urljoin()'s base): "/"
+      #   and a character other than "/", "\", a quote, "{" or "%"; "?" or "#"; or a path
+      #   segment and "/" (`"users/" + uid`), in the same forms;
+      # - a module constant (an upper-case name assigned a literal "scheme://host..." that the
+      #   module never assigns again; matched as the name itself) followed by a literal that
+      #   starts with "/", "?" or "#", or a constant that has one of them after its host, then
+      #   a concatenation chain of up to seven operands, an f-string or str.format();
+      # - a Django setting followed by a literal that starts with "/";
+      # - urljoin() of a fixed origin (a literal, a module constant or a Django setting) and a
+      #   non-empty relative literal, alone or followed by a concatenation chain.
       - patterns:
           - pattern-either:
               - pattern: $LEFT + $RIGHT
@@ -513,12 +523,78 @@ rules:
               - pattern: $LEFT.format(...)
           - metavariable-regex:
               metavariable: $LEFT
-              regex: ^[rbuRBU]{0,2}("|')([A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+/|/[^/"'{%\s])
+              regex: ^[rbuRBU]{0,2}("|')([A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+/|/[^/\\"'{%\s]|[?#]|[A-Za-z0-9._~-]+/)
       - patterns:
           - pattern: $FSTRING
           - metavariable-regex:
               metavariable: $FSTRING
-              regex: ^([fF][rR]?|[rR][fF])("|')([A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+/|/[^/"'{%\s])
+              regex: ^([fF][rR]?|[rR][fF])("|')([A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+/|/[^/\\"'{%\s]|[?#]|[A-Za-z0-9._~-]+/)
+      # An upper-case name (a module constant, also one imported or read from the environment)
+      # that the function does not assign and the module never assigns twice, then a literal
+      # that starts with "/" (not "//" or "/\"), "?" or "#".
+      - patterns:
+          - pattern-either:
+              - pattern: $ORIGIN + $SEP
+              - pattern: $ORIGIN + $SEP + $A
+              - pattern: $ORIGIN + $SEP + $A + $B
+              - pattern: $ORIGIN + $SEP + $A + $B + $C
+              - pattern: $ORIGIN + $SEP + $A + $B + $C + $D
+              - pattern: $ORIGIN + $SEP + $A + $B + $C + $D + $E
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $SEP
+              regex: ^[rbuRBU]{0,2}("|')(/(?![/\\])|[?#])
+          - pattern-not-inside: |
+              def $FUNCTION(...):
+                ...
+                $ORIGIN = $LOCAL
+                ...
+          - pattern-not-inside: |
+              $ORIGIN = $VALUE
+              ...
+              $ORIGIN = $OTHER
+              ...
+      - patterns:
+          - pattern: f"{$ORIGIN}..."
+          - pattern: $FSTRING
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $FSTRING
+              regex: ^[fF]("|')\{[A-Z][A-Z0-9_]*\}(/(?![/\\])|[?#])
+          - pattern-not-inside: |
+              def $FUNCTION(...):
+                ...
+                $ORIGIN = $LOCAL
+                ...
+          - pattern-not-inside: |
+              $ORIGIN = $VALUE
+              ...
+              $ORIGIN = $OTHER
+              ...
+      - patterns:
+          - pattern: $FORMAT.format($ORIGIN, ...)
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $FORMAT
+              regex: ^[rbuRBU]{0,2}("|')\{0?\}(/(?![/\\])|[?#])
+          - pattern-not-inside: |
+              def $FUNCTION(...):
+                ...
+                $ORIGIN = $LOCAL
+                ...
+          - pattern-not-inside: |
+              $ORIGIN = $VALUE
+              ...
+              $ORIGIN = $OTHER
+              ...
+      # A module constant with a separator after its host ("https://api.example.com/"), then
+      # anything.
       - patterns:
           - pattern-inside: |
               $ORIGIN = $VALUE
@@ -526,52 +602,90 @@ rules:
           - metavariable-regex:
               metavariable: $ORIGIN
               regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: ^[rbuRBU]{0,2}("|')[A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+[/?#]
           - pattern-not-inside: |
               $ORIGIN = $VALUE
               ...
               $ORIGIN = $OTHER
               ...
-          - metavariable-regex:
-              metavariable: $VALUE
-              regex: ^[rbuRBU]{0,2}("|')[A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+
           - pattern-either:
-              - patterns:
-                  - pattern: $LEFT + $RIGHT
-                  - metavariable-regex:
-                      metavariable: $LEFT
-                      regex: ^[A-Z][A-Z0-9_]*\s*\+\s*[rbuRBU]{0,2}("|')/
-                  - metavariable-pattern:
-                      metavariable: $LEFT
-                      pattern: $ORIGIN
-              - patterns:
-                  - pattern: f"{$ORIGIN}..."
-                  - pattern: $FSTRING
-                  - metavariable-regex:
-                      metavariable: $FSTRING
-                      regex: ^[fF]("|')\{[A-Z][A-Z0-9_]*\}/
-              - patterns:
-                  - pattern: $FORMAT.format($ORIGIN, ...)
-                  - metavariable-regex:
-                      metavariable: $FORMAT
-                      regex: ^[rbuRBU]{0,2}("|')\{0?\}/
-      - patterns:
-          - pattern-inside: |
-              $ORIGIN = $VALUE
-              ...
-          - metavariable-regex:
-              metavariable: $ORIGIN
-              regex: ^[A-Z][A-Z0-9_]*$
-          - pattern-not-inside: |
-              $ORIGIN = $VALUE
-              ...
-              $ORIGIN = $OTHER
-              ...
-          - metavariable-regex:
-              metavariable: $VALUE
-              regex: ^[rbuRBU]{0,2}("|')[A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+/
-          - pattern-either:
-              - pattern: $ORIGIN + $RIGHT
+              - pattern: $ORIGIN + $A
+              - pattern: $ORIGIN + $A + $B
+              - pattern: $ORIGIN + $A + $B + $C
+              - pattern: $ORIGIN + $A + $B + $C + $D
+              - pattern: $ORIGIN + $A + $B + $C + $D + $E
+              - pattern: $ORIGIN + $A + $B + $C + $D + $E + $F
               - pattern: f"{$ORIGIN}..."
+      - patterns:
+          - pattern-inside: |
+              $ORIGIN = $VALUE
+              ...
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: ^[rbuRBU]{0,2}("|')[A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+[/?#]
+          - pattern-not-inside: |
+              $ORIGIN = $VALUE
+              ...
+              $ORIGIN = $OTHER
+              ...
+          - pattern: $FORMAT.format($ORIGIN, ...)
+          - metavariable-regex:
+              metavariable: $FORMAT
+              regex: ^[rbuRBU]{0,2}("|')\{0?\}
+      # urljoin() of a fixed origin and a non-empty relative literal: a URL with a path on that
+      # host, alone or followed by a concatenation chain.
+      - patterns:
+          - pattern-either:
+              - pattern: urllib.parse.urljoin($BASE, $PATH)
+              - pattern: urllib.parse.urljoin($BASE, $PATH) + $A
+              - pattern: urllib.parse.urljoin($BASE, $PATH) + $A + $B
+              - pattern: urllib.parse.urljoin($BASE, $PATH) + $A + $B + $C
+              - pattern: urllib.parse.urljoin($BASE, $PATH) + $A + $B + $C + $D
+              - pattern: urllib.parse.urljoin($BASE, $PATH) + $A + $B + $C + $D + $E
+          - metavariable-regex:
+              metavariable: $BASE
+              regex: ^[rbuRBU]{0,2}("|')[A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+
+          - metavariable-regex:
+              metavariable: $PATH
+              regex: &relative-literal ^[rbuRBU]{0,2}("|')(/[^/\\"'{%\s]|[?#]|[A-Za-z0-9._~-]+(/|"$|'$))
+      - patterns:
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Z][A-Z0-9_]*$
+          - pattern-not-inside: |
+              def $FUNCTION(...):
+                ...
+                $ORIGIN = $LOCAL
+                ...
+          - pattern-not-inside: |
+              $ORIGIN = $VALUE
+              ...
+              $ORIGIN = $OTHER
+              ...
+          - pattern-either:
+              - pattern: urllib.parse.urljoin($ORIGIN, $PATH)
+              - pattern: urllib.parse.urljoin($ORIGIN, $PATH) + $A
+              - pattern: urllib.parse.urljoin($ORIGIN, $PATH) + $A + $B
+              - pattern: urllib.parse.urljoin($ORIGIN, $PATH) + $A + $B + $C
+              - pattern: urllib.parse.urljoin($ORIGIN, $PATH) + $A + $B + $C + $D
+              - pattern: urllib.parse.urljoin($ORIGIN, $PATH) + $A + $B + $C + $D + $E
+          - metavariable-regex:
+              metavariable: $PATH
+              regex: *relative-literal
+      - patterns:
+          - pattern-either:
+              - pattern: urllib.parse.urljoin(django.conf.settings.$SETTING, $PATH)
+              - pattern: urllib.parse.urljoin(django.conf.settings.$SETTING, $PATH) + $A
+              - pattern: urllib.parse.urljoin(django.conf.settings.$SETTING, $PATH) + $A + $B
+              - pattern: urllib.parse.urljoin(django.conf.settings.$SETTING, $PATH) + $A + $B + $C
+          - metavariable-regex:
+              metavariable: $PATH
+              regex: *relative-literal
       - patterns:
           - pattern-either:
               - patterns:
