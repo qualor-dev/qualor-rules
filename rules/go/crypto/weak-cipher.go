@@ -222,6 +222,28 @@ func ClientConfig(legacy bool) *tls.Config {
 	return &tls.Config{CipherSuites: compatSuites}
 }
 
+// A list variable assigned to the field, declared with var, or spread into an append.
+var fallbackSuites = []uint16{
+	// ruleid: go.weak-cipher
+	tls.TLS_ECDHE_ECDSA_WITH_RC4_128_SHA,
+}
+
+func Fallback(cfg *tls.Config) {
+	cfg.CipherSuites = fallbackSuites
+	var local = []uint16{
+		// ruleid: go.weak-cipher
+		tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+	}
+	cfg.CipherSuites = local
+	extra := []uint16{
+		// ruleid: go.weak-cipher
+		tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
+		// ok: go.weak-cipher
+		tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+	}
+	cfg.CipherSuites = append(cfg.CipherSuites, extra...)
+}
+
 // The safe forms: the suites CipherSuites lists, the default list, TLS 1.3 only, and the
 // constants used outside a tls.Config (a name for a log line, a comparison).
 func ModernServer() *tls.Config {

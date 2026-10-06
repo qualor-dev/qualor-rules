@@ -8,7 +8,8 @@ rules:
       InsecureCipherSuites "have security issues": data protected with them can be recovered or
       changed. Use an authenticated cipher instead: AES-GCM (`aes.NewCipher` with
       `cipher.NewGCM`) or ChaCha20-Poly1305 (`golang.org/x/crypto/chacha20poly1305`); in a
-      tls.Config, leave CipherSuites unset or name only suites that `tls.CipherSuites()` lists.
+      tls.Config, leave CipherSuites unset or name only suites that `tls.CipherSuites()` lists
+      (ECDHE key exchange, for forward secrecy).
     metadata:
       title: Broken cipher DES, 3DES or RC4, or an insecure TLS cipher suite (Go)
       cwe: ['CWE-327']
@@ -36,8 +37,8 @@ rules:
     # - TLS cipher suites: the twelve suites `tls.InsecureCipherSuites` lists (RC4, 3DES, RSA key
     #   exchange, CBC with SHA-256), named by their tls constant in the CipherSuites list of a
     #   tls.Config literal, a list assigned to a config's CipherSuites field (or appended to it),
-    #   or a list held in a variable of the same function or package that such a literal or
-    #   assignment uses. Not followed: suite IDs written as numbers, and lists filled from
+    #   or a list held in a variable (`:=` or `var`, in the function or the package) that such a
+    #   literal or assignment uses, directly or spread into an append. Not followed: suite IDs written as numbers, and lists filled from
     #   `tls.InsecureCipherSuites()` in a loop (`todoruleid:`), lists passed through functions or
     #   struct fields of the program.
     # - A local variable that shadows the package name (`des := ...; des.NewCipher(k)`), and a
@@ -68,15 +69,19 @@ rules:
               - pattern-inside: |
                   $V := $LIST
                   ...
-                  <... tls.Config{..., CipherSuites: $V, ...} ...>
+                  <... tls.Config{..., CipherSuites: <... $V ...>, ...} ...>
               - pattern-inside: |
                   $V := $LIST
                   ...
-                  $CFG.CipherSuites = $V
+                  $CFG.CipherSuites = <... $V ...>
               - pattern-inside: |
                   var $V = $LIST
                   ...
-                  <... tls.Config{..., CipherSuites: $V, ...} ...>
+                  <... tls.Config{..., CipherSuites: <... $V ...>, ...} ...>
+              - pattern-inside: |
+                  var $V = $LIST
+                  ...
+                  $CFG.CipherSuites = <... $V ...>
           # Only inside the list itself, not elsewhere in the region.
           - pattern-inside: $LIST
           - pattern: tls.$SUITE

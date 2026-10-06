@@ -14,7 +14,7 @@ under another name.
 
 It also finds TLS cipher suites that `crypto/tls` lists in `InsecureCipherSuites` (RC4, 3DES, RSA
 key exchange, and CBC with SHA-256) enabled in the `CipherSuites` of a `tls.Config`: in the
-literal, assigned to the field, or in a list variable used there.
+literal, assigned to the field (also with `append`), or in a list variable used there.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -24,6 +24,11 @@ The Go documentation calls these ciphers "cryptographically broken and should no
 secure applications". DES keys are short enough to search, Triple DES has a 64-bit block that
 leaks data over long sessions, and RC4's key stream is biased. Data encrypted with them can be
 recovered, and because none of them authenticates the data, it can also be changed unnoticed.
+
+The TLS suites in `InsecureCipherSuites` carry the same risks or others that the crypto/tls sources name: RC4
+and 3DES as above, RSA key exchange has no forward secrecy (anyone who later obtains the server's
+private key can decrypt recorded sessions), and Go's CBC suites with SHA-256 have no
+countermeasures against the Lucky13 timing attack on CBC padding.
 <!-- end: why-it-matters -->
 
 ## Example
