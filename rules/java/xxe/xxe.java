@@ -564,7 +564,153 @@ class SchemaImports {
     Schema dtdOnly(InputStream xsd) throws Exception {
         SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
         factory.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        // ruleid: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    Schema dtdOnlyByName(InputStream xsd) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        factory.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+        // ruleid: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    // External DTDs and entity references in the schema documents are still fetched.
+    Schema schemaOnly(InputStream xsd) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        factory.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        // ruleid: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    // A refused DOCTYPE does not stop xs:import or schemaLocation.
+    Schema doctypeRefused(InputStream xsd) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        // ruleid: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    // Secure processing alone is not a portable restriction on a factory found by lookup.
+    Schema secureProcessingOnly(InputStream xsd) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+        // ruleid: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    Schema chained(InputStream xsd) throws Exception {
+        // ruleid: java.xxe
+        return SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI).newSchema(new StreamSource(xsd));
+    }
+
+    Schema deniedByName(InputStream xsd) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        factory.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+        factory.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+        // ok: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    // The order of the two properties does not matter, nor how each is named.
+    Schema deniedInOtherOrder(InputStream xsd) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        factory.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+        factory.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        // ok: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    Schema deniedInTry(InputStream xsd) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        try {
+            factory.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+            factory.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        } catch (org.xml.sax.SAXException e) {
+            throw new IllegalStateException(e);
+        }
+        // ok: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    // The built-in JDK factory denies external access once secure processing is set explicitly.
+    Schema builtInSecure(InputStream xsd) throws Exception {
+        SchemaFactory factory = SchemaFactory.newDefaultInstance();
+        factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+        // ok: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    // A Validator is not checked: here external schemas named by the validated document are
+    // still fetched, since only the DTD property is set on it.
+    void validated(Schema schema, InputStream in) throws Exception {
+        javax.xml.validation.Validator validator = schema.newValidator();
+        validator.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
         // todoruleid: java.xxe
+        validator.validate(new StreamSource(in));
+    }
+}
+
+// A SchemaFactory in a field, set up in a static block, a constructor or a method.
+class SharedSchemaFactory {
+    private static final SchemaFactory FACTORY = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+
+    static {
+        try {
+            FACTORY.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        } catch (org.xml.sax.SAXException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    Schema load(InputStream xsd) throws Exception {
+        // ruleid: java.xxe
+        return FACTORY.newSchema(new StreamSource(xsd));
+    }
+}
+
+class HardenedSchemaInStaticBlock {
+    private static final SchemaFactory FACTORY = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+
+    static {
+        try {
+            FACTORY.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            FACTORY.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        } catch (org.xml.sax.SAXException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    Schema load(InputStream xsd) throws Exception {
+        // ok: java.xxe
+        return FACTORY.newSchema(new StreamSource(xsd));
+    }
+}
+
+class HardenedSchemaInConstructor {
+    private final SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+
+    HardenedSchemaInConstructor() throws Exception {
+        factory.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        factory.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+    }
+
+    Schema load(InputStream xsd) throws Exception {
+        // ok: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+}
+
+class HardenedSchemaInMethod {
+    private final SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+
+    void configure() throws Exception {
+        factory.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+        factory.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+    }
+
+    Schema load(InputStream xsd) throws Exception {
+        // ok: java.xxe
         return factory.newSchema(new StreamSource(xsd));
     }
 }

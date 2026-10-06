@@ -74,6 +74,9 @@ public class InvoiceParser {
 - For StAX, set `XMLInputFactory.SUPPORT_DTD` to `false`.
 - Where DTDs are needed, deny external access instead: set `XMLConstants.ACCESS_EXTERNAL_DTD` (and,
   for schemas and stylesheets, `ACCESS_EXTERNAL_SCHEMA` / `ACCESS_EXTERNAL_STYLESHEET`) to `""`.
+- A `SchemaFactory` needs both `ACCESS_EXTERNAL_DTD` and `ACCESS_EXTERNAL_SCHEMA` set to `""`:
+  refusing DOCTYPEs does not stop `xs:import`, `xs:include` or `schemaLocation` from fetching. Set
+  them on each `Validator` too.
 <!-- end: how-to-fix -->
 
 ## Frameworks and APIs covered
@@ -94,8 +97,7 @@ public class InvoiceParser {
   held in a constant of another class.
 - A setting is recognised before the use in the same block; one made only under a condition is not
   hardening and is reported.
-- The same settings count for every factory: a `SchemaFactory` with only `ACCESS_EXTERNAL_DTD`
-  set to `""` is quiet, although it still fetches imported schemas.
+- A `Validator` made from a `Schema` is not checked, whatever properties it has.
 - A `TransformerFactory` is reported only when its transformer parses a `StreamSource` or
   `SAXSource`; stylesheets parsed by `newTransformer(Source)` are not reported.
 - A dom4j `SAXReader` or JDOM `SAXBuilder` given its own `XMLReader` is not reported.
@@ -116,6 +118,7 @@ public class InvoiceParser {
 - <https://docs.oracle.com/en/java/javase/25/docs/api/java.xml/javax/xml/stream/XMLInputFactory.html>
 - <https://docs.oracle.com/en/java/javase/25/docs/api/java.xml/javax/xml/transform/TransformerFactory.html>
 - <https://docs.oracle.com/en/java/javase/25/docs/api/java.xml/javax/xml/validation/SchemaFactory.html>
+- <https://docs.oracle.com/en/java/javase/25/docs/api/java.xml/javax/xml/validation/Validator.html>
 - <https://docs.oracle.com/en/java/javase/25/docs/api/java.xml/org/xml/sax/helpers/XMLReaderFactory.html>
 - <https://dom4j.github.io/javadoc/2.1.3/org/dom4j/io/SAXReader.html>
 - <https://github.com/dom4j/dom4j/releases>
