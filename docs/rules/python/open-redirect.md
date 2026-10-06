@@ -10,7 +10,10 @@
 <!-- begin: what-it-finds -->
 Redirects whose target comes from the HTTP request: Flask's and Werkzeug's `redirect()`, Django's
 `redirect()`, `HttpResponseRedirect` and `HttpResponsePermanentRedirect`, and FastAPI's or
-Starlette's `RedirectResponse`, when request data decides the whole target or its scheme and host.
+Starlette's `RedirectResponse`, a `Location` header set on a response (`response["Location"] =
+url`, `response.headers["Location"]`, `headers={"Location": url}`, a Flask view's `(body, 302,
+{"Location": url})`), and the URL that a Django `RedirectView.get_redirect_url()` returns, when
+request data decides the whole target or its scheme and host.
 URLs the application builds for its own views (`url_for()`, `reverse()`) and request data after a
 fixed path or origin are not reported.
 
@@ -108,6 +111,10 @@ def after_login():
   missed.
 - In a view, the current request's own path counts as a path on this site, although a catch-all
   route can receive a path that starts with `//` (or `/\` in Flask), which names another host.
+- A `Location` header counts on a response the code makes or receives (middleware, an
+  `after_request` hook, a FastAPI `Response` parameter); headers collected in a dict variable
+  before the response is made are not followed. A `RedirectView` whose `url` attribute is filled
+  from URL arguments (`url = "https://%(host)s/"`) is not reported.
 - Values returned by a database query or another call are taken for stored data, unless the call
   receives request data whole; a request value passed to such a call through a variable is missed.
 - An allow-list is recognised only as a lookup in a module-level dict of literals assigned to an
@@ -157,6 +164,10 @@ def after_login():
 - <https://url.spec.whatwg.org/>
 - <https://docs.python.org/3/library/re.html#re.sub>
 - <https://docs.djangoproject.com/en/stable/topics/auth/default/#django.contrib.auth.views.LoginView>
+- <https://flask.palletsprojects.com/en/stable/quickstart/#about-responses>
+- <https://flask.palletsprojects.com/en/stable/api/#flask.make_response>
+- <https://flask.palletsprojects.com/en/stable/api/#flask.Flask.after_request>
+- <https://fastapi.tiangolo.com/advanced/response-headers/>
 
 ## Tests
 

@@ -5,16 +5,24 @@ from urllib.parse import urlencode, urlparse, urlsplit
 
 from django.conf import settings
 from django.core.exceptions import PermissionDenied
-from django.http import HttpResponseBadRequest, HttpResponsePermanentRedirect, HttpResponseRedirect
+from django.http import (
+    HttpResponse,
+    HttpResponseBadRequest,
+    HttpResponsePermanentRedirect,
+    HttpResponseRedirect,
+    JsonResponse,
+)
 from django.shortcuts import get_object_or_404, redirect as django_redirect
 from django.urls import reverse
 from django.utils.deprecation import MiddlewareMixin
 from django.utils.http import is_safe_url, url_has_allowed_host_and_scheme
 from django.views import View
+from django.views.generic import RedirectView
 from django_hosts.resolvers import reverse as hosts_reverse
 from fastapi import Depends, FastAPI, Path, Query, Request
+from fastapi import Response as FastAPIResponse
 from fastapi.responses import RedirectResponse
-from flask import Flask, redirect, request, url_for
+from flask import Flask, Response, make_response, redirect, request, url_for
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -367,6 +375,68 @@ def strip_trailing_slash():
 def files_catch_all(rest):
     # todoruleid: python.open-redirect
     return redirect(request.path + "/")
+
+
+# A Location header set on a response redirects as well: Flask's response headers, its
+# location attribute, a view's (body, status, headers) tuple and an after_request hook.
+@app.route("/moved")
+def moved():
+    resp = make_response("", 302)
+    # ruleid: python.open-redirect
+    resp.headers["Location"] = request.args["to"]
+    return resp
+
+
+@app.route("/moved-tuple")
+def moved_tuple():
+    # ruleid: python.open-redirect
+    return "", 302, {"Location": request.args["to"]}
+
+
+@app.route("/moved-attr")
+def moved_attr():
+    resp = Response(status=301)
+    # ruleid: python.open-redirect
+    resp.location = request.args["to"]
+    # ruleid: python.open-redirect
+    resp.headers.set("location", request.args["to"])
+    return resp
+
+
+@app.route("/moved-ok")
+def moved_ok():
+    resp = Response(status=302, headers={"Location": url_for("index")})
+    # ok: python.open-redirect
+    resp.headers["X-Ref"] = request.args.get("ref", "")
+    # ok: python.open-redirect
+    resp.headers["Location"] = "/items/" + request.args["item"]
+    # ok: python.open-redirect
+    return "", 302, {"Location": url_for("index"), "X-Ref": request.args.get("ref", "")}
+
+
+@app.after_request
+def add_location(response):
+    if response.status_code == 302 and "next" in request.args:
+        # ruleid: python.open-redirect
+        response.headers["Location"] = request.args["next"]
+    return response
+
+
+# A dict that is not a response is not a header (an exported row with a Location column).
+@app.post("/export-row")
+def export_row():
+    row = {"Name": request.form["name"]}
+    # ok: python.open-redirect
+    row["Location"] = request.form["city"]
+    return row
+
+
+# Headers collected in a dict first are not followed.
+@app.route("/moved-dict")
+def moved_dict():
+    headers = {"Location": request.args["to"]}
+    # todoruleid: python.open-redirect
+    return Response(status=302, headers=headers)
 
 
 # Django: redirect(), HttpResponseRedirect and HttpResponsePermanentRedirect.
@@ -728,6 +798,86 @@ def lowercase_middleware(get_response):
     return middleware
 
 
+# Django: a Location header set on a response, also in middleware, and RedirectView's
+# get_redirect_url() (its *args and **kwargs are the URL arguments).
+def django_location_header(request):
+    target = request.GET.get("next", "/")
+    response = HttpResponse(status=302)
+    # ruleid: python.open-redirect
+    response["Location"] = target
+    # ruleid: python.open-redirect
+    response.headers["location"] = request.GET["back"]
+    # ok: python.open-redirect
+    response["Location"] = reverse("home")
+    # ok: python.open-redirect
+    response["X-Next"] = target
+    return response
+
+
+def django_location_init(request):
+    # ruleid: python.open-redirect
+    a = HttpResponse(status=303, headers={"Location": request.POST["next"]})
+    # ok: python.open-redirect
+    return HttpResponse(status=303, headers={"Location": "/thanks/", "X-From": request.GET.get("from", "")})
+
+
+def django_export_row(request):
+    row = {"Name": request.POST["name"]}
+    # ok: python.open-redirect
+    row["Location"] = request.POST["city"]
+    return JsonResponse(row)
+
+
+class BackLinkMiddleware(MiddlewareMixin):
+    def process_response(self, request, response):
+        if response.status_code == 302 and "back" in request.GET:
+            # ruleid: python.open-redirect
+            response["Location"] = request.GET["back"]
+        return response
+
+
+class NextRedirectView(RedirectView):
+    def get_redirect_url(self, *args, **kwargs):
+        # ruleid: python.open-redirect
+        return self.request.GET.get("next", "/")
+
+
+class HostRedirectView(RedirectView):
+    def get_redirect_url(self, *args, **kwargs):
+        # ruleid: python.open-redirect
+        return "https://" + kwargs["host"] + "/"
+
+
+class CounterRedirectView(RedirectView):
+    pattern_name = "article-detail"
+
+    def get_redirect_url(self, *args, **kwargs):
+        article = get_object_or_404(Article, pk=kwargs["pk"])
+        article.visits += 1
+        article.save()
+        # ok: python.open-redirect
+        return super().get_redirect_url(*args, **kwargs)
+
+
+class SearchRedirectView(RedirectView):
+    def get_redirect_url(self, *args, **kwargs):
+        # ok: python.open-redirect
+        return reverse("search") + "?q=" + self.request.GET.get("q", "")
+
+
+# Not a RedirectView: its get_redirect_url() is not a redirect.
+class ShareLink(View):
+    def get_redirect_url(self):
+        # ok: python.open-redirect
+        return self.request.GET.get("next", "/")
+
+
+# RedirectView's url with a placeholder filled from the URL arguments is not followed.
+class PlaceholderRedirectView(RedirectView):
+    # todoruleid: python.open-redirect
+    url = "https://%(host)s/"
+
+
 # FastAPI: RedirectResponse, and a path operation with response_class=RedirectResponse.
 class Checkout(BaseModel):
     cart_id: str
@@ -840,3 +990,30 @@ class AsgiSlashMiddleware:
             await response(scope, receive, send)
             return
         await self.app(scope, receive, send)
+
+
+# FastAPI and Starlette: a Location header on a Response parameter, a response made in place or
+# in middleware.
+@api.get("/moved")
+async def fa_moved(response: FastAPIResponse, to: str = "/"):
+    response.status_code = 307
+    # ruleid: python.open-redirect
+    response.headers["Location"] = to
+    return {}
+
+
+@api.get("/moved-init")
+async def fa_moved_init(to: str = "/"):
+    # ruleid: python.open-redirect
+    a = FastAPIResponse(status_code=307, headers={"location": to})
+    # ok: python.open-redirect
+    return FastAPIResponse(status_code=307, headers={"location": "/home", "x-to": to})
+
+
+class LocationRewriteMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        if response.status_code in (301, 302) and request.url.path.startswith("/r/"):
+            # ruleid: python.open-redirect
+            response.headers["location"] = request.url.path.removeprefix("/r")
+        return response

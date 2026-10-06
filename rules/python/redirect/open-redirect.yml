@@ -55,6 +55,10 @@ rules:
         - https://url.spec.whatwg.org/
         - https://docs.python.org/3/library/re.html#re.sub
         - https://docs.djangoproject.com/en/stable/topics/auth/default/#django.contrib.auth.views.LoginView
+        - https://flask.palletsprojects.com/en/stable/quickstart/#about-responses
+        - https://flask.palletsprojects.com/en/stable/api/#flask.make_response
+        - https://flask.palletsprojects.com/en/stable/api/#flask.Flask.after_request
+        - https://fastapi.tiangolo.com/advanced/response-headers/
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A fixed origin is recognised as a literal, an upper-case module constant assigned a
@@ -102,6 +106,13 @@ rules:
     #   upper-case name assigned in the function is not a constant); or as a ternary of constants. A
     #   membership check (`if x not in ALLOWED: return`) is not, nor is a nested table or a value
     #   written as implicitly concatenated literals (todook).
+    # - A Location header counts on a response the function makes (a response class or factory)
+    #   or receives (middleware, an after_request hook, a FastAPI Response parameter), set by
+    #   item, headers.set()/add()/setdefault()/append(), `location =`, a `headers={...}` dict
+    #   literal or a Flask view's tuple; headers collected in a dict variable first are not
+    #   followed (todoruleid). RedirectView's get_redirect_url() is a sink and its arguments are
+    #   URL arguments; a `url` class attribute with a placeholder filled from them is not
+    #   followed (todoruleid).
     # Inherited from the request source block (python.sql-injection), each with a `todook` line:
     # - A Flask route parameter with a typed converter (`<int:n>`) is still a source.
     # - A Django URL argument is still a source when its converter (`<int:pk>`, in urls.py) or a
@@ -618,6 +629,27 @@ rules:
               def __call__(self, $SCOPE, $RECEIVE, $SEND):
                 ...
           - pattern: $SCOPE["path"]
+      # Django's RedirectView.get_redirect_url(*args, **kwargs): its arguments are the ones
+      # captured from the URL pattern.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $CLS(..., django.views.generic.RedirectView, ...):
+                    ...
+              - pattern-inside: |
+                  class $CLS(..., django.views.generic.base.RedirectView, ...):
+                    ...
+          - pattern-either:
+              - pattern-inside: |
+                  def get_redirect_url(self, ..., $PARAM, ...):
+                    ...
+              - pattern-inside: |
+                  def get_redirect_url(self, ..., *$PARAM, ...):
+                    ...
+              - pattern-inside: |
+                  def get_redirect_url(self, ..., **$PARAM):
+                    ...
+          - focus-metavariable: $PARAM
     pattern-sanitizers:
       - pattern: int(...)
       - pattern: float(...)
@@ -1237,6 +1269,10 @@ rules:
               - pattern: str($REQ.base_url) + $A + $B
               - pattern: str($REQ.base_url) + $A + $B + $C
               - pattern: f"{$REQ.base_url}..."
+      # RedirectView's own get_redirect_url(): its `url` (a class attribute) or `pattern_name`
+      # reversed with the URL arguments.
+      - pattern: super().get_redirect_url(...)
+      - pattern: super($CLS, self).get_redirect_url(...)
       # A Django model looked up through its manager or get_object_or_404(): redirect() sends
       # the browser to its get_absolute_url().
       - pattern: $MODEL.objects.$QUERY(...)
@@ -1454,5 +1490,158 @@ rules:
                   @$APP.$ROUTE(..., response_class=starlette.responses.RedirectResponse, ...)
                   def $VIEW(...):
                     ...
+          - pattern: return $URL
+          - focus-metavariable: $URL
+      # A Location header set on a response the function makes or receives: Django
+      # `response["Location"] = url` and `response.headers[...]`, Flask/Werkzeug
+      # `response.headers[...]`, `headers.set()/add()/setdefault()` and `response.location`,
+      # Starlette/FastAPI `response.headers[...]` and `append()`/`setdefault()`. The response comes
+      # from a response class or factory, middleware (get_response(), call_next(), the response
+      # argument of process_response() or an after_request hook) or a FastAPI Response parameter.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      $RESP = django.http.$CLASS(...)
+                      ...
+                  - metavariable-regex:
+                      metavariable: $CLASS
+                      regex: ^\w*(Response|Redirect)\w*$
+              - pattern-inside: |
+                  $RESP = django.shortcuts.render(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = django.shortcuts.redirect(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = django.template.response.TemplateResponse(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = flask.make_response(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = flask.Response(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = flask.redirect(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = flask.jsonify(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = werkzeug.wrappers.Response(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = starlette.responses.$CLASS(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = fastapi.responses.$CLASS(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = fastapi.Response(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = self.get_response(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = get_response(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = await call_next(...)
+                  ...
+              - pattern-inside: |
+                  def process_response(self, $REQ, $RESP):
+                    ...
+              - pattern-inside: |
+                  @$APP.after_request
+                  def $HOOK($RESP):
+                    ...
+              - pattern-inside: |
+                  def $VIEW(..., $RESP: fastapi.Response, ...):
+                    ...
+              - pattern-inside: |
+                  def $VIEW(..., $RESP: starlette.responses.Response, ...):
+                    ...
+          - pattern-either:
+              - pattern: $RESP[$HEADER] = $URL
+              - pattern: $RESP.headers[$HEADER] = $URL
+              - pattern: $RESP.setdefault($HEADER, $URL)
+              - pattern: $RESP.headers.set($HEADER, $URL, ...)
+              - pattern: $RESP.headers.add($HEADER, $URL, ...)
+              - pattern: $RESP.headers.setdefault($HEADER, $URL)
+              - pattern: $RESP.headers.append($HEADER, $URL)
+          - metavariable-regex:
+              metavariable: $HEADER
+              regex: &location-header ^[rbuRBU]{0,2}("|')(?i:location)("|')$
+          - focus-metavariable: $URL
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $RESP = flask.make_response(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = flask.Response(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = flask.redirect(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = werkzeug.wrappers.Response(...)
+                  ...
+              - pattern-inside: |
+                  @$APP.after_request
+                  def $HOOK($RESP):
+                    ...
+          - pattern: $RESP.location = $URL
+          - focus-metavariable: $URL
+      # A Location header given when the response is made: `headers={"Location": url}`, Flask's
+      # make_response() with a headers dict, and a Flask view's (body, status, headers) or
+      # (body, headers) tuple.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern: |
+                      django.http.$CLASS(..., headers={..., $HEADER: $URL, ...}, ...)
+                  - metavariable-regex:
+                      metavariable: $CLASS
+                      regex: ^\w*(Response|Redirect)\w*$
+              - pattern: |
+                  flask.Response(..., headers={..., $HEADER: $URL, ...}, ...)
+              - pattern: |
+                  werkzeug.wrappers.Response(..., headers={..., $HEADER: $URL, ...}, ...)
+              - pattern: |
+                  flask.make_response(..., {..., $HEADER: $URL, ...}, ...)
+              - pattern: |
+                  starlette.responses.$CLASS(..., headers={..., $HEADER: $URL, ...}, ...)
+              - pattern: |
+                  fastapi.responses.$CLASS(..., headers={..., $HEADER: $URL, ...}, ...)
+              - pattern: |
+                  fastapi.Response(..., headers={..., $HEADER: $URL, ...}, ...)
+              - patterns:
+                  - pattern-inside: |
+                      @$APP.$ROUTE(...)
+                      def $VIEW(...):
+                        ...
+                  - pattern-either:
+                      - pattern: |
+                          return $BODY, $STATUS, {..., $HEADER: $URL, ...}
+                      - pattern: |
+                          return $BODY, {..., $HEADER: $URL, ...}
+          - metavariable-regex:
+              metavariable: $HEADER
+              regex: *location-header
+          - focus-metavariable: $URL
+      # Django's RedirectView: the URL its get_redirect_url() returns.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $CLS(..., django.views.generic.RedirectView, ...):
+                    ...
+              - pattern-inside: |
+                  class $CLS(..., django.views.generic.base.RedirectView, ...):
+                    ...
+          - pattern-inside: |
+              def get_redirect_url(self, ...):
+                ...
           - pattern: return $URL
           - focus-metavariable: $URL
