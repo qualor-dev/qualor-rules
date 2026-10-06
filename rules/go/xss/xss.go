@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"text/template"
 	. "text/template"
 	mail "text/template"
@@ -361,6 +362,22 @@ func InlineTemplate(w http.ResponseWriter, r *http.Request) {
 	template.Must(template.New("inline").Parse("<p>{{.}}</p>")).Execute(&buf, r.FormValue("name"))
 	// todoruleid: go.xss
 	w.Write(buf.Bytes())
+}
+
+// A buffer taken from a sync.Pool.
+var buffers = sync.Pool{New: func() any { return new(bytes.Buffer) }}
+
+func Pooled(w http.ResponseWriter, r *http.Request) {
+	buf := buffers.Get().(*bytes.Buffer)
+	defer buffers.Put(buf)
+	buf.Reset()
+	greeting.Execute(buf, r.FormValue("name"))
+	// ruleid: go.xss
+	buf.WriteTo(w)
+	again := buffers.Get().(*bytes.Buffer)
+	receipt.Execute(again, r.FormValue("name"))
+	// ruleid: go.xss
+	w.Write(again.Bytes())
 }
 
 // The buffer sent as plain text.

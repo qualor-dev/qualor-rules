@@ -100,7 +100,7 @@ func Hello(w http.ResponseWriter, r *http.Request) {
   Templates built and executed in one expression (`template.Must(...).Execute(...)`), built in
   another file, reached through another variable, or imported with a dot are missed. A buffer
   counts only when it is a `bytes.Buffer` or `strings.Builder` declared in the handler (or made
-  with `bytes.NewBuffer`).
+  with `bytes.NewBuffer`, or taken from a `sync.Pool` with a type assertion).
 - Request data written into a buffer directly (`buf.WriteString(...)`, `fmt.Fprintf(&buf, ...)`)
   is not followed when the buffer is written to the response later.
 - The binder of the Echo instance is not a source, and numeric struct fields count as safe only

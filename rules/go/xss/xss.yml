@@ -75,8 +75,9 @@ rules:
     #   (`todoruleid:`), a template built and executed in one expression
     #   (`template.Must(...).Execute(...)`) (`todoruleid:`), a template built in another file of
     #   the package, and a local variable named "template".
-    # - Such a template executed into a bytes.Buffer or strings.Builder (typed in the file, or
-    #   made with bytes.NewBuffer(String) in the function) taints it: the buffer is reported
+    # - Such a template executed into a bytes.Buffer or strings.Builder (typed in the file, made
+    #   with bytes.NewBuffer(String), or asserted from an interface such as a sync.Pool's Get, in
+    #   the function) taints it: the buffer is reported
     #   where it reaches the response (Write of its Bytes or String, WriteTo, io.Copy of the
     #   buffer, Gin's c.Data, Echo's c.HTML). WriteTo and io.Copy count only for such a
     #   bytes.Buffer: a file, a bufio.Reader or an io.LimitedReader is not a sink. Request data
@@ -397,8 +398,9 @@ rules:
                               - pattern: $RECV.$FLD.Execute($OUT, $DATA)
                               - pattern: $RECV.$FLD.ExecuteTemplate(&$OUT, $NAME, $DATA)
                               - pattern: $RECV.$FLD.ExecuteTemplate($OUT, $NAME, $DATA)
-          # The writer is a bytes.Buffer or strings.Builder: typed, or made with
-          # bytes.NewBuffer(String) in the same function.
+          # The writer is a bytes.Buffer or strings.Builder: typed, made with
+          # bytes.NewBuffer(String), or asserted from an interface (a sync.Pool's Get) in the
+          # same function.
           - pattern-either:
               - pattern-inside: '$X.$M(..., &($OUT : bytes.Buffer), ...)'
               - pattern-inside: '$X.$M(..., &($OUT : strings.Builder), ...)'
@@ -415,6 +417,15 @@ rules:
                   ...
               - pattern-inside: |
                   $OUT = bytes.NewBufferString(...)
+                  ...
+              - pattern-inside: |
+                  $OUT := $POOLED.(*bytes.Buffer)
+                  ...
+              - pattern-inside: |
+                  $OUT = $POOLED.(*bytes.Buffer)
+                  ...
+              - pattern-inside: |
+                  $OUT := $POOLED.(*strings.Builder)
                   ...
         from: $DATA
         to: $OUT
@@ -504,7 +515,8 @@ rules:
               - pattern-inside: '($C : echo.Context).Response().Writer.$WRITE($DATA)'
               - pattern-inside: '($C : *echo.Context).Response().Writer.$WRITE($DATA)'
               # A bytes.Buffer that writes itself to the response, or is copied to it: typed in the
-              # file, or made with new, a literal or bytes.NewBuffer(String) in the same function.
+              # file, or made with new, a literal or bytes.NewBuffer(String), or asserted from an
+              # interface (a sync.Pool's Get), in the same function.
               # Other readers (a file, a bufio.Reader, an io.LimitedReader) are not sinks.
               - patterns:
                   - pattern-either:
@@ -540,6 +552,12 @@ rules:
                           ...
                       - pattern-inside: |
                           $DATA = bytes.NewBufferString(...)
+                          ...
+                      - pattern-inside: |
+                          $DATA := $POOLED.(*bytes.Buffer)
+                          ...
+                      - pattern-inside: |
+                          $DATA = $POOLED.(*bytes.Buffer)
                           ...
               # A text/template (no escaping) executed into the response. Go names an unaliased
               # import after its package, so in a file that imports text/template without an alias
