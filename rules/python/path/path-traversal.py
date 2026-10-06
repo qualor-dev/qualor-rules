@@ -1,6 +1,9 @@
+import dbm
+import dbm.sqlite3
 import io
 import os
 import pathlib
+import shelve
 import shutil
 import uuid
 import zipfile
@@ -11,6 +14,7 @@ from django.conf import settings
 from django.http import FileResponse as DjangoFileResponse
 from django.http import HttpResponse
 from django.views import View
+from PIL import Image
 from fastapi import Depends, FastAPI, Query
 from fastapi import Path as FastApiPath
 from fastapi.responses import FileResponse
@@ -121,6 +125,30 @@ def upload():
     # todook: python.path-traversal
     member = (root / request.form["member"]).read_text()
     return member
+
+
+# shelve and dbm open a database file by name, and create it with the "c" flag.
+@app.route("/prefs")
+def prefs():
+    # ruleid: python.path-traversal
+    with shelve.open(request.args["profile"]) as db:
+        theme = db.get("theme")
+    # ruleid: python.path-traversal
+    store = dbm.open(os.path.join(UPLOAD_FOLDER, request.args["store"]), "c")
+    # ruleid: python.path-traversal
+    cache = dbm.sqlite3.open(request.cookies["cache"])
+    # ruleid: python.path-traversal
+    shelf = shelve.DbfilenameShelf(filename=request.form["shelf"])
+    # ruleid: python.path-traversal
+    legacy = dbm.open(file="/srv/kv/" + request.args["kv"])
+    # ok: python.path-traversal
+    with shelve.open(os.path.join(UPLOAD_FOLDER, secure_filename(request.args["profile"]))) as db:
+        theme = db.get(request.args["key"])
+    # ok: python.path-traversal
+    store = dbm.open(os.path.join(UPLOAD_FOLDER, "prefs"), "r")
+    # ok: python.path-traversal
+    picture = Image.open(request.files["picture"].stream)
+    return theme
 
 
 @app.route("/notes/<slug>")
@@ -255,6 +283,12 @@ def django_read(request):
     return DjangoFileResponse(open(os.path.join(settings.MEDIA_ROOT, "manual.pdf"), "rb"))
 
 
+def django_shelf(request):
+    # ruleid: python.path-traversal
+    with shelve.open(os.path.join(settings.MEDIA_ROOT, request.GET["name"])) as db:
+        return HttpResponse(str(db.get("total")))
+
+
 class AttachmentView(View):
     def get(self, request, name):
         # ruleid: python.path-traversal
@@ -323,6 +357,13 @@ async def export(body: Export):
     # ok: python.path-traversal
     Path("exports", secure_filename(body.filename)).write_text("report")
     return {"ok": True}
+
+
+@api.get("/kv/{store}")
+async def kv(store: str):
+    # ruleid: python.path-traversal
+    with dbm.open(f"/srv/kv/{store}", "r") as db:
+        return {"keys": len(db)}
 
 
 @api.get("/starlette/{name}")

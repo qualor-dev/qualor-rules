@@ -26,6 +26,8 @@ rules:
         - https://docs.python.org/3/library/os.path.html#os.path.basename
         - https://docs.python.org/3/library/shutil.html
         - https://docs.python.org/3/library/pathlib.html
+        - https://docs.python.org/3/library/shelve.html
+        - https://docs.python.org/3/library/dbm.html
         - https://docs.python.org/3/library/uuid.html
         - https://peps.python.org/pep-0008/#constants
         - https://docs.djangoproject.com/en/stable/ref/settings/
@@ -664,6 +666,19 @@ rules:
           - metavariable-regex:
               metavariable: $FN
               regex: ^(copy|copy2|copyfile|copytree|move)$
+          - focus-metavariable: $PATH
+      # shelve and dbm open a database file by name (and create it with the "c" flag); the
+      # name is the base name of one or more files.
+      - patterns:
+          - pattern-either:
+              - pattern: shelve.open($PATH, ...)
+              - pattern: shelve.open(..., filename=$PATH, ...)
+              - pattern: shelve.DbfilenameShelf($PATH, ...)
+              - pattern: shelve.DbfilenameShelf(..., filename=$PATH, ...)
+              - pattern: dbm.open($PATH, ...)
+              - pattern: dbm.open(..., file=$PATH, ...)
+              - pattern: dbm.$MODULE.open($PATH, ...)
+              - pattern: dbm.dumb.open(..., filename=$PATH, ...)
           - focus-metavariable: $PATH
       # pathlib: a file method on a Path built in the function (Path(...), a `/` join or
       # joinpath()), in place or through a variable assigned from such an expression.

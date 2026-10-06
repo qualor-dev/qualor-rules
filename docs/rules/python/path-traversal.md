@@ -10,8 +10,9 @@
 <!-- begin: what-it-finds -->
 HTTP request data that reaches a file-system path the server opens, writes, deletes, lists or
 sends: `open()`, the `os` and `shutil` file functions, `pathlib.Path` methods such as
-`read_text()` and `unlink()`, Flask's `send_file()`, an upload's `save()`, and Starlette's or
-FastAPI's `FileResponse`. Request data is followed in Flask, Django and FastAPI.
+`read_text()` and `unlink()`, `shelve.open()` and `dbm.open()` (which also create the database
+file), Flask's `send_file()`, an upload's `save()`, and Starlette's or FastAPI's `FileResponse`.
+Request data is followed in Flask, Django and FastAPI.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -104,6 +105,8 @@ def report():
 - <https://docs.python.org/3/library/os.path.html#os.path.basename>
 - <https://docs.python.org/3/library/shutil.html>
 - <https://docs.python.org/3/library/pathlib.html>
+- <https://docs.python.org/3/library/shelve.html>
+- <https://docs.python.org/3/library/dbm.html>
 - <https://docs.python.org/3/library/uuid.html>
 - <https://peps.python.org/pep-0008/#constants>
 - <https://docs.djangoproject.com/en/stable/ref/settings/>
