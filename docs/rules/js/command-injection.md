@@ -85,7 +85,8 @@ app.get('/log', (req, res) => {
   before the call (`const options = { shell: true }`) are not followed.
 - An allow-list check before the call (`if (!TOOLS.includes(x)) return`) is not recognised; an
   allow-list that yields constants (a ternary, or a lookup in a `const` table with literal keys and
-  values) is.
+  values) is. A lookup with a fallback to request data (`TOOLS[k] || req.query.tool`,
+  `TOOLS.get(k) ?? req.body.tool`) is no allow-list and is reported.
 - A shell's script is followed when the argument array is written in the call
   (`spawn('sh', ['-c', cmd])`), not when it is built before.
 - PowerShell parameters are recognised by the names its documentation lists (`-Command`/`-c`,

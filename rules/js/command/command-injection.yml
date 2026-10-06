@@ -157,7 +157,8 @@ rules:
       - pattern: Number(...)
       # An allow-list lookup: an index into a const object or array, or get() on a const Map,
       # declared in the file with literal keys and values only (comments allowed, optionally
-      # wrapped in Object.freeze), and not changed after it.
+      # wrapped in Object.freeze), and not changed after it. Only the lookup itself is clean: a
+      # fallback to request data (`T[k] || req.query.x`, `T.get(k) ?? x`) still carries it.
       - patterns:
           - pattern-either:
               - pattern-inside: |

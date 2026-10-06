@@ -44,6 +44,9 @@ export async function POST(request: NextRequest) {
   const codec = codecs[body.kind] ?? 'copy';
   // ok: js.command-injection
   exec('ffmpeg -i in.mov -c ' + codec + ' out.mp4');
+  // A typed table with a request-data fallback is no allow-list.
+  // ruleid: js.command-injection
+  exec('ffmpeg -i in.mov -c ' + (codecs[body.kind] ?? body.codec) + ' out.mp4');
   // ruleid: js.command-injection
   cp.spawn('cmd.exe', ['/c', 'dir ' + body.folder]);
   const presets = { small: '640x360', large: '1920x1080' } as const;

@@ -114,6 +114,37 @@ app.get('/runner', (req, res) => {
   exec('ls ' + req.query.sort + ' ' + flag);
 });
 
+// A lookup with a request-data fallback is no allow-list: when the key is missing, the request
+// value itself runs. A constant fallback, or another lookup of a literal table, stays clean.
+app.get('/runner-fallback', (req, res) => {
+  // ruleid: js.command-injection
+  execFile(RUNNERS[req.query.op] || req.query.program, [], () => res.end());
+  // ruleid: js.command-injection
+  exec('ls ' + (SORTS.get(req.query.sort) ?? req.query.flags));
+  const pager = PAGERS[req.query.pager] ?? req.body.pager;
+  // ruleid: js.command-injection
+  spawn(pager, ['README.md']);
+  // ruleid: js.command-injection
+  exec(RUNNERS[req.query.op] ? RUNNERS[req.query.op] : req.query.op);
+  const typed = req.query.cmd;
+  // ruleid: js.command-injection
+  exec(RUNNERS[req.query.op] || typed);
+  let tool = RUNNERS[req.query.op];
+  tool ||= req.query.tool;
+  // ruleid: js.command-injection
+  exec(tool);
+  let order = SORTS.get(req.query.sort);
+  order ??= req.query.sort;
+  // ruleid: js.command-injection
+  exec('ls ' + order);
+  // ok: js.command-injection
+  exec(RUNNERS[req.query.op] || RUNNERS.list);
+  // ok: js.command-injection
+  exec('ls ' + (SORTS.get(req.query.sort) ?? ''));
+  // ok: js.command-injection
+  spawn(PAGERS[req.query.pager] ?? PAGERS[0], ['README.md']);
+});
+
 // Tables built from or filled with request data are no allow-lists.
 const LAST = {};
 
