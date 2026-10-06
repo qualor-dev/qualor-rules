@@ -21,6 +21,12 @@ check can be the `&&` condition of the branch that redirects, or the `||` condit
 value with a fixed one. A check that does not hold (a test with the wrong sign, `&&` and `||`
 swapped, the checks joined with `&&` to another condition, a `return` only in a nested branch,
 or the value assigned again afterwards) is still reported.
+
+URLs built with a fixed host are not reported: a `url.URL` whose `Host` is set (a string, a
+constant or the server's configuration) with request data only in its path, query or fragment,
+`JoinPath` elements, the consent page of an `oauth2.Config` (`AuthCodeURL`), and presigned storage
+URLs (minio, AWS SDK for Go v2) for an object the request names. A host, scheme or bucket that
+comes from the request is still reported.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -71,7 +77,8 @@ func AfterLogin(w http.ResponseWriter, r *http.Request) {
 
 <!-- begin: how-to-fix -->
 - Redirect to a path that starts with a fixed segment: `"/items/" + id`.
-- Or start the target with a fixed origin followed by `/`: `baseURL + "/items/" + id`.
+- Or start the target with a fixed origin followed by `/`: `baseURL + "/items/" + id`, or build
+  it as `url.URL{Scheme: "https", Host: siteHost, Path: p}`.
 - Or map the request value to a target from an allow-list (a `switch` or a map lookup that yields
   constants).
 - Or check the target before you redirect: accept a local path only when it starts with `/` and
@@ -87,11 +94,15 @@ enough either: browsers read `/\evil.example` as `//evil.example`.
 ## Frameworks and APIs covered
 
 - `net/http`
+- `net/url`
 - `encoding/json`
 - Gin
 - Echo
 - chi
 - gorilla/mux
+- `golang.org/x/oauth2`
+- `github.com/minio/minio-go/v7`
+- `github.com/aws/aws-sdk-go-v2/service/s3`
 
 ## Known limits
 
@@ -105,7 +116,10 @@ enough either: browsers read `/\evil.example` as `//evil.example`.
   later, so a redirect to the new value is missed. A host compared with a variable counts as
   your own host, even when the variable holds request data.
 - Request data passed through any function is assumed to reach its result, so a URL produced from
-  it (a signed storage URL, say) is reported.
+  it by your own code (a signed URL of your storage layer, say) is reported. Only the URL
+  producers named above are recognised; a `url.URL` declared empty and given its host field by
+  field is not, and neither is an `oauth2.Config` field that has the same name as a local
+  variable of the function.
 - The binder of the Echo instance (`c.Echo().Binder.Bind(&x, c)`) is not a source.
 - Numeric struct fields count as safe only when the struct is declared in the same file; a named
   numeric type (`type Status int`) still counts as request data.
@@ -123,6 +137,17 @@ enough either: browsers read `/\evil.example` as `//evil.example`.
 - <https://pkg.go.dev/net/url#Parse>
 - <https://pkg.go.dev/net/url#URL.IsAbs>
 - <https://pkg.go.dev/net/url#URL.Hostname>
+- <https://pkg.go.dev/net/url#URL.String>
+- <https://pkg.go.dev/net/url#JoinPath>
+- <https://pkg.go.dev/net/url#URL.JoinPath>
+- <https://pkg.go.dev/net/url#URL.ResolveReference>
+- <https://pkg.go.dev/golang.org/x/oauth2#Config.AuthCodeURL>
+- <https://pkg.go.dev/golang.org/x/oauth2#Endpoint>
+- <https://pkg.go.dev/github.com/minio/minio-go/v7#Client.PresignedGetObject>
+- <https://pkg.go.dev/github.com/minio/minio-go/v7#Options>
+- <https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/service/s3#PresignClient.PresignGetObject>
+- <https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/service/s3#GetObjectInput>
+- <https://pkg.go.dev/github.com/aws/aws-sdk-go-v2/service/s3#Options>
 - <https://pkg.go.dev/strings#HasPrefix>
 - <https://url.spec.whatwg.org/>
 - <https://pkg.go.dev/fmt>

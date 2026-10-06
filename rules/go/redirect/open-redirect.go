@@ -8,12 +8,17 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"example.com/shop/models"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/mux"
 	"github.com/labstack/echo/v4"
+	"github.com/minio/minio-go/v7"
+	"golang.org/x/oauth2"
 )
 
 const siteHost = "https://shop.example.com"
@@ -187,6 +192,8 @@ func isOwnSite(target string) bool { return strings.HasPrefix(target, siteRoot) 
 // browsers read as "/"), or a parsed URL whose host is compared with our own host. The check
 // exits or replaces the value with a literal, or it is the condition of the redirecting branch.
 const siteDomain = "shop.example.com"
+const noHost = ""
+const signInPath = "/sign-in"
 
 func (s *Server) Validated(w http.ResponseWriter, r *http.Request) {
 	back := r.FormValue("back")
@@ -466,6 +473,200 @@ func Download(w http.ResponseWriter, r *http.Request) {
 	}
 	// todook: go.open-redirect
 	http.Redirect(w, r, link, http.StatusTemporaryRedirect)
+}
+
+// URLs produced with a fixed host: a url.URL whose Host is fixed, with request data only in its
+// path, query or fragment (net/url escapes them); JoinPath elements (cleaned of ../ and repeated
+// "/", with "\" escaped); the OAuth 2.0 provider's consent page; presigned storage URLs.
+type Links struct {
+	host      string
+	publicURL string
+	conf    *oauth2.Config
+	store   *minio.Client
+	presign *s3.PresignClient
+}
+
+func (l *Links) Producers(w http.ResponseWriter, r *http.Request) {
+	p := r.FormValue("p")
+	u := url.URL{Scheme: "https", Host: siteDomain, Path: p, RawQuery: "from=" + r.FormValue("from")}
+	// ok: go.open-redirect
+	http.Redirect(w, r, u.String(), http.StatusFound)
+	// ok: go.open-redirect
+	http.Redirect(w, r, (&url.URL{Scheme: "https", Host: "shop.example.com", Path: "/" + p}).String(), http.StatusFound)
+	// A host from the server's configuration, and no scheme ("//host/path").
+	hosted := &url.URL{Host: l.host, Path: p, Fragment: r.FormValue("section")}
+	// ok: go.open-redirect
+	http.Redirect(w, r, hosted.String(), http.StatusFound)
+	// The path, query or fragment set after the URL is built with a fixed host, or parsed from a
+	// fixed origin.
+	built := url.URL{Scheme: "https", Host: siteDomain}
+	built.Path = p
+	q := built.Query()
+	q.Set("next", r.FormValue("next"))
+	built.RawQuery = q.Encode()
+	// ok: go.open-redirect
+	http.Redirect(w, r, built.String(), http.StatusFound)
+	site, _ := url.Parse(siteRoot)
+	site.Path = p
+	// ok: go.open-redirect
+	http.Redirect(w, r, site.String(), http.StatusFound)
+	// JoinPath on a fixed base, and on a parsed URL.
+	joined, err := url.JoinPath(siteRoot, "items", p)
+	if err != nil {
+		return
+	}
+	// ok: go.open-redirect
+	http.Redirect(w, r, joined, http.StatusFound)
+	docs, _ := url.Parse("/docs")
+	// ok: go.open-redirect
+	http.Redirect(w, r, docs.JoinPath(p).String(), http.StatusFound)
+	// The provider's consent page: the request's state and hints only go into its query.
+	// ok: go.open-redirect
+	http.Redirect(w, r, l.conf.AuthCodeURL(r.FormValue("state"), oauth2.SetAuthURLParam("login_hint", r.FormValue("email"))), http.StatusFound)
+	// A presigned URL for an object named by the request, in a fixed bucket.
+	signed, err := l.store.PresignedGetObject(r.Context(), "downloads", r.FormValue("file"), time.Hour, nil)
+	if err != nil {
+		return
+	}
+	// ok: go.open-redirect
+	http.Redirect(w, r, signed.String(), http.StatusTemporaryRedirect)
+	object, err := l.presign.PresignGetObject(r.Context(), &s3.GetObjectInput{Bucket: aws.String("downloads"), Key: aws.String(r.FormValue("file"))})
+	if err != nil {
+		return
+	}
+	// ok: go.open-redirect
+	http.Redirect(w, r, object.URL, http.StatusTemporaryRedirect)
+	// A client made in the handler, and request data in the response parameters of the URL.
+	client, err := minio.New("s3.example.com", &minio.Options{Secure: true})
+	if err != nil {
+		return
+	}
+	params := url.Values{"response-content-disposition": {"attachment; filename=" + p}}
+	named, err := client.PresignedGetObject(r.Context(), "downloads", "report.pdf", time.Hour, params)
+	if err != nil {
+		return
+	}
+	// ok: go.open-redirect
+	http.Redirect(w, r, named.String(), http.StatusTemporaryRedirect)
+	// A base URL from the server's configuration.
+	public, _ := url.Parse(l.publicURL)
+	public.Path = p
+	// ok: go.open-redirect
+	http.Redirect(w, r, public.String(), http.StatusFound)
+}
+
+// The same producers with a host, scheme or bucket from the request, or without a host.
+func (l *Links) UnsafeProducers(w http.ResponseWriter, r *http.Request) {
+	p := r.FormValue("p")
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, (&url.URL{Scheme: "https", Host: r.FormValue("host"), Path: "/home"}).String(), http.StatusFound)
+	// No host: a path "//evil.example" stays a link to another host.
+	hostless := url.URL{Path: p}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, hostless.String(), http.StatusFound)
+	// An empty host: "https:" and the path "//evil.example" give "https:////evil.example".
+	empty := url.URL{Scheme: "https", Host: "", Path: p}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, empty.String(), http.StatusFound)
+	// Opaque data replaces the host when the URL is written out.
+	opaque := url.URL{Scheme: "https", Host: siteDomain, Opaque: p}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, opaque.String(), http.StatusFound)
+	// The host set from request data after the URL is built.
+	moved := url.URL{Scheme: "https", Host: siteDomain}
+	moved.Host = r.FormValue("host")
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, moved.String(), http.StatusFound)
+	// A path set on a URL parsed from a relative constant: there is no host.
+	login, _ := url.Parse("/login")
+	login.Path = p
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, login.String(), http.StatusFound)
+	signIn, _ := url.Parse(signInPath)
+	signIn.RawQuery = p
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, signIn.String(), http.StatusFound)
+	// The path set on a url.URL built with an empty host.
+	bare := url.URL{Scheme: "https", Host: noHost}
+	bare.Path = p
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, bare.String(), http.StatusFound)
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, (&url.URL{Scheme: r.FormValue("scheme"), Host: siteDomain, Path: "/"}).String(), http.StatusFound)
+	// The base of JoinPath from the request.
+	other, _ := url.JoinPath(r.FormValue("base"), "items")
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, other, http.StatusFound)
+	// An OAuth 2.0 endpoint chosen by the request.
+	idp := &oauth2.Config{ClientID: "shop", Endpoint: oauth2.Endpoint{AuthURL: r.FormValue("idp")}}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, idp.AuthCodeURL("state"), http.StatusFound)
+	// The bucket name is part of the host in virtual-host style: anyone can create a bucket.
+	bucket, err := l.store.PresignedGetObject(r.Context(), r.FormValue("bucket"), "report.pdf", time.Hour, nil)
+	if err != nil {
+		return
+	}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, bucket.String(), http.StatusTemporaryRedirect)
+	theirs, err := l.presign.PresignGetObject(r.Context(), &s3.GetObjectInput{Bucket: aws.String(r.FormValue("bucket")), Key: aws.String("report.pdf")})
+	if err != nil {
+		return
+	}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, theirs.URL, http.StatusTemporaryRedirect)
+	// A method of the same name on another type is not the OAuth 2.0 one.
+	var sso SSO
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, sso.AuthCodeURL(r.FormValue("state")), http.StatusFound)
+	// An empty constant host, and opaque data set on a parsed fixed origin.
+	blank := url.URL{Scheme: "https", Host: noHost, Path: p}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, blank.String(), http.StatusFound)
+	fixed, _ := url.Parse(siteRoot)
+	fixed.Opaque = p
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, fixed.String(), http.StatusFound)
+	// An absolute reference replaces the base (net/url ResolveReference).
+	ref, _ := url.Parse(p)
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, fixed.ResolveReference(ref).String(), http.StatusFound)
+}
+
+// Producers that are not followed.
+func (l *Links) UnfollowedProducers(w http.ResponseWriter, r *http.Request) {
+	p := r.FormValue("p")
+	// A url.URL declared empty and given its host field by field.
+	var u url.URL
+	u.Scheme = "https"
+	u.Host = siteDomain
+	u.Path = p
+	// todook: go.open-redirect
+	http.Redirect(w, r, u.String(), http.StatusFound)
+	// OpenGrep 1.30.0 gives the field l.conf the type of a local variable named conf, so the
+	// Config's consent page is not recognised.
+	conf := &url.URL{Scheme: "https", Host: siteDomain}
+	conf.Path = "/consent"
+	// todook: go.open-redirect
+	http.Redirect(w, r, l.conf.AuthCodeURL(r.FormValue("state")), http.StatusFound)
+}
+
+type SSO struct{}
+
+func (SSO) AuthCodeURL(state string) string { return state }
+
+// Gin and Echo with URL producers.
+func GinConsent(c *gin.Context) {
+	conf := &oauth2.Config{ClientID: "shop", Endpoint: oauth2.Endpoint{AuthURL: "https://idp.example.com/authorize"}}
+	// ok: go.open-redirect
+	c.Redirect(http.StatusFound, conf.AuthCodeURL(c.Query("state")))
+	// ruleid: go.open-redirect
+	c.Redirect(http.StatusFound, (&url.URL{Path: c.Query("p")}).String())
+}
+
+func EchoProducers(c echo.Context) error {
+	u := &url.URL{Scheme: "https", Host: siteDomain, Path: c.Param("page")}
+	// ok: go.open-redirect
+	return c.Redirect(http.StatusFound, u.String())
 }
 
 // Routers on net/http: chi and gorilla/mux route variables.
