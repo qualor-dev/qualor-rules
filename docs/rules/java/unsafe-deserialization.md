@@ -104,7 +104,7 @@ public class CartServlet extends HttpServlet {
 <!-- begin: known-limits -->
 - A handler parameter without an annotation is not a source, except the raw body (an `InputStream`
   or `Reader` parameter, a Spring `HttpEntity` or `RequestEntity`); a Spring `MultipartFile`
-  without `@RequestParam` is missed.
+  without an annotation (`@RequestParam` or `@RequestPart`) is missed.
 - Only a stream created as `ObjectInputStream` or `XMLDecoder` in the same method is followed; one
   opened by a helper is missed. A named subclass of `ObjectInputStream` is never reported, and an
   anonymous subclass counts as safe when its `resolveClass` throws, even if it rejects only a few

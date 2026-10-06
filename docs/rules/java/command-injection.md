@@ -13,7 +13,8 @@ HTTP request data that reaches an operating-system command started with `Runtime
 
 - a command string, which `Runtime.exec(String)` splits at white space;
 - the script a shell runs (`sh -c`, `cmd /c`, PowerShell `-Command`);
-- the program to start, or a whole command handed over by the request;
+- the program to start, or a whole command handed over by the request (a request parameter
+  array, a bound list or array parameter, the list body of an `HttpEntity` or `RequestEntity`);
 - the environment of the new process.
 <!-- end: what-it-finds -->
 

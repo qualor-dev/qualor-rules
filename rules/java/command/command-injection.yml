@@ -58,7 +58,8 @@ rules:
     # - In a list that gets a shell added, every later element counts as shell code, even a
     #   positional parameter after a fixed script.
     # - A whole command is a sink only when the request hands it over (a request getter, a split
-    #   of request text, a bound handler parameter or a field of it, or a variable assigned from
+    #   of request text, a bound handler parameter or a field of it, the list or array body of an
+    #   HttpEntity or RequestEntity parameter, or a variable assigned from
     #   one of these). Lists and arrays the method builds (in any form) are checked by their first
     #   element where it is visible, and lists from helper methods are accepted: a list filled
     #   with add, with the request value first, is missed.
@@ -265,6 +266,29 @@ rules:
               - pattern: (Runtime $RT).exec($P.$GET(...).toArray(...), ...)
               - pattern: Runtime.getRuntime().exec($P.toArray(...), ...)
               - pattern: Runtime.getRuntime().exec($P.$GET(...).toArray(...), ...)
+          - focus-metavariable: $P
+      # The body of a Spring MVC HttpEntity or RequestEntity parameter that is a list or an array of
+      # strings, passed whole (an array body given to Runtime.exec is a command-string sink above).
+      - patterns:
+          # The source already requires a mapped handler.
+          - pattern-inside: $RET $M(..., $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(org\.springframework\.http\.)?(HttpEntity|RequestEntity)\s*<\s*((java\.util\.)?(List|Collection)\s*<|String\s*\[)
+          - pattern-either:
+              - pattern: new ProcessBuilder($P.getBody())
+              - pattern: (ProcessBuilder $B).command($P.getBody())
+              - pattern: Runtime.getRuntime().exec($P.getBody().toArray(...), ...)
+          - focus-metavariable: $P
+      # An annotated String[] handler parameter handed to Runtime.exec(String[], ...) as it is.
+      - patterns:
+          - pattern-inside: $RET $M(..., @$ANN(...) $T[] $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $ANN
+              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|RequestPart|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+          - pattern-either:
+              - pattern: (Runtime $RT).exec($P, ...)
+              - pattern: Runtime.getRuntime().exec($P, ...)
           - focus-metavariable: $P
       # The program: the first element of a command array or list.
       - patterns:

@@ -42,8 +42,8 @@ rules:
     # Known limits (each has a `todo` line in the test file):
     # - A handler parameter without an annotation is not a source, except the raw body (an
     #   InputStream or Reader parameter of a Spring MVC or Jakarta REST handler, and a Spring
-    #   HttpEntity or RequestEntity parameter): a Spring MVC MultipartFile without @RequestParam
-    #   is missed. Only the scalar types of the source block count as safe: an enum parameter is
+    #   HttpEntity or RequestEntity parameter): a Spring MVC MultipartFile without an annotation
+    #   (@RequestParam or @RequestPart) is missed. Only the scalar types of the source block count as safe: an enum parameter is
     #   still a source, as in java.sql-injection.
     # - Only a stream created as ObjectInputStream or XMLDecoder in the same method is followed;
     #   one opened by a helper method is missed. A named subclass of ObjectInputStream is never

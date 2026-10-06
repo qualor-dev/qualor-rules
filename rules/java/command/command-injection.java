@@ -324,6 +324,40 @@ class ToolController {
         return "ok";
     }
 
+    @PostMapping("/jobs/arrays")
+    String arrays(@RequestParam("argv") String[] argv, @RequestPart("steps") String[] steps) throws IOException {
+        // An array parameter handed to Runtime.exec as it is.
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec(argv);
+        Runtime runtime = Runtime.getRuntime();
+        // ruleid: java.command-injection
+        runtime.exec(steps, new String[] {"LANG=C"});
+        // A fixed program with an element of the array as its argument.
+        // ok: java.command-injection
+        Runtime.getRuntime().exec(new String[] {"echo", argv[0]});
+        return "ok";
+    }
+
+    @PostMapping("/jobs/entities")
+    String entities(RequestEntity<List<String>> request, HttpEntity<String[]> entity) throws IOException {
+        // A decoded JSON array in the request body, passed whole.
+        // ruleid: java.command-injection
+        new ProcessBuilder(request.getBody()).start();
+        ProcessBuilder builder = new ProcessBuilder();
+        // ruleid: java.command-injection
+        builder.command(request.getBody());
+        Runtime runtime = Runtime.getRuntime();
+        // ruleid: java.command-injection
+        runtime.exec(entity.getBody());
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec(entity.getBody());
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec(request.getBody().toArray(new String[0]));
+        // ok: java.command-injection
+        new ProcessBuilder("echo", request.getBody().get(0)).start();
+        return "ok";
+    }
+
     @PostMapping("/jobs")
     String job(@RequestBody JobForm form) throws IOException {
         // ruleid: java.command-injection
