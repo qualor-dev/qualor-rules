@@ -50,8 +50,9 @@ rules:
     #   string literals (also in Object.freeze) that the file never changes; the check as the
     #   condition of an if around the use (todook), other checks and lists whose strings hold
     #   escaped quotes are not followed.
-    #   A checked variable given another request value after the check (`q = req.query.other`)
-    #   stays clean and is missed (recorded from review, no test line).
+    #   The check covers the value up to its next assignment in the same block; an assignment
+    #   inside a nested block after the check (`if (x) { q = req.query.other; }`) is not seen, so
+    #   the value stays clean.
     # - An element of a request array reached through a callback parameter
     #   (`req.body.filters.map((f) => new RegExp(f.pattern))`) is missed.
     # - An allow-list lookup yields constants only in a table declared const in the file with
@@ -284,6 +285,25 @@ rules:
               metavariable: $CHECK
               regex: ^(?:includes|has)$
           - pattern: $VALUE
+          # Not after the value is assigned again following the check.
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        if (!$LIST.$CHECK($VALUE)) return ...;
+                        ...
+                    - pattern-inside: |
+                        if (!$LIST.$CHECK($VALUE)) { return ...; }
+                        ...
+                    - pattern-inside: |
+                        if (!$LIST.$CHECK($VALUE)) throw $ERR;
+                        ...
+                    - pattern-inside: |
+                        if (!$LIST.$CHECK($VALUE)) { throw $ERR; }
+                        ...
+                - pattern: |
+                    $VALUE = $NEW;
+                    ...
           - pattern-not-inside: |
               const $LIST = $DECL;
               ...

@@ -83,7 +83,9 @@ app.get('/search', (req, res) => {
   hand-written escaping are still reported (MDN advises `RegExp.escape()` instead).
 - An allow-list check is recognised only as an early `return` or `throw` after `includes()` or
   `has()` on a constant list of string literals; the same check as the condition of an `if` around
-  the use is not.
+  the use is not. The check covers the value up to its next assignment; an assignment inside a
+  nested block after the check (`if (x) { q = req.query.other; }`) is not seen, so the value is
+  still taken for checked.
 - An element of a request array reached through a callback
   (`req.body.filters.map((f) => new RegExp(f.pattern))`) is missed.
 - Results of awaited calls on other objects (a database lookup by a request value) are taken for

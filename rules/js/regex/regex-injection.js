@@ -187,6 +187,30 @@ app.get('/sorted2', (req, res) => {
   return res.json([a.source, b.source]);
 });
 
+// The check covers the value up to its next assignment: a value given another request value after
+// the check is request data again. A value normalised before the check stays checked.
+app.get('/sorted3', (req, res) => {
+  let q = req.query.q;
+  q = q.trim();
+  if (!SORT_FIELDS.includes(q)) return res.status(400).end();
+  // ok: js.regex-injection
+  const a = new RegExp(`^${q}:`);
+  q = req.query.other;
+  // ruleid: js.regex-injection
+  const b = new RegExp(q);
+  let mode = req.query.mode;
+  if (!MODES.has(mode)) throw new Error('unknown mode');
+  // ok: js.regex-injection
+  const c = new RegExp(mode);
+  // An assignment inside a nested block after the check is not seen.
+  if (req.query.custom) {
+    mode = req.query.custom;
+  }
+  // todoruleid: js.regex-injection
+  const d = new RegExp(mode);
+  res.json([a, b, c, d].map((r) => r.source));
+});
+
 // An element of a request array reached through a callback parameter is not followed.
 app.post('/filters', (req, res) => {
   // todoruleid: js.regex-injection
