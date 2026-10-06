@@ -4,8 +4,8 @@ rules:
     languages: [go]
     severity: ERROR
     message: >-
-      Data from the HTTP request decides which server this server sends a request to (the whole
-      URL, or its scheme and host). Keep the scheme and host fixed and put the request data after
+      Data from the HTTP request decides which server this server sends a request to, or proxies
+      it to (the whole URL, or its scheme and host). Keep the scheme and host fixed and put the request data after
       a path separator (`baseURL + "/items/" + id`, `url.JoinPath(baseURL, id)`), or map the
       request value to a server from an allow-list.
     metadata:
@@ -15,7 +15,7 @@ rules:
       kind: issue
       severity: high
       confidence: high
-      frameworks: [net/http, net/url, encoding/json, gin, echo, chi, gorilla/mux]
+      frameworks: [net/http, net/http/httputil, net/url, encoding/json, gin, echo, chi, gorilla/mux]
       sources:
         - https://cwe.mitre.org/data/definitions/918.html
         - https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html
@@ -25,6 +25,10 @@ rules:
         - https://pkg.go.dev/net/http#NewRequest
         - https://pkg.go.dev/net/http#NewRequestWithContext
         - https://pkg.go.dev/net/http#Client
+        - https://pkg.go.dev/net/http/httputil#NewSingleHostReverseProxy
+        - https://pkg.go.dev/net/http/httputil#ReverseProxy
+        - https://pkg.go.dev/net/http/httputil#ProxyRequest
+        - https://pkg.go.dev/net/http/httputil#ProxyRequest.SetURL
         - https://pkg.go.dev/net/url#URL
         - https://pkg.go.dev/net/url#JoinPath
         - https://pkg.go.dev/net/url#URL.JoinPath
@@ -58,7 +62,13 @@ rules:
     #   written first does not make it clean, and a builder holding a path after an origin
     #   without a separator is reported (`todook:`). fmt.Fprintf into a builder is not followed
     #   (`todoruleid:`).
-    # - Reverse proxies (net/http/httputil) and other HTTP clients are not followed yet.
+    # - Reverse proxies (net/http/httputil): the target of NewSingleHostReverseProxy, the URL given
+    #   to ProxyRequest.SetURL, and the URL or its Host set on the outbound request in a Rewrite
+    #   function (a typed *httputil.ProxyRequest, whose In and Out are request data) or in a
+    #   Director function literal (in the ReverseProxy literal, assigned to its Director field, or
+    #   held in a variable of the same function first). A Director written as a method or a
+    #   function declared elsewhere is not followed (`todoruleid:`). Other HTTP clients are not
+    #   followed yet.
     # Inherited from the request source block (go.sql-injection):
     # - The Echo instance's binder (`c.Echo().Binder.Bind(&x, c)`) is not a source (`todoruleid:`).
     # - Numeric fields count as clean only when their type is known in the file: a struct declared
@@ -85,6 +95,22 @@ rules:
               - pattern: '($C : *gin.Context).Request.$F(...)'
               - pattern: '($C : echo.Context).Request().$F(...)'
               - pattern: '($C : *echo.Context).Request().$F(...)'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(FormValue|PostFormValue|PathValue|Cookie|Cookies|Referer|UserAgent)$
+      # The inbound request inside a reverse proxy's Rewrite function (net/http/httputil): In, and
+      # Out, the copy the proxy sends on.
+      - patterns:
+          - pattern-either:
+              - pattern: '($PR : *httputil.ProxyRequest).In.$F'
+              - pattern: '($PR : *httputil.ProxyRequest).Out.$F'
+          - metavariable-regex:
+              metavariable: $F
+              regex: ^(URL|Form|PostForm|MultipartForm|Header|Body|RequestURI)$
+      - patterns:
+          - pattern-either:
+              - pattern: '($PR : *httputil.ProxyRequest).In.$F(...)'
+              - pattern: '($PR : *httputil.ProxyRequest).Out.$F(...)'
           - metavariable-regex:
               metavariable: $F
               regex: ^(FormValue|PostFormValue|PathValue|Cookie|Cookies|Referer|UserAgent)$
@@ -291,6 +317,32 @@ rules:
           - pattern-inside: '"=~/^[?#]/" + $X'
           - pattern: $X
     pattern-sinks:
+      # Reverse proxies (net/http/httputil): the target of NewSingleHostReverseProxy, the URL given
+      # to ProxyRequest.SetURL, and the host or URL set on the outbound request in a Rewrite
+      # function or in a Director function literal (in place, or a variable in the same function).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: httputil.NewSingleHostReverseProxy($T)
+              - pattern-inside: '($PR : *httputil.ProxyRequest).SetURL($T)'
+              - pattern-inside: '($PR : *httputil.ProxyRequest).Out.URL.Host = $T'
+              - pattern-inside: '($PR : *httputil.ProxyRequest).Out.URL = $T'
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: 'httputil.ReverseProxy{..., Director: func($REQ *http.Request) { ... }, ...}'
+                      - pattern-inside: '$P.Director = func($REQ *http.Request) { ... }'
+                      - pattern-inside: |
+                          $D := func($REQ *http.Request) { ... }
+                          ...
+                          <... httputil.ReverseProxy{..., Director: $D, ...} ...>
+                      - pattern-inside: |
+                          $D := func($REQ *http.Request) { ... }
+                          ...
+                          $P.Director = $D
+                  - pattern-either:
+                      - pattern-inside: $REQ.URL.Host = $T
+                      - pattern-inside: $REQ.URL = $T
+                      - pattern-inside: $REQ.URL, $E = $T
+          - focus-metavariable: $T
       - patterns:
           # The URL of a request: net/http's package functions, NewRequest(WithContext), and the
           # methods of an *http.Client (typed, http.DefaultClient, or made in the same function).

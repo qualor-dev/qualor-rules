@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httputil"
 	"net/url"
 	"os"
 	"strconv"
@@ -379,6 +380,218 @@ func LookAlikes(w http.ResponseWriter, r *http.Request) {
 	r.URL.Query().Get(r.FormValue("param"))
 	fmt.Fprintln(w, "ok")
 }
+
+// Reverse proxies (net/http/httputil): the target of NewSingleHostReverseProxy, the URL given to
+// ProxyRequest.SetURL in a Rewrite function, and the host a Director or Rewrite function sets on
+// the outbound request.
+var backendURL, _ = url.Parse("http://backend.internal:8080/")
+
+var shards = map[string]string{"eu": "eu.backend.internal:8080", "us": "us.backend.internal:8080"}
+
+func (p *Proxy) ReverseProxy(w http.ResponseWriter, r *http.Request) {
+	target, err := url.Parse(r.FormValue("backend"))
+	if err != nil {
+		return
+	}
+	// ruleid: go.ssrf
+	httputil.NewSingleHostReverseProxy(target).ServeHTTP(w, r)
+	rewrite := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			// ruleid: go.ssrf
+			pr.SetURL(target)
+		},
+	}
+	rewrite.ServeHTTP(w, r)
+	// ruleid: go.ssrf
+	httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: r.Header.Get("X-Backend")}).ServeHTTP(w, r)
+	fmt.Fprintln(w, "ok")
+}
+
+// The inbound request inside a Rewrite or Director function: its headers, query and path are
+// request data.
+var headerRouted = &httputil.ReverseProxy{
+	Rewrite: func(pr *httputil.ProxyRequest) {
+		pr.SetURL(backendURL)
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = pr.In.Header.Get("X-Backend")
+		// ruleid: go.ssrf
+		pr.SetURL(&url.URL{Scheme: "https", Host: pr.In.URL.Query().Get("host")})
+		// The Host header only: the connection still goes to the target.
+		// ok: go.ssrf
+		pr.Out.Host = pr.In.Host
+	},
+}
+
+var directed = &httputil.ReverseProxy{
+	Director: func(req *http.Request) {
+		req.URL.Scheme = "http"
+		// ruleid: go.ssrf
+		req.URL.Host = req.Header.Get("X-Backend")
+	},
+}
+
+func NewTenantProxy() *httputil.ReverseProxy {
+	proxy := httputil.NewSingleHostReverseProxy(backendURL)
+	next := proxy.Director
+	proxy.Director = func(req *http.Request) {
+		next(req)
+		// ruleid: go.ssrf
+		req.URL.Host = req.URL.Query().Get("tenant") + ".backend.internal"
+	}
+	return proxy
+}
+
+var parsedDirector = &httputil.ReverseProxy{
+	Director: func(req *http.Request) {
+		// ruleid: go.ssrf
+		req.URL, _ = url.Parse(req.Header.Get("X-Upstream"))
+	},
+}
+
+// The safe forms: a fixed or configured target, an allow-list, the inbound path and query on a
+// fixed host.
+func (p *Proxy) FixedProxy(w http.ResponseWriter, r *http.Request) {
+	// ok: go.ssrf
+	httputil.NewSingleHostReverseProxy(backendURL).ServeHTTP(w, r)
+	configured, _ := url.Parse(p.baseURL)
+	// ok: go.ssrf
+	httputil.NewSingleHostReverseProxy(configured).ServeHTTP(w, r)
+	// ok: go.ssrf
+	httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: "backend.internal:8080", Path: r.FormValue("prefix")}).ServeHTTP(w, r)
+	fixed := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			// ok: go.ssrf
+			pr.SetURL(backendURL)
+			pr.SetXForwarded()
+		},
+	}
+	fixed.ServeHTTP(w, r)
+	fmt.Fprintln(w, "ok")
+}
+
+var sharded = &httputil.ReverseProxy{
+	Director: func(req *http.Request) {
+		req.URL.Scheme = "http"
+		// ok: go.ssrf
+		req.URL.Host = shards[req.Header.Get("X-Region")]
+		req.URL.Path = "/api" + req.URL.Path
+		// ok: go.ssrf
+		req.Host = backendURL.Host
+	},
+}
+
+var rewritten = &httputil.ReverseProxy{
+	Rewrite: func(pr *httputil.ProxyRequest) {
+		// ok: go.ssrf
+		pr.SetURL(&url.URL{Scheme: "http", Host: "backend.internal:8080", Path: pr.In.Header.Get("X-Prefix")})
+		// ok: go.ssrf
+		pr.Out.URL.Host = backendURL.Host
+	},
+}
+
+// Gin and Echo handlers that proxy to a backend chosen by the request.
+func GinProxy(c *gin.Context) {
+	remote, err := url.Parse(c.Query("upstream"))
+	if err != nil {
+		return
+	}
+	// ruleid: go.ssrf
+	proxy := httputil.NewSingleHostReverseProxy(remote)
+	proxy.ServeHTTP(c.Writer, c.Request)
+}
+
+func EchoProxy(c echo.Context) error {
+	// ok: go.ssrf
+	proxy := httputil.NewSingleHostReverseProxy(backendURL)
+	proxy.ServeHTTP(c.Response(), c.Request())
+	remote, err := url.Parse("https://" + c.Param("site") + "/")
+	if err != nil {
+		return err
+	}
+	// ruleid: go.ssrf
+	httputil.NewSingleHostReverseProxy(remote).ServeHTTP(c.Response(), c.Request())
+	return nil
+}
+
+// A Director held in a variable, a Rewrite method, a Rewrite function set on the proxy later, and
+// the headers of the outbound copy.
+func NamedDirector() *httputil.ReverseProxy {
+	director := func(req *http.Request) {
+		req.URL.Scheme = "http"
+		// ruleid: go.ssrf
+		req.URL.Host = req.Header.Get("X-Backend")
+	}
+	return &httputil.ReverseProxy{Director: director}
+}
+
+func AssignedDirector() *httputil.ReverseProxy {
+	route := func(req *http.Request) {
+		// ruleid: go.ssrf
+		req.URL.Host = req.URL.Query().Get("node") + ".backend.internal"
+	}
+	proxy := &httputil.ReverseProxy{}
+	proxy.Director = route
+	return proxy
+}
+
+func FixedDirector() *httputil.ReverseProxy {
+	director := func(req *http.Request) {
+		req.URL.Scheme = backendURL.Scheme
+		// ok: go.ssrf
+		req.URL.Host = backendURL.Host
+	}
+	proxy := &httputil.ReverseProxy{}
+	proxy.Director = director
+	return proxy
+}
+
+type Gateway struct{}
+
+func (g *Gateway) rewrite(pr *httputil.ProxyRequest) {
+	// ruleid: go.ssrf
+	pr.SetURL(&url.URL{Scheme: "http", Host: pr.In.Header.Get("X-Host")})
+}
+
+func (g *Gateway) Serve(w http.ResponseWriter, r *http.Request) {
+	upstream, _ := url.Parse(r.URL.Query().Get("to"))
+	proxy := httputil.ReverseProxy{}
+	proxy.Rewrite = func(pr *httputil.ProxyRequest) {
+		// ruleid: go.ssrf
+		pr.SetURL(upstream)
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = pr.Out.Header.Get("X-Host")
+		// ok: go.ssrf
+		pr.Out.URL.Path = pr.In.URL.Path
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+// Director methods and look-alikes.
+type Balancer struct{ next string }
+
+// A Director written as a method is not recognised as one.
+func (b *Balancer) direct(req *http.Request) {
+	// todoruleid: go.ssrf
+	req.URL.Host = req.Header.Get("X-Backend")
+}
+
+func (b *Balancer) Proxy() *httputil.ReverseProxy {
+	return &httputil.ReverseProxy{Director: b.direct}
+}
+
+// Setting the host of the inbound request in a handler does not send anything.
+func (b *Balancer) Rewrite(w http.ResponseWriter, r *http.Request) {
+	// ok: go.ssrf
+	r.URL.Host = r.Header.Get("X-Original-Host")
+	var link Link
+	// ok: go.ssrf
+	link.SetURL(r.FormValue("url"))
+	fmt.Fprintln(w, r.URL.String())
+}
+
+type Link struct{ href string }
+
+func (l *Link) SetURL(u string) { l.href = u }
 
 func fetchStatus(ctx context.Context, endpoint string) (*http.Response, error) {
 	// ok: go.ssrf

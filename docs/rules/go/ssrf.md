@@ -12,6 +12,12 @@ Outgoing HTTP requests whose URL is decided by the incoming request: `http.Get`,
 `http.Head`, `http.PostForm`, `http.NewRequest(WithContext)` and the same methods on an
 `*http.Client`, when request data forms the whole URL or its scheme and host. Request data after a
 fixed origin and a `/` (`baseURL + "/items/" + id`) is not reported.
+
+Reverse proxies of `net/http/httputil` are checked too: the target of
+`NewSingleHostReverseProxy`, the URL given to `ProxyRequest.SetURL`, and the URL or host that a
+`Rewrite` or `Director` function sets on the outbound request, when request data chooses it (in a
+`Rewrite` or `Director` function, the headers, query and path of the proxied request are request
+data too).
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -77,6 +83,8 @@ func Fetch(w http.ResponseWriter, r *http.Request) {
   `url.PathEscape`.
 - If the client must choose the server, map its value to a URL from an allow-list (a `switch` or a
   map lookup that yields constants).
+- For a reverse proxy, give `NewSingleHostReverseProxy` or `SetURL` a fixed or configured target,
+  or pick the backend from an allow-list.
 - Where you cannot avoid user-chosen hosts, check the parsed host against an allow-list and block
   private and link-local addresses at the network level as well.
 <!-- end: how-to-fix -->
@@ -84,6 +92,7 @@ func Fetch(w http.ResponseWriter, r *http.Request) {
 ## Frameworks and APIs covered
 
 - `net/http`
+- `net/http/httputil`
 - `net/url`
 - `encoding/json`
 - Gin
@@ -101,7 +110,9 @@ func Fetch(w http.ResponseWriter, r *http.Request) {
   that starts with `/`; a path cut with `strings.TrimPrefix` or kept in a variable first is
   reported. URLs assembled in a `strings.Builder` or `bytes.Buffer` are judged as a whole, and
   `fmt.Fprintf` into a builder is not followed.
-- Reverse proxies (`net/http/httputil`) and HTTP clients other than `net/http` are not checked yet.
+- A `Director` written as a method or as a function declared elsewhere is not followed (a
+  function literal in the proxy, or held in a variable of the same function, is). HTTP clients
+  other than `net/http` are not checked yet.
 - The binder of the Echo instance is not a source, and numeric struct fields count as safe only
   when the struct is declared in the same file.
 <!-- end: known-limits -->
@@ -116,6 +127,10 @@ func Fetch(w http.ResponseWriter, r *http.Request) {
 - <https://pkg.go.dev/net/http#NewRequest>
 - <https://pkg.go.dev/net/http#NewRequestWithContext>
 - <https://pkg.go.dev/net/http#Client>
+- <https://pkg.go.dev/net/http/httputil#NewSingleHostReverseProxy>
+- <https://pkg.go.dev/net/http/httputil#ReverseProxy>
+- <https://pkg.go.dev/net/http/httputil#ProxyRequest>
+- <https://pkg.go.dev/net/http/httputil#ProxyRequest.SetURL>
 - <https://pkg.go.dev/net/url#URL>
 - <https://pkg.go.dev/net/url#JoinPath>
 - <https://pkg.go.dev/net/url#URL.JoinPath>
