@@ -94,6 +94,24 @@ def shells():
     subprocess.run(["pwsh", "-c", cmd])
     # ruleid: python.command-injection
     subprocess.run(["sudo", "-u", "www-data", "sh", "-c", cmd])
+    # ruleid: python.command-injection
+    subprocess.run(["bash", "-l", "-o", "pipefail", "-c", cmd])
+    # ruleid: python.command-injection
+    subprocess.run(["pwsh", "-NoProfile", "-CommandWithArgs", cmd, "first", "second"])
+    # ok: python.command-injection
+    subprocess.run(["pwsh", "-CommandWithArgs", '$args | ForEach-Object { "arg: $_" }', cmd])
+    # Words after a script operand are the script's own arguments, not the shell's flags.
+    # ok: python.command-injection
+    subprocess.run(["bash", "/opt/scripts/convert.sh", "-c", cmd])
+    # ok: python.command-injection
+    subprocess.run(["sh", "deploy.sh", "-scheme", cmd])
+    # ok: python.command-injection
+    subprocess.run(["powershell", "-File", "C:\\scripts\\report.ps1", "-c", cmd])
+    # ok: python.command-injection
+    subprocess.run(["bash", "-c", 'tar -C "$1" -xf "$2"', "_", "-cf", cmd])
+    # PowerShell also accepts shortened parameter names; only the documented forms are known.
+    # todoruleid: python.command-injection
+    subprocess.run(["powershell", "-Comm", cmd])
     # ok: python.command-injection
     subprocess.run(["sh", "-c", 'tar czf "/backups/$1.tgz" "$1"', "sh", request.args["dir"]])
     # ok: python.command-injection
@@ -110,6 +128,10 @@ def run_program():
     prog = request.args["prog"]
     # ruleid: python.command-injection
     subprocess.run([request.args["prog"], "--version"])
+    # A list variable whose first element is request data (reported where the list is written).
+    # ruleid: python.command-injection
+    version_argv = [prog, "--version"]
+    subprocess.run(version_argv)
     # ruleid: python.command-injection
     subprocess.run((prog, "-h"))
     # ruleid: python.command-injection
@@ -224,6 +246,17 @@ def list_dir():
     words = ("echo " + request.args["text"]).split()
     # ok: python.command-injection
     subprocess.run(words)
+    host = request.args["host"]
+    # A fixed command line split into words keeps its program.
+    # ok: python.command-injection
+    subprocess.run(f"ping -c 1 {host}".split())
+    # ok: python.command-injection
+    subprocess.run("ping -c 1 {}".format(host).split())
+    # ok: python.command-injection
+    subprocess.run("ping -c 1".split() + [host])
+    ping = f"ping -c 1 {host}".split()
+    # ok: python.command-injection
+    subprocess.run(ping)
     return "ok"
 
 
@@ -352,12 +385,15 @@ def win():
     return "ok"
 
 
-# An argument list for a shell program built before the call is not followed.
+# An argument list for a shell program built before the call (reported where it is written).
 @app.route("/shell-list")
 def shell_list():
+    # ruleid: python.command-injection
     argv = ["sh", "-c", request.args["cmd"]]
-    # todoruleid: python.command-injection
     subprocess.run(argv)
+    # ruleid: python.command-injection
+    win_argv = ["cmd", "/c", "type", request.args["file"]]
+    subprocess.run(win_argv)
     return "ok"
 
 

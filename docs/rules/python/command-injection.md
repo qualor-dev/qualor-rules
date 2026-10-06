@@ -20,7 +20,8 @@ command:
   `executable=`, the program of `asyncio.create_subprocess_exec()`, or a whole argument list sent
   by the client (`request.args.getlist("argv")`, `shlex.split(request.form["cmd"])`).
 
-A fixed program with request data only as further list elements is not reported: without a shell,
+A fixed program with request data only as further list elements is not reported, also when the
+list is a fixed command line split into words (`f"ping -c 1 {host}".split()`): without a shell,
 each element reaches the program as one argument.
 <!-- end: what-it-finds -->
 
@@ -101,8 +102,9 @@ def ping():
 - With `shell=True`, only the first element of an argument list is taken for shell code, as on
   POSIX; on Windows the other elements reach `cmd.exe` too. `shlex.quote()` is accepted as
   escaping also in a `cmd /c` command.
-- A shell program's command is followed when the argument list is written in the call, not when
-  the list is built before it.
+- A shell program's command is followed when its argument list is written in the call or assigned
+  to a variable just before it; a POSIX shell's `-c` counts after up to three option words, and
+  PowerShell's shortened parameter names (`-Comm`, `-enc`) are not recognised.
 - Without a shell, a program is recognised when it is visibly a string, a request value, a view
   parameter or a variable assigned one of these; a program concatenated from names only
   (`TOOL_DIR + tool`) is missed. A variable that held request data and then a list with a fixed
