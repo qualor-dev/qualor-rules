@@ -358,6 +358,20 @@ class ToolController {
         return "ok";
     }
 
+    // A request vector passed whole through a variable or a copy is not followed.
+    @PostMapping("/jobs/held")
+    String held(RequestEntity<List<String>> request, @RequestBody List<String> argv) throws IOException {
+        List<String> fromBody = request.getBody();
+        // todoruleid: java.command-injection
+        new ProcessBuilder(fromBody).start();
+        // todoruleid: java.command-injection
+        new ProcessBuilder(new ArrayList<>(request.getBody())).start();
+        List<String> bound = argv;
+        // todoruleid: java.command-injection
+        new ProcessBuilder(bound).start();
+        return "ok";
+    }
+
     @PostMapping("/jobs")
     String job(@RequestBody JobForm form) throws IOException {
         // ruleid: java.command-injection

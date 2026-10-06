@@ -57,12 +57,13 @@ rules:
     #   Arrays.asList("sh", "-c") is missed.
     # - In a list that gets a shell added, every later element counts as shell code, even a
     #   positional parameter after a fixed script.
-    # - A whole command is a sink only when the request hands it over (a request getter, a split
-    #   of request text, a bound handler parameter or a field of it, the list or array body of an
-    #   HttpEntity or RequestEntity parameter, or a variable assigned from
-    #   one of these). Lists and arrays the method builds (in any form) are checked by their first
-    #   element where it is visible, and lists from helper methods are accepted: a list filled
-    #   with add, with the request value first, is missed.
+    # - A whole command is a sink only when the request hands it over: a request getter or a split
+    #   of request text (in place or through a variable the method assigns), or, in place only, a
+    #   bound handler parameter or a field of it, or the list or array body of an HttpEntity or
+    #   RequestEntity parameter. Such a parameter or body held in a variable or copied into a new
+    #   list (new ArrayList<>(...)) first is missed. Lists and arrays the method builds (in any
+    #   form) are checked by their first element where it is visible, and lists from helper
+    #   methods are accepted: a list filled with add, with the request value first, is missed.
     # - For POSIX shells only the element right after -c is shell code; for cmd.exe (/c, /k) and
     #   PowerShell (-Command, -c) every later element is.
     # - The environment: an entry is judged by its literal "NAME=" prefix, inline or in a variable

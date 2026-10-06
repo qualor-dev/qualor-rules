@@ -101,6 +101,9 @@ public class PingController {
   the element after `-c` is shell code; for `cmd.exe` and PowerShell every later element is.
 - Lists and arrays the method builds are judged by their first element; a list filled with `add`,
   with the request value first, is missed.
+- A bound list or array parameter, or the list body of an `HttpEntity` or `RequestEntity`, counts
+  as a whole command only when it is passed in place: held in a variable or copied into a new list
+  first, it is missed.
 - Request data as a separate argument of a fixed program is accepted, although a value starting
   with `-` may be read as an option (argument injection, CWE-88).
 - One method is analysed at a time and conditions are not evaluated. Allow-list lookups are
