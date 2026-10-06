@@ -150,10 +150,123 @@ func limits() *tls.Config {
 		// todook: go.weak-cipher
 		des.NewCipher(nil)
 	}
-	// The TLS 1.0-1.2 cipher suites with RC4 or 3DES (crypto/tls InsecureCipherSuites) are not
-	// followed.
+	// The TLS 1.0-1.2 cipher suites with RC4 or 3DES (crypto/tls InsecureCipherSuites).
+	return &tls.Config{
+		// ruleid: go.weak-cipher
+		CipherSuites: []uint16{tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA, tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA},
+	}
+}
+
+// crypto/tls: the cipher suites InsecureCipherSuites lists ("have security issues"; RC4, 3DES,
+// RSA key exchange, CBC with SHA-256), enabled in a tls.Config.
+func LegacyServer() *tls.Config {
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		CipherSuites: []uint16{
+			// ok: go.weak-cipher
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			// ruleid: go.weak-cipher
+			tls.TLS_RSA_WITH_RC4_128_SHA,
+			// ruleid: go.weak-cipher
+			tls.TLS_ECDHE_ECDSA_WITH_RC4_128_SHA,
+			// ruleid: go.weak-cipher
+			tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA,
+			// ruleid: go.weak-cipher
+			tls.TLS_RSA_WITH_AES_128_CBC_SHA,
+			// ruleid: go.weak-cipher
+			tls.TLS_RSA_WITH_AES_256_CBC_SHA,
+			// ruleid: go.weak-cipher
+			tls.TLS_RSA_WITH_AES_128_CBC_SHA256,
+			// ruleid: go.weak-cipher
+			tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+			// ruleid: go.weak-cipher
+			tls.TLS_RSA_WITH_AES_256_GCM_SHA384,
+			// ruleid: go.weak-cipher
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
+			// ruleid: go.weak-cipher
+			tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,
+		},
+	}
+}
+
+// The suites set on a config built first, appended to its list, or held in a variable.
+var compatSuites = []uint16{
+	// ruleid: go.weak-cipher
+	tls.TLS_RSA_WITH_AES_128_GCM_SHA256,
+	// ok: go.weak-cipher
+	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+}
+
+func ClientConfig(legacy bool) *tls.Config {
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	// ok: go.weak-cipher
+	disabled := tls.CipherSuiteName(tls.TLS_RSA_WITH_RC4_128_SHA)
+	_ = disabled
+	// ruleid: go.weak-cipher
+	cfg.CipherSuites = []uint16{tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA}
+	if legacy {
+		// ruleid: go.weak-cipher
+		cfg.CipherSuites = append(cfg.CipherSuites, tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA)
+	}
+	suites := []uint16{
+		// ruleid: go.weak-cipher
+		tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,
+	}
+	// A suite named outside the list, between the list and its use.
+	// ok: go.weak-cipher
+	if suites[0] == tls.TLS_RSA_WITH_AES_256_CBC_SHA {
+		return nil
+	}
+	other := &tls.Config{CipherSuites: suites}
+	_ = other
+	return &tls.Config{CipherSuites: compatSuites}
+}
+
+// The safe forms: the suites CipherSuites lists, the default list, TLS 1.3 only, and the
+// constants used outside a tls.Config (a name for a log line, a comparison).
+func ModernServer() *tls.Config {
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		CipherSuites: []uint16{
+			// ok: go.weak-cipher
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			// ok: go.weak-cipher
+			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+			// ok: go.weak-cipher
+			tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
+		},
+	}
+}
+
+func DefaultSuites() *tls.Config {
+	// ok: go.weak-cipher
+	return &tls.Config{MinVersion: tls.VersionTLS13}
+}
+
+func DescribeSuite(state tls.ConnectionState) string {
+	// ok: go.weak-cipher
+	if state.CipherSuite == tls.TLS_RSA_WITH_RC4_128_SHA {
+		return "legacy"
+	}
+	switch state.CipherSuite {
+	// ok: go.weak-cipher
+	case tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA:
+		return "legacy"
+	}
+	// ok: go.weak-cipher
+	return tls.CipherSuiteName(tls.TLS_RSA_WITH_AES_128_GCM_SHA256)
+}
+
+// Not followed: suite IDs written as numbers, and the whole insecure list enabled in a loop.
+func NumericSuites() *tls.Config {
+	ids := []uint16{}
+	for _, s := range tls.InsecureCipherSuites() {
+		// todoruleid: go.weak-cipher
+		ids = append(ids, s.ID)
+	}
+	_ = &tls.Config{CipherSuites: ids}
 	return &tls.Config{
 		// todoruleid: go.weak-cipher
-		CipherSuites: []uint16{tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA, tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA},
+		CipherSuites: []uint16{0x0005, 0x000a},
 	}
 }

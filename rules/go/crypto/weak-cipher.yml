@@ -4,17 +4,19 @@ rules:
     severity: WARNING
     message: >-
       DES, Triple DES and RC4 are broken ciphers ("cryptographically broken and should not be used
-      for secure applications", Go docs): data encrypted with them can be recovered or changed.
-      Use an authenticated cipher instead: AES-GCM (`aes.NewCipher` with `cipher.NewGCM`) or
-      ChaCha20-Poly1305 (`golang.org/x/crypto/chacha20poly1305`).
+      for secure applications", Go docs), and the TLS cipher suites crypto/tls lists in
+      InsecureCipherSuites "have security issues": data protected with them can be recovered or
+      changed. Use an authenticated cipher instead: AES-GCM (`aes.NewCipher` with
+      `cipher.NewGCM`) or ChaCha20-Poly1305 (`golang.org/x/crypto/chacha20poly1305`); in a
+      tls.Config, leave CipherSuites unset or name only suites that `tls.CipherSuites()` lists.
     metadata:
-      title: Broken cipher DES, 3DES or RC4 (Go)
+      title: Broken cipher DES, 3DES or RC4, or an insecure TLS cipher suite (Go)
       cwe: ['CWE-327']
       owasp: ['A04:2025', 'A02:2021']
       kind: issue
       severity: medium
       confidence: high
-      frameworks: [crypto/des, crypto/rc4]
+      frameworks: [crypto/des, crypto/rc4, crypto/tls]
       sources:
         - https://cwe.mitre.org/data/definitions/327.html
         - https://top10.owasp.org/2025/A04_2025-Cryptographic_Failures/
@@ -26,10 +28,18 @@ rules:
         - https://pkg.go.dev/crypto/cipher#NewGCMWithRandomNonce
         - https://pkg.go.dev/golang.org/x/crypto/chacha20poly1305
         - https://pkg.go.dev/crypto/tls#InsecureCipherSuites
+        - https://pkg.go.dev/crypto/tls#CipherSuites
+        - https://pkg.go.dev/crypto/tls#Config
+        - https://go.dev/src/crypto/tls/cipher_suites.go
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
-    # - TLS 1.0-1.2 cipher suites with RC4 or 3DES in `tls.Config.CipherSuites` (listed by
-    #   `tls.InsecureCipherSuites`) are not followed (`todoruleid:`).
+    # - TLS cipher suites: the twelve suites `tls.InsecureCipherSuites` lists (RC4, 3DES, RSA key
+    #   exchange, CBC with SHA-256), named by their tls constant in the CipherSuites list of a
+    #   tls.Config literal, a list assigned to a config's CipherSuites field (or appended to it),
+    #   or a list held in a variable of the same function or package that such a literal or
+    #   assignment uses. Not followed: suite IDs written as numbers, and lists filled from
+    #   `tls.InsecureCipherSuites()` in a loop (`todoruleid:`), lists passed through functions or
+    #   struct fields of the program.
     # - A local variable that shadows the package name (`des := ...; des.NewCipher(k)`), and a
     #   package of another path whose last element is the same, imported under an alias in a
     #   file that also imports crypto/des or crypto/rc4, are taken for the cipher package
@@ -49,3 +59,27 @@ rules:
               import "crypto/rc4"
               ...
           - pattern: rc4.NewCipher
+      # crypto/tls: a suite that InsecureCipherSuites lists, enabled in the CipherSuites of a
+      # tls.Config (in the literal, assigned to the field, or held in a variable used there).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: 'tls.Config{..., CipherSuites: $LIST, ...}'
+              - pattern-inside: '$CFG.CipherSuites = $LIST'
+              - pattern-inside: |
+                  $V := $LIST
+                  ...
+                  <... tls.Config{..., CipherSuites: $V, ...} ...>
+              - pattern-inside: |
+                  $V := $LIST
+                  ...
+                  $CFG.CipherSuites = $V
+              - pattern-inside: |
+                  var $V = $LIST
+                  ...
+                  <... tls.Config{..., CipherSuites: $V, ...} ...>
+          # Only inside the list itself, not elsewhere in the region.
+          - pattern-inside: $LIST
+          - pattern: tls.$SUITE
+          - metavariable-regex:
+              metavariable: $SUITE
+              regex: ^TLS_(RSA_WITH_(RC4_128_SHA|3DES_EDE_CBC_SHA|AES_128_CBC_SHA|AES_256_CBC_SHA|AES_128_CBC_SHA256|AES_128_GCM_SHA256|AES_256_GCM_SHA384)|ECDHE_ECDSA_WITH_(RC4_128_SHA|AES_128_CBC_SHA256)|ECDHE_RSA_WITH_(RC4_128_SHA|3DES_EDE_CBC_SHA|AES_128_CBC_SHA256))$

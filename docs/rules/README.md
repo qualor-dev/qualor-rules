@@ -79,7 +79,7 @@ The key `qualor:<lang>/<name>` is how Qualor names a rule; the rule itself is
 | [`qualor:go/ssrf`](go/ssrf.md) | Server-side request to a URL from HTTP request data (Go) | Issue | High | [CWE-918](https://cwe.mitre.org/data/definitions/918.html) |
 | [`qualor:go/template-injection`](go/template-injection.md) | Go template text built from HTTP request data (Go) | Issue | High | [CWE-1336](https://cwe.mitre.org/data/definitions/1336.html) |
 | [`qualor:go/tls-verification-disabled`](go/tls-verification-disabled.md) | TLS certificate verification disabled (Go) | Issue | High | [CWE-295](https://cwe.mitre.org/data/definitions/295.html) |
-| [`qualor:go/weak-cipher`](go/weak-cipher.md) | Broken cipher DES, 3DES or RC4 (Go) | Issue | Medium | [CWE-327](https://cwe.mitre.org/data/definitions/327.html) |
+| [`qualor:go/weak-cipher`](go/weak-cipher.md) | Broken cipher DES, 3DES or RC4, or an insecure TLS cipher suite (Go) | Issue | Medium | [CWE-327](https://cwe.mitre.org/data/definitions/327.html) |
 | [`qualor:go/weak-hash`](go/weak-hash.md) | Weak hash MD5 or SHA-1 (Go) | Security hotspot | Low | [CWE-328](https://cwe.mitre.org/data/definitions/328.html) |
 | [`qualor:go/xss`](go/xss.md) | HTML response built from HTTP request data (Go) | Issue | High | [CWE-79](https://cwe.mitre.org/data/definitions/79.html) |
 | [`qualor:go/zip-slip`](go/zip-slip.md) | Archive entry name used as an extraction path (Go) | Issue | High | [CWE-22](https://cwe.mitre.org/data/definitions/22.html) |
