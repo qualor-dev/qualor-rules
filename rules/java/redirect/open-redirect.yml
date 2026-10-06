@@ -62,7 +62,8 @@ rules:
     #   lambda are not recognised.
     # - A StringBuilder or StringBuffer counts as fixed only when it is created with such a
     #   literal, or gets one in the append right after it is created (a builder given its start
-    #   later, or cut with setLength or delete, is reported).
+    #   later, edited with setLength, delete, replace, insert or setCharAt, or assigned again, is
+    #   reported).
     # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
     #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
     #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
@@ -121,8 +122,8 @@ rules:
       # A StringBuilder or StringBuffer whose text starts with a fixed target (the forms above:
       # an origin, a local path, a relative path or a query): created with it, or given it by its
       # first append right after it is created (alone or at the start of an append chain).
-      # Request data appended later only reaches the path or the query. A builder that is cut
-      # afterwards (setLength, delete) is not trusted.
+      # Request data appended later only reaches the path or the query. A builder that is edited
+      # afterwards (setLength, delete, replace, insert, setCharAt) or assigned again is not trusted.
       - patterns:
           - pattern-either:
               - patterns:
@@ -139,6 +140,21 @@ rules:
                       ...
                   - pattern-not-inside: |
                       $SB.delete(...);
+                      ...
+                  - pattern-not-inside: |
+                      $SB.replace(...);
+                      ...
+                  - pattern-not-inside: |
+                      $SB.insert(...);
+                      ...
+                  - pattern-not-inside: |
+                      $SB.setCharAt(...);
+                      ...
+                  # A builder assigned again after its fixed start (the first assignment creates it).
+                  - pattern-not-inside: |
+                      $SB = $Y;
+                      ...
+                      $SB = $Z;
                       ...
                   - pattern: $SB.toString()
               - pattern: new $B("$ORIGIN"). ... .toString()

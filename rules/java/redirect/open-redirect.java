@@ -638,6 +638,49 @@ class BuilderLoginController {
         cut.append(next);
         // ruleid: java.open-redirect
         response.sendRedirect(cut.toString());
+        // The start replaced, a value inserted in front, or a character set, then request data.
+        StringBuilder replaced = new StringBuilder("/items/");
+        replaced.replace(0, replaced.length(), "https://");
+        replaced.append(next);
+        // ruleid: java.open-redirect
+        response.sendRedirect(replaced.toString());
+        StringBuilder inserted = new StringBuilder("/items/");
+        inserted.insert(0, "//");
+        inserted.append(next);
+        // ruleid: java.open-redirect
+        response.sendRedirect(inserted.toString());
+        StringBuilder patched = new StringBuilder("/items/");
+        patched.setCharAt(1, '/');
+        patched.append(next);
+        // ruleid: java.open-redirect
+        response.sendRedirect(patched.toString());
+        // A builder assigned again after its fixed start: a new empty builder, a builder of request
+        // data in a branch, another builder that holds request data.
+        StringBuilder renewed = new StringBuilder("/items/");
+        renewed = new StringBuilder();
+        renewed.append(next);
+        // ruleid: java.open-redirect
+        response.sendRedirect(renewed.toString());
+        StringBuilder branched = new StringBuilder("/items/");
+        if (next.isEmpty()) {
+            branched = new StringBuilder(next);
+        }
+        // ruleid: java.open-redirect
+        response.sendRedirect(branched.toString());
+        StringBuilder aliased = new StringBuilder();
+        aliased.append("/items/");
+        StringBuilder other = new StringBuilder();
+        other.append(next);
+        aliased = other;
+        // ruleid: java.open-redirect
+        response.sendRedirect(aliased.toString());
+        // Two builders with fixed starts: an assignment to one does not count for the other.
+        StringBuilder first = new StringBuilder("/items/");
+        StringBuilder second = new StringBuilder("/items/");
+        first.append(id);
+        second.append(id);
+        // ok: java.open-redirect
+        response.sendRedirect(first.toString());
     }
 
     @GetMapping("/builders/view")

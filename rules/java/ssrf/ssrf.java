@@ -585,6 +585,49 @@ class BuilderController {
         cut.append(host);
         // ruleid: java.ssrf
         new URL(cut.toString()).openStream();
+        // The start replaced, a value inserted in front, or a character set, then request data.
+        StringBuilder replaced = new StringBuilder("https://api.example.com/items/");
+        replaced.replace(0, replaced.length(), "https://");
+        replaced.append(host);
+        // ruleid: java.ssrf
+        new URL(replaced.toString()).openStream();
+        StringBuilder inserted = new StringBuilder("https://api.example.com/items/");
+        inserted.insert(0, "//");
+        inserted.append(host);
+        // ruleid: java.ssrf
+        new URL(inserted.toString()).openStream();
+        StringBuilder patched = new StringBuilder("https://api.example.com/items/");
+        patched.setCharAt(1, '/');
+        patched.append(host);
+        // ruleid: java.ssrf
+        new URL(patched.toString()).openStream();
+        // A builder assigned again after its fixed start: a new empty builder, a builder of request
+        // data in a branch, another builder that holds request data.
+        StringBuilder renewed = new StringBuilder("https://api.example.com/items/");
+        renewed = new StringBuilder();
+        renewed.append(host);
+        // ruleid: java.ssrf
+        new URL(renewed.toString()).openStream();
+        StringBuilder branched = new StringBuilder("https://api.example.com/items/");
+        if (host.isEmpty()) {
+            branched = new StringBuilder(host);
+        }
+        // ruleid: java.ssrf
+        new URL(branched.toString()).openStream();
+        StringBuilder aliased = new StringBuilder();
+        aliased.append("https://api.example.com/items/");
+        StringBuilder other = new StringBuilder();
+        other.append(host);
+        aliased = other;
+        // ruleid: java.ssrf
+        new URL(aliased.toString()).openStream();
+        // Two builders with fixed starts: an assignment to one does not count for the other.
+        StringBuilder first = new StringBuilder("https://api.example.com/items/");
+        StringBuilder second = new StringBuilder("https://api.example.com/items/");
+        first.append(id);
+        second.append(id);
+        // ok: java.ssrf
+        new URL(first.toString()).openStream();
         return "ok";
     }
 }

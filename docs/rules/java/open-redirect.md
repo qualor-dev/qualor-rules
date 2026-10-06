@@ -97,8 +97,9 @@ public class AfterLoginServlet extends HttpServlet {
   path as the base, `UriComponentsBuilder.fromPath(...)` and a `Location` set in a
   `ResponseEntity` headers lambda are not recognised.
 - A `StringBuilder` or `StringBuffer` counts as fixed only when it is created with such a literal
-  (or a `static final` field holding one) or gets one in its first append; a builder given its start later, or cut with
-  `setLength` or `delete`, is reported.
+  (or a `static final` field holding one) or gets one in its first append. A builder given its
+  start later, edited afterwards (`setLength`, `delete`, `replace`, `insert`, `setCharAt`) or
+  assigned again is reported.
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
   Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
   request body and headers); enum, `List` or `Optional` parameters still count as request data.
