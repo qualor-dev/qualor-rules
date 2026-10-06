@@ -362,6 +362,13 @@ func (s *Server) BrokenChecks(w http.ResponseWriter, r *http.Request, strict boo
 	}
 	// ruleid: go.open-redirect
 	http.Redirect(w, r, h.String(), http.StatusFound)
+	// The checks joined with && to another condition: without it, nothing exits.
+	k := r.FormValue("k")
+	if strict && (!strings.HasPrefix(k, "/") || strings.HasPrefix(k, "//") || strings.HasPrefix(k, "/\\")) {
+		return
+	}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, k, http.StatusFound)
 }
 
 // Checks that are not followed.
@@ -391,6 +398,30 @@ func (s *Server) UnfollowedChecks(w http.ResponseWriter, r *http.Request) {
 	to = r.FormValue("then")
 	// todoruleid: go.open-redirect
 	http.Redirect(w, r, to, http.StatusFound)
+	// An exit body with more than two statements before its return.
+	prev := r.FormValue("prev")
+	if !strings.HasPrefix(prev, "/") || strings.HasPrefix(prev, "//") || strings.HasPrefix(prev, "/\\") {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("X-Redirect", "refused")
+		http.Error(w, "bad target", http.StatusBadRequest)
+		return
+	}
+	// todook: go.open-redirect
+	http.Redirect(w, r, prev, http.StatusFound)
+	// The checks negated as one group.
+	land := r.FormValue("land")
+	if !(strings.HasPrefix(land, "/") && !strings.HasPrefix(land, "//") && !strings.HasPrefix(land, "/\\")) {
+		return
+	}
+	// todook: go.open-redirect
+	http.Redirect(w, r, land, http.StatusFound)
+	// A host compared with the result of a call (the server's configuration).
+	cfgHost, err := url.Parse(r.FormValue("cfg"))
+	if err != nil || cfgHost.Hostname() != os.Getenv("PUBLIC_HOST") {
+		return
+	}
+	// todook: go.open-redirect
+	http.Redirect(w, r, cfgHost.String(), http.StatusFound)
 	// A host held in a variable counts as fixed, wherever the variable comes from.
 	wanted := r.FormValue("wanted")
 	dest, err := url.Parse(r.FormValue("dest"))

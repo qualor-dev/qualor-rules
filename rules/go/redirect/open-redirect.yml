@@ -56,11 +56,14 @@ rules:
     #   value is not assigned again. Checks with the wrong polarity, joined the other way, with
     #   a return only in a nested branch, compared with request data, or that still let "/\host",
     #   "//host" or a relative target through (only "//", only `IsAbs`, `Host != ""`) are
-    #   reported. Not followed: a helper that checks it (`isOwnSite(x)`), a check held in a
-    #   variable or written as a switch case list, and a check whose `if` also has an else
-    #   branch (`todook:`); a string parsed for a host check and assigned again afterwards
-    #   still counts as checked, and a host held in a variable counts as fixed wherever the
-    #   variable comes from (`todoruleid:`).
+    #   reported, and so are checks joined with `&&` to another condition (`strict && (...)`).
+    #   Not followed: a helper that checks it (`isOwnSite(x)`), a check held in a variable or
+    #   written as a switch case list, a check whose `if` also has an else branch, an exit body
+    #   with more than two statements before its return, the checks negated as one group
+    #   (`!(a && !b && !c)`), and a host compared with the result of a call
+    #   (`os.Getenv(...)`) (`todook:`); a string parsed for a host check and assigned again
+    #   afterwards still counts as checked, and a host held in a variable counts as fixed
+    #   wherever the variable comes from (`todoruleid:`).
     # - Request data passed to a function counts as reaching its result, whatever the function
     #   does (a signed URL of a storage service, say) (`todook:`).
     # - The request's own path (`r.URL.Path`, `RequestURI()`) after a base, and anything after a
@@ -404,40 +407,40 @@ rules:
                   }
                   ...
           - pattern-not-inside: |
-              if <... $P && !strings.HasPrefix($X, "/") ...> { ... }
+              if <... $P && <... !strings.HasPrefix($X, "/") ...> ...> { ... }
               ...
           - pattern-not-inside: |
-              if <... !strings.HasPrefix($X, "/") && $Q ...> { ... }
+              if <... <... !strings.HasPrefix($X, "/") ...> && $Q ...> { ... }
               ...
           - pattern-not-inside: |
-              if <... $P && strings.HasPrefix($X, "//") ...> { ... }
+              if <... $P && <... strings.HasPrefix($X, "//") ...> ...> { ... }
               ...
           - pattern-not-inside: |
-              if <... strings.HasPrefix($X, "//") && $Q ...> { ... }
+              if <... <... strings.HasPrefix($X, "//") ...> && $Q ...> { ... }
               ...
           - pattern-not-inside: |
-              if <... $P && strings.HasPrefix($X, "/\\") ...> { ... }
+              if <... $P && <... strings.HasPrefix($X, "/\\") ...> ...> { ... }
               ...
           - pattern-not-inside: |
-              if <... strings.HasPrefix($X, "/\\") && $Q ...> { ... }
+              if <... <... strings.HasPrefix($X, "/\\") ...> && $Q ...> { ... }
               ...
           - pattern-not-inside: |
-              if <... $P && strings.HasPrefix($X, `/\`) ...> { ... }
+              if <... $P && <... strings.HasPrefix($X, `/\`) ...> ...> { ... }
               ...
           - pattern-not-inside: |
-              if <... strings.HasPrefix($X, `/\`) && $Q ...> { ... }
+              if <... <... strings.HasPrefix($X, `/\`) ...> && $Q ...> { ... }
               ...
           - pattern-not-inside: |
-              if <... $P && strings.Contains($X, "\\") ...> { ... }
+              if <... $P && <... strings.Contains($X, "\\") ...> ...> { ... }
               ...
           - pattern-not-inside: |
-              if <... strings.Contains($X, "\\") && $Q ...> { ... }
+              if <... <... strings.Contains($X, "\\") ...> && $Q ...> { ... }
               ...
           - pattern-not-inside: |
-              if <... $P && strings.Contains($X, `\`) ...> { ... }
+              if <... $P && <... strings.Contains($X, `\`) ...> ...> { ... }
               ...
           - pattern-not-inside: |
-              if <... strings.Contains($X, `\`) && $Q ...> { ... }
+              if <... <... strings.Contains($X, `\`) ...> && $Q ...> { ... }
               ...
           - pattern-not-inside: |
               if <... !strings.HasPrefix($X, "//") ...> { ... }

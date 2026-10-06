@@ -15,11 +15,12 @@ origin and a `/` is not reported, since it cannot move the browser to another si
 
 A target that the handler checks first is not reported either: a local path that starts with `/`
 and is checked not to start with `//` or `/\`, or a URL parsed with `url.Parse` whose host is
-compared with your own host (a constant, a variable or a field, not other request data). The
+compared with your own host (a string, a constant, a variable or a field, not a call). The
 check can be the `&&` condition of the branch that redirects, or the `||` condition of earlier
-`if` statements that return or replace the value with a fixed one. A check that does not hold
-(a test with the wrong sign, `&&` and `||` swapped, a `return` only in a nested branch, or the
-value assigned again afterwards) is still reported.
+`if` statements that return (directly, after at most two other statements) or replace the
+value with a fixed one. A check that does not hold (a test with the wrong sign, `&&` and `||`
+swapped, the checks joined with `&&` to another condition, a `return` only in a nested branch,
+or the value assigned again afterwards) is still reported.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -96,8 +97,10 @@ enough either: browsers read `/\evil.example` as `//evil.example`.
 
 <!-- begin: known-limits -->
 - A check by a helper function (such as `isOwnSite(x)`), a check held in a boolean variable or
-  written as the case list of a `switch`, and a check whose `if` statement also has an `else`
-  branch are not recognised: the checked value is still reported.
+  written as the case list of a `switch`, a check whose `if` statement also has an `else`
+  branch, an `if` with more than two statements before its `return`, the checks negated as one
+  group (`!(a && !b && !c)`), and a host compared with the result of a call (such as
+  `os.Getenv("PUBLIC_HOST")`) are not recognised: the checked value is still reported.
 - After a host check, the string that was parsed counts as checked even if it is assigned again
   later, so a redirect to the new value is missed. A host compared with a variable counts as
   your own host, even when the variable holds request data.
