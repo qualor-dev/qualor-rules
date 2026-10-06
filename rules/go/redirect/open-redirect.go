@@ -157,19 +157,21 @@ func Continue(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fallback, http.StatusFound)
 }
 
-// Checks before the call are not followed: the value checked is still reported.
+// Checks before the call: a local-path check that replaces the value is followed; a check by a
+// helper function is not, and the value checked is still reported.
 func Checked(w http.ResponseWriter, r *http.Request) {
 	next := r.URL.Query().Get("next")
 	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.HasPrefix(next, "/\\") {
 		next = "/"
 	}
-	// todook: go.open-redirect
+	// ok: go.open-redirect
 	http.Redirect(w, r, next, http.StatusFound)
+	// No scheme and no host still lets "/\evil.example" through: browsers read "\" as "/".
 	u, err := url.Parse(r.FormValue("back"))
 	if err != nil || u.IsAbs() || u.Host != "" {
 		return
 	}
-	// todook: go.open-redirect
+	// ruleid: go.open-redirect
 	http.Redirect(w, r, u.String(), http.StatusFound)
 	back := r.FormValue("back")
 	if !isOwnSite(back) {
@@ -180,6 +182,134 @@ func Checked(w http.ResponseWriter, r *http.Request) {
 }
 
 func isOwnSite(target string) bool { return strings.HasPrefix(target, siteRoot) }
+
+// Validators before the redirect: a local path ("/" first, then neither "/" nor "\", which
+// browsers read as "/"), or a parsed URL whose host is compared with our own host. The check
+// exits or replaces the value with a literal, or it is the condition of the redirecting branch.
+const siteDomain = "shop.example.com"
+
+func (s *Server) Validated(w http.ResponseWriter, r *http.Request) {
+	back := r.FormValue("back")
+	if !strings.HasPrefix(back, "/") || strings.HasPrefix(back, "//") || strings.Contains(back, "\\") {
+		http.Error(w, "bad target", http.StatusBadRequest)
+		return
+	}
+	// ok: go.open-redirect
+	http.Redirect(w, r, back, http.StatusFound)
+	next := r.URL.Query().Get("next")
+	if strings.HasPrefix(next, "/") && !strings.HasPrefix(next, "//") && !strings.HasPrefix(next, "/\\") {
+		// ok: go.open-redirect
+		http.Redirect(w, r, next, http.StatusSeeOther)
+	}
+	step := r.FormValue("step")
+	if !strings.HasPrefix(step, "/") {
+		return
+	}
+	if strings.HasPrefix(step, "//") || strings.HasPrefix(step, "/\\") {
+		return
+	}
+	// ok: go.open-redirect
+	w.Header().Set("Location", step)
+	target, err := url.Parse(r.FormValue("target"))
+	if err != nil || target.Host != siteDomain {
+		return
+	}
+	// ok: go.open-redirect
+	http.Redirect(w, r, target.String(), http.StatusFound)
+	raw := r.FormValue("raw")
+	parsed, err := url.Parse(raw)
+	if err == nil && parsed.Hostname() == siteDomain {
+		// ok: go.open-redirect
+		http.Redirect(w, r, raw, http.StatusFound)
+	}
+}
+
+// Checks that leave a way out are still reported.
+func (s *Server) WeakChecks(w http.ResponseWriter, r *http.Request) {
+	// "/\evil.example" passes a check for "//" alone.
+	next := r.FormValue("next")
+	if strings.HasPrefix(next, "/") && !strings.HasPrefix(next, "//") {
+		// ruleid: go.open-redirect
+		http.Redirect(w, r, next, http.StatusFound)
+	}
+	// "//evil.example" has no scheme, so it is not absolute.
+	u, err := url.Parse(r.FormValue("u"))
+	if err != nil || u.IsAbs() {
+		return
+	}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, u.String(), http.StatusFound)
+	// A relative target passes when only other hosts are refused.
+	v, err := url.Parse(r.FormValue("v"))
+	if err != nil || (v.Host != "" && v.Host != siteDomain) {
+		return
+	}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, v.String(), http.StatusFound)
+	rel, err := url.Parse(r.FormValue("rel"))
+	if err != nil || rel.Hostname() != "" {
+		return
+	}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, rel.String(), http.StatusFound)
+	// The check does not stop the request.
+	to := r.FormValue("to")
+	if !strings.HasPrefix(to, "/") || strings.HasPrefix(to, "//") || strings.HasPrefix(to, "/\\") {
+		fmt.Println("unexpected target", to)
+	}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, to, http.StatusFound)
+	// The fallback is request data again.
+	ret := r.FormValue("ret")
+	if !strings.HasPrefix(ret, "/") || strings.HasPrefix(ret, "//") || strings.HasPrefix(ret, "/\\") {
+		ret = r.Referer()
+	}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, ret, http.StatusFound)
+	// The redirect sits in the branch the check rejects.
+	other := r.FormValue("other")
+	if strings.HasPrefix(other, "/") && !strings.HasPrefix(other, "//") && !strings.HasPrefix(other, "/\\") {
+		fmt.Fprintln(w, "local")
+	} else {
+		// ruleid: go.open-redirect
+		http.Redirect(w, r, other, http.StatusFound)
+	}
+	// Our own host leads to an early exit, so every other host goes on.
+	z, _ := url.Parse(r.FormValue("z"))
+	if z.Host == siteDomain {
+		return
+	}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, z.String(), http.StatusFound)
+	// A check whose if statement also has an else branch is not followed, even on its own branch.
+	alt := r.FormValue("alt")
+	if strings.HasPrefix(alt, "/") && !strings.HasPrefix(alt, "//") && !strings.HasPrefix(alt, "/\\") {
+		// todook: go.open-redirect
+		http.Redirect(w, r, alt, http.StatusFound)
+	} else {
+		http.Redirect(w, r, "/", http.StatusFound)
+	}
+}
+
+// Gin and Echo with the same checks.
+func GinValidated(c *gin.Context) {
+	next := c.Query("next")
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.HasPrefix(next, "/\\") {
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
+	// ok: go.open-redirect
+	c.Redirect(http.StatusFound, next)
+}
+
+func EchoValidated(c echo.Context) error {
+	to, err := url.Parse(c.QueryParam("to"))
+	if err != nil || to.Hostname() != siteDomain {
+		return echo.ErrBadRequest
+	}
+	// ok: go.open-redirect
+	return c.Redirect(http.StatusFound, to.String())
+}
 
 // The result of a function given request data counts as request data, whatever the function
 // does: here a signed URL of a storage service, whose host comes from its configuration.

@@ -12,6 +12,11 @@ Redirects whose target comes from the HTTP request: `http.Redirect`, a `Location
 hand, and the redirect methods of Gin and Echo, when request data decides the whole target or its
 scheme and host. Request data after a fixed path segment (`"/items/" + id`) or after a fixed
 origin and a `/` is not reported, since it cannot move the browser to another site.
+
+A target that the handler checks first is not reported either: a local path that starts with `/`
+and is checked not to start with `//` or `/\`, or a URL parsed with `url.Parse` whose host is
+compared with your own host. The check can be the condition of the branch that redirects, or an
+earlier `if` that returns or replaces the value with a fixed one.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -66,8 +71,13 @@ func AfterLogin(w http.ResponseWriter, r *http.Request) {
 - Or map the request value to a target from an allow-list (a `switch` or a map lookup that yields
   constants).
 
+- Or check the target before you redirect: accept a local path only when it starts with `/` and
+  neither with `//` nor with `/\` (`strings.HasPrefix`), or parse it with `url.Parse` and accept
+  it only when its `Host` is your own host.
+
 A target that only "starts with `/`" is not enough: `//evil.example` starts with `/` and is a link
-to another host.
+to another host. Checking for `//` alone, or that `url.Parse` found no scheme and no host, is not
+enough either: browsers read `/\evil.example` as `//evil.example`.
 <!-- end: how-to-fix -->
 
 ## Frameworks and APIs covered
@@ -82,8 +92,8 @@ to another host.
 ## Known limits
 
 <!-- begin: known-limits -->
-- A check before the redirect (for example "starts with `/` but not `//`", `u.IsAbs()` or a helper
-  such as `isOwnSite(x)`) is not recognised: the checked value is still reported.
+- A check by a helper function (such as `isOwnSite(x)`) is not recognised, nor is a check whose
+  `if` statement also has an `else` branch: the checked value is still reported.
 - Request data passed through any function is assumed to reach its result, so a URL produced from
   it (a signed storage URL, say) is reported.
 - The binder of the Echo instance (`c.Echo().Binder.Bind(&x, c)`) is not a source.
@@ -100,6 +110,11 @@ to another host.
 - <https://pkg.go.dev/net/http#Redirect>
 - <https://pkg.go.dev/net/http#Header.Set>
 - <https://pkg.go.dev/net/url#URL>
+- <https://pkg.go.dev/net/url#Parse>
+- <https://pkg.go.dev/net/url#URL.IsAbs>
+- <https://pkg.go.dev/net/url#URL.Hostname>
+- <https://pkg.go.dev/strings#HasPrefix>
+- <https://url.spec.whatwg.org/>
 - <https://pkg.go.dev/fmt>
 - <https://pkg.go.dev/net/http#Request>
 - <https://pkg.go.dev/encoding/json>

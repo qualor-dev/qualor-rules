@@ -24,6 +24,11 @@ rules:
         - https://pkg.go.dev/net/http#Redirect
         - https://pkg.go.dev/net/http#Header.Set
         - https://pkg.go.dev/net/url#URL
+        - https://pkg.go.dev/net/url#Parse
+        - https://pkg.go.dev/net/url#URL.IsAbs
+        - https://pkg.go.dev/net/url#URL.Hostname
+        - https://pkg.go.dev/strings#HasPrefix
+        - https://url.spec.whatwg.org/
         - https://pkg.go.dev/fmt
         - https://pkg.go.dev/net/http#Request
         - https://pkg.go.dev/encoding/json
@@ -42,9 +47,13 @@ rules:
         - https://pkg.go.dev/github.com/gorilla/mux
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
-    # - A check before the call ("starts with / but not //", `u.IsAbs()`, `u.Host != ""`) is not
-    #   followed, nor is a helper that checks it (`isOwnSite(x)`): the value checked is still
-    #   reported (`todook:`).
+    # - Validators are followed when they are written out: a local path ("/" first, then neither
+    #   "/" nor "\", which browsers read as "/") checked with strings.HasPrefix or Contains, or
+    #   the host of url.Parse's result compared with a non-empty host, as the condition of the
+    #   redirecting branch or of an earlier `if` that returns or assigns a literal. A check that
+    #   still lets "/\host", "//host" or a relative target through (only "//", only `IsAbs`,
+    #   `Host != ""`) is reported. A helper that checks it (`isOwnSite(x)`) is not followed
+    #   (`todook:`), nor is a check whose `if` also has an else branch (`todook:`).
     # - Request data passed to a function counts as reaching its result, whatever the function
     #   does (a signed URL of a storage service, say) (`todook:`).
     # - The request's own path (`r.URL.Path`, `RequestURI()`) after a base, and anything after a
@@ -240,6 +249,120 @@ rules:
       - patterns:
           - pattern-inside: '"=~/^[?#]/" + $X'
           - pattern: $X
+      # A target checked to be a local path before the redirect: it starts with "/" but not with
+      # "//" or "/\" (browsers read a backslash in a URL as a slash). The check exits (return) or
+      # replaces the value with a literal; the checks may sit in one condition or in several.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  if <... !strings.HasPrefix($X, "/") ...> {
+                    ...
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... !strings.HasPrefix($X, "/") ...> {
+                    ...
+                    $X = "..."
+                  }
+                  ...
+          - pattern-either:
+              - pattern-inside: |
+                  if <... strings.HasPrefix($X, "//") ...> {
+                    ...
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.HasPrefix($X, "//") ...> {
+                    ...
+                    $X = "..."
+                  }
+                  ...
+          - pattern-either:
+              - pattern-inside: |
+                  if <... strings.HasPrefix($X, "/\\") ...> {
+                    ...
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.HasPrefix($X, "/\\") ...> {
+                    ...
+                    $X = "..."
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.Contains($X, "\\") ...> {
+                    ...
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.Contains($X, "\\") ...> {
+                    ...
+                    $X = "..."
+                  }
+                  ...
+          - pattern: $X
+      # The same checks as the condition of the branch that redirects.
+      - patterns:
+          - pattern-inside: |
+              if <... strings.HasPrefix($X, "/") ...> { ... }
+          - pattern-inside: |
+              if <... !strings.HasPrefix($X, "//") ...> { ... }
+          - pattern-either:
+              - pattern-inside: |
+                  if <... !strings.HasPrefix($X, "/\\") ...> { ... }
+              - pattern-inside: |
+                  if <... !strings.Contains($X, "\\") ...> { ... }
+          # Not the else branch.
+          - pattern-not-inside: |
+              if <... strings.HasPrefix($X, "/") ...> { ... } else { ... }
+          - pattern: $X
+      # A parsed target whose host is compared with a fixed or configured host (not ""), before
+      # the redirect (exit) or as the condition of the branch that redirects: the parsed URL and
+      # the string it was parsed from.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $U, $E := url.Parse($S)
+                  ...
+              - pattern-inside: |
+                  $U, $E = url.Parse($S)
+                  ...
+          - pattern-either:
+              - pattern-inside: |
+                  if <... $U.Host != $H ...> {
+                    ...
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... $U.Hostname() != $H ...> {
+                    ...
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... $U.Host == $H ...> { ... }
+              - pattern-inside: |
+                  if <... $U.Hostname() == $H ...> { ... }
+          - metavariable-regex:
+              metavariable: $H
+              regex: ^(?!""$)
+          - pattern-not-inside: |
+              if <... $U.Host == $H ...> { ... } else { ... }
+          - pattern-not-inside: |
+              if <... $U.Hostname() == $H ...> { ... } else { ... }
+          - pattern-not-inside: |
+              if <... $U.Host == "" ...> { ... }
+          - pattern-not-inside: |
+              if <... $U.Host != "" ...> { ... }
+              ...
+          - pattern-either:
+              - pattern: $U
+              - pattern: $S
     pattern-sinks:
       - patterns:
           # The redirect target: net/http's Redirect, Gin's and Echo's c.Redirect, and the
