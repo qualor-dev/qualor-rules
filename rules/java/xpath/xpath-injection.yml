@@ -54,7 +54,9 @@ rules:
     # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
     #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
     #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
-    #   and valueOf of an enum from another file still pass the request data on.
+    #   and valueOf of an enum from another file still pass the request data on. An enum of this
+    #   file counts only when a class comes before it or after it (or contains it and another
+    #   class comes before): an enum nested in a file's only class is not recognised.
     # - Only the JAXP javax.xml.xpath API is checked: the XPath methods of dom4j (selectNodes,
     #   createXPath), JDOM (XPathFactory.compile) and Jaxen are not.
     pattern-sources:
