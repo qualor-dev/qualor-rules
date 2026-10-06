@@ -249,14 +249,17 @@ rules:
               - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([cC]|[cC][oO][mM][mM][aA][nN][dD])$/", ..., $SCRIPT, ...)
           - focus-metavariable: $SCRIPT
       # PowerShell given an encoded command: the argument after `-EncodedCommand` (`-e`, `-ec`,
-      # any case) is the command, as Base64 of its UTF-16LE text. After `-File`, `-e` is a
-      # parameter of the script instead.
+      # any case) is the command, as Base64 of its UTF-16LE text. After `-File`, or after a
+      # `.ps1` script given without it (File is the default parameter), `-e` is a parameter of
+      # the script instead.
       - patterns:
           - pattern-either:
               - pattern: exec.Command("=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([eE]|[eE][cC]|[eE][nN][cC][oO][dD][eE][dD][cC][oO][mM][mM][aA][nN][dD])$/", $SCRIPT, ...)
               - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([eE]|[eE][cC]|[eE][nN][cC][oO][dD][eE][dD][cC][oO][mM][mM][aA][nN][dD])$/", $SCRIPT, ...)
           - pattern-not: exec.Command($PS, ..., "=~/^-([fF]|[fF][iI][lL][eE])$/", ..., $SCRIPT, ...)
           - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/^-([fF]|[fF][iI][lL][eE])$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.Command($PS, ..., "=~/[.][pP][sS]1$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/[.][pP][sS]1$/", ..., $SCRIPT, ...)
           - focus-metavariable: $SCRIPT
       # The program itself: the name or path given to Command or CommandContext, or Cmd.Path.
       - patterns:

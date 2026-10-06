@@ -126,6 +126,9 @@ func Encoded(w http.ResponseWriter, r *http.Request) {
 	// -e after -File is a parameter of the script, and its value is passed as a literal string.
 	// ok: go.command-injection
 	exec.Command("pwsh", "-File", "deploy.ps1", "-e", r.FormValue("env")).Run()
+	// The script path given without -File: File is pwsh's default parameter.
+	// ok: go.command-injection
+	exec.CommandContext(r.Context(), "pwsh", "-NoProfile", "rotate.ps1", "-e", r.FormValue("stage")).Run()
 	// Other options of PowerShell take request data as a value, not as code.
 	// ok: go.command-injection
 	exec.Command("pwsh", "-NoProfile", "-ExecutionPolicy", r.FormValue("policy"), "-File", "job.ps1").Run()
