@@ -63,7 +63,9 @@ rules:
     #   request value as its key, `await Filter.findById(req.params.id)`), except promise helpers,
     #   parsers, formatters, request.json()/formData()/text(), methods of the response and
     #   functions imported by name; another method that returns the request value it is given is
-    #   missed.
+    #   missed. When a function is passed to such a call (`await cache.wrap(key, async () =>
+    #   ...)`, `await db.transaction(async (t) => { ... })`), only the value of the call is clean:
+    #   what is written inside the callback is checked as usual.
     # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
     #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
     #   source, and a one-parameter callback given to get/post/... after a path literal (also on
@@ -241,6 +243,32 @@ rules:
           # everything inside the call. The function pattern also matches arrow functions.
           - pattern-not: 'await $OBJ.$M(..., <... function (...) { ... } ...>, ...)'
           - pattern-not: 'await $OBJ.$M(..., {..., $K(...) { ... }, ...}, ...)'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(?!(?:resolve|all|any|race|allSettled|parse|format\w*)$)
+          - metavariable-regex:
+              metavariable: $OBJ
+              regex: ^(?!(?:res|resp|response|reply|rep|_res|_response)\b)
+          - pattern-not-inside: |
+              import {..., $M, ...} from $FROM;
+              ...
+          - pattern-not-inside: |
+              import {$M as $ALIAS} from $FROM;
+              ...
+          - pattern-not-inside: |
+              const {..., $M, ...} = require($FROM);
+              ...
+          - pattern-not-inside: |
+              const {..., $M: $ALIAS, ...} = require($FROM);
+              ...
+      # The same results when a function is passed to the call (`await cache.wrap(key, async () =>
+      # build())`, `await Item.find({...}).sort((a, b) => a.n - b.n)`): only the value of the call
+      # itself is clean (exact), so a sink written inside the callback is still reported.
+      - exact: true
+        patterns:
+          - pattern-either:
+              - pattern: 'await $OBJ.$M(..., <... function (...) { ... } ...>, ...)'
+              - pattern: 'await $OBJ.$M(..., {..., $K(...) { ... }, ...}, ...)'
           - metavariable-regex:
               metavariable: $M
               regex: ^(?!(?:resolve|all|any|race|allSettled|parse|format\w*)$)

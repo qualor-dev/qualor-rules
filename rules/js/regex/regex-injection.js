@@ -237,6 +237,25 @@ app.get('/tx-search', async (req, res) => {
   res.json(found);
 });
 
+// The value of an awaited call that is given a callback stays stored data, and so does a lookup
+// awaited inside the callback.
+const pageCache = { wrap: async (key, build) => build() };
+const Items = { find: (query) => ({ sort: async (compare) => [] }) };
+app.get('/cached/:key', async (req, res) => {
+  const page = await pageCache.wrap(req.params.key, async () => '^built$');
+  // ok: js.regex-injection
+  const a = new RegExp(page);
+  const rows = await Items.find({ q: req.query.q }).sort((x, y) => x.n - y.n);
+  // ok: js.regex-injection
+  const b = new RegExp(rows[0].pattern);
+  await txdb.transaction(async (t) => {
+    const saved = await t.filters.findOne({ id: req.params.key });
+    // ok: js.regex-injection
+    res.json(new RegExp(saved.pattern).source);
+  });
+  res.json([a.source, b.source]);
+});
+
 // An element of a request array reached through a callback parameter is not followed.
 app.post('/filters', (req, res) => {
   // todoruleid: js.regex-injection

@@ -89,7 +89,8 @@ app.get('/search', (req, res) => {
 - An element of a request array reached through a callback
   (`req.body.filters.map((f) => new RegExp(f.pattern))`) is missed.
 - Results of awaited calls on other objects (a database lookup by a request value) are taken for
-  stored data.
+  stored data. When a function is passed to such a call (`await cache.wrap(key, async () =>
+  ...)`), only the value of the call is; a pattern built inside the callback is checked as usual.
 - Request handlers are recognised by the name of their second parameter (`res`, `reply`, `ctx`,
   `next`, ...): a handler written as `(request, out)` is not checked.
 <!-- end: known-limits -->
