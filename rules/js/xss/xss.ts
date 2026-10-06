@@ -2,8 +2,25 @@ import express, { Request, Response } from 'express';
 import escapeHtml from 'escape-html';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { NextRequest } from 'next/server';
+import { buildCard, buildBanner as banner } from './cards';
+import * as widgets from './widgets';
 
 const app = express();
+
+// Functions imported by name, also renamed, are not other objects' methods.
+app.get('/card/:id', async (req: Request, res: Response) => {
+  // ruleid: js.xss
+  res.send(await buildCard(req.params.id));
+  const top = await banner(req.query.text as string);
+  // ruleid: js.xss
+  res.send(top);
+  // A function called through a module object counts as another object's method.
+  // todoruleid: js.xss
+  res.send(await widgets.drawWidget(req.params.id));
+  // A method named like a function the file imports by name is not taken for another object's.
+  // todook: js.xss
+  res.send(await widgets.buildCard(req.params.id));
+});
 
 // TypeScript: typed Express handlers.
 app.get('/welcome/:name', (req: Request, res: Response) => {

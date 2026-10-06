@@ -44,8 +44,13 @@ rules:
     #   missed although browsers may sniff it as HTML.
     # - The results of awaited methods of other objects are not request data (data loaded with a
     #   request value as its key, `await User.findById(req.params.id)`), except renderers,
-    #   parsers, formatters, translators, promise helpers and request.json()/formData()/text();
-    #   another method that returns the request value it is given is missed.
+    #   parsers, formatters, translators, promise helpers, request.json()/formData()/text(),
+    #   methods of the response and functions imported by name; another method that returns the
+    #   request value it is given is missed, and so is a function called through a module object
+    #   (`import * as widgets`, then `await widgets.drawWidget(req.params.id)`). An awaited helper
+    #   that is given the response object (`await renderCard(id, res)`) is clean, also when it
+    #   returns the request value. A method named like a function the file imports by name stays
+    #   request data.
     # - res.send() of a variable first assigned an object or array literal is taken for JSON, also
     #   when the variable is later given a string.
     # - A Fastify handler whose reply parameter is named res is taken for an Express handler, so a
@@ -286,7 +291,8 @@ rules:
       # Results of awaited methods of other objects (services, models, clients: data loaded with
       # a request value as its key) are not request data. Renderers, parsers, formatters,
       # translators and promise helpers return what they are given; the body readers of a Web
-      # Request stay sources.
+      # Request stay sources. Not sanitizers: methods of the response (an awaited sink stays a
+      # sink) and functions imported by name (OpenGrep matches their calls as methods).
       - patterns:
           - pattern: await $OBJ.$M(...)
           - pattern-not: await $R.json()
@@ -295,6 +301,28 @@ rules:
           - metavariable-regex:
               metavariable: $M
               regex: ^(?!(?:render\w*|parse|compile\w*|html\w*|toHtml|markdown\w*|format\w*|template\w*|translate|t|resolve|all|any|race|allSettled)$)
+          - metavariable-regex:
+              metavariable: $OBJ
+              regex: ^(?!(?:res|resp|response|reply|rep|_res|_response)\b)
+          - pattern-not-inside: |
+              import {..., $M, ...} from $FROM;
+              ...
+          - pattern-not-inside: |
+              import {$M as $ALIAS} from $FROM;
+              ...
+          - pattern-not-inside: |
+              const {..., $M, ...} = require($FROM);
+              ...
+          - pattern-not-inside: |
+              const {..., $M: $ALIAS, ...} = require($FROM);
+              ...
+      # An awaited helper that is given the handler's response object writes its own answer
+      # (`await renderProfile(user, res)`): its result is not sent as HTML by the handler.
+      - patterns:
+          - pattern: await $F(..., $RESARG, ...)
+          - metavariable-regex:
+              metavariable: $RESARG
+              regex: ^(?:res|resp|response|reply|rep|_res|_response)$
       # Comparisons and negations give booleans, which Express sends as JSON.
       - pattern-either:
           - pattern: $A === $B

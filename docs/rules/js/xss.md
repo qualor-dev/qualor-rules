@@ -78,7 +78,11 @@ app.get('/hello', (req, res) => {
   HTML; a bare request value written without a content type is missed, although browsers may sniff
   it as HTML.
 - Results of awaited calls on other objects (a database lookup by a request value) are taken for
-  stored data.
+  stored data, also when the method only hands the request value back. Functions imported by name
+  are followed, but a function called through a module object (`await widgets.draw(id)`) counts
+  as such a method, and a method named like a function the file imports by name is followed.
+- An awaited helper that is given the response object (`await renderCard(id, res)`) is taken to
+  write its own answer: what it returns is not reported.
 - `res.send()` of a variable first assigned an object or array is taken for JSON, even if the
   variable later holds a string.
 - A Fastify handler whose reply parameter is named `res` is taken for an Express handler, so a

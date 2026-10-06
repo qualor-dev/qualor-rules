@@ -229,6 +229,41 @@ app.get('/echoed', async (req, res) => {
   res.send(await store.echo(req.query.v));
 });
 
+// Functions imported by name are not other objects' methods: their results stay request data.
+// An awaited helper that is given the response writes its own answer, so its result is clean.
+const { decorate, framePage: frame } = require('./page-helpers');
+const { loadCard, echoCard } = require('./cards');
+app.get('/decorated/:id', async (req, res) => {
+  if (req.query.a) {
+    // ruleid: js.xss
+    return res.send(await decorate(req.query.title));
+  }
+  if (req.query.b) {
+    const framed = await frame(req.query.body);
+    // ruleid: js.xss
+    return res.send(framed);
+  }
+  if (req.query.c) {
+    const card = await loadCard(req.params.id, res);
+    // ok: js.xss
+    return res.send(card);
+  }
+  // A helper given the response that returns the request value is not followed.
+  const echoed = await echoCard(req.query.title, res);
+  // todoruleid: js.xss
+  return res.send('<p>' + echoed + '</p>');
+});
+
+// An awaited sink is still a sink.
+app.get('/await-send', async (req, res) => {
+  if (req.query.a) {
+    // ruleid: js.xss
+    await res.send('<p>' + req.query.name + '</p>');
+  }
+  // ruleid: js.xss
+  await res.status(200).send(`<h1>${req.query.title}</h1>`);
+});
+
 // Sources are the request block of the SQL rule: a handler is recognised by the name of its
 // second parameter, and a one-parameter callback after a path literal is taken for a route.
 app.get('/legacy', (request, out) => {
@@ -285,6 +320,12 @@ fastify.get('/fhtml', async (request, reply) => {
 fastify.get('/fres', async (req, res) => {
   // todook: js.xss
   return res.send('Hello ' + req.query.name);
+});
+
+// Awaited sinks of the reply are still sinks.
+fastify.get('/fawait/:slug', async (request, reply) => {
+  // ruleid: js.xss
+  return await reply.type('text/html').send(`<h1>${request.params.slug}</h1>`);
 });
 
 fastify.get('/fsafe', async (request, reply) => {
