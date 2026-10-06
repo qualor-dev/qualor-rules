@@ -224,6 +224,8 @@ rules:
           - metavariable-type:
               metavariable: $E
               types: [int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool]
+    # go.xss copies these sink patterns as sanitizers (rules/go/xss/xss.yml), so that the output
+    # of a command reported here is not reported again as XSS: change them there as well.
     pattern-sinks:
       # A POSIX shell given a script: `sh -c <script>` (also `bash -lc`, `sh -e -c`, a variable or
       # constant that holds the shell's name, or the shell started through `env`). The arguments

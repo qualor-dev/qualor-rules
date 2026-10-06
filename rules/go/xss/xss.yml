@@ -16,7 +16,7 @@ rules:
       kind: issue
       severity: high
       confidence: high
-      frameworks: [net/http, html/template, text/template, encoding/json, gin, echo, chi, gorilla/mux, bluemonday]
+      frameworks: [net/http, html/template, text/template, encoding/json, os/exec, gin, echo, chi, gorilla/mux, bluemonday]
       sources:
         - https://cwe.mitre.org/data/definitions/79.html
         - https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
@@ -94,6 +94,10 @@ rules:
     #   and is not reported again here (`ok:`, a decision, not a limit). A fixed program given
     #   request data as an argument (echo, ping, a shell's positional parameters) may print it
     #   back, so its output is still reported.
+    # - Those command arguments are written as copies of go.command-injection's sink patterns
+    #   (sanitizers below): a change to that rule's sinks must be made here as well, or the two
+    #   rules drift apart (a command the other rule stops reporting stays silent here, a new sink
+    #   there is reported twice).
     # Inherited from the request source block (go.sql-injection):
     # - The Echo instance's binder (`c.Echo().Binder.Bind(&x, c)`) is not a source (`todoruleid:`).
     # - Numeric fields count as clean only when their type is known in the file: a struct declared

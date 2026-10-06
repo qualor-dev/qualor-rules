@@ -89,6 +89,7 @@ func Hello(w http.ResponseWriter, r *http.Request) {
 - `html/template`
 - `text/template`
 - `encoding/json`
+- `os/exec`
 - Gin
 - Echo
 - chi
