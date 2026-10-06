@@ -48,12 +48,19 @@ rules:
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - Validators are followed when they are written out: a local path ("/" first, then neither
-    #   "/" nor "\", which browsers read as "/") checked with strings.HasPrefix or Contains, or
-    #   the host of url.Parse's result compared with a non-empty host, as the condition of the
-    #   redirecting branch or of an earlier `if` that returns or assigns a literal. A check that
-    #   still lets "/\host", "//host" or a relative target through (only "//", only `IsAbs`,
-    #   `Host != ""`) is reported. A helper that checks it (`isOwnSite(x)`) is not followed
-    #   (`todook:`), nor is a check whose `if` also has an else branch (`todook:`).
+    #   "/" nor "\", which browsers read as "/") checked with strings.HasPrefix or Contains
+    #   (quoted or raw strings), or the host of url.Parse's result compared with a non-empty
+    #   literal or a constant, variable or field. They count in the `&&` condition of the
+    #   redirecting branch (not its else), or in the `||` condition of earlier ifs whose body
+    #   returns directly (after at most two statements) or assigns a literal, as long as the
+    #   value is not assigned again. Checks with the wrong polarity, joined the other way, with
+    #   a return only in a nested branch, compared with request data, or that still let "/\host",
+    #   "//host" or a relative target through (only "//", only `IsAbs`, `Host != ""`) are
+    #   reported. Not followed: a helper that checks it (`isOwnSite(x)`), a check held in a
+    #   variable or written as a switch case list, and a check whose `if` also has an else
+    #   branch (`todook:`); a string parsed for a host check and assigned again afterwards
+    #   still counts as checked, and a host held in a variable counts as fixed wherever the
+    #   variable comes from (`todoruleid:`).
     # - Request data passed to a function counts as reaching its result, whatever the function
     #   does (a signed URL of a storage service, say) (`todook:`).
     # - The request's own path (`r.URL.Path`, `RequestURI()`) after a base, and anything after a
@@ -250,62 +257,210 @@ rules:
           - pattern-inside: '"=~/^[?#]/" + $X'
           - pattern: $X
       # A target checked to be a local path before the redirect: it starts with "/" but not with
-      # "//" or "/\" (browsers read a backslash in a URL as a slash). The check exits (return) or
-      # replaces the value with a literal; the checks may sit in one condition or in several.
+      # "//" or "/\" (browsers read a backslash in a URL as a slash). Each check sits in the `||`
+      # condition of an `if` (one or several ifs) whose body returns directly or replaces the value
+      # with a literal; no check is negated the other way or joined with `&&`, and the value is not
+      # assigned again after the first check.
       - patterns:
           - pattern-either:
               - pattern-inside: |
                   if <... !strings.HasPrefix($X, "/") ...> {
-                    ...
                     return ...
                   }
                   ...
               - pattern-inside: |
                   if <... !strings.HasPrefix($X, "/") ...> {
-                    ...
+                    $A1
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... !strings.HasPrefix($X, "/") ...> {
+                    $A1
+                    $A2
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... !strings.HasPrefix($X, "/") ...> {
                     $X = "..."
                   }
                   ...
           - pattern-either:
               - pattern-inside: |
                   if <... strings.HasPrefix($X, "//") ...> {
-                    ...
                     return ...
                   }
                   ...
               - pattern-inside: |
                   if <... strings.HasPrefix($X, "//") ...> {
-                    ...
+                    $A1
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.HasPrefix($X, "//") ...> {
+                    $A1
+                    $A2
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.HasPrefix($X, "//") ...> {
                     $X = "..."
                   }
                   ...
           - pattern-either:
               - pattern-inside: |
                   if <... strings.HasPrefix($X, "/\\") ...> {
-                    ...
                     return ...
                   }
                   ...
               - pattern-inside: |
                   if <... strings.HasPrefix($X, "/\\") ...> {
-                    ...
+                    $A1
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.HasPrefix($X, "/\\") ...> {
+                    $A1
+                    $A2
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.HasPrefix($X, "/\\") ...> {
+                    $X = "..."
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.HasPrefix($X, `/\`) ...> {
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.HasPrefix($X, `/\`) ...> {
+                    $A1
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.HasPrefix($X, `/\`) ...> {
+                    $A1
+                    $A2
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.HasPrefix($X, `/\`) ...> {
                     $X = "..."
                   }
                   ...
               - pattern-inside: |
                   if <... strings.Contains($X, "\\") ...> {
-                    ...
                     return ...
                   }
                   ...
               - pattern-inside: |
                   if <... strings.Contains($X, "\\") ...> {
-                    ...
+                    $A1
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.Contains($X, "\\") ...> {
+                    $A1
+                    $A2
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.Contains($X, "\\") ...> {
                     $X = "..."
                   }
                   ...
+              - pattern-inside: |
+                  if <... strings.Contains($X, `\`) ...> {
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.Contains($X, `\`) ...> {
+                    $A1
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.Contains($X, `\`) ...> {
+                    $A1
+                    $A2
+                    return ...
+                  }
+                  ...
+              - pattern-inside: |
+                  if <... strings.Contains($X, `\`) ...> {
+                    $X = "..."
+                  }
+                  ...
+          - pattern-not-inside: |
+              if <... $P && !strings.HasPrefix($X, "/") ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... !strings.HasPrefix($X, "/") && $Q ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... $P && strings.HasPrefix($X, "//") ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... strings.HasPrefix($X, "//") && $Q ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... $P && strings.HasPrefix($X, "/\\") ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... strings.HasPrefix($X, "/\\") && $Q ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... $P && strings.HasPrefix($X, `/\`) ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... strings.HasPrefix($X, `/\`) && $Q ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... $P && strings.Contains($X, "\\") ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... strings.Contains($X, "\\") && $Q ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... $P && strings.Contains($X, `\`) ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... strings.Contains($X, `\`) && $Q ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... !strings.HasPrefix($X, "//") ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... !strings.HasPrefix($X, "/\\") ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... !strings.HasPrefix($X, `/\`) ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... !strings.Contains($X, "\\") ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... !strings.Contains($X, `\`) ...> { ... }
+              ...
+          - pattern-not-inside: |
+              if <... !strings.HasPrefix($X, "/") ...> { ... }
+              ...
+              $X = $V
+              ...
           - pattern: $X
-      # The same checks as the condition of the branch that redirects.
+      # The same checks as the `&&` condition of the branch that redirects (not its else branch).
       - patterns:
           - pattern-inside: |
               if <... strings.HasPrefix($X, "/") ...> { ... }
@@ -315,14 +470,43 @@ rules:
               - pattern-inside: |
                   if <... !strings.HasPrefix($X, "/\\") ...> { ... }
               - pattern-inside: |
+                  if <... !strings.HasPrefix($X, `/\`) ...> { ... }
+              - pattern-inside: |
                   if <... !strings.Contains($X, "\\") ...> { ... }
-          # Not the else branch.
+              - pattern-inside: |
+                  if <... !strings.Contains($X, `\`) ...> { ... }
+          - pattern-not-inside: |
+              if <... !strings.HasPrefix($X, "/") ...> { ... }
+          - pattern-not-inside: |
+              if <... $P || strings.HasPrefix($X, "/") ...> { ... }
+          - pattern-not-inside: |
+              if <... strings.HasPrefix($X, "/") || $Q ...> { ... }
+          - pattern-not-inside: |
+              if <... $P || !strings.HasPrefix($X, "//") ...> { ... }
+          - pattern-not-inside: |
+              if <... !strings.HasPrefix($X, "//") || $Q ...> { ... }
+          - pattern-not-inside: |
+              if <... $P || !strings.HasPrefix($X, "/\\") ...> { ... }
+          - pattern-not-inside: |
+              if <... !strings.HasPrefix($X, "/\\") || $Q ...> { ... }
+          - pattern-not-inside: |
+              if <... $P || !strings.HasPrefix($X, `/\`) ...> { ... }
+          - pattern-not-inside: |
+              if <... !strings.HasPrefix($X, `/\`) || $Q ...> { ... }
+          - pattern-not-inside: |
+              if <... $P || !strings.Contains($X, "\\") ...> { ... }
+          - pattern-not-inside: |
+              if <... !strings.Contains($X, "\\") || $Q ...> { ... }
+          - pattern-not-inside: |
+              if <... $P || !strings.Contains($X, `\`) ...> { ... }
+          - pattern-not-inside: |
+              if <... !strings.Contains($X, `\`) || $Q ...> { ... }
           - pattern-not-inside: |
               if <... strings.HasPrefix($X, "/") ...> { ... } else { ... }
           - pattern: $X
-      # A parsed target whose host is compared with a fixed or configured host (not ""), before
-      # the redirect (exit) or as the condition of the branch that redirects: the parsed URL and
-      # the string it was parsed from.
+      # A parsed target whose host is compared with a non-empty literal or a constant, variable or
+      # field (not a call), in the condition of an `if` that returns (no `&&`) or as the `&&`
+      # condition of the branch that redirects: the parsed URL and the string it was parsed from.
       - patterns:
           - pattern-either:
               - pattern-inside: |
@@ -332,34 +516,77 @@ rules:
                   $U, $E = url.Parse($S)
                   ...
           - pattern-either:
-              - pattern-inside: |
-                  if <... $U.Host != $H ...> {
-                    ...
-                    return ...
-                  }
-                  ...
-              - pattern-inside: |
-                  if <... $U.Hostname() != $H ...> {
-                    ...
-                    return ...
-                  }
-                  ...
-              - pattern-inside: |
-                  if <... $U.Host == $H ...> { ... }
-              - pattern-inside: |
-                  if <... $U.Hostname() == $H ...> { ... }
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          if <... $U.Host != $H ...> {
+                            return ...
+                          }
+                          ...
+                      - pattern-inside: |
+                          if <... $U.Host != $H ...> {
+                            $A1
+                            return ...
+                          }
+                          ...
+                      - pattern-inside: |
+                          if <... $U.Host != $H ...> {
+                            $A1
+                            $A2
+                            return ...
+                          }
+                          ...
+                      - pattern-inside: |
+                          if <... $U.Hostname() != $H ...> {
+                            return ...
+                          }
+                          ...
+                      - pattern-inside: |
+                          if <... $U.Hostname() != $H ...> {
+                            $A1
+                            return ...
+                          }
+                          ...
+                      - pattern-inside: |
+                          if <... $U.Hostname() != $H ...> {
+                            $A1
+                            $A2
+                            return ...
+                          }
+                          ...
+                  - pattern-not-inside: |
+                      if <... $P && $U.Host != $H ...> { ... }
+                      ...
+                  - pattern-not-inside: |
+                      if <... $U.Host != $H && $Q ...> { ... }
+                      ...
+                  - pattern-not-inside: |
+                      if <... $P && $U.Hostname() != $H ...> { ... }
+                      ...
+                  - pattern-not-inside: |
+                      if <... $U.Hostname() != $H && $Q ...> { ... }
+                      ...
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          if <... $U.Host == $H ...> { ... }
+                      - pattern-inside: |
+                          if <... $U.Hostname() == $H ...> { ... }
+                  - pattern-not-inside: |
+                      if <... $P || $U.Host == $H ...> { ... }
+                  - pattern-not-inside: |
+                      if <... $U.Host == $H || $Q ...> { ... }
+                  - pattern-not-inside: |
+                      if <... $P || $U.Hostname() == $H ...> { ... }
+                  - pattern-not-inside: |
+                      if <... $U.Hostname() == $H || $Q ...> { ... }
+                  - pattern-not-inside: |
+                      if <... $U.Host == $H ...> { ... } else { ... }
+                  - pattern-not-inside: |
+                      if <... $U.Hostname() == $H ...> { ... } else { ... }
           - metavariable-regex:
               metavariable: $H
-              regex: ^(?!""$)
-          - pattern-not-inside: |
-              if <... $U.Host == $H ...> { ... } else { ... }
-          - pattern-not-inside: |
-              if <... $U.Hostname() == $H ...> { ... } else { ... }
-          - pattern-not-inside: |
-              if <... $U.Host == "" ...> { ... }
-          - pattern-not-inside: |
-              if <... $U.Host != "" ...> { ... }
-              ...
+              regex: ^("[^"]+"|[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*)$
           - pattern-either:
               - pattern: $U
               - pattern: $S

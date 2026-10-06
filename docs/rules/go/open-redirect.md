@@ -15,8 +15,11 @@ origin and a `/` is not reported, since it cannot move the browser to another si
 
 A target that the handler checks first is not reported either: a local path that starts with `/`
 and is checked not to start with `//` or `/\`, or a URL parsed with `url.Parse` whose host is
-compared with your own host. The check can be the condition of the branch that redirects, or an
-earlier `if` that returns or replaces the value with a fixed one.
+compared with your own host (a constant, a variable or a field, not other request data). The
+check can be the `&&` condition of the branch that redirects, or the `||` condition of earlier
+`if` statements that return or replace the value with a fixed one. A check that does not hold
+(a test with the wrong sign, `&&` and `||` swapped, a `return` only in a nested branch, or the
+value assigned again afterwards) is still reported.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -70,10 +73,10 @@ func AfterLogin(w http.ResponseWriter, r *http.Request) {
 - Or start the target with a fixed origin followed by `/`: `baseURL + "/items/" + id`.
 - Or map the request value to a target from an allow-list (a `switch` or a map lookup that yields
   constants).
-
 - Or check the target before you redirect: accept a local path only when it starts with `/` and
   neither with `//` nor with `/\` (`strings.HasPrefix`), or parse it with `url.Parse` and accept
-  it only when its `Host` is your own host.
+  it only when its `Host` is your own host. Return right away when the check fails, and do not
+  assign the value again after it.
 
 A target that only "starts with `/`" is not enough: `//evil.example` starts with `/` and is a link
 to another host. Checking for `//` alone, or that `url.Parse` found no scheme and no host, is not
@@ -92,8 +95,12 @@ enough either: browsers read `/\evil.example` as `//evil.example`.
 ## Known limits
 
 <!-- begin: known-limits -->
-- A check by a helper function (such as `isOwnSite(x)`) is not recognised, nor is a check whose
-  `if` statement also has an `else` branch: the checked value is still reported.
+- A check by a helper function (such as `isOwnSite(x)`), a check held in a boolean variable or
+  written as the case list of a `switch`, and a check whose `if` statement also has an `else`
+  branch are not recognised: the checked value is still reported.
+- After a host check, the string that was parsed counts as checked even if it is assigned again
+  later, so a redirect to the new value is missed. A host compared with a variable counts as
+  your own host, even when the variable holds request data.
 - Request data passed through any function is assumed to reach its result, so a URL produced from
   it (a signed storage URL, say) is reported.
 - The binder of the Echo instance (`c.Echo().Binder.Bind(&x, c)`) is not a source.

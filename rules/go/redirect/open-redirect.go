@@ -222,6 +222,25 @@ func (s *Server) Validated(w http.ResponseWriter, r *http.Request) {
 		// ok: go.open-redirect
 		http.Redirect(w, r, raw, http.StatusFound)
 	}
+	// Backslash checks written with raw strings.
+	path := r.FormValue("path")
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.Contains(path, `\`) {
+		return
+	}
+	// ok: go.open-redirect
+	http.Redirect(w, r, path, http.StatusFound)
+	page := r.FormValue("page")
+	if strings.HasPrefix(page, "/") && !strings.HasPrefix(page, "//") && !strings.HasPrefix(page, `/\`) {
+		// ok: go.open-redirect
+		http.Redirect(w, r, page, http.StatusFound)
+	}
+	// The host the request was sent to.
+	same, err := url.Parse(r.FormValue("same"))
+	if err != nil || same.Host != r.Host {
+		return
+	}
+	// ok: go.open-redirect
+	http.Redirect(w, r, same.String(), http.StatusFound)
 }
 
 // Checks that leave a way out are still reported.
@@ -289,6 +308,97 @@ func (s *Server) WeakChecks(w http.ResponseWriter, r *http.Request) {
 	} else {
 		http.Redirect(w, r, "/", http.StatusFound)
 	}
+}
+
+// Checks combined or placed so that they do not hold.
+func (s *Server) BrokenChecks(w http.ResponseWriter, r *http.Request, strict bool) {
+	// The first check negated in the branch: only targets that do not start with "/" go on.
+	a := r.FormValue("a")
+	if !strings.HasPrefix(a, "/") && !strings.HasPrefix(a, "//") && !strings.HasPrefix(a, "/\\") {
+		// ruleid: go.open-redirect
+		http.Redirect(w, r, a, http.StatusFound)
+	}
+	// || in the branch: any target that starts with "/" goes on, "//evil.example" too.
+	b := r.FormValue("b")
+	if strings.HasPrefix(b, "/") || !strings.HasPrefix(b, "//") || !strings.HasPrefix(b, "/\\") {
+		// ruleid: go.open-redirect
+		http.Redirect(w, r, b, http.StatusFound)
+	}
+	// && in the exit: an absolute URL does not exit.
+	d := r.FormValue("d")
+	if !strings.HasPrefix(d, "/") && strings.HasPrefix(d, "//") && strings.HasPrefix(d, "/\\") {
+		return
+	}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, d, http.StatusFound)
+	// The "//" check negated in the exit: "//evil.example" goes on.
+	e := r.FormValue("e")
+	if !strings.HasPrefix(e, "/") || !strings.HasPrefix(e, "//") || strings.HasPrefix(e, "/\\") {
+		return
+	}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, e, http.StatusFound)
+	// The exit only happens in a nested branch.
+	f := r.FormValue("f")
+	if !strings.HasPrefix(f, "/") || strings.HasPrefix(f, "//") || strings.HasPrefix(f, "/\\") {
+		if strict {
+			return
+		}
+	}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, f, http.StatusFound)
+	// Request data assigned again after a passing check.
+	g := r.FormValue("g")
+	if !strings.HasPrefix(g, "/") || strings.HasPrefix(g, "//") || strings.HasPrefix(g, "/\\") {
+		return
+	}
+	g = r.FormValue("then")
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, g, http.StatusFound)
+	// The host compared with request data.
+	h, err := url.Parse(r.FormValue("h"))
+	if err != nil || h.Host != r.FormValue("allowed") {
+		return
+	}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, h.String(), http.StatusFound)
+}
+
+// Checks that are not followed.
+func (s *Server) UnfollowedChecks(w http.ResponseWriter, r *http.Request) {
+	// A check held in a variable.
+	next := r.FormValue("next")
+	rejected := !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.HasPrefix(next, "/\\")
+	if rejected {
+		return
+	}
+	// todook: go.open-redirect
+	http.Redirect(w, r, next, http.StatusFound)
+	// A check written as the case list of a switch.
+	back := r.FormValue("back")
+	switch {
+	case !strings.HasPrefix(back, "/"), strings.HasPrefix(back, "//"), strings.HasPrefix(back, "/\\"):
+		back = "/"
+	}
+	// todook: go.open-redirect
+	http.Redirect(w, r, back, http.StatusFound)
+	// The string parsed for a host check, assigned again after the check.
+	to := r.FormValue("to")
+	u, err := url.Parse(to)
+	if err != nil || u.Host != siteDomain {
+		return
+	}
+	to = r.FormValue("then")
+	// todoruleid: go.open-redirect
+	http.Redirect(w, r, to, http.StatusFound)
+	// A host held in a variable counts as fixed, wherever the variable comes from.
+	wanted := r.FormValue("wanted")
+	dest, err := url.Parse(r.FormValue("dest"))
+	if err != nil || dest.Host != wanted {
+		return
+	}
+	// todoruleid: go.open-redirect
+	http.Redirect(w, r, dest.String(), http.StatusFound)
 }
 
 // Gin and Echo with the same checks.
