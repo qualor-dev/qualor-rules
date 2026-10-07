@@ -566,6 +566,69 @@ func (g *Gateway) Serve(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
+// Each request field and method of In, and the request data Out copies from it.
+var everyField = &httputil.ReverseProxy{
+	Rewrite: func(pr *httputil.ProxyRequest) {
+		pr.SetURL(backendURL)
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = pr.In.Form.Get("host")
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = pr.In.PostForm.Get("host")
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = pr.In.MultipartForm.Value["host"][0]
+		inBody, _ := io.ReadAll(pr.In.Body)
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = string(inBody)
+		// ruleid: go.ssrf
+		pr.SetURL(&url.URL{Scheme: "https", Host: pr.In.RequestURI})
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = pr.In.FormValue("host")
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = pr.In.PostFormValue("host")
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = pr.In.PathValue("host")
+		inCookie, _ := pr.In.Cookie("backend")
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = inCookie.Value
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = pr.In.Cookies()[0].Value
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = pr.In.Referer()
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = pr.In.UserAgent()
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = pr.Out.Form.Get("host")
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = pr.Out.PostForm.Get("host")
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = pr.Out.MultipartForm.Value["host"][0]
+		outBody, _ := io.ReadAll(pr.Out.Body)
+		// ruleid: go.ssrf
+		pr.Out.URL.Host = string(outBody)
+	},
+}
+
+// Out's methods, in a function that sets no field of Out (a call on Out reads all of it).
+var everyMethod = &httputil.ReverseProxy{
+	Rewrite: func(pr *httputil.ProxyRequest) {
+		// ruleid: go.ssrf
+		pr.SetURL(&url.URL{Scheme: "https", Host: pr.Out.FormValue("host")})
+		// ruleid: go.ssrf
+		pr.SetURL(&url.URL{Scheme: "https", Host: pr.Out.PostFormValue("host")})
+		// ruleid: go.ssrf
+		pr.SetURL(&url.URL{Scheme: "https", Host: pr.Out.PathValue("host")})
+		outCookie, _ := pr.Out.Cookie("backend")
+		// ruleid: go.ssrf
+		pr.SetURL(&url.URL{Scheme: "https", Host: outCookie.Value})
+		// ruleid: go.ssrf
+		pr.SetURL(&url.URL{Scheme: "https", Host: pr.Out.Cookies()[0].Value})
+		// ruleid: go.ssrf
+		pr.SetURL(&url.URL{Scheme: "https", Host: pr.Out.Referer()})
+		// ruleid: go.ssrf
+		pr.SetURL(&url.URL{Scheme: "https", Host: pr.Out.UserAgent()})
+	},
+}
+
 // The outbound URL after SetURL is the fixed target, and a Director that routes by the Host
 // header is not followed (Host is not a source).
 var versioned = &httputil.ReverseProxy{

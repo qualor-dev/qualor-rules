@@ -102,23 +102,35 @@ rules:
               regex: ^(FormValue|PostFormValue|PathValue|Cookie|Cookies|Referer|UserAgent)$
       # The inbound request inside a reverse proxy's Rewrite function (net/http/httputil): In, and
       # the request data Out copies from it (not its URL, which SetURL may have fixed already).
-      - patterns:
-          - pattern: '($PR : *httputil.ProxyRequest).In.$F'
-          - metavariable-regex:
-              metavariable: $F
-              regex: ^(URL|Form|PostForm|MultipartForm|Header|Body|RequestURI)$
-      - patterns:
-          - pattern: '($PR : *httputil.ProxyRequest).Out.$F'
-          - metavariable-regex:
-              metavariable: $F
-              regex: ^(Form|PostForm|MultipartForm|Header|Body)$
-      - patterns:
-          - pattern-either:
-              - pattern: '($PR : *httputil.ProxyRequest).In.$F(...)'
-              - pattern: '($PR : *httputil.ProxyRequest).Out.$F(...)'
-          - metavariable-regex:
-              metavariable: $F
-              regex: ^(FormValue|PostFormValue|PathValue|Cookie|Cookies|Referer|UserAgent)$
+      # The names are written out: a metavariable-regex per form multiplied the rule's prefilter
+      # (OpenGrep builds it again for every file: 67 kB and 0.58 s per file with three of them).
+      - pattern-either:
+          - pattern: '($PR : *httputil.ProxyRequest).In.URL'
+          - pattern: '($PR : *httputil.ProxyRequest).In.Form'
+          - pattern: '($PR : *httputil.ProxyRequest).In.PostForm'
+          - pattern: '($PR : *httputil.ProxyRequest).In.MultipartForm'
+          - pattern: '($PR : *httputil.ProxyRequest).In.Header'
+          - pattern: '($PR : *httputil.ProxyRequest).In.Body'
+          - pattern: '($PR : *httputil.ProxyRequest).In.RequestURI'
+          - pattern: '($PR : *httputil.ProxyRequest).Out.Form'
+          - pattern: '($PR : *httputil.ProxyRequest).Out.PostForm'
+          - pattern: '($PR : *httputil.ProxyRequest).Out.MultipartForm'
+          - pattern: '($PR : *httputil.ProxyRequest).Out.Header'
+          - pattern: '($PR : *httputil.ProxyRequest).Out.Body'
+          - pattern: '($PR : *httputil.ProxyRequest).In.FormValue(...)'
+          - pattern: '($PR : *httputil.ProxyRequest).In.PostFormValue(...)'
+          - pattern: '($PR : *httputil.ProxyRequest).In.PathValue(...)'
+          - pattern: '($PR : *httputil.ProxyRequest).In.Cookie(...)'
+          - pattern: '($PR : *httputil.ProxyRequest).In.Cookies(...)'
+          - pattern: '($PR : *httputil.ProxyRequest).In.Referer(...)'
+          - pattern: '($PR : *httputil.ProxyRequest).In.UserAgent(...)'
+          - pattern: '($PR : *httputil.ProxyRequest).Out.FormValue(...)'
+          - pattern: '($PR : *httputil.ProxyRequest).Out.PostFormValue(...)'
+          - pattern: '($PR : *httputil.ProxyRequest).Out.PathValue(...)'
+          - pattern: '($PR : *httputil.ProxyRequest).Out.Cookie(...)'
+          - pattern: '($PR : *httputil.ProxyRequest).Out.Cookies(...)'
+          - pattern: '($PR : *httputil.ProxyRequest).Out.Referer(...)'
+          - pattern: '($PR : *httputil.ProxyRequest).Out.UserAgent(...)'
       - pattern-either:
           # Route variables of routers built on net/http.
           - pattern: chi.URLParam(...)
