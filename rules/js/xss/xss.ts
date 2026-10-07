@@ -4,6 +4,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { NextRequest } from 'next/server';
 import { buildCard, buildBanner as banner } from './cards';
 import * as widgets from './widgets';
+import axios from 'axios';
 
 const app = express();
 
@@ -63,4 +64,12 @@ export async function POST(request: NextRequest) {
   new Response(title, { headers: { 'Content-Type': 'text/plain' } });
   // ok: js.xss
   return Response.json({ title });
+}
+
+// A page fetched from a URL that the request chooses, in a Next.js route handler that destructures
+// the request (ruling J2).
+export async function PATCH({ nextUrl }: NextRequest) {
+  const { data } = await axios.get(nextUrl.searchParams.get('url') ?? '');
+  // ruleid: js.xss
+  return new Response(data, { headers: { 'Content-Type': 'text/html' } });
 }

@@ -534,4 +534,20 @@ app.get('/preview', async (req, res) => {
   res.send(await viaConstant.text());
 });
 
+// The request-chosen URL is recognised by the names of the request value: under another name
+// (a handler parameter, a renamed or nested destructured field) the page is taken for stored data.
+app.get('/preview/named', async (r, res) => {
+  const { data } = await axios.get(r.query.url);
+  // todoruleid: js.xss
+  res.send(data);
+});
+app.get('/preview/renamed', async ({ query: q, params: { site } }, res) => {
+  const { data } = await axios.get(q.url);
+  // todoruleid: js.xss
+  res.send(data);
+  const { data: home } = await axios.get(site);
+  // todoruleid: js.xss
+  res.send(home);
+});
+
 module.exports = { app, server, fastify, reply };

@@ -107,8 +107,9 @@ app.get('/hello', (req, res) => {
   (`({ query = {} }, res)`), which is not checked.
 - Output of a request-chosen program (`execFileSync(req.query.tool)`) is reported here as well as
   by the command injection rule; output handed to a callback (`execFile('echo', [x], (err, out)
-  => ...)`) is not followed; a request-chosen URL first stored in a variable and then given to
-  `axios` or `got` is missed; and `fetch()` given an origin held in a constant (`API_BASE +
+  => ...)`) is not followed; a request-chosen URL given to `axios` or `got` is recognised by the names of the
+  request value (`req`, `request`, a destructured `query`, `params`, `body`, `headers`, `cookies`
+  or `nextUrl`), so one stored in a variable first or reached through another name is missed; and `fetch()` given an origin held in a constant (`API_BASE +
   '/pages/' + id`) does not recognise it, so such a page counts as request data.
 <!-- end: known-limits -->
 

@@ -73,8 +73,9 @@ rules:
     #   the output of execFileSync()/spawnSync() with a request-chosen program is reported again
     #   (`todook:`); output given to a callback (`execFile('echo', [x], (err, out) => ...)`) is
     #   not followed (`todoruleid:`); a request-chosen URL held in a variable first (`const
-    #   target = req.query.url; await axios.get(target)`) is taken for stored data
-    #   (`todoruleid:`); fetch() itself given an origin held in a constant (`fetch(API_BASE +
+    #   target = req.query.url; await axios.get(target)`) is taken for stored data, and so is a
+    #   URL whose request value has another name than req, request or a destructured field name
+    #   (`(r, res)`, `({ query: q }, res)`, `({ query: { url } }, res)`) (`todoruleid:`); fetch() itself given an origin held in a constant (`fetch(API_BASE +
     #   '/pages/' + id)`) counts as request data (`todook:`).
     # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
     #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
@@ -501,7 +502,8 @@ rules:
           - pattern-not: await $R.text()
           # The body of a response fetched by an HTTP client from a URL that the request visibly
           # chooses is the attacker's content (ruling J2 of java.xss): a URL that starts with a
-          # request value (`req.query.url`, a destructured `query.url`), also after a lone scheme or
+          # request value (`req.query.url`, a destructured `query.url`, Next.js `nextUrl`; the request
+          # recognised by these names), also after a lone scheme or
           # `//` (`'https://' + req.query.host`, `` `https://${req.params.host}/x` ``). A URL held in
           # a variable, a constant or a template on a constant base, and request data elsewhere
           # (the path, the body) leave the response stored data.
@@ -513,7 +515,7 @@ rules:
                     regex: ^(?:axios|got|superagent|undici)$
                 - metavariable-regex:
                     metavariable: $URL
-                    regex: ^(?:["'`](?:https?:)?(?://)?["'`]\s*\+\s*|`(?:https?:)?(?://)?\$\{\s*)?(?:req|request|query|params|body|headers|cookies)\s*(?:\?\.|\.|\[)
+                    regex: ^(?:["'`](?:https?:)?(?://)?["'`]\s*\+\s*|`(?:https?:)?(?://)?\$\{\s*)?(?:req|request|query|params|body|headers|cookies|nextUrl)\s*(?:\?\.|\.|\[)
           # Not when a function is passed to it (`await db.transaction(async (t) => { ... })`):
           # a sink written inside that callback is still a sink, and the sanitizer would clean
           # everything inside the call. The function pattern also matches arrow functions.
