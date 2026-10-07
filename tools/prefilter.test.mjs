@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { parse, parseDocument, visit } from 'yaml';
 import { BACKLOG_HEADER, parseTable } from './backlog.mjs';
-import { ALLOWED, BUDGET_MS, LOAD_RATIO, MAX_BYTES, budgetFor, corePath, expandAnchors, parsePrefilter, prefilterProblems, resultTable, selectRuleFiles } from './prefilter.mjs';
+import { ALLOWED, BUDGET_MS, KILL_MS, LOAD_RATIO, MAX_BYTES, budgetFor, buildOutcome, corePath, expandAnchors, measure, parsePrefilter, prefilterProblems, resultTable, selectRuleFiles } from './prefilter.mjs';
 import { ruleFiles } from './rules.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -65,6 +65,7 @@ test('parsePrefilter refuses empty, foreign and malformed output', () => {
   assert.match(parsePrefilter('[{"rule_id":"go.ssrf","filter":"None"}]', 'go.xss').error, /want one entry for go\.xss/);
   assert.match(parsePrefilter('[]', 'go.xss').error, /want one entry/);
   assert.match(parsePrefilter('[{"rule_id":"go.xss","filter":["Maybe"]}]', 'go.xss').error, /unknown filter/);
+  assert.equal(parsePrefilter('[{"rule_id":"go.xss"}]', 'go.xss').error, 'unknown filter undefined');
 });
 
 test('selectRuleFiles takes files and directories, and refuses a path without rules', () => {
@@ -80,9 +81,102 @@ test('budgetFor: BUDGET_MS, or LOAD_RATIO times the one-pattern rule on a busy h
   assert.equal(budgetFor(0), BUDGET_MS);
   assert.equal(budgetFor(77), BUDGET_MS);
   assert.equal(budgetFor(210), LOAD_RATIO * 210);
-  // The plain and slow rules measured with 4 and 6 busy loops on 2 CPUs (budgetFor's comment).
-  assert.ok(396 <= budgetFor(210) && 693 <= budgetFor(307));
-  assert.ok(1610 > budgetFor(210) && 2809 > budgetFor(307));
+  assert.equal(budgetFor(80), BUDGET_MS);
+  assert.equal(budgetFor(100.2), 501);
+});
+
+const SOME = '[{"rule_id":"go.x","filter":["Some",["Pred",["Idents",["x"]]]]}]\n';
+const REF = 'reference.yml';
+
+/** A builder that answers the rule's and the reference's builds from two scripts, and counts them. */
+function scripted(rule, ref = []) {
+  const calls = { rule: 0, ref: 0 };
+  const next = (list, i) => {
+    const step = list[Math.min(i, list.length - 1)];
+    return typeof step === 'number' ? { ms: step, stdout: SOME } : step;
+  };
+  const builder = (file) => (file === REF ? next(ref, calls.ref++) : next(rule, calls.rule++));
+  return { builder, calls };
+}
+const judge = (r) => prefilterProblems([r], { allowed: {}, rows: [], complete: false });
+
+test('measure: a slow run then a fast one passes (best of 3), and the reference is built only for the slow run', () => {
+  const { builder, calls } = scripted([900, 120], [80]);
+  const r = measure(builder, 'go.yml', 'go.x', REF, false);
+  assert.deepEqual(r, { id: 'go.x', ms: 120, budget: BUDGET_MS, fastest: 120, filter: 'some', bytes: SOME.trim().length });
+  assert.deepEqual(calls, { rule: 2, ref: 3 });
+  assert.deepEqual(judge(r), []);
+});
+
+test('measure: no reference build when the first run is within BUDGET_MS', () => {
+  const { builder, calls } = scripted([BUDGET_MS], [80]);
+  assert.equal(measure(builder, 'go.yml', 'go.x', REF, false).ms, BUDGET_MS);
+  assert.deepEqual(calls, { rule: 1, ref: 0 });
+});
+
+test('measure: a slow rule on an idle host fails after three runs', () => {
+  const { builder, calls } = scripted([700], [90, 80, 80]);
+  const r = measure(builder, 'go.yml', 'go.x', REF, false);
+  assert.equal(r.ms, 700);
+  assert.equal(r.budget, BUDGET_MS);
+  assert.deepEqual(calls, { rule: 3, ref: 9 });
+  assert.match(judge(r).join('\n'), /go\.x: prefilter build 700 ms \(best of 3\), budget 400 ms/);
+});
+
+test('measure: on a busy host a run within 5 references passes and one over fails', () => {
+  // Reference 250 ms (best of its three builds): budget 1,250 ms.
+  const busy = scripted([700], [300, 250, 260]);
+  const pass = measure(busy.builder, 'go.yml', 'go.x', REF, false);
+  assert.deepEqual([pass.ms, pass.budget], [700, 1250]);
+  assert.deepEqual(busy.calls, { rule: 1, ref: 3 });
+  assert.deepEqual(judge(pass), []);
+  const slow = scripted([3000], [250]);
+  const fail = measure(slow.builder, 'go.yml', 'go.x', REF, false);
+  assert.deepEqual([fail.ms, fail.budget], [3000, 1250]);
+  assert.deepEqual(slow.calls, { rule: 3, ref: 9 });
+  assert.match(judge(fail).join('\n'), /build 3000 ms \(best of 3\), budget 1250 ms/);
+  // The line is LOAD_RATIO times the reference: 4.99 passes, 5.01 fails.
+  assert.deepEqual(judge(measure(scripted([499], [100]).builder, 'go.yml', 'go.x', REF, false)), []);
+  assert.equal(judge(measure(scripted([501], [100]).builder, 'go.yml', 'go.x', REF, false)).length, 1);
+});
+
+test('measure: the run closest to its budget is judged; --table runs all three and keeps the fastest', () => {
+  // 600 ms with a 1,000 ms budget beats 450 ms with a 400 ms budget.
+  const { builder, calls } = scripted([450, 600, 900], [80, 80, 80, 200, 200, 200, 80]);
+  const r = measure(builder, 'go.yml', 'go.x', REF, true);
+  assert.deepEqual([r.ms, r.budget, r.fastest], [600, 1000, 450]);
+  assert.deepEqual(calls, { rule: 3, ref: 9 });
+  const fast = scripted([100, 90, 95]);
+  assert.deepEqual(measure(fast.builder, 'go.yml', 'go.x', REF, true).fastest, 90);
+  assert.deepEqual(fast.calls, { rule: 3, ref: 0 });
+});
+
+test('measure: a failed or killed build is the rule\'s error and is not retried', () => {
+  for (const error of ['exit 2: oops', 'killed by SIGSEGV', 'build over 30 s (killed)']) {
+    const { builder, calls } = scripted([{ error }, 100]);
+    assert.deepEqual(measure(builder, 'go.yml', 'go.x', REF, false), { id: 'go.x', error });
+    assert.deepEqual(calls, { rule: 1, ref: 0 });
+  }
+  // A later failure also ends the series.
+  const late = scripted([700, { error: 'exit 2: oops' }], [80]);
+  assert.deepEqual(measure(late.builder, 'go.yml', 'go.x', REF, false), { id: 'go.x', error: 'exit 2: oops' });
+});
+
+test('measure: failed reference builds leave the budget at BUDGET_MS', () => {
+  const none = measure(scripted([700], [{ error: 'exit 1: x' }]).builder, 'go.yml', 'go.x', REF, false);
+  assert.equal(none.budget, BUDGET_MS);
+  // The ones that worked still count.
+  const some = measure(scripted([700], [{ error: 'exit 1: x' }, 200]).builder, 'go.yml', 'go.x', REF, false);
+  assert.equal(some.budget, 1000);
+});
+
+test('buildOutcome: timeout, signal, exit status, success', () => {
+  assert.deepEqual(buildOutcome({ error: Object.assign(new Error('t'), { code: 'ETIMEDOUT' }), signal: 'SIGKILL' }, 30000, 'core'), { error: `build over ${KILL_MS / 1000} s (killed)` });
+  assert.throws(() => buildOutcome({ error: Object.assign(new Error('spawn core ENOENT'), { code: 'ENOENT' }) }, 1, 'core'), /core: spawn core ENOENT/);
+  assert.deepEqual(buildOutcome({ status: null, signal: 'SIGSEGV', stderr: 'a\nb\nc\n' }, 5, 'core'), { error: 'killed by SIGSEGV: b c' });
+  assert.deepEqual(buildOutcome({ status: null, signal: 'SIGSEGV', stderr: '' }, 5, 'core'), { error: 'killed by SIGSEGV' });
+  assert.deepEqual(buildOutcome({ status: 2, signal: null, stderr: 'oops\n' }, 5, 'core'), { error: 'exit 2: oops' });
+  assert.deepEqual(buildOutcome({ status: 0, signal: null, stdout: SOME, stderr: '' }, 5, 'core'), { ms: 5, stdout: SOME });
 });
 
 const ok = (id, extra = {}) => ({ id, ms: 100, filter: 'some', bytes: 2000, ...extra });
@@ -95,7 +189,7 @@ test('a rule within every limit passes', () => {
 
 test('None, size and build time each fail', () => {
   assert.match(prefilterProblems([ok('go.xss', { filter: 'none', bytes: 39 })], opts()).join('\n'), /go\.xss: prefilter None/);
-  assert.match(prefilterProblems([ok('go.insecure-cookie', { bytes: 6500415 })], opts()).join('\n'), /go\.insecure-cookie: prefilter 6348\.1 kB, budget 20\.0 kB/);
+  assert.match(prefilterProblems([ok('go.insecure-cookie', { bytes: 6500415 })], opts()).join('\n'), /go\.insecure-cookie: prefilter 6500\.4 kB, budget 20\.0 kB/);
   assert.match(prefilterProblems([ok('js.nosql-injection', { ms: BUDGET_MS + 1 })], opts()).join('\n'), /js\.nosql-injection: prefilter build 401 ms \(best of 3\), budget 400 ms/);
   assert.equal(prefilterProblems([ok('go.ssrf', { ms: 592, bytes: 66626 })], opts()).length, 2);
   // A run on a busy host is held to the budget measured with it.
@@ -128,7 +222,10 @@ test('ALLOWED needs an open BACKLOG.md row of the same rule and an existing rule
   const allowed = { 'go.xss': { limit: 'none', row: 'go.xss#prefilter' } };
   assert.match(prefilterProblems([none], opts({ allowed })).join('\n'), /row go\.xss#prefilter, which does not exist/);
   assert.match(prefilterProblems([none], opts({ allowed, rows: [{ id: 'go.xss#prefilter', status: 'done' }] })).join('\n'), /which is done/);
-  assert.match(prefilterProblems([none], opts({ allowed: { 'go.xss': { limit: 'none', row: 'go.ssrf#prefilter' } } })).join('\n'), /must be a BACKLOG\.md row go\.xss#<topic>/);
+  assert.match(prefilterProblems([none], opts({ allowed: { 'go.xss': { limit: 'none', row: 'go.ssrf#prefilter' } } })).join('\n'), /must be a BACKLOG\.md row go\.xss#prefilter…/);
+  // A row of the same rule about something else does not justify it.
+  const other = { 'go.xss': { limit: 'none', row: 'go.xss#bind-in-comparison' } };
+  assert.match(prefilterProblems([none], opts({ allowed: other, rows: [{ id: 'go.xss#bind-in-comparison', status: 'todo' }] })).join('\n'), /must be a BACKLOG\.md row go\.xss#prefilter…/);
   assert.match(prefilterProblems([none], opts({ allowed: { 'go.xss': { limit: 'slow', row: 'go.xss#prefilter' } }, rows: [{ id: 'go.xss#prefilter', status: 'todo' }] })).join('\n'), /limit must be none or size/);
   // A rule that is not measured: an error in a full run, nothing when only some rules ran.
   const rowsOpen = [{ id: 'go.xss#prefilter', status: 'todo' }];
@@ -145,7 +242,8 @@ test('every ALLOWED entry names an open BACKLOG.md row and an existing rule', ()
 
 test('resultTable has one row per rule', () => {
   const t = resultTable([ok('go.weak-hash'), ok('go.xss', { filter: 'none', bytes: 39 }), { id: 'js.x', error: 'no output' }], { 'go.xss': { limit: 'none' } });
-  assert.match(t, /\| go\.weak-hash \| 100 \| 400 \| 2000 B \| Some \| {2}\|/);
-  assert.match(t, /\| go\.xss \| 100 \| 400 \| 39 B \| None \| none \|/);
-  assert.match(t, /\| js\.x \| – \| – \| – \| error: no output \| \|/);
+  assert.match(t, /\| go\.weak-hash \| 100 \| 100 \| 400 \| 2000 B \| Some \| {2}\|/);
+  assert.match(t, /\| go\.xss \| 100 \| 100 \| 400 \| 39 B \| None \| none \|/);
+  assert.match(t, /\| js\.x \| – \| – \| – \| – \| error: no output \| \|/);
+  assert.match(resultTable([ok('go.ssrf', { ms: 600, budget: 1000, fastest: 450 })], {}), /\| go\.ssrf \| 450 \| 600 \| 1000 \| 2000 B \| Some \| {2}\|/);
 });

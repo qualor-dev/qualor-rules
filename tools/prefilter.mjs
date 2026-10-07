@@ -35,10 +35,12 @@ export const BUDGET_MS = 400;
  * after it.
  */
 export const LOAD_RATIO = 5;
-/** Size budget of the prefilter's JSON: a few kB is the norm, 20 kB the most. */
-export const MAX_BYTES = 20 * 1024;
+/** Size budget of the prefilter's JSON: a few kB is the norm, 20 kB (20,000 bytes) the most. */
+export const MAX_BYTES = 20_000;
 /** Runs per rule; the best counts (a run within its budget ends the series). */
 export const RUNS = 3;
+/** A build still running after this is killed and fails its rule (an exploding CNF must not hang npm test). */
+export const KILL_MS = 30_000;
 
 /** The time budget of one run, given the one-pattern rule's build `refMs` timed with it. */
 export const budgetFor = (refMs) => Math.max(BUDGET_MS, Math.round(LOAD_RATIO * refMs));
@@ -103,7 +105,7 @@ export function parsePrefilter(stdout, id) {
   const bytes = Buffer.byteLength(stdout.trim());
   if (entry.filter === 'None') return { filter: 'none', bytes };
   if (Array.isArray(entry.filter) && entry.filter[0] === 'Some') return { filter: 'some', bytes };
-  return { error: `unknown filter ${JSON.stringify(entry.filter).slice(0, 80)}` };
+  return { error: `unknown filter ${String(JSON.stringify(entry.filter)).slice(0, 80)}` };
 }
 
 /** The rule files of `files` (root-relative, `/`) at or below the `wanted` paths (all when none). */
@@ -119,7 +121,7 @@ export function selectRuleFiles(files, wanted) {
   return files.filter((f) => out.has(f));
 }
 
-const kB = (bytes) => `${(bytes / 1024).toFixed(1)} kB`;
+const kB = (bytes) => `${(bytes / 1000).toFixed(1)} kB`;
 
 /**
  * The problems of the measured `results` ({ id, ms, budget, filter, bytes } or { id, error }; `ms`
@@ -151,7 +153,7 @@ export function prefilterProblems(results, { allowed = ALLOWED, rows = [], compl
   }
   for (const [id, allow] of Object.entries(allowed)) {
     if (!['none', 'size'].includes(allow.limit)) problems.push(`${id}: ALLOWED limit must be none or size, got ${JSON.stringify(allow.limit)}`);
-    if (allow.row?.split('#')[0] !== id) problems.push(`${id}: ALLOWED row ${JSON.stringify(allow.row)} must be a BACKLOG.md row ${id}#<topic>`);
+    if (allow.row?.split('#')[0] !== id || !/^[^#]+#prefilter/.test(allow.row)) problems.push(`${id}: ALLOWED row ${JSON.stringify(allow.row)} must be a BACKLOG.md row ${id}#prefilter…`);
     else if (!status.has(allow.row)) problems.push(`${id}: ALLOWED names BACKLOG.md row ${allow.row}, which does not exist`);
     else if (status.get(allow.row) === 'done') problems.push(`${id}: ALLOWED names BACKLOG.md row ${allow.row}, which is done: fix the rule or reopen the row`);
     if (complete && !seen.has(id)) problems.push(`${id}: in ALLOWED but no rule file has this id`);
@@ -161,10 +163,10 @@ export function prefilterProblems(results, { allowed = ALLOWED, rows = [], compl
 
 /** A Markdown table of the measured results. */
 export function resultTable(results, allowed = ALLOWED) {
-  const lines = ['| rule | build ms | budget ms | size | prefilter | allowed |', '|---|---|---|---|---|---|'];
+  const lines = ['| rule | fastest ms | judged ms | budget ms | size | prefilter | allowed |', '|---|---|---|---|---|---|---|'];
   for (const r of results) {
-    if (r.error !== undefined) lines.push(`| ${r.id} | – | – | – | error: ${r.error} | |`);
-    else lines.push(`| ${r.id} | ${Math.round(r.ms)} | ${r.budget ?? BUDGET_MS} | ${r.bytes} B | ${r.filter === 'none' ? 'None' : 'Some'} | ${allowed[r.id]?.limit ?? ''} |`);
+    if (r.error !== undefined) lines.push(`| ${r.id} | – | – | – | – | error: ${r.error} | |`);
+    else lines.push(`| ${r.id} | ${Math.round(r.fastest ?? r.ms)} | ${Math.round(r.ms)} | ${r.budget ?? BUDGET_MS} | ${r.bytes} B | ${r.filter === 'none' ? 'None' : 'Some'} | ${allowed[r.id]?.limit ?? ''} |`);
   }
   return lines.join('\n');
 }
@@ -181,49 +183,68 @@ const REFERENCE_RULE = 'rules:\n  - id: reference\n    languages: [javascript]\n
 /** opengrep-core of the pinned OpenGrep, unpacked by a one-line scan when it is missing. */
 function locateCore(bin, pinned, reference, work) {
   const core = corePath(process.env, process.env.HOME || homedir(), pinned);
+  let unpack = '';
   if (!existsSync(core) && !process.env.OPENGREP_CORE) {
     writeFileSync(path.join(work, 'a.js'), 'x = 1;\n');
-    check(bin, ['scan', '--config', reference, '--disable-version-check', '--quiet', '--json', path.join(work, 'a.js')], bin);
+    const scan = check(bin, ['scan', '--config', reference, '--disable-version-check', '--quiet', '--json', path.join(work, 'a.js')], bin);
+    unpack = scan.status === 0 ? '' : ` (the unpacking scan exited ${scan.status}: ${tail(scan.stderr)})`;
   }
   if (!existsSync(core)) {
-    throw new Error(`no opengrep-core at ${core}: set OPENGREP_CORE to the opengrep-core of OpenGrep ${pinned}`);
+    throw new Error(`no opengrep-core at ${core}${unpack}: set OPENGREP_CORE to the opengrep-core of OpenGrep ${pinned}`);
   }
   const v = check(core, ['-version'], core);
-  if (!v.stdout.includes(`version: ${pinned}`)) throw new Error(`${core} -version must print ${pinned}, got ${JSON.stringify(v.stdout.trim())}`);
+  if (/^opengrep-core version: (.+)$/m.exec(v.stdout)?.[1].trim() !== pinned) throw new Error(`${core} -version must print ${pinned}, got ${JSON.stringify(v.stdout.trim())}`);
   return core;
 }
 
-/** One build of the prefilter of `file`: `{ ms, stdout }` or `{ error }`. */
-function build(core, file) {
-  const start = process.hrtime.bigint();
-  const r = spawnSync(core, ['-prefilter_of_rules', file], { encoding: 'utf8', maxBuffer: 1024 * 1024 * 1024 });
-  const ms = Number(process.hrtime.bigint() - start) / 1e6;
+/** The last two lines of `text`, on one line. */
+const tail = (text) => (text ?? '').trim().split('\n').slice(-2).join(' ');
+
+/**
+ * One build from its spawnSync result `r` and duration: `{ ms, stdout }` or `{ error }`. A build
+ * killed at KILL_MS is that rule's error; a core that cannot be started stops the whole check.
+ */
+export function buildOutcome(r, ms, core) {
+  if (r.error?.code === 'ETIMEDOUT') return { error: `build over ${KILL_MS / 1000} s (killed)` };
   if (r.error) throw new Error(`${core}: ${r.error.message}`);
-  if (r.status !== 0) return { error: `exit ${r.status}: ${r.stderr.trim().split('\n').slice(-2).join(' ')}` };
+  const why = tail(r.stderr) ? `: ${tail(r.stderr)}` : '';
+  if (r.signal) return { error: `killed by ${r.signal}${why}` };
+  if (r.status !== 0) return { error: `exit ${r.status}${why}` };
   return { ms, stdout: r.stdout };
 }
 
+/** One build of the prefilter of `file`. */
+function build(core, file) {
+  const start = process.hrtime.bigint();
+  const r = spawnSync(core, ['-prefilter_of_rules', file], { encoding: 'utf8', maxBuffer: 1024 * 1024 * 1024, timeout: KILL_MS, killSignal: 'SIGKILL' });
+  return buildOutcome(r, Number(process.hrtime.bigint() - start) / 1e6, core);
+}
+
 /**
- * Up to RUNS builds of the prefilter of `file` (all of them when `all`); a run over BUDGET_MS is
- * followed by builds of the `reference` rule that set its budget. Keeps the run closest to its budget.
+ * Up to RUNS builds of the prefilter of `file` by `builder(file)` (all of them when `all`); a run
+ * over BUDGET_MS is followed by RUNS builds of the `reference` rule whose best sets its budget. The
+ * verdict is the run closest to its budget (`ms`, `budget`); `fastest` is the best run. A failed
+ * build ends the series with that error.
  */
-function measure(core, file, id, reference, all) {
-  let best;
+export function measure(builder, file, id, reference, all) {
+  let judged;
+  let fastest = Infinity;
   let stdout = '';
   for (let i = 0; i < RUNS; i++) {
-    const run = build(core, file);
+    const run = builder(file);
     if (run.error !== undefined) return { id, error: run.error };
     stdout = run.stdout;
+    fastest = Math.min(fastest, run.ms);
     let budget = BUDGET_MS;
     if (run.ms > budget) {
       // The best of RUNS reference builds: a single one is noisy, and a high one lets a slow rule pass.
-      const refs = Array.from({ length: RUNS }, () => build(core, reference)).filter((r) => r.error === undefined);
+      const refs = Array.from({ length: RUNS }, () => builder(reference)).filter((r) => r.error === undefined);
       if (refs.length > 0) budget = budgetFor(Math.min(...refs.map((r) => r.ms)));
     }
-    if (best === undefined || run.ms - budget < best.ms - best.budget) best = { ms: run.ms, budget };
-    if (!all && best.ms <= best.budget) break;
+    if (judged === undefined || run.ms - budget < judged.ms - judged.budget) judged = { ms: run.ms, budget };
+    if (!all && judged.ms <= judged.budget) break;
   }
-  return { id, ...best, ...parsePrefilter(stdout, id) };
+  return { id, ...judged, fastest, ...parsePrefilter(stdout, id) };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
@@ -253,7 +274,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       const id = parse(expanded)?.rules?.[0]?.id ?? f;
       const out = path.join(work, 'rules', `${f.split('/').slice(1).join('_')}`);
       writeFileSync(out, expanded);
-      results.push(measure(core, out, id, reference, table));
+      results.push(measure((file) => build(core, file), out, id, reference, table));
     }
     const rows = parseTable(readFileSync(path.join(root, 'BACKLOG.md'), 'utf8'), BACKLOG_HEADER) ?? [];
     problems = prefilterProblems(results, { rows, complete: wanted.length === 0 });
