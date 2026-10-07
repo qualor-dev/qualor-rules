@@ -12,8 +12,9 @@ JCA `Cipher.getInstance` transformations that do not protect the data, named by 
 constant:
 
 - the algorithms DES, DESede (Triple DES, also `TripleDES` and `DESedeWrap`), RC2, RC4
-  (`ARCFOUR`) and Blowfish, in any mode, and the password-based names built on them
-  (`PBEWithMD5AndDES`, `PBEWithSHA1AndDESede`, `PBEWithSHA1AndRC4_128`, ...);
+  (`ARCFOUR`), Blowfish and RC5, in any mode, and the password-based names built on them
+  (`PBEWithMD5AndDES`, `PBEWithSHA1AndDESede`, `PBEWithSHA1AndRC4_128`, ..., also written
+  with their mode and padding, `PBEWithMD5AndDES/CBC/PKCS5Padding`);
 - ECB mode with a block cipher (`AES/ECB/PKCS5Padding`), and `AES` named without a mode, which
   the JDK's providers then run in ECB mode;
 - RSA without padding (`RSA/ECB/NoPadding`);
@@ -30,12 +31,12 @@ in `Test`, `Tests`, `TestCase`, `IT` or `ITCase`.
 
 <!-- begin: why-it-matters -->
 DES has a 56-bit key that can be found by brute force; RC4's output is biased enough to recover
-plaintext; Triple DES, RC2 and Blowfish have 64-bit blocks, so after a few gigabytes under one key
-blocks collide and leak data (birthday-bound attacks). ECB encrypts equal blocks to equal
-ciphertext, so patterns in the data stay visible (the JCA names page: ECB "generally ... should
-not be used for multiple blocks of data"), and `AES` alone means ECB with the JDK's providers. RSA
-without padding is deterministic and malleable. None of these keep the data confidential, and none
-of them detect changes to it.
+plaintext; Triple DES, RC2, Blowfish and RC5 (in its usual RC5-32 form) have 64-bit blocks, so
+after a few gigabytes under one key blocks collide and leak data (birthday-bound attacks). ECB
+encrypts equal blocks to equal ciphertext, so patterns in the data stay visible (the JCA names
+page: ECB "generally ... should not be used for multiple blocks of data"), and `AES` alone means
+ECB with the JDK's providers. RSA without padding is deterministic and malleable. None of these
+keep the data confidential, and none of them detect changes to it.
 <!-- end: why-it-matters -->
 
 ## Example

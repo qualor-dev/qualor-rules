@@ -3,8 +3,8 @@ rules:
     languages: [java]
     severity: WARNING
     message: >-
-      This cipher does not protect the data: DES, Triple DES (DESede), RC2, RC4 (ARCFOUR) and
-      Blowfish are broken or have a 64-bit block that leaks data after a few gigabytes, ECB mode
+      This cipher does not protect the data: DES, Triple DES (DESede), RC2, RC4 (ARCFOUR),
+      Blowfish and RC5 are broken or have a 64-bit block that leaks data after a few gigabytes, ECB mode
       (also the provider default when only "AES" is named) encrypts equal blocks to equal
       ciphertext, RSA without padding is deterministic and malleable, and NullCipher does not
       encrypt at all. Use an authenticated cipher with the mode and padding written out:
@@ -45,10 +45,11 @@ rules:
     # that decrypts legacy DES data or checks that ECB is refused is not a weakness.
     # Which transformations (Java Security Standard Algorithm Names, Oracle providers' SunJCE
     # section; the names are case-insensitive):
-    # - DES, DESede (TripleDES), DESedeWrap, RC2, RC4 (ARCFOUR) and Blowfish in any mode, and the
-    #   PBE names built on them (PBEWithMD5AndDES, PBEWithSHA1AndRC4_128, ...): DES has a 56-bit
-    #   key, RC4 is broken, and the others have 64-bit blocks (birthday-bound attacks after a few
-    #   gigabytes under one key).
+    # - DES, DESede (TripleDES), DESedeWrap, RC2, RC4 (ARCFOUR), Blowfish and RC5 in any mode, and
+    #   the PBE names built on them (PBEWithMD5AndDES, PBEWithSHA1AndRC4_128, ..., also with the
+    #   mode and padding written out, PBEWithMD5AndDES/CBC/PKCS5Padding): DES has a 56-bit key, RC4
+    #   is broken, and the others have 64-bit blocks (birthday-bound attacks after a few gigabytes
+    #   under one key; RC5 in its usual RC5-32 form, as the Bouncy Castle provider offers it).
     # - ECB with any other block cipher, and "AES" (AES_128, AES_192, AES_256) without a mode:
     #   SunJCE and SunPKCS11 then use ECB, which the names page says "generally ... should not be
     #   used for multiple blocks of data".
@@ -83,5 +84,5 @@ rules:
           - pattern: javax.crypto.Cipher.getInstance("$NAME", ...)
           - metavariable-regex:
               metavariable: $NAME
-              regex: (?i)^((DES|DESede|TripleDES|DESedeWrap|RC2|RC4|ARCFOUR|Blowfish)(/.*)?|PBEWith\w+And(DES|DESede|TripleDES|RC2_\d+|RC4_\d+)|AES(_\d+)?|(?!(RSA|ECIES)/)[^/]+/ECB(/.*)?|RSA/[^/]+/NoPadding)$
+              regex: (?i)^((DES|DESede|TripleDES|DESedeWrap|RC2|RC4|ARCFOUR|Blowfish|RC5)(/.*)?|PBEWith\w+And(DES|DESede|TripleDES|RC2_\d+|RC4_\d+)(/.*)?|AES(_\d+)?|(?!(RSA|ECIES)/)[^/]+/ECB(/.*)?|RSA/[^/]+/NoPadding)$
       - pattern: new javax.crypto.NullCipher()

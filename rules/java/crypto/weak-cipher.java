@@ -33,6 +33,9 @@ public class Ciphers {
         Cipher.getInstance("ARCFOUR");
         // ruleid: java.weak-cipher
         Cipher.getInstance("Blowfish/CBC/PKCS5Padding");
+        // RC5 (a 64-bit block in its RC5-32 form) from the Bouncy Castle provider.
+        // ruleid: java.weak-cipher
+        Cipher.getInstance("RC5/CBC/PKCS5Padding", "BC");
         // Algorithm names are not case-sensitive.
         // ruleid: java.weak-cipher
         Cipher.getInstance("des/cbc/pkcs5padding");
@@ -73,8 +76,15 @@ public class Ciphers {
         Cipher.getInstance("PBEWithSHA1AndRC2_40");
         // ruleid: java.weak-cipher
         Cipher.getInstance("PBEWithSHA1AndRC4_128");
+        // The full transformation, with the mode and padding the providers use.
+        // ruleid: java.weak-cipher
+        Cipher.getInstance("PBEWithMD5AndDES/CBC/PKCS5Padding");
+        // ruleid: java.weak-cipher
+        Cipher.getInstance("PBEWithSHA1AndRC2_40/CBC/PKCS5Padding");
         // ok: java.weak-cipher
         Cipher.getInstance("PBEWithHmacSHA256AndAES_256");
+        // ok: java.weak-cipher
+        Cipher.getInstance("PBEWithHmacSHA256AndAES_256/CBC/PKCS5Padding");
     }
 
     // ECB mode: equal plaintext blocks give equal ciphertext blocks. "AES" alone is ECB too: the
