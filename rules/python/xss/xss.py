@@ -364,6 +364,103 @@ def echo_json2():
     return request.get_json(silent=True) or {}
 
 
+@app.post("/api/echo-json3")
+def echo_json3():
+    # ok: python.xss
+    return request.json or [], 201
+
+
+# The request's JSON value given a JSON default ({} or []) after it is read is still JSON.
+@app.post("/api/settings")
+def save_settings():
+    data = request.get_json()
+    data = data or {}
+    # ok: python.xss
+    return data
+
+
+@app.post("/api/settings2")
+def save_settings2():
+    data = request.get_json(silent=True)
+    if data is None:
+        data = {}
+    # ok: python.xss
+    return data, 200
+
+
+@app.post("/api/tags")
+def save_tags():
+    tags = request.json
+    if not tags:
+        tags = []
+    # ok: python.xss
+    return tags
+
+
+@app.post("/api/profile")
+def save_profile():
+    profile = request.get_json()
+    # ok: python.xss
+    return profile or {}
+
+
+@app.post("/api/profile2")
+def save_profile2():
+    profile = request.get_json(silent=True) or {}
+    profile = profile or {"name": "anonymous"}
+    # ok: python.xss
+    return profile or {}, 201
+
+
+# A default or a later value that is request text, not JSON.
+@app.post("/api/fallback")
+def json_fallback():
+    data = request.get_json(silent=True) or request.args["text"]
+    # ruleid: python.xss
+    return data
+
+
+@app.post("/api/fallback2")
+def json_fallback2():
+    data = request.get_json(silent=True)
+    if not data:
+        data = request.form["text"]
+    # ruleid: python.xss
+    return data
+
+
+@app.post("/api/fallback3")
+def json_fallback3():
+    data = request.get_json(silent=True)
+    # ruleid: python.xss
+    return data or request.args["text"]
+
+
+@app.post("/api/fallback4")
+def json_fallback4():
+    # ruleid: python.xss
+    return request.json or request.args["text"]
+
+
+@app.post("/api/after-default")
+def json_after_default():
+    data = request.get_json()
+    data = data or {}
+    if "title" in data:
+        data = "<h1>" + data["title"] + "</h1>"
+    # ruleid: python.xss
+    return data
+
+
+@app.post("/api/before-default")
+def json_before_default():
+    data = request.get_json()
+    data = "<h1>" + data["title"] + "</h1>"
+    data = data or {}
+    # ruleid: python.xss
+    return data
+
+
 @app.route("/bytes")
 def as_bytes():
     # ruleid: python.xss

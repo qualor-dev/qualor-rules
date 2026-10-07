@@ -64,8 +64,10 @@ rules:
     #   subscripted value in place (`Comment(text=request.args["t"]).text`), is not seen
     #   (todoruleid), a deliberate trade-off for ORM lookups by a request id.
     # - A Flask view returning the request's JSON value whole (`request.json`, `get_json()`, an
-    #   `or {}` default, or a variable assigned from them and returned as it is) is taken for
-    #   JSON; a request whose JSON body is a bare string is not followed.
+    #   `or {}` / `or []` default, or a variable assigned from them and returned as it is, also
+    #   after `data = data or {}`, `if data is None: data = {}` or `if not data: data = []`) is
+    #   taken for JSON; a request whose JSON body is a bare string is not followed. A default
+    #   that is not a dict or list literal (`get_json() or request.args["t"]`) is reported.
     # - OpenGrep does not carry taint through a slice, so a slice of request data is a source
     #   itself: of a request access chain (`request.args["q"][:50]`), of a variable assigned one in
     #   the function, or of a view parameter. A slice of a value built from request data
@@ -648,9 +650,10 @@ rules:
               metavariable: $INIT
               regex: ^(?!(self\.)?request\b|([\w.]*\.)?(urlparse|urlsplit|urldefrag)\(|json\.loads\(|[\w.]*\.(model_validate|model_validate_json|parse_obj|parse_raw)\(|[\w.]*\.(FILES|POST|GET|COOKIES|META|args|form|files|values|headers|cookies|query_params)\.)[A-Za-z_][\w.]*\((?!(?s:.*)(\b\w+\.(POST|GET|FILES|form|args|values|json|data|query_params)\b(?!\s*[\[.(])|get_json\(|\*\*))
           - pattern-not-inside: $X.$ATTR(...)
-      # Flask: the request's own JSON value returned whole through a variable, `return data` or
-      # `return data, 201` after `data = request.get_json()` (Flask sends a dict or list as JSON).
-      # Only that returned name is cleared, and not after the variable is assigned again.
+      # Flask: the request's own JSON value returned whole through a variable, `return data`,
+      # `return data, 201` or `return data or {}` after `data = request.get_json()` (also
+      # `request.json`, either with an `or {}` / `or []` default; Flask sends a dict or list as
+      # JSON). Only that returned name is cleared, and not after the variable is assigned again.
       - patterns:
           - pattern-either:
               - pattern-inside: |
@@ -660,10 +663,16 @@ rules:
                   $DATA = flask.request.get_json(...)
                   ...
               - pattern-inside: |
-                  $DATA = flask.request.json or $DEFAULT
+                  $DATA = flask.request.json or {...}
                   ...
               - pattern-inside: |
-                  $DATA = flask.request.get_json(...) or $DEFAULT
+                  $DATA = flask.request.json or [...]
+                  ...
+              - pattern-inside: |
+                  $DATA = flask.request.get_json(...) or {...}
+                  ...
+              - pattern-inside: |
+                  $DATA = flask.request.get_json(...) or [...]
                   ...
           - pattern-not-inside: |
               $DATA = $JSON
@@ -673,6 +682,105 @@ rules:
           - pattern-either:
               - pattern-inside: return $DATA
               - pattern-inside: return $DATA, ...
+              - pattern-inside: return $DATA or {...}
+              - pattern-inside: return $DATA or [...]
+              - pattern-inside: return $DATA or {...}, ...
+              - pattern-inside: return $DATA or [...], ...
+          - pattern: $DATA
+      # The same variable given a JSON default after it is read, and assigned nothing else
+      # before or after that: `data = data or {}`, `if data is None: data = {}` or
+      # `if not data: data = []`.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $DATA = flask.request.json
+                  ...
+              - pattern-inside: |
+                  $DATA = flask.request.get_json(...)
+                  ...
+              - pattern-inside: |
+                  $DATA = flask.request.json or {...}
+                  ...
+              - pattern-inside: |
+                  $DATA = flask.request.json or [...]
+                  ...
+              - pattern-inside: |
+                  $DATA = flask.request.get_json(...) or {...}
+                  ...
+              - pattern-inside: |
+                  $DATA = flask.request.get_json(...) or [...]
+                  ...
+          - pattern-either:
+              - pattern-inside: |
+                  $DATA = $DATA or {...}
+                  ...
+              - pattern-inside: |
+                  $DATA = $DATA or [...]
+                  ...
+              - pattern-inside: |
+                  if $DATA is None:
+                      $DATA = {...}
+                  ...
+              - pattern-inside: |
+                  if $DATA is None:
+                      $DATA = [...]
+                  ...
+              - pattern-inside: |
+                  if not $DATA:
+                      $DATA = {...}
+                  ...
+              - pattern-inside: |
+                  if not $DATA:
+                      $DATA = [...]
+                  ...
+          # Assigned something else between the request value and the default, or after it.
+          - pattern-not-inside: |
+              $DATA = $JSON
+              ...
+              $DATA = $OTHER
+              ...
+              $DATA = $DATA or $DEFAULT
+              ...
+          - pattern-not-inside: |
+              $DATA = $JSON
+              ...
+              $DATA = $OTHER
+              ...
+              if $DATA is None:
+                  $DATA = $DEFAULT
+              ...
+          - pattern-not-inside: |
+              $DATA = $JSON
+              ...
+              $DATA = $OTHER
+              ...
+              if not $DATA:
+                  $DATA = $DEFAULT
+              ...
+          - pattern-not-inside: |
+              $DATA = $DATA or $DEFAULT
+              ...
+              $DATA = $OTHER
+              ...
+          - pattern-not-inside: |
+              if $DATA is None:
+                  $DATA = $DEFAULT
+              ...
+              $DATA = $OTHER
+              ...
+          - pattern-not-inside: |
+              if not $DATA:
+                  $DATA = $DEFAULT
+              ...
+              $DATA = $OTHER
+              ...
+          - pattern-either:
+              - pattern-inside: return $DATA
+              - pattern-inside: return $DATA, ...
+              - pattern-inside: return $DATA or {...}
+              - pattern-inside: return $DATA or [...]
+              - pattern-inside: return $DATA or {...}, ...
+              - pattern-inside: return $DATA or [...], ...
           - pattern: $DATA
       # HTML sanitisers that keep an allow-list of tags and attributes.
       - pattern: bleach.clean(...)
@@ -725,13 +833,19 @@ rules:
           - pattern-not: return {...}
           - pattern-not: return [...]
           # The request's own JSON value returned whole (Flask sends a dict or list as JSON), in
-          # place or with an `or` default (a variable holding it: see the sanitizers).
+          # place or with an `or {}` / `or []` default (a variable holding it: see the sanitizers).
           - pattern-not: return flask.request.json
           - pattern-not: return flask.request.get_json(...)
-          - pattern-not: return flask.request.json or $DEFAULT
-          - pattern-not: return flask.request.get_json(...) or $DEFAULT
+          - pattern-not: return flask.request.json or {...}
+          - pattern-not: return flask.request.json or [...]
+          - pattern-not: return flask.request.get_json(...) or {...}
+          - pattern-not: return flask.request.get_json(...) or [...]
           - pattern-not: return flask.request.json, ...
           - pattern-not: return flask.request.get_json(...), ...
+          - pattern-not: return flask.request.json or {...}, ...
+          - pattern-not: return flask.request.json or [...], ...
+          - pattern-not: return flask.request.get_json(...) or {...}, ...
+          - pattern-not: return flask.request.get_json(...) or [...], ...
           - pattern-not-inside: |
               $RESPONSE = flask.make_response(...)
               ...
@@ -792,13 +906,19 @@ rules:
           - pattern-not: return {...}, ...
           - pattern-not: return [...], ...
           # The request's own JSON value returned whole (Flask sends a dict or list as JSON), in
-          # place or with an `or` default (a variable holding it: see the sanitizers).
+          # place or with an `or {}` / `or []` default (a variable holding it: see the sanitizers).
           - pattern-not: return flask.request.json
           - pattern-not: return flask.request.get_json(...)
-          - pattern-not: return flask.request.json or $DEFAULT
-          - pattern-not: return flask.request.get_json(...) or $DEFAULT
+          - pattern-not: return flask.request.json or {...}
+          - pattern-not: return flask.request.json or [...]
+          - pattern-not: return flask.request.get_json(...) or {...}
+          - pattern-not: return flask.request.get_json(...) or [...]
           - pattern-not: return flask.request.json, ...
           - pattern-not: return flask.request.get_json(...), ...
+          - pattern-not: return flask.request.json or {...}, ...
+          - pattern-not: return flask.request.json or [...], ...
+          - pattern-not: return flask.request.get_json(...) or {...}, ...
+          - pattern-not: return flask.request.get_json(...) or [...], ...
           - pattern-not: |
               return $B, {..., "Content-Type": "=~/^(?![^;]*html)/", ...}
           - pattern-not: |

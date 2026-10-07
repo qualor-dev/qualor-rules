@@ -87,8 +87,11 @@ def hello(request):
 - Values read from an object a call returned (a database row looked up by a request id) are taken
   for stored data, unless the call receives request data whole; a request value reaching such a
   call through a variable is missed.
-- A Flask view returning the request's JSON whole is taken for JSON. A response whose content type
-  is changed after it is made (`resp.mimetype = "text/plain"`) is still taken for HTML.
+- A Flask view returning the request's JSON whole is taken for JSON, also with a `{}` or `[]`
+  default (`request.get_json() or {}`, `data = data or {}`, `if data is None: data = {}`); a
+  default that is request text, or any other value assigned to the variable, is still reported.
+  A request whose JSON body is a bare string is not followed. A response whose content type is
+  changed after it is made (`resp.mimetype = "text/plain"`) is still taken for HTML.
 - A slice is followed when it slices request data in place (`request.args["q"][:50]`),
   a variable assigned request data, or a view parameter; a slice of a value built from request
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
