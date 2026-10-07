@@ -47,8 +47,8 @@ rules:
     #   request value as its key, `await User.findById(req.params.id)`), except renderers,
     #   parsers, formatters, translators, promise helpers, request.json()/formData()/text(),
     #   methods of the response, functions imported by name, and axios/got/superagent/undici
-    #   requests to a URL that the request may choose (see the results of other sinks below); another method that returns the
-    #   request value it is given is missed, and so is a function called through a module object
+    #   requests to a URL that visibly starts with request data (see the results of other sinks
+    #   below); another method that returns the request value it is given is missed, and so is a function called through a module object
     #   (`import * as widgets`, then `await widgets.drawWidget(req.params.id)`). An awaited helper
     #   that is given the response object (`await renderCard(id, res)`) is clean, also when it
     #   returns the request value. A method named like a function the file imports by name stays
@@ -67,12 +67,15 @@ rules:
     #   execSync() or util.promisify(exec) print and what readFileSync() reads are not request
     #   data (request data in the command or the file name is js.command-injection's or
     #   js.path-traversal's finding, not reported again); a page fetched from a URL that the
-    #   request may choose stays request data (ruling J2), one fetched from a fixed origin or a
-    #   path of this site does not. Limits of that: the output of execFileSync()/spawnSync() with
-    #   a request-chosen program is reported again (`todook:`); output given to a callback
-    #   (`execFile('echo', [x], (err, out) => ...)`) is not followed (`todoruleid:`); an origin
-    #   held in a constant (`API_BASE + '/pages/' + id`) is not recognised, so the page counts as
-    #   request data (`todook:`).
+    #   request visibly chooses stays request data (ruling J2): its URL starts with a request value,
+    #   also after a lone scheme or `//`. One fetched from a fixed origin, a path of this site, a
+    #   URL in a variable or a template on a constant base is that service's data. Limits of that:
+    #   the output of execFileSync()/spawnSync() with a request-chosen program is reported again
+    #   (`todook:`); output given to a callback (`execFile('echo', [x], (err, out) => ...)`) is
+    #   not followed (`todoruleid:`); a request-chosen URL held in a variable first (`const
+    #   target = req.query.url; await axios.get(target)`) is taken for stored data
+    #   (`todoruleid:`); fetch() itself given an origin held in a constant (`fetch(API_BASE +
+    #   '/pages/' + id)`) counts as request data (`todook:`).
     # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
     #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
     #   source, and a one-parameter callback given to get/post/... after a path literal (also on
@@ -496,9 +499,12 @@ rules:
           - pattern-not: await $R.json()
           - pattern-not: await $R.formData()
           - pattern-not: await $R.text()
-          # The body of a response fetched by an HTTP client from a URL that the request may choose
-          # (anything but a literal that fixes the origin, or a path of this site) is the
-          # attacker's content (ruling J2 of java.xss).
+          # The body of a response fetched by an HTTP client from a URL that the request visibly
+          # chooses is the attacker's content (ruling J2 of java.xss): a URL that starts with a
+          # request value (`req.query.url`, a destructured `query.url`), also after a lone scheme or
+          # `//` (`'https://' + req.query.host`, `` `https://${req.params.host}/x` ``). A URL held in
+          # a variable, a constant or a template on a constant base, and request data elsewhere
+          # (the path, the body) leave the response stored data.
           - pattern-not:
               patterns:
                 - pattern: await $OBJ.$M($URL, ...)
@@ -507,7 +513,7 @@ rules:
                     regex: ^(?:axios|got|superagent|undici)$
                 - metavariable-regex:
                     metavariable: $URL
-                    regex: ^(?!["'`](?:(?:https?:)?//[^/\\?#@"'`$]+(?:/(?![/\\])|[?#])|/(?![/\\])))
+                    regex: ^(?:["'`](?:https?:)?(?://)?["'`]\s*\+\s*|`(?:https?:)?(?://)?\$\{\s*)?(?:req|request|query|params|body|headers|cookies)\s*(?:\?\.|\.|\[)
           # Not when a function is passed to it (`await db.transaction(async (t) => { ... })`):
           # a sink written inside that callback is still a sink, and the sanitizer would clean
           # everything inside the call. The function pattern also matches arrow functions.
@@ -660,13 +666,13 @@ rules:
               metavariable: $PROMISIFY
               regex: ^(?:\w+\.)?promisify$
       # A response fetched from a URL whose literal start fixes the origin, or from a path of this
-      # site (`await fetch('https://api.example.com/pages/' + id)`), is data of that service (the
-      # awaited methods of axios and got are covered above). The origin is fixed only by a host
-      # followed by a path, query or fragment separator (a lone scheme or `//` + request data
-      # is not).
+      # site (`await fetch('https://api.example.com/pages/' + id)`, got's promise shortcut
+      # `` got(`https://api.example.com/x/${id}`).json() ``), is data of that service (the awaited
+      # methods of axios and got are covered above). The origin is fixed only by a host followed
+      # by a path, query or fragment separator (a lone scheme or `//` + request data is not).
       - exact: true
         patterns:
-          - pattern: await $HTTP($URL, ...)
+          - pattern: $HTTP($URL, ...)
           - metavariable-regex:
               metavariable: $HTTP
               regex: ^(?:fetch|axios|got)$

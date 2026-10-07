@@ -19,8 +19,10 @@ and what `readFileSync()` reads are not taken for request data, because request 
 command or the file name is already a command injection or a path traversal finding of its own.
 The output of a fixed program given request data as an argument (`execFileSync('echo', [x])`)
 can print it back and is reported, and so is a page fetched from a URL that the request chooses
-(`fetch(req.query.url)`, `axios.get(req.query.url)`): its content belongs to whoever chose the URL.
-A page fetched from a fixed origin or from a path of this site is taken for that service's data.
+(`fetch(req.query.url)`, `axios.get(req.query.url)`, `` axios.get(`https://${req.query.host}/x`) ``):
+its content belongs to whoever chose the URL. A page fetched from a fixed origin or a path of this
+site (also through got's `.json()` shortcut), or with `axios`/`got` from a URL in a variable or on
+a constant base, with request data only in the path or the body, is taken for that service's data.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -86,8 +88,8 @@ app.get('/hello', (req, res) => {
   HTML; a bare request value written without a content type is missed, although browsers may sniff
   it as HTML.
 - Results of awaited calls on other objects (a database lookup by a request value) are taken for
-  stored data (except HTTP clients given a URL the request may choose), also when the method only hands the request value back. Functions imported by name
-  are followed, but a function called through a module object (`await widgets.draw(id)`) counts
+  stored data (except HTTP clients given a URL that visibly starts with request data), also when
+  the method only hands the request value back. Functions imported by name are followed, but a function called through a module object (`await widgets.draw(id)`) counts
   as such a method, and a method named like a function the file imports by name is followed.
 - An awaited helper that is given the response object (`await renderCard(id, res)`) is taken to
   write its own answer: what it returns is not reported.
@@ -105,8 +107,9 @@ app.get('/hello', (req, res) => {
   (`({ query = {} }, res)`), which is not checked.
 - Output of a request-chosen program (`execFileSync(req.query.tool)`) is reported here as well as
   by the command injection rule; output handed to a callback (`execFile('echo', [x], (err, out)
-  => ...)`) is not followed; and an origin held in a constant (`API_BASE + '/pages/' + id`) is
-  not recognised, so such a page counts as request data.
+  => ...)`) is not followed; a request-chosen URL first stored in a variable and then given to
+  `axios` or `got` is missed; and `fetch()` given an origin held in a constant (`API_BASE +
+  '/pages/' + id`) does not recognise it, so such a page counts as request data.
 <!-- end: known-limits -->
 
 ## References

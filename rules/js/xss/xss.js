@@ -440,6 +440,7 @@ const util = require('node:util');
 const childProcess = require('node:child_process');
 const { exec, execSync, execFile, execFileSync } = require('child_process');
 const axios = require('axios');
+const got = require('got');
 const execAsync = util.promisify(childProcess.exec);
 const PAGES = '/srv/pages';
 const API_BASE = 'https://api.example.com';
@@ -502,7 +503,32 @@ app.get('/preview', async (req, res) => {
   const { data: card } = await axios.get('https://api.example.com/cards/' + req.query.id);
   // ok: js.xss
   res.send(card);
-  // An origin held in a constant is not recognised: the page counts as request data.
+  // Only a URL that visibly starts with request data keeps the page request data: a URL built
+  // from a fixed origin in a variable, a constant URL with request data in the body, a template on
+  // a constant base, and got's promise shortcut on a fixed origin are that service's data.
+  const pageUrl = 'https://api.example.com/pages/' + req.query.id;
+  const { data: stored } = await axios.get(pageUrl);
+  // ok: js.xss
+  res.send(stored);
+  const { data: hook } = await axios.post(API_BASE + '/notify', { name: req.query.name });
+  // ok: js.xss
+  res.send(hook);
+  const { data: item } = await axios.get(`${API_BASE}/items/${req.query.id}`);
+  // ok: js.xss
+  res.send(item);
+  const shortcut = await got(`https://api.example.com/items/${req.query.id}`).json();
+  // ok: js.xss
+  res.send(shortcut);
+  const hostPage = await axios.get(`https://${req.query.host}/status`);
+  // ruleid: js.xss
+  res.send(hostPage.data);
+  // A request-chosen URL held in a variable first is not recognised.
+  const target = req.query.url;
+  const { data: chosen } = await axios.get(target);
+  // todoruleid: js.xss
+  res.send(chosen);
+  // An origin held in a constant, given to fetch() itself, is not recognised: the page counts as
+  // request data.
   const viaConstant = await fetch(API_BASE + '/pages/' + req.query.id);
   // todook: js.xss
   res.send(await viaConstant.text());
