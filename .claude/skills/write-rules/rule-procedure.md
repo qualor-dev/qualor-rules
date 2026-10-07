@@ -216,6 +216,15 @@ says. Layout as the SQL rule: `message` (what is wrong and how to fix it), `meta
     cannot run, and record what remains, such as a name rebound from the context to another
     object, as a Known limit with a `todook:` line. python.tls-verification-disabled: 3^5 x 2^5 →
     3 x 2^6, 0.63 → 0.1 s.
+    The budget is ≤ 0.2 s and ≤ 20 kB. Exclusions cost nothing, so a branch (a source or sink of a
+    taint rule too) can keep one or two positive terms exactly: write a context it must sit in as
+    "not outside it" (a `pattern-not` of the same pattern with the context as a
+    `pattern-not-inside`; metavariables shared with the context still have to agree), and a
+    condition that gives no word as a `pattern-not` of the same shape with the condition
+    reversed. Such an exclusion's own pattern must match few places (a template, a header name, a
+    `new X(...)` with an object): one that matches every call costs its size squared on large
+    files. Keep the term that holds the rare word positive. js.tls-verification-disabled: 2.0 s /
+    90 kB → 0.09 s / 1.4 kB, js.insecure-cookie: 215 kB → 1.3 kB, identical findings.
   - **Time** on a large real or minified file that **contains** the rule's words (three.js or a
     900 kB bundle for JS, gitea's largest files for Go, a 100–200 kB Django module for Python),
     with `--timeout 0` (OpenGrep's 5 s default times out on a loaded host and drops findings), and
