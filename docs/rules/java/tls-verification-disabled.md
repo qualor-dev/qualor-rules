@@ -128,7 +128,8 @@ public class Clients {
   message or a delegation to the default trust manager whose `CertificateException` is caught and
   only logged; one that throws anywhere counts too, even when its only throw is the
   `IllegalArgumentException` for a null or empty chain. One certificate of the chain, or a copy
-  of it, counts only when it goes to another trust manager or to a method of the same class.
+  of it, counts only when it goes to another trust manager or to a method of the same class,
+  whatever that method does: an empty or log-only method of the class hides a trust-all manager.
 - A lambda counts as a host name verifier only where the code shows it is one (the JDK setters, a
   `HostnameVerifier` variable, a cast): one given to another library's builder, such as OkHttp's
   `hostnameVerifier`, is missed, and so are other libraries' own trust-all and no-op classes

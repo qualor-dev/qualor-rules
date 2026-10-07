@@ -51,8 +51,10 @@ rules:
     #   log message (`Arrays.toString(chain)`) and a delegation to another trust manager whose
     #   CertificateException is caught and only logged. One certificate of the chain, a copy of
     #   it or the variable of a loop over it counts only when given to another trust manager's
-    #   checkServerTrusted or to a method of the same class. One that throws anywhere counts too,
-    #   also when its only throw is the IllegalArgumentException for a null or empty chain.
+    #   checkServerTrusted or to a method of the same class, whatever that method does (an empty
+    #   or log-only method of the class hides a trust-all manager). One that throws anywhere
+    #   counts too, also when its only throw is the IllegalArgumentException for a null or empty
+    #   chain.
     # - A trust-all manager given only to a server context (whose checkServerTrusted is never
     #   called) is still reported.
     # - A lambda is a HostnameVerifier only when it is given to setHostnameVerifier or

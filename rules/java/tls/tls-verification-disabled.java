@@ -555,6 +555,28 @@ class CopyOfTrustManager implements X509TrustManager {
     }
 }
 
+// A method of the class counts as a check whatever it does: one that only logs the server
+// certificate hides a trust-all manager.
+class LogOnlyHelperTrustManager implements X509TrustManager {
+    private static final Logger LOG = Logger.getLogger("tls");
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType) {
+    }
+
+    // todoruleid: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType) {
+        describe(chain[0]);
+    }
+
+    private static void describe(X509Certificate server) {
+        LOG.fine("server certificate " + server.getSubjectX500Principal());
+    }
+
+    public X509Certificate[] getAcceptedIssuers() {
+        return new X509Certificate[0];
+    }
+}
+
 // Methods of the class declared before the trust checks that call them.
 class HelperFirstTrustManager extends X509ExtendedTrustManager {
     private static void requireServerUse(X509Certificate certificate) throws CertificateException {
