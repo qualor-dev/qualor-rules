@@ -37,6 +37,7 @@ Entry format:
   - js.nosql-injection#prefilter-cost (js batch, 60b0280 + fix round 1): the OBJ sources keep the value as their only positive term; the Fastify OBJ source stays separate so its schema checks keep the route's metavariables (review: a route registered inside a schema route's handler was lost); build 1257 → 186 ms, 32.9 → 11.7 kB; one-line scan 1.3 → 0.05 s; findings identical.
   - js.open-redirect#prefilter-cost (js batch, ed3af36): wordless sink conditions became exclusions (template text, header method, Response receiver and header); build 646 → 143 ms, 27.2 → 11.1 kB; three.js with the words not slower (≈10 s); findings identical; four ok: lines added for the moved conditions.
   - js.insecure-cookie#prefilter-cost (js batch, 327fd12): the forms became exclusions of the cookie call; 215.6 → 1.3 kB, build 141 → 87 ms; findings identical.
+  - python-taint (python.sql-injection#prefilter-restore, pf-python-taint 724c467..82e05d8): the 2026.10.2 slice sources (118206d) had made every Python taint rule's prefilter None; shared block restructured (520 source clauses), open-redirect word anchor and merged own sources, path-traversal names written out: Some for all ten, 0.3–19.8 kB, 98–152 ms, identical findings (fixtures, probe, 162 kB Django module); python.command-injection and python.xss stay None on their own sinks
 
 ## 2026-10-07: release 2026.10.2 (`/release-pack`)
 
