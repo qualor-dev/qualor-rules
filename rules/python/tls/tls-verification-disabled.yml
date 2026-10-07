@@ -126,279 +126,296 @@ rules:
     #   `loop.create_server(ssl=ctx)`) is still reported (no test line: recorded from review).
     # - A name reused for two contexts: an insecure client context rebound later in the function
     #   to a context wrapped with server_side=True is no longer reported (no test line).
+    # - A module is scanned only when one of its import lines names one of the libraries (see
+    #   Performance): a library named only on a later line of a parenthesised import
+    #   (`from .compat import (` with `requests,` below it), or imported through importlib, is
+    #   not seen (no test line: a fixture imports them plainly).
     paths:
       exclude: ['test_*.py', '*_test.py', 'conftest.py', 'tests.py', 'tests/', 'test/']
-    pattern-either:
-      # requests and httpx: the module functions, httpx's clients, and an inline Session.
-      - patterns:
-          - pattern-either:
-              - pattern: requests.$FN(...)
-              - pattern: requests.Session(...).$FN(...)
-              - pattern: requests.session(...).$FN(...)
-              - pattern: requests.sessions.Session(...).$FN(...)
-              - pattern: httpx.$FN(...)
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(get|post|put|patch|delete|head|options|request|send|stream|Client|AsyncClient)$
-          - pattern: $CALL(..., verify=False, ...)
-      # A requests Session (requests.Session, the lowercase requests.session factory, or
-      # requests.sessions.Session): assigned earlier, a with block, or a typed parameter; its
-      # request methods with verify=False, or its `verify` attribute set to False.
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $S = requests.Session(...)
-                  ...
-              - pattern-inside: |
-                  $S = requests.session(...)
-                  ...
-              - pattern-inside: |
-                  $S = requests.sessions.Session(...)
-                  ...
-              - pattern-inside: |
-                  with requests.Session(...) as $S:
+    # Performance. OpenGrep skips a file that cannot match through the rule's prefilter, which it
+    # builds by multiplying the conditions of the branches below; for this rule that came to tens
+    # of megabytes, checked against every file (20 to 110 s on a 124 kB module). So the first
+    # branch has no word: OpenGrep stops building the branches' prefilter there (it must stay
+    # first), and the rule's prefilter is the import regex alone: a module that imports none of
+    # these libraries is skipped. The regex matches the whole file, so it holds wherever a branch
+    # matches. After a change, the prefilter (opengrep-core -prefilter_of_rules) must stay that
+    # one regex, and a large module that imports the libraries must scan in about a second with
+    # --timeout 0.
+    patterns:
+      - pattern-regex: (?sm)\A(?=.*?^[ \t]*(?:import|from)[ \t][^\n]*?\b(?:requests|httpx|aiohttp|ssl|urllib3)\b).*\z
+      - pattern-either:
+          # No word, and no code writes it (`x is not x is not x`): see Performance above.
+          - pattern: $NOWORD is not $NOWORD is not $NOWORD
+          # requests and httpx: the module functions, httpx's clients, and an inline Session.
+          - patterns:
+              - pattern-either:
+                  - pattern: requests.$FN(...)
+                  - pattern: requests.Session(...).$FN(...)
+                  - pattern: requests.session(...).$FN(...)
+                  - pattern: requests.sessions.Session(...).$FN(...)
+                  - pattern: httpx.$FN(...)
+              - metavariable-regex:
+                  metavariable: $FN
+                  regex: ^(get|post|put|patch|delete|head|options|request|send|stream|Client|AsyncClient)$
+              - pattern: $CALL(..., verify=False, ...)
+          # A requests Session (requests.Session, the lowercase requests.session factory, or
+          # requests.sessions.Session): assigned earlier, a with block, or a typed parameter; its
+          # request methods with verify=False, or its `verify` attribute set to False.
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      $S = requests.Session(...)
                       ...
-              - pattern-inside: |
-                  with requests.session(...) as $S:
+                  - pattern-inside: |
+                      $S = requests.session(...)
                       ...
-              - pattern-inside: |
-                  with requests.sessions.Session(...) as $S:
+                  - pattern-inside: |
+                      $S = requests.sessions.Session(...)
                       ...
-              - pattern-inside: |
-                  def $F(..., $S: requests.Session, ...):
+                  - pattern-inside: |
+                      with requests.Session(...) as $S:
+                          ...
+                  - pattern-inside: |
+                      with requests.session(...) as $S:
+                          ...
+                  - pattern-inside: |
+                      with requests.sessions.Session(...) as $S:
+                          ...
+                  - pattern-inside: |
+                      def $F(..., $S: requests.Session, ...):
+                          ...
+              - pattern-either:
+                  - patterns:
+                      - pattern: $S.$M(..., verify=False, ...)
+                      - metavariable-regex:
+                          metavariable: $M
+                          regex: ^(get|post|put|patch|delete|head|options|request|send)$
+                  - pattern: $S.verify = False
+          # A Session kept in an attribute of self by __init__, used in the other methods.
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      class $C(...):
+                          ...
+                          def __init__(self, ...):
+                              ...
+                              self.$A = requests.Session(...)
+                          ...
+                  - pattern-inside: |
+                      class $C(...):
+                          ...
+                          def __init__(self, ...):
+                              ...
+                              self.$A = requests.session(...)
+                          ...
+                  - pattern-inside: |
+                      class $C(...):
+                          ...
+                          def __init__(self, ...):
+                              ...
+                              self.$A = requests.sessions.Session(...)
+                          ...
+              - pattern-either:
+                  - patterns:
+                      - pattern: self.$A.$M(..., verify=False, ...)
+                      - metavariable-regex:
+                          metavariable: $M
+                          regex: ^(get|post|put|patch|delete|head|options|request|send)$
+                  - pattern: self.$A.verify = False
+          # aiohttp: ssl=False ("skip SSL certificate validation") on aiohttp.request(), a
+          # TCPConnector, or a ClientSession's request methods and ws_connect; verify_ssl=False, its
+          # deprecated spelling, on a TCPConnector and the session methods.
+          - pattern: aiohttp.request(..., ssl=False, ...)
+          - pattern: aiohttp.TCPConnector(..., ssl=False, ...)
+          - pattern: aiohttp.TCPConnector(..., verify_ssl=False, ...)
+          - pattern: aiohttp.connector.TCPConnector(..., ssl=False, ...)
+          - pattern: aiohttp.connector.TCPConnector(..., verify_ssl=False, ...)
+          # A ClientSession assigned earlier, opened by `async with`, or a typed parameter.
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      $S = aiohttp.ClientSession(...)
                       ...
-          - pattern-either:
-              - patterns:
-                  - pattern: $S.$M(..., verify=False, ...)
-                  - metavariable-regex:
-                      metavariable: $M
-                      regex: ^(get|post|put|patch|delete|head|options|request|send)$
-              - pattern: $S.verify = False
-      # A Session kept in an attribute of self by __init__, used in the other methods.
-      - patterns:
-          - pattern-either:
+                  - pattern-inside: |
+                      async with aiohttp.ClientSession(...) as $S:
+                          ...
+                  - pattern-inside: |
+                      def $F(..., $S: aiohttp.ClientSession, ...):
+                          ...
+              - pattern-either:
+                  - pattern: $S.$M(..., ssl=False, ...)
+                  - pattern: $S.$M(..., verify_ssl=False, ...)
+              - metavariable-regex:
+                  metavariable: $M
+                  regex: ^(get|post|put|patch|delete|head|options|request|ws_connect)$
+          # A ClientSession kept in an attribute of self by __init__.
+          - patterns:
               - pattern-inside: |
                   class $C(...):
                       ...
                       def __init__(self, ...):
                           ...
-                          self.$A = requests.Session(...)
+                          self.$A = aiohttp.ClientSession(...)
                       ...
-              - pattern-inside: |
-                  class $C(...):
-                      ...
-                      def __init__(self, ...):
+              - pattern-either:
+                  - pattern: self.$A.$M(..., ssl=False, ...)
+                  - pattern: self.$A.$M(..., verify_ssl=False, ...)
+              - metavariable-regex:
+                  metavariable: $M
+                  regex: ^(get|post|put|patch|delete|head|options|request|ws_connect)$
+          # ssl: the unverified context (PEP 476) and its old name.
+          - pattern: ssl._create_unverified_context
+          - pattern: ssl._create_stdlib_context
+          # ssl.wrap_socket() (deprecated since Python 3.7): its cert_reqs defaults to CERT_NONE, so
+          # the client socket it makes accepts any certificate unless cert_reqs (keyword, or the
+          # fifth argument) asks for one. A socket wrapped with a server_side argument other than
+          # False is left alone: CERT_NONE on a server only means "no client certificate".
+          - patterns:
+              - pattern-either:
+                  - patterns:
+                      - pattern: ssl.wrap_socket(...)
+                      - pattern-not: ssl.wrap_socket(..., cert_reqs=$REQS, ...)
+                      - pattern-not: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, $REQS, ...)
+                  - pattern: ssl.wrap_socket(..., cert_reqs=ssl.CERT_NONE, ...)
+                  - pattern: ssl.wrap_socket(..., cert_reqs=ssl.VerifyMode.CERT_NONE, ...)
+                  - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, ssl.CERT_NONE, ...)
+                  - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, ssl.VerifyMode.CERT_NONE, ...)
+                  # CERT_REQUIRED or CERT_OPTIONAL: the chain is checked, the host name never is,
+                  # unless the function matches it itself afterwards.
+                  - patterns:
+                      - pattern-either:
+                          - pattern: ssl.wrap_socket(..., cert_reqs=ssl.CERT_REQUIRED, ...)
+                          - pattern: ssl.wrap_socket(..., cert_reqs=ssl.CERT_OPTIONAL, ...)
+                          - pattern: ssl.wrap_socket(..., cert_reqs=ssl.VerifyMode.CERT_REQUIRED, ...)
+                          - pattern: ssl.wrap_socket(..., cert_reqs=ssl.VerifyMode.CERT_OPTIONAL, ...)
+                          - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, ssl.CERT_REQUIRED, ...)
+                          - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, ssl.CERT_OPTIONAL, ...)
+                          - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, ssl.VerifyMode.CERT_REQUIRED, ...)
+                          - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, ssl.VerifyMode.CERT_OPTIONAL, ...)
+                      - pattern-not-inside: |
+                          $TLS = ssl.wrap_socket(...)
                           ...
-                          self.$A = requests.session(...)
+                          ssl.match_hostname(...)
+              - pattern-either:
+                  - patterns:
+                      - pattern: ssl.wrap_socket(...)
+                      - pattern-not: ssl.wrap_socket(..., server_side=$SIDE, ...)
+                      - pattern-not: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SIDE, ...)
+                  - pattern: ssl.wrap_socket(..., server_side=False, ...)
+                  - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, False, ...)
+          # ssl: hostname checking off and CERT_NONE on the same context (either order), unless the
+          # context is made for a server, where CERT_NONE only means "no client certificate".
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      $CTX.check_hostname = False
                       ...
-              - pattern-inside: |
-                  class $C(...):
+                  - pattern-inside: |
+                      $CTX.verify_mode = $ANY
                       ...
-                      def __init__(self, ...):
-                          ...
-                          self.$A = requests.sessions.Session(...)
-                      ...
-          - pattern-either:
-              - patterns:
-                  - pattern: self.$A.$M(..., verify=False, ...)
-                  - metavariable-regex:
-                      metavariable: $M
-                      regex: ^(get|post|put|patch|delete|head|options|request|send)$
-              - pattern: self.$A.verify = False
-      # aiohttp: ssl=False ("skip SSL certificate validation") on aiohttp.request(), a
-      # TCPConnector, or a ClientSession's request methods and ws_connect; verify_ssl=False, its
-      # deprecated spelling, on a TCPConnector and the session methods.
-      - pattern: aiohttp.request(..., ssl=False, ...)
-      - pattern: aiohttp.TCPConnector(..., ssl=False, ...)
-      - pattern: aiohttp.TCPConnector(..., verify_ssl=False, ...)
-      - pattern: aiohttp.connector.TCPConnector(..., ssl=False, ...)
-      - pattern: aiohttp.connector.TCPConnector(..., verify_ssl=False, ...)
-      # A ClientSession assigned earlier, opened by `async with`, or a typed parameter.
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $S = aiohttp.ClientSession(...)
+                      $CTX.check_hostname = False
+              - pattern-either:
+                  - pattern: $CTX.verify_mode = ssl.CERT_NONE
+                  - pattern: $CTX.verify_mode = ssl.VerifyMode.CERT_NONE
+              - pattern-not-inside: |
+                  $CTX = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
                   ...
-              - pattern-inside: |
-                  async with aiohttp.ClientSession(...) as $S:
-                      ...
-              - pattern-inside: |
-                  def $F(..., $S: aiohttp.ClientSession, ...):
-                      ...
-          - pattern-either:
-              - pattern: $S.$M(..., ssl=False, ...)
-              - pattern: $S.$M(..., verify_ssl=False, ...)
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^(get|post|put|patch|delete|head|options|request|ws_connect)$
-      # A ClientSession kept in an attribute of self by __init__.
-      - patterns:
-          - pattern-inside: |
-              class $C(...):
+              - pattern-not-inside: |
+                  $CTX = ssl.SSLContext(protocol=ssl.PROTOCOL_TLS_SERVER)
                   ...
-                  def __init__(self, ...):
-                      ...
-                      self.$A = aiohttp.ClientSession(...)
+              - pattern-not-inside: |
+                  $CTX = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH, ...)
                   ...
-          - pattern-either:
-              - pattern: self.$A.$M(..., ssl=False, ...)
-              - pattern: self.$A.$M(..., verify_ssl=False, ...)
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^(get|post|put|patch|delete|head|options|request|ws_connect)$
-      # ssl: the unverified context (PEP 476) and its old name.
-      - pattern: ssl._create_unverified_context
-      - pattern: ssl._create_stdlib_context
-      # ssl.wrap_socket() (deprecated since Python 3.7): its cert_reqs defaults to CERT_NONE, so
-      # the client socket it makes accepts any certificate unless cert_reqs (keyword, or the
-      # fifth argument) asks for one. A socket wrapped with a server_side argument other than
-      # False is left alone: CERT_NONE on a server only means "no client certificate".
-      - patterns:
-          - pattern-either:
-              - patterns:
-                  - pattern: ssl.wrap_socket(...)
-                  - pattern-not: ssl.wrap_socket(..., cert_reqs=$REQS, ...)
-                  - pattern-not: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, $REQS, ...)
-              - pattern: ssl.wrap_socket(..., cert_reqs=ssl.CERT_NONE, ...)
-              - pattern: ssl.wrap_socket(..., cert_reqs=ssl.VerifyMode.CERT_NONE, ...)
-              - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, ssl.CERT_NONE, ...)
-              - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, ssl.VerifyMode.CERT_NONE, ...)
-              # CERT_REQUIRED or CERT_OPTIONAL: the chain is checked, the host name never is,
-              # unless the function matches it itself afterwards.
-              - patterns:
-                  - pattern-either:
-                      - pattern: ssl.wrap_socket(..., cert_reqs=ssl.CERT_REQUIRED, ...)
-                      - pattern: ssl.wrap_socket(..., cert_reqs=ssl.CERT_OPTIONAL, ...)
-                      - pattern: ssl.wrap_socket(..., cert_reqs=ssl.VerifyMode.CERT_REQUIRED, ...)
-                      - pattern: ssl.wrap_socket(..., cert_reqs=ssl.VerifyMode.CERT_OPTIONAL, ...)
-                      - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, ssl.CERT_REQUIRED, ...)
-                      - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, ssl.CERT_OPTIONAL, ...)
-                      - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, ssl.VerifyMode.CERT_REQUIRED, ...)
-                      - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, ssl.VerifyMode.CERT_OPTIONAL, ...)
-                  - pattern-not-inside: |
-                      $TLS = ssl.wrap_socket(...)
-                      ...
-                      ssl.match_hostname(...)
-          - pattern-either:
-              - patterns:
-                  - pattern: ssl.wrap_socket(...)
-                  - pattern-not: ssl.wrap_socket(..., server_side=$SIDE, ...)
-                  - pattern-not: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SIDE, ...)
-              - pattern: ssl.wrap_socket(..., server_side=False, ...)
-              - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, False, ...)
-      # ssl: hostname checking off and CERT_NONE on the same context (either order), unless the
-      # context is made for a server, where CERT_NONE only means "no client certificate".
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $CTX.check_hostname = False
+              - pattern-not-inside: |
+                  $CTX = ssl.create_default_context(..., purpose=ssl.Purpose.CLIENT_AUTH, ...)
                   ...
-              - pattern-inside: |
+              # A context the code then uses on the server side of a connection.
+              - pattern-not-inside: |
                   $CTX.verify_mode = $ANY
                   ...
+                  $CTX.wrap_socket(..., server_side=True, ...)
+              - pattern-not-inside: |
+                  $CTX.verify_mode = $ANY
+                  ...
+                  with $CTX.wrap_socket(..., server_side=True, ...) as $TLS:
+                      ...
+              - pattern-not-inside: |
+                  $CTX.verify_mode = $ANY
+                  ...
+                  $CTX.wrap_bio(..., server_side=True, ...)
+          # ssl: hostname checking off on a client context (made for servers' certificates, or with
+          # PROTOCOL_TLS_CLIENT) that keeps the chain check; a context also given CERT_NONE is
+          # reported by the branch above, on its CERT_NONE line.
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      $CTX = ssl.create_default_context(...)
+                      ...
+                  - pattern-inside: |
+                      $CTX = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT, ...)
+                      ...
+                  - pattern-inside: |
+                      $CTX = ssl.SSLContext(..., protocol=ssl.PROTOCOL_TLS_CLIENT, ...)
+                      ...
+              - pattern: $CTX.check_hostname = False
+              - pattern-not-inside: |
+                  $CTX = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH, ...)
+                  ...
+              - pattern-not-inside: |
+                  $CTX = ssl.create_default_context(..., purpose=ssl.Purpose.CLIENT_AUTH, ...)
+                  ...
+              - pattern-not-inside: |
                   $CTX.check_hostname = False
-          - pattern-either:
-              - pattern: $CTX.verify_mode = ssl.CERT_NONE
-              - pattern: $CTX.verify_mode = ssl.VerifyMode.CERT_NONE
-          - pattern-not-inside: |
-              $CTX = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-              ...
-          - pattern-not-inside: |
-              $CTX = ssl.SSLContext(protocol=ssl.PROTOCOL_TLS_SERVER)
-              ...
-          - pattern-not-inside: |
-              $CTX = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH, ...)
-              ...
-          - pattern-not-inside: |
-              $CTX = ssl.create_default_context(..., purpose=ssl.Purpose.CLIENT_AUTH, ...)
-              ...
-          # A context the code then uses on the server side of a connection.
-          - pattern-not-inside: |
-              $CTX.verify_mode = $ANY
-              ...
-              $CTX.wrap_socket(..., server_side=True, ...)
-          - pattern-not-inside: |
-              $CTX.verify_mode = $ANY
-              ...
-              with $CTX.wrap_socket(..., server_side=True, ...) as $TLS:
                   ...
-          - pattern-not-inside: |
-              $CTX.verify_mode = $ANY
-              ...
-              $CTX.wrap_bio(..., server_side=True, ...)
-      # ssl: hostname checking off on a client context (made for servers' certificates, or with
-      # PROTOCOL_TLS_CLIENT) that keeps the chain check; a context also given CERT_NONE is
-      # reported by the branch above, on its CERT_NONE line.
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $CTX = ssl.create_default_context(...)
+                  $CTX.verify_mode = ssl.CERT_NONE
+              - pattern-not-inside: |
+                  $CTX.check_hostname = False
                   ...
-              - pattern-inside: |
-                  $CTX = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT, ...)
+                  $CTX.verify_mode = ssl.VerifyMode.CERT_NONE
+              # The function matches the host name itself, or compares the certificate with a
+              # pinned one.
+              - pattern-not-inside: |
+                  $CTX.check_hostname = False
                   ...
-              - pattern-inside: |
-                  $CTX = ssl.SSLContext(..., protocol=ssl.PROTOCOL_TLS_CLIENT, ...)
+                  ssl.match_hostname(...)
+              - pattern-not-inside: |
+                  $CTX.check_hostname = False
                   ...
-          - pattern: $CTX.check_hostname = False
-          - pattern-not-inside: |
-              $CTX = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH, ...)
-              ...
-          - pattern-not-inside: |
-              $CTX = ssl.create_default_context(..., purpose=ssl.Purpose.CLIENT_AUTH, ...)
-              ...
-          - pattern-not-inside: |
-              $CTX.check_hostname = False
-              ...
-              $CTX.verify_mode = ssl.CERT_NONE
-          - pattern-not-inside: |
-              $CTX.check_hostname = False
-              ...
-              $CTX.verify_mode = ssl.VerifyMode.CERT_NONE
-          # The function matches the host name itself, or compares the certificate with a
-          # pinned one.
-          - pattern-not-inside: |
-              $CTX.check_hostname = False
-              ...
-              ssl.match_hostname(...)
-          - pattern-not-inside: |
-              $CTX.check_hostname = False
-              ...
-              $PEER.getpeercert(binary_form=True)
-          - pattern-not-inside: |
-              $CTX.check_hostname = False
-              ...
-              $PEER.getpeercert(True)
-      # urllib3: assert_hostname=False turns the host name check off, unless assert_fingerprint
-      # pins the certificate (urllib3 uses it before assert_hostname).
-      - patterns:
-          - pattern-either:
-              - pattern: urllib3.PoolManager(..., assert_hostname=False, ...)
-              - pattern: urllib3.poolmanager.PoolManager(..., assert_hostname=False, ...)
-              - pattern: urllib3.ProxyManager(..., assert_hostname=False, ...)
-              - pattern: urllib3.poolmanager.ProxyManager(..., assert_hostname=False, ...)
-              - pattern: urllib3.HTTPSConnectionPool(..., assert_hostname=False, ...)
-              - pattern: urllib3.connectionpool.HTTPSConnectionPool(..., assert_hostname=False, ...)
-              - pattern: urllib3.connection_from_url(..., assert_hostname=False, ...)
-              - pattern: urllib3.connectionpool.connection_from_url(..., assert_hostname=False, ...)
-          - pattern-not: $CALL(..., assert_fingerprint=$FP, ...)
-      # urllib3: cert_reqs CERT_NONE, by name, abbreviation or ssl constant.
-      - patterns:
-          - pattern-either:
-              - pattern: urllib3.PoolManager(...)
-              - pattern: urllib3.poolmanager.PoolManager(...)
-              - pattern: urllib3.ProxyManager(...)
-              - pattern: urllib3.poolmanager.ProxyManager(...)
-              - pattern: urllib3.HTTPSConnectionPool(...)
-              - pattern: urllib3.connectionpool.HTTPSConnectionPool(...)
-              - pattern: urllib3.connection_from_url(...)
-              - pattern: urllib3.connectionpool.connection_from_url(...)
-              - pattern: urllib3.util.create_urllib3_context(...)
-              - pattern: urllib3.util.ssl_.create_urllib3_context(...)
-              - pattern: urllib3.util.ssl_wrap_socket(...)
-              - pattern: urllib3.util.ssl_.ssl_wrap_socket(...)
-          - pattern-either:
-              - pattern: $CALL(..., cert_reqs="CERT_NONE", ...)
-              - pattern: $CALL(..., cert_reqs="NONE", ...)
-              - pattern: $CALL(..., cert_reqs=ssl.CERT_NONE, ...)
-              - pattern: $CALL(..., cert_reqs=ssl.VerifyMode.CERT_NONE, ...)
+                  $PEER.getpeercert(binary_form=True)
+              - pattern-not-inside: |
+                  $CTX.check_hostname = False
+                  ...
+                  $PEER.getpeercert(True)
+          # urllib3: assert_hostname=False turns the host name check off, unless assert_fingerprint
+          # pins the certificate (urllib3 uses it before assert_hostname).
+          - patterns:
+              - pattern-either:
+                  - pattern: urllib3.PoolManager(..., assert_hostname=False, ...)
+                  - pattern: urllib3.poolmanager.PoolManager(..., assert_hostname=False, ...)
+                  - pattern: urllib3.ProxyManager(..., assert_hostname=False, ...)
+                  - pattern: urllib3.poolmanager.ProxyManager(..., assert_hostname=False, ...)
+                  - pattern: urllib3.HTTPSConnectionPool(..., assert_hostname=False, ...)
+                  - pattern: urllib3.connectionpool.HTTPSConnectionPool(..., assert_hostname=False, ...)
+                  - pattern: urllib3.connection_from_url(..., assert_hostname=False, ...)
+                  - pattern: urllib3.connectionpool.connection_from_url(..., assert_hostname=False, ...)
+              - pattern-not: $CALL(..., assert_fingerprint=$FP, ...)
+          # urllib3: cert_reqs CERT_NONE, by name, abbreviation or ssl constant.
+          - patterns:
+              - pattern-either:
+                  - pattern: urllib3.PoolManager(...)
+                  - pattern: urllib3.poolmanager.PoolManager(...)
+                  - pattern: urllib3.ProxyManager(...)
+                  - pattern: urllib3.poolmanager.ProxyManager(...)
+                  - pattern: urllib3.HTTPSConnectionPool(...)
+                  - pattern: urllib3.connectionpool.HTTPSConnectionPool(...)
+                  - pattern: urllib3.connection_from_url(...)
+                  - pattern: urllib3.connectionpool.connection_from_url(...)
+                  - pattern: urllib3.util.create_urllib3_context(...)
+                  - pattern: urllib3.util.ssl_.create_urllib3_context(...)
+                  - pattern: urllib3.util.ssl_wrap_socket(...)
+                  - pattern: urllib3.util.ssl_.ssl_wrap_socket(...)
+              - pattern-either:
+                  - pattern: $CALL(..., cert_reqs="CERT_NONE", ...)
+                  - pattern: $CALL(..., cert_reqs="NONE", ...)
+                  - pattern: $CALL(..., cert_reqs=ssl.CERT_NONE, ...)
+                  - pattern: $CALL(..., cert_reqs=ssl.VerifyMode.CERT_NONE, ...)

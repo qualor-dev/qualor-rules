@@ -123,6 +123,9 @@ def fetch_status():
   (`ssl.wrap_socket(sock, **opts)`) are reported as if `cert_reqs` were missing.
 - An insecure context handed to a server API (`asyncio.start_server(..., ssl=ctx)`) is still
   reported.
+- Only modules that import one of the libraries on an `import` or `from` line are checked; a
+  library named only on a later line of a parenthesised import (`from .compat import (` with
+  `requests,` on the next line), or loaded through `importlib`, is missed.
 <!-- end: known-limits -->
 
 ## References
