@@ -155,13 +155,21 @@ rules:
     # libraries as a word (every pattern below needs that name in the file, imported or
     # written). The no-word branch must stay (anywhere in the list): without it the 31 MB
     # prefilter comes back. The regex matches the whole file, so it holds wherever a branch
-    # matches. OpenGrep still multiplies the branches once per scan worker (about 1 s for the
-    # first file), and gives up the whole prefilter, regex included, when one branch alone grows
-    # too large (it did for the boto3 session forms below with one shared metavariable-regex).
-    # After a change, `opengrep-core -prefilter_of_rules` must print that one regex (in the
-    # qualor/scanner image the binary is /home/node/.cache/opengrep/v1.30.0/semgrep/bin/
-    # opengrep-core after one `opengrep scan`), and a large module that names the libraries
-    # must scan in about a second with --timeout 0. Check again after an OpenGrep upgrade.
+    # matches. OpenGrep still multiplies the branches for every file it scans, before it drops
+    # them, and gives up the whole prefilter, regex included, when one branch alone grows too
+    # large (it did for the boto3 session forms below with one shared metavariable-regex). That
+    # product is the branches' positive conditions (pattern, pattern-inside, metavariable-regex;
+    # pattern-not costs nothing) multiplied together: 3 x 3 x 3 x 3 x 3 x 2 x 2 x 2 x 2 x 2 took
+    # 0.6 s per file in 2026.10.2. So the branches that need a context (a session, a context)
+    # write their method names out instead of a metavariable-regex, and the session forms of
+    # requests, aiohttp and boto3 share one branch, those kept on self another (3 x 2 x 2 x 2 x 2
+    # x 2 x 2, 0.1 s). A new branch should have one positive condition (a pattern-either of
+    # plain patterns), or join a branch of the same shape.
+    # After a change, `opengrep-core -prefilter_of_rules` must print that one regex, in about
+    # 0.1 s (in the qualor/scanner image the binary is /home/node/.cache/opengrep/v1.30.0/
+    # semgrep/bin/opengrep-core after one `opengrep scan`), and a large module that names the
+    # libraries must scan in about a second with --timeout 0. Check again after an OpenGrep
+    # upgrade.
     patterns:
       - pattern-regex: (?s)\A(?=.*?\b(?:requests|httpx|aiohttp|ssl|urllib3|boto3|botocore|elasticsearch|opensearchpy|pymongo|hvac)\b).*\z
       - pattern-either:
@@ -180,9 +188,13 @@ rules:
                   metavariable: $FN
                   regex: ^(get|post|put|patch|delete|head|options|request|send|stream|Client|AsyncClient)$
               - pattern: $CALL(..., verify=False, ...)
-          # A requests Session (requests.Session, the lowercase requests.session factory, or
-          # requests.sessions.Session): assigned earlier, a with block, or a typed parameter; its
-          # request methods with verify=False, or its `verify` attribute set to False.
+          # Sessions assigned earlier in the function or module, opened by a with (`async with`)
+          # block, or a typed parameter: a requests Session (requests.Session, the lowercase
+          # requests.session factory, or requests.sessions.Session), an aiohttp ClientSession, and
+          # a boto3 or botocore session. One branch for the three libraries, with the method names
+          # written out (see Performance above). A session of one library meets another's sink
+          # only in code that cannot run (the other sessions have no such method, or reject its
+          # keyword with a TypeError) or sets a `verify` attribute nothing reads.
           - patterns:
               - pattern-either:
                   - pattern-inside: |
@@ -206,14 +218,71 @@ rules:
                   - pattern-inside: |
                       def $F(..., $S: requests.Session, ...):
                           ...
+                  - pattern-inside: |
+                      $S = aiohttp.ClientSession(...)
+                      ...
+                  - pattern-inside: |
+                      async with aiohttp.ClientSession(...) as $S:
+                          ...
+                  - pattern-inside: |
+                      def $F(..., $S: aiohttp.ClientSession, ...):
+                          ...
+                  - pattern-inside: |
+                      $S = boto3.Session(...)
+                      ...
+                  - pattern-inside: |
+                      $S = boto3.session.Session(...)
+                      ...
+                  - pattern-inside: |
+                      $S = botocore.session.get_session(...)
+                      ...
+                  - pattern-inside: |
+                      $S = botocore.session.Session(...)
+                      ...
               - pattern-either:
-                  - patterns:
-                      - pattern: $S.$M(..., verify=False, ...)
-                      - metavariable-regex:
-                          metavariable: $M
-                          regex: ^(get|post|put|patch|delete|head|options|request|send)$
+                  # requests: the request methods with verify=False, or the `verify` attribute
+                  # set to False.
+                  - pattern: $S.get(..., verify=False, ...)
+                  - pattern: $S.post(..., verify=False, ...)
+                  - pattern: $S.put(..., verify=False, ...)
+                  - pattern: $S.patch(..., verify=False, ...)
+                  - pattern: $S.delete(..., verify=False, ...)
+                  - pattern: $S.head(..., verify=False, ...)
+                  - pattern: $S.options(..., verify=False, ...)
+                  - pattern: $S.request(..., verify=False, ...)
+                  - pattern: $S.send(..., verify=False, ...)
                   - pattern: $S.verify = False
-          # A Session kept in an attribute of self by __init__, used in the other methods.
+                  # aiohttp: ssl=False or verify_ssl=False (see the aiohttp branches below) on the
+                  # request methods and ws_connect.
+                  - pattern: $S.get(..., ssl=False, ...)
+                  - pattern: $S.get(..., verify_ssl=False, ...)
+                  - pattern: $S.post(..., ssl=False, ...)
+                  - pattern: $S.post(..., verify_ssl=False, ...)
+                  - pattern: $S.put(..., ssl=False, ...)
+                  - pattern: $S.put(..., verify_ssl=False, ...)
+                  - pattern: $S.patch(..., ssl=False, ...)
+                  - pattern: $S.patch(..., verify_ssl=False, ...)
+                  - pattern: $S.delete(..., ssl=False, ...)
+                  - pattern: $S.delete(..., verify_ssl=False, ...)
+                  - pattern: $S.head(..., ssl=False, ...)
+                  - pattern: $S.head(..., verify_ssl=False, ...)
+                  - pattern: $S.options(..., ssl=False, ...)
+                  - pattern: $S.options(..., verify_ssl=False, ...)
+                  - pattern: $S.request(..., ssl=False, ...)
+                  - pattern: $S.request(..., verify_ssl=False, ...)
+                  - pattern: $S.ws_connect(..., ssl=False, ...)
+                  - pattern: $S.ws_connect(..., verify_ssl=False, ...)
+                  # boto3 and botocore: a client made with verify=False (see the boto3 branches
+                  # below); plain HTTP has no certificate to verify.
+                  - patterns:
+                      - pattern-either:
+                          - pattern: $S.client(..., verify=False, ...)
+                          - pattern: $S.resource(..., verify=False, ...)
+                          - pattern: $S.create_client(..., verify=False, ...)
+                      - pattern-not: $CALL(..., use_ssl=False, ...)
+                      - pattern-not: $CALL(..., endpoint_url="=~/^http:\/\//", ...)
+          # A requests Session or an aiohttp ClientSession kept in an attribute of self by
+          # __init__, used in the other methods (one branch for both, as above).
           - patterns:
               - pattern-either:
                   - pattern-inside: |
@@ -237,13 +306,42 @@ rules:
                               ...
                               self.$A = requests.sessions.Session(...)
                           ...
+                  - pattern-inside: |
+                      class $C(...):
+                          ...
+                          def __init__(self, ...):
+                              ...
+                              self.$A = aiohttp.ClientSession(...)
+                          ...
               - pattern-either:
-                  - patterns:
-                      - pattern: self.$A.$M(..., verify=False, ...)
-                      - metavariable-regex:
-                          metavariable: $M
-                          regex: ^(get|post|put|patch|delete|head|options|request|send)$
+                  - pattern: self.$A.get(..., verify=False, ...)
+                  - pattern: self.$A.post(..., verify=False, ...)
+                  - pattern: self.$A.put(..., verify=False, ...)
+                  - pattern: self.$A.patch(..., verify=False, ...)
+                  - pattern: self.$A.delete(..., verify=False, ...)
+                  - pattern: self.$A.head(..., verify=False, ...)
+                  - pattern: self.$A.options(..., verify=False, ...)
+                  - pattern: self.$A.request(..., verify=False, ...)
+                  - pattern: self.$A.send(..., verify=False, ...)
                   - pattern: self.$A.verify = False
+                  - pattern: self.$A.get(..., ssl=False, ...)
+                  - pattern: self.$A.get(..., verify_ssl=False, ...)
+                  - pattern: self.$A.post(..., ssl=False, ...)
+                  - pattern: self.$A.post(..., verify_ssl=False, ...)
+                  - pattern: self.$A.put(..., ssl=False, ...)
+                  - pattern: self.$A.put(..., verify_ssl=False, ...)
+                  - pattern: self.$A.patch(..., ssl=False, ...)
+                  - pattern: self.$A.patch(..., verify_ssl=False, ...)
+                  - pattern: self.$A.delete(..., ssl=False, ...)
+                  - pattern: self.$A.delete(..., verify_ssl=False, ...)
+                  - pattern: self.$A.head(..., ssl=False, ...)
+                  - pattern: self.$A.head(..., verify_ssl=False, ...)
+                  - pattern: self.$A.options(..., ssl=False, ...)
+                  - pattern: self.$A.options(..., verify_ssl=False, ...)
+                  - pattern: self.$A.request(..., ssl=False, ...)
+                  - pattern: self.$A.request(..., verify_ssl=False, ...)
+                  - pattern: self.$A.ws_connect(..., ssl=False, ...)
+                  - pattern: self.$A.ws_connect(..., verify_ssl=False, ...)
           # aiohttp: ssl=False ("skip SSL certificate validation") on aiohttp.request(), a
           # TCPConnector, or a ClientSession's request methods and ws_connect; verify_ssl=False, its
           # deprecated spelling, on a TCPConnector and the session methods.
@@ -252,39 +350,8 @@ rules:
           - pattern: aiohttp.TCPConnector(..., verify_ssl=False, ...)
           - pattern: aiohttp.connector.TCPConnector(..., ssl=False, ...)
           - pattern: aiohttp.connector.TCPConnector(..., verify_ssl=False, ...)
-          # A ClientSession assigned earlier, opened by `async with`, or a typed parameter.
-          - patterns:
-              - pattern-either:
-                  - pattern-inside: |
-                      $S = aiohttp.ClientSession(...)
-                      ...
-                  - pattern-inside: |
-                      async with aiohttp.ClientSession(...) as $S:
-                          ...
-                  - pattern-inside: |
-                      def $F(..., $S: aiohttp.ClientSession, ...):
-                          ...
-              - pattern-either:
-                  - pattern: $S.$M(..., ssl=False, ...)
-                  - pattern: $S.$M(..., verify_ssl=False, ...)
-              - metavariable-regex:
-                  metavariable: $M
-                  regex: ^(get|post|put|patch|delete|head|options|request|ws_connect)$
-          # A ClientSession kept in an attribute of self by __init__.
-          - patterns:
-              - pattern-inside: |
-                  class $C(...):
-                      ...
-                      def __init__(self, ...):
-                          ...
-                          self.$A = aiohttp.ClientSession(...)
-                      ...
-              - pattern-either:
-                  - pattern: self.$A.$M(..., ssl=False, ...)
-                  - pattern: self.$A.$M(..., verify_ssl=False, ...)
-              - metavariable-regex:
-                  metavariable: $M
-                  regex: ^(get|post|put|patch|delete|head|options|request|ws_connect)$
+          # A ClientSession assigned earlier, opened by `async with`, a typed parameter, or kept in
+          # an attribute of self by __init__: in the session branches above.
           # SDKs that document a switch that turns certificate validation off, bound to their
           # modules. Plain HTTP (use_ssl=False, an http:// endpoint written in the call) has no
           # certificate to verify and is left alone.
@@ -296,9 +363,9 @@ rules:
                   - pattern: boto3.resource(..., verify=False, ...)
               - pattern-not: $CALL(..., use_ssl=False, ...)
               - pattern-not: $CALL(..., endpoint_url="=~/^http:\/\//", ...)
-          # A session made in place, or assigned earlier in the function or module. (Written as
-          # explicit method names: a metavariable-regex shared with the assigned form made
-          # OpenGrep give up the rule's prefilter.)
+          # A session made in place; one assigned earlier in the function or module is in the
+          # session branch above. (Written as explicit method names: a metavariable-regex shared
+          # with the assigned form made OpenGrep give up the rule's prefilter.)
           - patterns:
               - pattern-either:
                   - pattern: boto3.Session(...).client(..., verify=False, ...)
@@ -307,26 +374,6 @@ rules:
                   - pattern: boto3.session.Session(...).resource(..., verify=False, ...)
                   - pattern: botocore.session.get_session(...).create_client(..., verify=False, ...)
                   - pattern: botocore.session.Session(...).create_client(..., verify=False, ...)
-              - pattern-not: $CALL(..., use_ssl=False, ...)
-              - pattern-not: $CALL(..., endpoint_url="=~/^http:\/\//", ...)
-          - patterns:
-              - pattern-either:
-                  - pattern-inside: |
-                      $S = boto3.Session(...)
-                      ...
-                  - pattern-inside: |
-                      $S = boto3.session.Session(...)
-                      ...
-                  - pattern-inside: |
-                      $S = botocore.session.get_session(...)
-                      ...
-                  - pattern-inside: |
-                      $S = botocore.session.Session(...)
-                      ...
-              - pattern-either:
-                  - pattern: $S.client(..., verify=False, ...)
-                  - pattern: $S.resource(..., verify=False, ...)
-                  - pattern: $S.create_client(..., verify=False, ...)
               - pattern-not: $CALL(..., use_ssl=False, ...)
               - pattern-not: $CALL(..., endpoint_url="=~/^http:\/\//", ...)
           # Elasticsearch and OpenSearch: verify_certs=False, unless ssl_assert_fingerprint pins
