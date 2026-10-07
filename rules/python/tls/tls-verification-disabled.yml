@@ -145,28 +145,28 @@ rules:
     #   `loop.create_server(ssl=ctx)`) is still reported (no test line: recorded from review).
     # - A name reused for two contexts: an insecure client context rebound later in the function
     #   to a context wrapped with server_side=True is no longer reported (no test line).
-    # - A module is scanned only when one of its import lines names one of the libraries (see
-    #   Performance): a library named only on a later line of a parenthesised import
-    #   (`from .compat import (` with `requests,` below it), or imported through importlib, is
-    #   not seen (no test line: a fixture imports them plainly).
     paths:
       exclude: ['test_*.py', '*_test.py', 'conftest.py', 'tests.py', 'tests/', 'test/']
     # Performance. OpenGrep skips a file that cannot match through the rule's prefilter, which it
-    # builds by multiplying the conditions of the branches below; for this rule that came to tens
-    # of megabytes, checked against every file (20 to 110 s on a 124 kB module). So the first
-    # branch has no word: OpenGrep stops building the branches' prefilter there (it must stay
-    # first), and the rule's prefilter is the import regex alone: a module that imports none of
-    # these libraries is skipped. The regex matches the whole file, so it holds wherever a branch
+    # builds by multiplying the conditions of the branches below; for this rule that came to
+    # 31 MB, checked against every file (20 to 110 s on a 124 kB module). So one branch has no
+    # word (`$NOWORD is not ...`): OpenGrep then gives the branches no prefilter, and the rule's
+    # prefilter is the regex above them alone, which asks that the file name one of the
+    # libraries as a word (every pattern below needs that name in the file, imported or
+    # written). The no-word branch must stay (anywhere in the list): without it the 31 MB
+    # prefilter comes back. The regex matches the whole file, so it holds wherever a branch
     # matches. OpenGrep still multiplies the branches once per scan worker (about 1 s for the
     # first file), and gives up the whole prefilter, regex included, when one branch alone grows
     # too large (it did for the boto3 session forms below with one shared metavariable-regex).
-    # After a change, the prefilter (opengrep-core -prefilter_of_rules) must stay that
-    # one regex, and a large module that imports the libraries must scan in about a second with
-    # --timeout 0.
+    # After a change, `opengrep-core -prefilter_of_rules` must print that one regex (in the
+    # qualor/scanner image the binary is /home/node/.cache/opengrep/v1.30.0/semgrep/bin/
+    # opengrep-core after one `opengrep scan`), and a large module that names the libraries
+    # must scan in about a second with --timeout 0. Check again after an OpenGrep upgrade.
     patterns:
-      - pattern-regex: (?sm)\A(?=.*?^[ \t]*(?:import|from)[ \t][^\n]*?\b(?:requests|httpx|aiohttp|ssl|urllib3|boto3|botocore|elasticsearch|opensearchpy|pymongo|hvac)\b).*\z
+      - pattern-regex: (?s)\A(?=.*?\b(?:requests|httpx|aiohttp|ssl|urllib3|boto3|botocore|elasticsearch|opensearchpy|pymongo|hvac)\b).*\z
       - pattern-either:
-          # No word, and no code writes it (`x is not x is not x`): see Performance above.
+          # No word, and no code writes it (`x is not x is not x`); it must stay: see
+          # Performance above.
           - pattern: $NOWORD is not $NOWORD is not $NOWORD
           # requests and httpx: the module functions, httpx's clients, and an inline Session.
           - patterns:
