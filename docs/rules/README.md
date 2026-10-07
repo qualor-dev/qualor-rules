@@ -50,6 +50,7 @@ The key `qualor:<lang>/<name>` is how Qualor names a rule; the rule itself is
 | [`qualor:python/xpath-injection`](python/xpath-injection.md) | XPath expression built from HTTP request data (Python) | Issue | High | [CWE-643](https://cwe.mitre.org/data/definitions/643.html) |
 | [`qualor:python/xss`](python/xss.md) | HTML response built from HTTP request data (Python) | Issue | High | [CWE-79](https://cwe.mitre.org/data/definitions/79.html) |
 | [`qualor:python/xxe`](python/xxe.md) | XML parser configured to resolve external entities (Python) | Issue | High | [CWE-611](https://cwe.mitre.org/data/definitions/611.html), [CWE-776](https://cwe.mitre.org/data/definitions/776.html) |
+| [`qualor:python/xxe-dtd-options`](python/xxe-dtd-options.md) | lxml parser loading DTDs or without size limits (Python) | Security hotspot | Medium | [CWE-611](https://cwe.mitre.org/data/definitions/611.html), [CWE-776](https://cwe.mitre.org/data/definitions/776.html) |
 
 ## Java
 

@@ -75,7 +75,8 @@ def load_invoice(path):
 - Options passed as a dict (`XMLParser(**opts)`) are not seen.
 - `load_dtd=True`, `dtd_validation=True` and `attribute_defaults=True` load the external DTD a
   document names. The lxml FAQ advises against that for untrusted input, but validating trusted
-  documents is their purpose, so they are not reported.
+  documents is their purpose, so they are not reported here; the hotspot rule
+  [python.xxe-dtd-options](xxe-dtd-options.md) marks them, and `huge_tree=True`, for review.
 <!-- end: known-limits -->
 
 ## References

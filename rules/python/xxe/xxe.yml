@@ -44,14 +44,14 @@ rules:
     # no_network=False is reported unless the same call turns entities off (resolve_entities=False)
     # and loads no DTD: then the parser has nothing external to fetch.
     # Not in scope: huge_tree=True, which lxml describes as "disable security restrictions" (the
-    # limits that also bound entity expansion, CWE-776); the row does not name it, and it is
-    # proposed for a separate hotspot row with the DTD-loading options below.
+    # limits that also bound entity expansion, CWE-776), and the DTD-loading options below: the
+    # hotspot rule python.xxe-dtd-options marks them for review.
     # Known limits (each has a `todo` line in the test file):
     # - Options passed as a dict (`XMLParser(**opts)`) are not seen.
     # - load_dtd=True, dtd_validation=True and attribute_defaults=True load the external DTD a
     #   document names (local files while no_network stays on); the lxml FAQ advises against it
     #   for untrusted input, but validating trusted documents is the documented use, so they are
-    #   not reported.
+    #   not reported (python.xxe-dtd-options marks them for review).
     pattern-either:
       # lxml parsers (XMLTreeBuilder is an alias of ETCompatXMLParser; XHTMLParser is an XMLParser
       # for lxml.html) and the functions that take parser options.

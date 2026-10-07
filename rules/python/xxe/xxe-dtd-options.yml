@@ -1,0 +1,77 @@
+rules:
+  - id: python.xxe-dtd-options
+    languages: [python]
+    severity: WARNING
+    message: >-
+      This lxml parser loads the DTD a document names (`load_dtd=True`, `dtd_validation=True` or
+      `attribute_defaults=True`) or lifts libxml2's security limits (`huge_tree=True`). Review
+      what it parses: for trusted documents (your own files, validated against a DTD you ship)
+      this is the documented use; for untrusted input a document can make the parser read local
+      files as its DTD, or exhaust memory and time with deep trees, huge text or entity
+      expansion. Parse untrusted input with the defaults (no DTD loaded, limits on), and validate
+      it against a schema the code loads itself.
+    metadata:
+      title: lxml parser loading DTDs or without size limits (Python)
+      cwe: ['CWE-611', 'CWE-776']
+      owasp: ['A02:2025', 'A05:2021']
+      kind: hotspot
+      severity: medium
+      confidence: high
+      frameworks: [lxml]
+      sources:
+        - https://cwe.mitre.org/data/definitions/611.html
+        - https://cwe.mitre.org/data/definitions/776.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html
+        - https://top10.owasp.org/2025/A02_2025-Security_Misconfiguration
+        - https://top10.owasp.org/2021/A05_2021-Security_Misconfiguration
+        - https://lxml.de/parsing.html#parser-options
+        - https://lxml.de/FAQ.html#how-do-i-use-lxml-safely-as-a-web-service-endpoint
+        - https://lxml.de/validation.html#validation-at-parse-time
+        - https://lxml.de/apidoc/lxml.etree.html#lxml.etree.XMLParser
+        - https://lxml.de/apidoc/lxml.etree.html#lxml.etree.iterparse
+        - https://lxml.de/apidoc/lxml.etree.html#lxml.etree.XMLPullParser
+        - https://lxml.de/apidoc/lxml.objectify.html#lxml.objectify.makeparser
+        - https://lxml.de/apidoc/lxml.html.html#lxml.html.XHTMLParser
+        - https://docs.pytest.org/en/stable/explanation/goodpractices.html#conventions-for-python-test-discovery
+        - https://docs.pytest.org/en/stable/reference/fixtures.html#conftest-py-sharing-fixtures-across-multiple-files
+      since: 2026.10.2
+    # A hotspot: whether the parser sees untrusted input is not known where it is made, and DTD
+    # validation of trusted documents is lxml's documented use. A parser that python.xxe already
+    # reports (resolve_entities=True, or no_network=False unless entities are off and no DTD is
+    # loaded) is left to that rule, so that one parser gets one finding.
+    # Test code is out of scope (as for python.tls-verification-disabled): files pytest collects
+    # (test_*.py, *_test.py), conftest.py, Django's tests.py, and everything under tests/ or test/.
+    # Known limits (each has a `todo` line in the test file):
+    # - Options passed as a dict (`XMLParser(**opts)`) are not seen.
+    paths:
+      exclude: ['test_*.py', '*_test.py', 'conftest.py', 'tests.py', 'tests/', 'test/']
+    patterns:
+      # lxml parsers (XMLTreeBuilder is an alias of ETCompatXMLParser; XHTMLParser is an XMLParser
+      # for lxml.html) and the functions that take parser options. HTMLParser reads no DTD.
+      - pattern-either:
+          - pattern: lxml.etree.XMLParser(...)
+          - pattern: lxml.etree.ETCompatXMLParser(...)
+          - pattern: lxml.etree.XMLTreeBuilder(...)
+          - pattern: lxml.html.XHTMLParser(...)
+          - pattern: lxml.etree.XMLPullParser(...)
+          - pattern: lxml.etree.iterparse(...)
+          - pattern: lxml.objectify.makeparser(...)
+      - pattern-either:
+          # A DTD option or huge_tree, on a parser python.xxe does not report.
+          - patterns:
+              - pattern-either:
+                  - pattern: $FUNC(..., load_dtd=True, ...)
+                  - pattern: $FUNC(..., dtd_validation=True, ...)
+                  - pattern: $FUNC(..., attribute_defaults=True, ...)
+                  - pattern: $FUNC(..., huge_tree=True, ...)
+              - pattern-not: $FUNC(..., resolve_entities=True, ...)
+              - pattern-not: $FUNC(..., no_network=False, ...)
+          # Network on with entities off and no DTD loaded: python.xxe leaves it, the limits are
+          # still lifted.
+          - patterns:
+              - pattern: $FUNC(..., huge_tree=True, ...)
+              - pattern: $FUNC(..., no_network=False, ...)
+              - pattern: $FUNC(..., resolve_entities=False, ...)
+              - pattern-not: $FUNC(..., load_dtd=True, ...)
+              - pattern-not: $FUNC(..., dtd_validation=True, ...)
+              - pattern-not: $FUNC(..., attribute_defaults=True, ...)
