@@ -120,262 +120,302 @@ rules:
     # once with `var o={rejectUnauthorized:!0};` prepended:
     # - Without the literal, the match time must stay 0: OpenGrep 1.30 skips a file only through
     #   the rule's literal prefilter (rejectUnauthorized, NODE_TLS_REJECT_UNAUTHORIZED,
-    #   tlsAllowInvalidCertificates, tlsInsecure, the mongodb:// text), and gives
-    #   it up when the rule has more alternatives than this one or a branch yields no literal (a
-    #   string key such as process.env['...']). (Variable forms for a module required in place
-    #   were one alternative too many.) OpenGrep multiplies the conditions of the top-level
-    #   branches and gives up past 50,000 clauses; this rule is close to that, so a new branch
-    #   must be plain patterns (a pattern-either of patterns), not a patterns block with a second
-    #   condition. Check it with `opengrep-core -prefilter_of_rules` on a copy with the YAML
-    #   anchor expanded (the tool does not read anchors): it must not print "None".
+    #   tlsAllowInvalidCertificates, tlsInsecure, the mongodb:// text), and gives it up when a
+    #   branch yields no literal (a string key such as process.env['...']). OpenGrep builds that
+    #   prefilter again for every file it scans, by multiplying the positive terms of the
+    #   top-level branches (a pattern-inside, a metavariable-regex, a nested pattern-either of
+    #   patterns blocks each count); exclusions cost nothing. So every branch has one positive
+    #   term, the pattern of what is reported, and the calls it must sit in are exclusions: a
+    #   pattern-not of the same pattern with each call as a pattern-not-inside ("not outside these
+    #   calls"). A new form goes into those exclusions, never as a second positive term: the
+    #   rule with its calls as positive terms took 2 s to prepare per scan and file (prefilter
+    #   90 kB); now about 0.1 s and 1.4 kB. Check it with `opengrep-core -prefilter_of_rules` on
+    #   a copy with the YAML anchors expanded (the tool does not read anchors): it must print one
+    #   clause of the words above, not "None".
     # - With the literal, the match time must stay near 1 s: every statement sequence
     #   (`$OPTS = ...; ... call($OPTS)`) starts at a statement that holds the literal (or at a
     #   rare one, `new https.Agent(...)`). A sequence that starts at any assignment
     #   (`$OPTS = $INIT;`) took 86 s on such a file, and the whole rule over 110 s (a timeout that
     #   drops the file's findings).
     pattern-either:
-      # https.request(), https.get(), new https.Agent(), tls.connect() and http2.connect() given
-      # an options object with rejectUnauthorized: false: in place (also nested, as axios's
-      # httpsAgent), or built in a variable first.
+      # rejectUnauthorized: false in an options object given to https.request(), https.get(),
+      # new https.Agent(), tls.connect(), http2.connect() or undici buildConnector() (in place, also
+      # nested, as axios's httpsAgent, or built in a variable first); under the TLS keys of an undici
+      # dispatcher; or added to the options with Object.assign() before the call.
+      # Written as "an object that is not outside these calls" (a pattern-not of the object with
+      # each call as a pattern-not-inside), so that only the object's pattern is a positive term:
+      # see Maintenance, performance above.
       - patterns:
-          - pattern-either: &api-calls
-              # The module imported as an object.
-              - patterns:
-                  - pattern-either:
-                      - pattern-inside: |
-                          $MOD = require($M)
-                          ...
-                      - pattern-inside: |
-                          import $MOD from $M;
-                          ...
-                      - pattern-inside: |
-                          import * as $MOD from $M;
-                          ...
-                  - pattern-either:
-                      - pattern-inside: $MOD.$FN(...)
-                      - pattern-inside: new $MOD.$FN(...)
-                      - patterns:
-                          - pattern-either:
-                              - pattern-inside: |
-                                  $OPTS = {..., rejectUnauthorized: false, ...};
-                                  ...
-                                  $MOD.$FN(..., $OPTS, ...);
-                              - pattern-inside: |
-                                  $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
-                                  ...
-                                  $MOD.$FN(..., $OPTS, ...);
-                              - pattern-inside: |
-                                  $OPTS = {..., rejectUnauthorized: false, ...};
-                                  ...
-                                  new $MOD.$FN(..., $OPTS, ...);
-                              - pattern-inside: |
-                                  $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
-                                  ...
-                                  new $MOD.$FN(..., $OPTS, ...);
-                          - pattern-inside: $OPTS = {...}
-              # The module required in place (`require('https').get(...)`), options in place.
-              - pattern-inside: require($M).$FN(...)
-              # Functions imported by name: CommonJS destructuring (also renamed) and renamed ES
-              # imports.
-              - patterns:
-                  - pattern-either:
-                      - pattern-inside: |
-                          const {..., $FN: $LOCAL, ...} = require($M);
-                          ...
-                      - pattern-inside: |
-                          import {$FN as $LOCAL} from $M;
-                          ...
-                  - pattern-either:
-                      - pattern-inside: $LOCAL(...)
-                      - pattern-inside: new $LOCAL(...)
-                      - patterns:
-                          - pattern-either:
-                              - pattern-inside: |
-                                  $OPTS = {..., rejectUnauthorized: false, ...};
-                                  ...
-                                  $LOCAL(..., $OPTS, ...);
-                              - pattern-inside: |
-                                  $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
-                                  ...
-                                  $LOCAL(..., $OPTS, ...);
-                              - pattern-inside: |
-                                  $OPTS = {..., rejectUnauthorized: false, ...};
-                                  ...
-                                  new $LOCAL(..., $OPTS, ...);
-                              - pattern-inside: |
-                                  $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
-                                  ...
-                                  new $LOCAL(..., $OPTS, ...);
-                          - pattern-inside: $OPTS = {...}
-              # ES named imports under their own names. (An import renamed with `as` matches the
-              # first pattern under its original name, hence the exclusion.)
-              - patterns:
-                  - pattern-inside: |
-                      import {..., $FN, ...} from $M;
-                      ...
-                  - pattern-not-inside: |
-                      import {$FN as $ALIAS} from $M;
-                      ...
-                  - pattern-either:
-                      - pattern-inside: $FN(...)
-                      - pattern-inside: new $FN(...)
-                      - patterns:
-                          - pattern-either:
-                              - pattern-inside: |
-                                  $OPTS = {..., rejectUnauthorized: false, ...};
-                                  ...
-                                  $FN(..., $OPTS, ...);
-                              - pattern-inside: |
-                                  $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
-                                  ...
-                                  $FN(..., $OPTS, ...);
-                              - pattern-inside: |
-                                  $OPTS = {..., rejectUnauthorized: false, ...};
-                                  ...
-                                  new $FN(..., $OPTS, ...);
-                              - pattern-inside: |
-                                  $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
-                                  ...
-                                  new $FN(..., $OPTS, ...);
-                          - pattern-inside: $OPTS = {...}
-          # https.request(), https.get(), new https.Agent(), tls.connect(), http2.connect(), and
-          # undici buildConnector(), which takes tls.connect() options directly.
-          - metavariable-comparison:
-              comparison: >-
-                (re.match("^[\"'`]?(node:)?(https|tls|http2)[\"'`]?$", str($M)) and
-                re.match("^(request|get|Agent|connect)$", str($FN))) or
-                (re.match("^[\"'`]?undici[\"'`]?$", str($M)) and str($FN) == "buildConnector")
           - pattern: '{..., rejectUnauthorized: false, ...}'
-      # undici: the TLS options of a dispatcher are its `connect` options (Agent, Client, Pool)
-      # or ProxyAgent's requestTls and proxyTls; other top-level options are not TLS options.
+          - pattern-not:
+              patterns:
+                - pattern: '{..., rejectUnauthorized: false, ...}'
+                # https.request(), https.get(), new https.Agent(), tls.connect(), http2.connect(), and
+                # undici buildConnector(), which takes tls.connect() options directly; in place, or
+                # built in a variable first.
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-either: &api-calls
+                          # The module imported as an object.
+                          - patterns:
+                              - pattern-either:
+                                  - pattern-inside: |
+                                      $MOD = require($M)
+                                      ...
+                                  - pattern-inside: |
+                                      import $MOD from $M;
+                                      ...
+                                  - pattern-inside: |
+                                      import * as $MOD from $M;
+                                      ...
+                              - pattern-either:
+                                  - pattern-inside: $MOD.$FN(...)
+                                  - pattern-inside: new $MOD.$FN(...)
+                                  - patterns:
+                                      - pattern-either:
+                                          - pattern-inside: |
+                                              $OPTS = {..., rejectUnauthorized: false, ...};
+                                              ...
+                                              $MOD.$FN(..., $OPTS, ...);
+                                          - pattern-inside: |
+                                              $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
+                                              ...
+                                              $MOD.$FN(..., $OPTS, ...);
+                                          - pattern-inside: |
+                                              $OPTS = {..., rejectUnauthorized: false, ...};
+                                              ...
+                                              new $MOD.$FN(..., $OPTS, ...);
+                                          - pattern-inside: |
+                                              $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
+                                              ...
+                                              new $MOD.$FN(..., $OPTS, ...);
+                                      - pattern-inside: $OPTS = {...}
+                          # The module required in place (`require('https').get(...)`), options in place.
+                          - pattern-inside: require($M).$FN(...)
+                          # Functions imported by name: CommonJS destructuring (also renamed) and renamed ES
+                          # imports.
+                          - patterns:
+                              - pattern-either:
+                                  - pattern-inside: |
+                                      const {..., $FN: $LOCAL, ...} = require($M);
+                                      ...
+                                  - pattern-inside: |
+                                      import {$FN as $LOCAL} from $M;
+                                      ...
+                              - pattern-either:
+                                  - pattern-inside: $LOCAL(...)
+                                  - pattern-inside: new $LOCAL(...)
+                                  - patterns:
+                                      - pattern-either:
+                                          - pattern-inside: |
+                                              $OPTS = {..., rejectUnauthorized: false, ...};
+                                              ...
+                                              $LOCAL(..., $OPTS, ...);
+                                          - pattern-inside: |
+                                              $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
+                                              ...
+                                              $LOCAL(..., $OPTS, ...);
+                                          - pattern-inside: |
+                                              $OPTS = {..., rejectUnauthorized: false, ...};
+                                              ...
+                                              new $LOCAL(..., $OPTS, ...);
+                                          - pattern-inside: |
+                                              $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
+                                              ...
+                                              new $LOCAL(..., $OPTS, ...);
+                                      - pattern-inside: $OPTS = {...}
+                          # ES named imports under their own names. (An import renamed with `as` matches the
+                          # first pattern under its original name, hence the exclusion.)
+                          - patterns:
+                              - pattern-inside: |
+                                  import {..., $FN, ...} from $M;
+                                  ...
+                              - pattern-not-inside: |
+                                  import {$FN as $ALIAS} from $M;
+                                  ...
+                              - pattern-either:
+                                  - pattern-inside: $FN(...)
+                                  - pattern-inside: new $FN(...)
+                                  - patterns:
+                                      - pattern-either:
+                                          - pattern-inside: |
+                                              $OPTS = {..., rejectUnauthorized: false, ...};
+                                              ...
+                                              $FN(..., $OPTS, ...);
+                                          - pattern-inside: |
+                                              $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
+                                              ...
+                                              $FN(..., $OPTS, ...);
+                                          - pattern-inside: |
+                                              $OPTS = {..., rejectUnauthorized: false, ...};
+                                              ...
+                                              new $FN(..., $OPTS, ...);
+                                          - pattern-inside: |
+                                              $OPTS = {..., $KEY: {..., rejectUnauthorized: false, ...}, ...};
+                                              ...
+                                              new $FN(..., $OPTS, ...);
+                                      - pattern-inside: $OPTS = {...}
+                      - metavariable-comparison:
+                          comparison: >-
+                            (re.match("^[\"'`]?(node:)?(https|tls|http2)[\"'`]?$", str($M)) and
+                            re.match("^(request|get|Agent|connect)$", str($FN))) or
+                            (re.match("^[\"'`]?undici[\"'`]?$", str($M)) and str($FN) == "buildConnector")
+                # undici: the TLS options of a dispatcher are its `connect` options (Agent, Client,
+                # Pool) or ProxyAgent's requestTls and proxyTls; other top-level options are not TLS
+                # options.
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-either: *api-calls
+                      - metavariable-regex:
+                          metavariable: $M
+                          regex: ^["'`]?undici["'`]?$
+                      - metavariable-regex:
+                          metavariable: $FN
+                          regex: ^(?:Agent|Client|Pool|ProxyAgent)$
+                      - pattern-inside: '{..., $KEY: {..., rejectUnauthorized: false, ...}, ...}'
+                      - metavariable-regex:
+                          metavariable: $KEY
+                          regex: ^(?:connect|requestTls|proxyTls)$
+                # An object given to Object.assign() on the options between their creation and the
+                # call (the calls of the next branch).
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-either: &assign-calls
+                          - patterns:
+                              - pattern-either:
+                                  - pattern-inside: |
+                                      $MOD = require($M)
+                                      ...
+                                  - pattern-inside: |
+                                      import $MOD from $M;
+                                      ...
+                                  - pattern-inside: |
+                                      import * as $MOD from $M;
+                                      ...
+                              - pattern-either:
+                                  - pattern-inside: |
+                                      $OPTS.rejectUnauthorized = false;
+                                      ...
+                                      $MOD.$FN(..., $OPTS, ...);
+                                  - pattern-inside: |
+                                      Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
+                                      ...
+                                      $MOD.$FN(..., $OPTS, ...);
+                                  - pattern-inside: |
+                                      $OPTS.rejectUnauthorized = false;
+                                      ...
+                                      new $MOD.$FN(..., $OPTS, ...);
+                                  - pattern-inside: |
+                                      Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
+                                      ...
+                                      new $MOD.$FN(..., $OPTS, ...);
+                          - patterns:
+                              - pattern-either:
+                                  - pattern-inside: |
+                                      const {..., $FN: $LOCAL, ...} = require($M);
+                                      ...
+                                  - pattern-inside: |
+                                      import {$FN as $LOCAL} from $M;
+                                      ...
+                              - pattern-either:
+                                  - pattern-inside: |
+                                      $OPTS.rejectUnauthorized = false;
+                                      ...
+                                      $LOCAL(..., $OPTS, ...);
+                                  - pattern-inside: |
+                                      Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
+                                      ...
+                                      $LOCAL(..., $OPTS, ...);
+                                  - pattern-inside: |
+                                      $OPTS.rejectUnauthorized = false;
+                                      ...
+                                      new $LOCAL(..., $OPTS, ...);
+                                  - pattern-inside: |
+                                      Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
+                                      ...
+                                      new $LOCAL(..., $OPTS, ...);
+                          - patterns:
+                              - pattern-inside: |
+                                  import {..., $FN, ...} from $M;
+                                  ...
+                              - pattern-not-inside: |
+                                  import {$FN as $ALIAS} from $M;
+                                  ...
+                              - pattern-either:
+                                  - pattern-inside: |
+                                      $OPTS.rejectUnauthorized = false;
+                                      ...
+                                      $FN(..., $OPTS, ...);
+                                  - pattern-inside: |
+                                      Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
+                                      ...
+                                      $FN(..., $OPTS, ...);
+                                  - pattern-inside: |
+                                      $OPTS.rejectUnauthorized = false;
+                                      ...
+                                      new $FN(..., $OPTS, ...);
+                                  - pattern-inside: |
+                                      Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
+                                      ...
+                                      new $FN(..., $OPTS, ...);
+                      - metavariable-regex:
+                          metavariable: $M
+                          regex: ^["'`]?(?:node:)?(?:https|tls|http2)["'`]?$
+                      - metavariable-regex:
+                          metavariable: $FN
+                          regex: ^(?:request|get|Agent|connect)$
+                      - pattern-inside: Object.assign($OPTS, ...)
+      # rejectUnauthorized set to false on an options object between its creation and the call.
       - patterns:
-          - pattern-either: *api-calls
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?undici["'`]?$
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(?:Agent|Client|Pool|ProxyAgent)$
-          - pattern-inside: '{..., $KEY: {..., rejectUnauthorized: false, ...}, ...}'
-          - metavariable-regex:
-              metavariable: $KEY
-              regex: ^(?:connect|requestTls|proxyTls)$
-          - pattern: '{..., rejectUnauthorized: false, ...}'
-      # rejectUnauthorized set to false on an options object between its creation and the call
-      # (also with Object.assign()).
-      - patterns:
-          - pattern-either:
-              - patterns:
-                  - pattern-either:
-                      - pattern-inside: |
-                          $MOD = require($M)
-                          ...
-                      - pattern-inside: |
-                          import $MOD from $M;
-                          ...
-                      - pattern-inside: |
-                          import * as $MOD from $M;
-                          ...
-                  - pattern-either:
-                      - pattern-inside: |
-                          $OPTS.rejectUnauthorized = false;
-                          ...
-                          $MOD.$FN(..., $OPTS, ...);
-                      - pattern-inside: |
-                          Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
-                          ...
-                          $MOD.$FN(..., $OPTS, ...);
-                      - pattern-inside: |
-                          $OPTS.rejectUnauthorized = false;
-                          ...
-                          new $MOD.$FN(..., $OPTS, ...);
-                      - pattern-inside: |
-                          Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
-                          ...
-                          new $MOD.$FN(..., $OPTS, ...);
-              - patterns:
-                  - pattern-either:
-                      - pattern-inside: |
-                          const {..., $FN: $LOCAL, ...} = require($M);
-                          ...
-                      - pattern-inside: |
-                          import {$FN as $LOCAL} from $M;
-                          ...
-                  - pattern-either:
-                      - pattern-inside: |
-                          $OPTS.rejectUnauthorized = false;
-                          ...
-                          $LOCAL(..., $OPTS, ...);
-                      - pattern-inside: |
-                          Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
-                          ...
-                          $LOCAL(..., $OPTS, ...);
-                      - pattern-inside: |
-                          $OPTS.rejectUnauthorized = false;
-                          ...
-                          new $LOCAL(..., $OPTS, ...);
-                      - pattern-inside: |
-                          Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
-                          ...
-                          new $LOCAL(..., $OPTS, ...);
-              - patterns:
-                  - pattern-inside: |
-                      import {..., $FN, ...} from $M;
-                      ...
-                  - pattern-not-inside: |
-                      import {$FN as $ALIAS} from $M;
-                      ...
-                  - pattern-either:
-                      - pattern-inside: |
-                          $OPTS.rejectUnauthorized = false;
-                          ...
-                          $FN(..., $OPTS, ...);
-                      - pattern-inside: |
-                          Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
-                          ...
-                          $FN(..., $OPTS, ...);
-                      - pattern-inside: |
-                          $OPTS.rejectUnauthorized = false;
-                          ...
-                          new $FN(..., $OPTS, ...);
-                      - pattern-inside: |
-                          Object.assign($OPTS, ..., {..., rejectUnauthorized: false, ...}, ...);
-                          ...
-                          new $FN(..., $OPTS, ...);
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?(?:node:)?(?:https|tls|http2)["'`]?$
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(?:request|get|Agent|connect)$
-          - pattern-either:
-              - pattern: $OPTS.rejectUnauthorized = false
-              - patterns:
-                  - pattern-inside: Object.assign($OPTS, ...)
-                  - pattern: '{..., rejectUnauthorized: false, ...}'
+          - pattern: $OPTS.rejectUnauthorized = false
+          - pattern-not:
+              patterns:
+                - pattern: $OPTS.rejectUnauthorized = false
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-either: *assign-calls
+                      - metavariable-regex:
+                          metavariable: $M
+                          regex: ^["'`]?(?:node:)?(?:https|tls|http2)["'`]?$
+                      - metavariable-regex:
+                          metavariable: $FN
+                          regex: ^(?:request|get|Agent|connect)$
       # The options of https.globalAgent, or of an https.Agent made in the file, changed after it
       # is made.
       - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $MOD = require($M)
-                  ...
-              - pattern-inside: |
-                  import $MOD from $M;
-                  ...
-              - pattern-inside: |
-                  import * as $MOD from $M;
-                  ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?(?:node:)?https["'`]?$
-          - pattern-either:
-              - pattern: $MOD.globalAgent.options.rejectUnauthorized = false
-              - patterns:
-                  - pattern-inside: |
-                      $AGENT = new $MOD.Agent(...);
-                      ...
-                  - pattern: $AGENT.options.rejectUnauthorized = false
+          - pattern: $MOD.globalAgent.options.rejectUnauthorized = false
+          - pattern-not:
+              patterns:
+                - pattern: $MOD.globalAgent.options.rejectUnauthorized = false
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-either: &https-imports
+                          - pattern-inside: |
+                              $MOD = require($M)
+                              ...
+                          - pattern-inside: |
+                              import $MOD from $M;
+                              ...
+                          - pattern-inside: |
+                              import * as $MOD from $M;
+                              ...
+                      - metavariable-regex:
+                          metavariable: $M
+                          regex: ^["'`]?(?:node:)?https["'`]?$
+      - patterns:
+          - pattern: $AGENT.options.rejectUnauthorized = false
+          - pattern-not:
+              patterns:
+                - pattern: $AGENT.options.rejectUnauthorized = false
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-either: *https-imports
+                      - metavariable-regex:
+                          metavariable: $M
+                          regex: ^["'`]?(?:node:)?https["'`]?$
+                      - pattern-inside: |
+                          $AGENT = new $MOD.Agent(...);
+                          ...
       # Other libraries. An options object held under an `ssl`, `tls` or `https` key is the TLS
       # configuration that a client library hands to tls.connect() or https.request()
       # (node-postgres `ssl`, also handed on by knex; nodemailer `tls`; got `https`):
@@ -387,8 +427,7 @@ rules:
       # Server options under such a key are not reported, as for tls.createServer() above: an object
       # that also holds requestCert (optional client certificates), and Fastify's `https` factory
       # option (https.createServer options). Only exclusions besides the patterns: a positive
-      # condition here makes OpenGrep drop the rule's literal prefilter, and every pattern adds to
-      # the time OpenGrep spends preparing it.
+      # condition here would multiply the prefilter (see Maintenance, performance above).
       - patterns:
           - pattern-either:
               - pattern: '{..., ssl: {..., rejectUnauthorized: false, ...}, ...}'
