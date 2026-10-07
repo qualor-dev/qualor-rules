@@ -12,6 +12,7 @@ from django.http import (
     HttpResponsePermanentRedirect,
     HttpResponseRedirect,
     JsonResponse,
+    StreamingHttpResponse,
 )
 from django.shortcuts import get_object_or_404, resolve_url
 from django.shortcuts import redirect as django_redirect
@@ -23,8 +24,8 @@ from django.views.generic import RedirectView
 from django_hosts.resolvers import reverse as hosts_reverse
 from fastapi import Depends, FastAPI, Path, Query, Request
 from fastapi import Response as FastAPIResponse
-from fastapi.responses import RedirectResponse
-from flask import Flask, Response, make_response, redirect, request, url_for
+from fastapi.responses import HTMLResponse, RedirectResponse
+from flask import Flask, Response, current_app, make_response, redirect, request, url_for
 from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -42,6 +43,8 @@ OAUTH_ROOT = "https://accounts.example.com/"
 SCHEME = "https:"
 ENV_SITE = os.environ["SITE_URL"]
 CFG_SITE = os.environ.get("SITE_URL", "https://www.example.com")
+URL_PREFIX = "/app"
+ROOT_SLASH = "/"
 DESTINATIONS = {
     # Partner sites the app may send users to.
     "docs": "https://docs.example.com/",
@@ -257,7 +260,16 @@ def env_item(item_id):
     # ruleid: python.open-redirect
     f = redirect(ENV_SITE + "/" + item_id)
     # ruleid: python.open-redirect
-    return redirect(f"{ENV_SITE}//{item_id}")
+    g = redirect(f"{ENV_SITE}//{item_id}")
+    # A constant path on this site keeps what follows on this site.
+    # ok: python.open-redirect
+    h = redirect(URL_PREFIX + "/items/" + item_id)
+    # "/" alone is not a path prefix: "/" + "/evil.example" names another host.
+    # ruleid: python.open-redirect
+    i = redirect(ROOT_SLASH + request.args["host"])
+    # Flask's app.config is not recognised as an origin.
+    # todook: python.open-redirect
+    return redirect(current_app.config["SITE_URL"] + "/items/" + item_id)
 
 
 # Nested tables and implicitly concatenated values are not recognised as allow-lists; an
@@ -915,6 +927,13 @@ def django_created(request, pk):
     return resp
 
 
+def django_streamed_location(request):
+    resp = StreamingHttpResponse(iter([b""]), status=302)
+    # ruleid: python.open-redirect
+    resp["Location"] = request.GET["next"]
+    return resp
+
+
 def django_location_init(request):
     # ruleid: python.open-redirect
     a = HttpResponse(status=303, headers={"Location": request.POST["next"]})
@@ -1119,6 +1138,14 @@ async def fa_moved(response: FastAPIResponse, to: str = "/"):
     # ruleid: python.open-redirect
     response.headers["Location"] = to
     return {}
+
+
+@api.get("/moved-html")
+async def fa_moved_html(to: str = "/"):
+    resp = HTMLResponse("<p>moved</p>", status_code=303)
+    # ruleid: python.open-redirect
+    resp.headers["location"] = to
+    return resp
 
 
 @api.get("/moved-init")

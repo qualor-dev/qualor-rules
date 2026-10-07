@@ -98,7 +98,8 @@ def after_login():
   constant holding a literal URL with a scheme and a host, and, before a path segment, `?` or `#`,
   a Django setting or a constant imported or read from the environment. A bare `/` after a
   setting or such a constant, `//` after any constant, `%`-formatting with a constant origin
-  (`"%s/items/%s" % (SITE, id)`) and long chains of concatenation are reported.
+  (`"%s/items/%s" % (SITE, id)`), long chains of concatenation and a base URL from Flask's
+  `app.config` are reported. A constant holding a path on this site (`"/app"`) counts as fixed.
 - In middleware, `%`-formatting with a host before the current path (`"https://%s%s" %
   (request.get_host(), request.path)`) is reported. Collapsing slashes is taken for safe, but a
   Flask path can still hold a backslash (`/\evil.example`), which browsers read as `//`.
@@ -117,7 +118,9 @@ def after_login():
 - A `Location` header counts on a response the code makes or receives (middleware, an
   `after_request` hook, a FastAPI `Response` parameter); headers collected in a dict variable
   before the response is made are not followed, and a header set on a response must be written
-  `Location` or `location` (`LOCATION` is missed). A `RedirectView` whose `url` attribute is filled
+  `Location` or `location` (`LOCATION` is missed), on a response made by one of the common
+  response classes and factories (a response from your own helper or another class is not
+  followed). A `RedirectView` whose `url` attribute is filled
   from URL arguments (`url = "https://%(host)s/"`) is not reported.
 - Values returned by a database query or another call are taken for stored data, unless the call
   receives request data whole; a request value passed to such a call through a variable is missed.

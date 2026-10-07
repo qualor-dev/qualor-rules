@@ -63,11 +63,12 @@ rules:
     # Known limits (each has a `todo` line in the test file):
     # - A fixed origin is recognised at the start of the URL text (concatenation, format(),
     #   f-string): a literal; an upper-case module constant assigned a literal URL with a scheme
-    #   and a host; and, before a path segment ("/x..."), "?" or "#" (not a bare "/"), a Django
-    #   setting (also %-formatting) or an upper-case constant imported or read from the
-    #   environment. %-formatting with a constant origin (`"%s/items/%s" % (SITE, id)`) is not,
-    #   nor a chain of more than five operands after a constant ending in "host/" (todook).
-    #   "//" after a constant is refused even when the constant holds a host.
+    #   and a host, or a literal path on this site ("/app"); and, before a path segment
+    #   ("/x..."), "?" or "#" (not a bare "/"), a Django setting (also %-formatting) or an
+    #   upper-case constant imported or read from the environment. %-formatting with a constant
+    #   origin (`"%s/items/%s" % (SITE, id)`) is not, nor a chain of more than five operands
+    #   after a constant ending in "host/", nor Flask's `current_app.config[...]` (todook). "//"
+    #   after a constant is refused even when the constant holds a host.
     # - Middleware sees every path, so there the current path is request data: Django middleware
     #   methods (`__call__`, `process_request`, `process_view`, `process_response`, ...) and
     #   functions inside a `def ...(get_response)` factory, Flask before_request hooks, and
@@ -1371,7 +1372,8 @@ rules:
       #   "scheme://host..." once and the function does not assign; matched as the name itself)
       #   followed by a literal that starts with "/" (not "//" or "/\"), "?" or "#", then a
       #   concatenation chain of up to seven operands, an f-string or str.format(); a constant
-      #   that itself ends with "host/", then up to five operands or an f-string;
+      #   that itself ends with "host/" (or a constant path on this site: "/" and a character
+      #   other than "/" or "\"), then up to five operands or an f-string;
       # - a Django setting followed by a literal that starts with "/" and another character
       #   than "/" or "\", or with "?" or "#" (also str.format() and %-formatting);
       # - any upper-case name that the module does not assign a string literal (a constant
@@ -1554,7 +1556,7 @@ rules:
               ...
           - metavariable-regex:
               metavariable: $VALUE
-              regex: ^[rbuRBU]{0,2}("|')[A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+/
+              regex: ^[rbuRBU]{0,2}("|')([A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+/|/[^/\\"'{%\s])
           - pattern-not-inside: |
               def $FUNCTION(...):
                 ...
@@ -1655,6 +1657,9 @@ rules:
                   $RESP = django.http.JsonResponse(...)
                   ...
               - pattern-inside: |
+                  $RESP = django.http.StreamingHttpResponse(...)
+                  ...
+              - pattern-inside: |
                   $RESP = django.shortcuts.render(...)
                   ...
               - pattern-inside: |
@@ -1691,6 +1696,12 @@ rules:
                   $RESP = starlette.responses.JSONResponse(...)
                   ...
               - pattern-inside: |
+                  $RESP = starlette.responses.HTMLResponse(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = starlette.responses.PlainTextResponse(...)
+                  ...
+              - pattern-inside: |
                   $RESP = fastapi.Response(...)
                   ...
               - pattern-inside: |
@@ -1701,6 +1712,12 @@ rules:
                   ...
               - pattern-inside: |
                   $RESP = fastapi.responses.JSONResponse(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = fastapi.responses.HTMLResponse(...)
+                  ...
+              - pattern-inside: |
+                  $RESP = fastapi.responses.PlainTextResponse(...)
                   ...
               - pattern-inside: |
                   $RESP = self.get_response(...)
