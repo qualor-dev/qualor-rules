@@ -588,28 +588,45 @@ rules:
               - pattern: os.open($PATH, ...)
           - focus-metavariable: $PATH
       - patterns:
-          - pattern: os.$FN($PATH, ...)
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(remove|unlink|rmdir|removedirs|rename|renames|replace|listdir|scandir|walk|mkdir|makedirs|chmod|chown|truncate)$
+          - pattern-either:
+              - pattern: os.remove($PATH, ...)
+              - pattern: os.unlink($PATH, ...)
+              - pattern: os.rmdir($PATH, ...)
+              - pattern: os.removedirs($PATH, ...)
+              - pattern: os.rename($PATH, ...)
+              - pattern: os.renames($PATH, ...)
+              - pattern: os.replace($PATH, ...)
+              - pattern: os.listdir($PATH, ...)
+              - pattern: os.scandir($PATH, ...)
+              - pattern: os.walk($PATH, ...)
+              - pattern: os.mkdir($PATH, ...)
+              - pattern: os.makedirs($PATH, ...)
+              - pattern: os.chmod($PATH, ...)
+              - pattern: os.chown($PATH, ...)
+              - pattern: os.truncate($PATH, ...)
           - focus-metavariable: $PATH
       - patterns:
-          - pattern: os.$FN($SRC, $PATH, ...)
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(rename|renames|replace)$
+          - pattern-either:
+              - pattern: os.rename($SRC, $PATH, ...)
+              - pattern: os.renames($SRC, $PATH, ...)
+              - pattern: os.replace($SRC, $PATH, ...)
           - focus-metavariable: $PATH
       - patterns:
-          - pattern: shutil.$FN($PATH, ...)
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(copy|copy2|copyfile|copytree|move|rmtree)$
+          - pattern-either:
+              - pattern: shutil.copy($PATH, ...)
+              - pattern: shutil.copy2($PATH, ...)
+              - pattern: shutil.copyfile($PATH, ...)
+              - pattern: shutil.copytree($PATH, ...)
+              - pattern: shutil.move($PATH, ...)
+              - pattern: shutil.rmtree($PATH, ...)
           - focus-metavariable: $PATH
       - patterns:
-          - pattern: shutil.$FN($SRC, $PATH, ...)
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(copy|copy2|copyfile|copytree|move)$
+          - pattern-either:
+              - pattern: shutil.copy($SRC, $PATH, ...)
+              - pattern: shutil.copy2($SRC, $PATH, ...)
+              - pattern: shutil.copyfile($SRC, $PATH, ...)
+              - pattern: shutil.copytree($SRC, $PATH, ...)
+              - pattern: shutil.move($SRC, $PATH, ...)
           - focus-metavariable: $PATH
       # shelve and dbm open a database file by name (and create it with the "c" flag); the
       # name is the base name of one or more files.
