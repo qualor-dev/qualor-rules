@@ -1,0 +1,132 @@
+rules:
+  - id: java.tls-verification-disabled
+    languages: [java]
+    severity: ERROR
+    message: >-
+      This TLS client check accepts anything: a trust manager whose checkServerTrusted returns
+      without checking the certificate chain trusts every server certificate, and a
+      HostnameVerifier that returns true accepts a certificate issued for another host. Anyone on
+      the network path can then pose as the server and read or change the traffic. Use the default
+      trust managers (TrustManagerFactory over a key store that holds your private CA), delegate to
+      them, or throw CertificateException when your own check fails; keep the default host name
+      verification.
+    metadata:
+      title: TLS certificate or host name verification disabled (Java)
+      cwe: ['CWE-295']
+      owasp: ['A07:2025', 'A07:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [javax.net.ssl]
+      sources:
+        - https://cwe.mitre.org/data/definitions/295.html
+        - https://top10.owasp.org/2025/A07_2025-Authentication_Failures/
+        - https://top10.owasp.org/2021/A07_2021-Identification_and_Authentication_Failures/
+        - https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/net/ssl/X509TrustManager.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/net/ssl/X509ExtendedTrustManager.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/net/ssl/HostnameVerifier.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/net/ssl/HttpsURLConnection.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/net/ssl/SSLContext.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/net/ssl/TrustManagerFactory.html
+        - https://docs.oracle.com/en/java/javase/25/security/java-secure-socket-extension-jsse-reference-guide.html
+        - https://maven.apache.org/guides/introduction/introduction-to-the-standard-directory-layout.html
+        - https://maven.apache.org/surefire/maven-surefire-plugin/test-mojo.html#includes
+        - https://maven.apache.org/surefire/maven-failsafe-plugin/integration-test-mojo.html#includes
+        - https://docs.gradle.org/current/userguide/java_testing.html
+        - https://docs.gradle.org/current/userguide/jvm_test_suite_plugin.html
+      since: 2026.10.2
+    # Test code is out of scope (ruling F10 of 2026-10-04, as the Go, Python and JS rules): tests
+    # often talk to a local server with a self-signed certificate. Excluded are the Maven and
+    # Gradle test source trees (src/test/, also Gradle's src/testFixtures/, src/integrationTest/
+    # and src/intTest/, at any depth) and the class files the Surefire and Failsafe plugins run by
+    # default whose names end in Test, Tests, TestCase, IT or ITCase. Their Test*.java and
+    # IT*.java defaults are left out: they would also skip production classes such as
+    # TestimonialService or ITunesClient.
+    # Accepted trade-off: a production class whose name ends in Test or IT is skipped too.
+    # Only client checks are reported: checkClientTrusted is what a server calls, and an empty one
+    # means "clients need no certificate", so it is never reported.
+    # Known limits (each has a `todo` line in the test file):
+    # - A checkServerTrusted that hands the chain to any call (a log message too) counts as
+    #   checking it; so does one that throws anywhere or calls another checkServerTrusted.
+    # - A trust-all manager given only to a server context (whose checkServerTrusted is never
+    #   called) is still reported.
+    # - A lambda is a HostnameVerifier only when it is given to setHostnameVerifier or
+    #   setDefaultHostnameVerifier, assigned to a HostnameVerifier variable or cast to one; a
+    #   lambda given to another library's builder (OkHttp's hostnameVerifier) is missed.
+    # - Other libraries' own trust-all and no-op classes (Apache HttpClient's NoopHostnameVerifier
+    #   and TrustAllStrategy, OkHttp) are not checked.
+    paths:
+      exclude:
+        - 'src/test/'
+        - 'src/testFixtures/'
+        - 'src/integrationTest/'
+        - 'src/intTest/'
+        - '*Test.java'
+        - '*Tests.java'
+        - '*TestCase.java'
+        - '*IT.java'
+        - '*ITCase.java'
+    pattern-either:
+      # X509TrustManager / X509ExtendedTrustManager: a checkServerTrusted that returns normally
+      # whatever the chain ("returns normally" means "trusted", javadoc). It checks something when
+      # it throws (CertificateException) or hands the chain to a call (another trust manager's
+      # checkServerTrusted, super's, a helper). A certificate's own checkValidity() or verify()
+      # whose failure is caught and not thrown again checks nothing.
+      - patterns:
+          - pattern: |
+              void checkServerTrusted(java.security.cert.X509Certificate[] $CHAIN, String $AUTH, ...) { ... }
+          - pattern-not: |
+              void checkServerTrusted(...) { ... throw $E; ... }
+          - pattern-not: |
+              void checkServerTrusted(java.security.cert.X509Certificate[] $CHAIN, ...) { ... $F(..., $CHAIN, ...); ... }
+      # HostnameVerifier: `return true` that is not under a condition, in a verify method or in a
+      # lambda given where a HostnameVerifier is expected, whose body never returns false or
+      # throws.
+      - patterns:
+          - pattern: return $TRUE;
+          - metavariable-regex:
+              metavariable: $TRUE
+              regex: ^true$
+          - pattern-either:
+              - pattern-inside: |
+                  boolean verify(String $H, javax.net.ssl.SSLSession $S) { ... }
+              - patterns:
+                  - pattern-inside: |
+                      ($H, $S) -> { ... }
+                  - pattern-either:
+                      - patterns:
+                          - pattern-inside: $X.$SET(($H, $S) -> { ... })
+                          - metavariable-regex:
+                              metavariable: $SET
+                              regex: ^(setHostnameVerifier|setDefaultHostnameVerifier)$
+                      - pattern-inside: javax.net.ssl.HostnameVerifier $V = ($H, $S) -> { ... };
+                      - pattern-inside: (javax.net.ssl.HostnameVerifier) ($H, $S) -> { ... }
+          # (Also an if with an else: a return true in either branch is under a condition.)
+          - pattern-not-inside: |
+              if ($C) $STMT;
+          - pattern-not-inside: |
+              boolean verify(...) { ... return false; ... }
+          - pattern-not-inside: |
+              boolean verify(...) { ... throw $E; ... }
+          - pattern-not-inside: |
+              ($H, $S) -> { ... return false; ... }
+          - pattern-not-inside: |
+              ($H, $S) -> { ... throw $E; ... }
+          # (OpenGrep also matches `return true;` on a whole method or lambda whose body is only
+          # that statement; the finding is put on the value.)
+          - focus-metavariable: $TRUE
+      # The same as an expression lambda: `(host, session) -> true`.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern: $X.$SET(($H, $S) -> $TRUE)
+                  - metavariable-regex:
+                      metavariable: $SET
+                      regex: ^(setHostnameVerifier|setDefaultHostnameVerifier)$
+              - pattern: javax.net.ssl.HostnameVerifier $V = ($H, $S) -> $TRUE;
+              - pattern: (javax.net.ssl.HostnameVerifier) ($H, $S) -> $TRUE
+          - metavariable-regex:
+              metavariable: $TRUE
+              regex: ^true$
+          - focus-metavariable: $TRUE
