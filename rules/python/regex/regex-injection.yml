@@ -206,7 +206,7 @@ rules:
                       - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:$UPPER]
           - metavariable-regex:
               metavariable: $INIT
-              regex: &flask-request-chain ^((flask\.)?request\.(args|form|values|headers|cookies|json|data|files|view_args|path|full_path|url|query_string|get_json\([^()]*\)|get_data\([^()]*\))|json\.loads\((flask\.)?request\.(data|get_data\([^()]*\))\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
+              regex: ^((flask\.)?request\.(args|form|values|headers|cookies|json|data|files|view_args|path|full_path|url|query_string|get_json\([^()]*\)|get_data\([^()]*\))|json\.loads\((flask\.)?request\.(data|get_data\([^()]*\))\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
           - metavariable-pattern:
               metavariable: $INIT
               pattern: flask.request.$ATTR
@@ -326,7 +326,7 @@ rules:
                           - pattern-either: *chain-slices
                           - metavariable-regex:
                               metavariable: $INIT
-                              regex: &django-request-chain ^(request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|json\.loads\(request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
+                              regex: ^(request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|json\.loads\(request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
               # Class-based views: View.setup() keeps the request on self.request and the URL
               # arguments on self.args and self.kwargs.
               - patterns:
@@ -352,7 +352,7 @@ rules:
                           - pattern-either: *chain-slices
                           - metavariable-regex:
                               metavariable: $INIT
-                              regex: &django-self-chain ^(self\.request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|self\.(args|kwargs)|json\.loads\(self\.request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
+                              regex: ^(self\.request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|self\.(args|kwargs)|json\.loads\(self\.request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
               # URL arguments: the parameters after the request of a function-based view, and of
               # a class-based view's handler method (dispatch() calls get(), post(), ...): a
               # function get(self, request, ...), post(...), ... (inside a class or not: a class

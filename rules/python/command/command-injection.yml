@@ -84,14 +84,14 @@ rules:
     #   a module-level alias) are not sources; so a Flask view parameter annotated int is not one
     #   either, although Flask passes a str for a rule without a converter.
     # - Django views are recognised in a module that imports Django, by their signature (a
-    #   function whose first parameter is named `request`, or a class's get()/post()/... method
-    #   taking `(self, request, ...)`). An `<int:pk>` argument (its converter is in urls.py) and a
-    #   parameter with a default value are still sources; a helper whose first parameter is named
-    #   `request` has its other parameters taken for URL arguments, and the request attributes
-    #   (`headers`, `body`, ...) of such a parameter count even when it is another library's
-    #   request object. A module whose Django imports are all nested (`if TYPE_CHECKING:`,
-    #   `try:`) is not taken for a Django module (no test line: the fixture imports Django at its
-    #   top level).
+    #   function whose first parameter is named `request`, or a get()/post()/... method
+    #   taking `(self, request, ...)`, in a class or not). An `<int:pk>` argument (its converter
+    #   is in urls.py) and a parameter with a default value are still sources; a helper whose
+    #   first parameter is named `request` has its other parameters taken for URL arguments, and
+    #   the request attributes (`headers`, `body`, ...) of such a parameter count even when it is
+    #   another library's request object. A module whose Django imports are all nested (`if
+    #   TYPE_CHECKING:`, `try:`) is not taken for a Django module (no test line: the fixture
+    #   imports Django at its top level).
     pattern-sources:
       - pattern-either:
           - pattern: flask.request.args
@@ -237,7 +237,7 @@ rules:
                       - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:$UPPER]
           - metavariable-regex:
               metavariable: $INIT
-              regex: &flask-request-chain ^((flask\.)?request\.(args|form|values|headers|cookies|json|data|files|view_args|path|full_path|url|query_string|get_json\([^()]*\)|get_data\([^()]*\))|json\.loads\((flask\.)?request\.(data|get_data\([^()]*\))\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
+              regex: ^((flask\.)?request\.(args|form|values|headers|cookies|json|data|files|view_args|path|full_path|url|query_string|get_json\([^()]*\)|get_data\([^()]*\))|json\.loads\((flask\.)?request\.(data|get_data\([^()]*\))\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
           - metavariable-pattern:
               metavariable: $INIT
               pattern: flask.request.$ATTR
@@ -357,7 +357,7 @@ rules:
                           - pattern-either: *chain-slices
                           - metavariable-regex:
                               metavariable: $INIT
-                              regex: &django-request-chain ^(request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|json\.loads\(request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
+                              regex: ^(request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|json\.loads\(request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
               # Class-based views: View.setup() keeps the request on self.request and the URL
               # arguments on self.args and self.kwargs.
               - patterns:
@@ -383,7 +383,7 @@ rules:
                           - pattern-either: *chain-slices
                           - metavariable-regex:
                               metavariable: $INIT
-                              regex: &django-self-chain ^(self\.request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|self\.(args|kwargs)|json\.loads\(self\.request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
+                              regex: ^(self\.request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|self\.(args|kwargs)|json\.loads\(self\.request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
               # URL arguments: the parameters after the request of a function-based view, and of
               # a class-based view's handler method (dispatch() calls get(), post(), ...): a
               # function get(self, request, ...), post(...), ... (inside a class or not: a class
