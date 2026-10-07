@@ -156,14 +156,37 @@ rules:
       # FastAPI path operations match too; their parameters annotated int, float or bool are
       # converted by FastAPI, and those with a Depends()/Security() default are dependencies,
       # not request data.
+      # (Each route decorator, and each Django handler method name below, is written out: a
+      # metavariable-regex on the name, like every condition of a source item, multiplies the
+      # formula OpenGrep builds its prefilter from, and past a size it gives up and matches
+      # every file. So the shared block binds each source shape with as few conditions as it
+      # can, and the Django shapes share one `import django` item.)
       - patterns:
-          - pattern-inside: |
-              @$APP.$ROUTE(...)
-              def $VIEW(..., $PARAM, ...):
-                ...
-          - metavariable-regex:
-              metavariable: $ROUTE
-              regex: ^(route|get|post|put|patch|delete)$
+          - pattern-either:
+              - pattern-inside: |
+                  @$APP.route(...)
+                  def $VIEW(..., $PARAM, ...):
+                    ...
+              - pattern-inside: |
+                  @$APP.get(...)
+                  def $VIEW(..., $PARAM, ...):
+                    ...
+              - pattern-inside: |
+                  @$APP.post(...)
+                  def $VIEW(..., $PARAM, ...):
+                    ...
+              - pattern-inside: |
+                  @$APP.put(...)
+                  def $VIEW(..., $PARAM, ...):
+                    ...
+              - pattern-inside: |
+                  @$APP.patch(...)
+                  def $VIEW(..., $PARAM, ...):
+                    ...
+              - pattern-inside: |
+                  @$APP.delete(...)
+                  def $VIEW(..., $PARAM, ...):
+                    ...
           # (A parameter pattern without a type or default also matches a typed one, and one
           # without a default also matches one with a default.)
           - pattern-not-inside: |
@@ -211,310 +234,87 @@ rules:
               def $VIEW(..., $PARAM: $ALIAS, ...):
                 ...
           - focus-metavariable: $PARAM
-      # Django, in a module that imports it: the HttpRequest a view receives, the URL arguments
-      # passed to the view after it, and what View.setup() keeps on a class-based view. Only an
-      # import at the module's top level counts; one nested in `if TYPE_CHECKING:` or `try:` does
-      # not (no test line: a fixture is one module, and it imports Django at the top level).
+      # Slices: OpenGrep does not carry taint through a slice (`request.args["q"][:50]`), so a
+      # slice of request data is a source itself: of a request access chain (Flask's request;
+      # in a Django view, its request or json.loads(request.body), and in a class, self.request,
+      # self.args, self.kwargs; with their subscripts, attributes and method calls), in place
+      # ($INIT[...]) or through a variable assigned one in the function and not assigned again
+      # (`q = escape(q)`), or of a view parameter (and its attributes). The chain is checked by
+      # its text ($INIT) and, for Flask, by flask.request resolution.
       - patterns:
-          # A module that imports Django. `import django` also matches `from django.x import y`
-          # and `import django.x as z`, and binds no metavariable: a finding counts
-          # once toward OpenGrep's match limit per file, however many names the
-          # module imports.
-          - pattern-inside: |
-              import django
-              ...
-          - pattern-either:
-              # The request: the first parameter of a function, the one after self of a method.
-              # The upper-case attributes exist only on Django's HttpRequest; the others count
-              # only on a parameter named request.
-              - patterns:
-                  - pattern-either:
-                      - pattern-inside: |
-                          def $VIEW($REQ, ...):
-                            ...
-                      - pattern-inside: |
-                          def $VIEW(self, $REQ, ...):
-                            ...
-                  - pattern-either:
-                      - pattern: $REQ.GET
-                      - pattern: $REQ.POST
-                      - pattern: $REQ.COOKIES
-                      - pattern: $REQ.META
-                      - pattern: $REQ.FILES
-                      - patterns:
-                          - pattern-either:
-                              - pattern: $REQ.headers
-                              - pattern: $REQ.body
-                              - pattern: $REQ.path
-                              - pattern: $REQ.path_info
-                              - pattern: $REQ.get_full_path(...)
-                              - pattern: $REQ.get_full_path_info(...)
-                              - pattern: $REQ.build_absolute_uri(...)
-                              - pattern: $REQ.read(...)
-                              - pattern: $REQ.readline(...)
-                              - pattern: $REQ.readlines(...)
-                          - metavariable-regex:
-                              metavariable: $REQ
-                              regex: ^request$
-              # Class-based views: View.setup() keeps the request on self.request and the URL
-              # arguments on self.args and self.kwargs.
+          - pattern-either: &chain-slices
+              - pattern: $INIT[$LOWER:]
+              - pattern: $INIT[:$UPPER]
+              - pattern: $INIT[$LOWER:$UPPER]
+              - pattern: $INIT[::$STEP]
+              - pattern: $INIT[$LOWER::$STEP]
+              - pattern: $INIT[:$UPPER:$STEP]
+              - pattern: $INIT[$LOWER:$UPPER:$STEP]
+              - pattern: $INIT[:]
               - patterns:
                   - pattern-inside: |
-                      class $CLS(...):
-                        ...
+                      $VALUE = $INIT
+                      ...
+                  - pattern-not-inside: |
+                      $VALUE = $INIT
+                      ...
+                      $VALUE = $OTHER
+                      ...
                   - pattern-either:
-                      - pattern: self.request.GET
-                      - pattern: self.request.POST
-                      - pattern: self.request.COOKIES
-                      - pattern: self.request.META
-                      - pattern: self.request.FILES
-                      - pattern: self.request.headers
-                      - pattern: self.request.body
-                      - pattern: self.request.path
-                      - pattern: self.request.path_info
-                      - pattern: self.request.get_full_path(...)
-                      - pattern: self.request.get_full_path_info(...)
-                      - pattern: self.request.build_absolute_uri(...)
-                      - pattern: self.args
-                      - pattern: self.kwargs
-              # URL arguments: the parameters after the request of a function-based view, and of
-              # a class-based view's handler method (dispatch() calls get(), post(), ...).
-              - patterns:
-                  - pattern-either:
-                      - pattern-inside: |
-                          def $VIEW(request, ..., $PARAM, ...):
-                            ...
-                      - pattern-inside: |
-                          def $VIEW(request, ..., *$PARAM, ...):
-                            ...
-                      - pattern-inside: |
-                          def $VIEW(request, ..., **$PARAM):
-                            ...
-                      - patterns:
-                          - pattern-inside: |
-                              class $CLS(...):
-                                ...
-                          - pattern-either:
-                              - pattern-inside: |
-                                  def $VIEW(self, request, ..., $PARAM, ...):
-                                    ...
-                              - pattern-inside: |
-                                  def $VIEW(self, request, ..., *$PARAM, ...):
-                                    ...
-                              - pattern-inside: |
-                                  def $VIEW(self, request, ..., **$PARAM):
-                                    ...
-                          - metavariable-regex:
-                              metavariable: $VIEW
-                              regex: ^(get|post|put|patch|delete|head|options|trace|dispatch)$
-                  - focus-metavariable: $PARAM
-      # Slices: OpenGrep does not carry taint through a slice (`request.args["q"][:50]`), so a
-      # slice of request data is a source itself: of a request access chain (Flask's request; in
-      # a Django view, its request or json.loads(request.body), and in a class, self.request,
-      # self.args, self.kwargs; with their subscripts, attributes and method calls), in place or
-      # through a variable assigned one in the function and not assigned again (`q =
-      # escape(q)`), or of a view parameter (and its attributes).
-      - patterns:
-          - pattern-either:
-              - pattern: $VALUE[$LOWER:]
-              - pattern: $VALUE[:$UPPER]
-              - pattern: $VALUE[$LOWER:$UPPER]
-              - pattern: $VALUE[::$STEP]
-              - pattern: $VALUE[$LOWER::$STEP]
-              - pattern: $VALUE[:$UPPER:$STEP]
-              - pattern: $VALUE[$LOWER:$UPPER:$STEP]
-              - pattern: $VALUE[:]
+                      - pattern: $VALUE[$LOWER:]
+                      - pattern: $VALUE[:$UPPER]
+                      - pattern: $VALUE[$LOWER:$UPPER]
+                      - pattern: $VALUE[::$STEP]
+                      - pattern: $VALUE[$LOWER::$STEP]
+                      - pattern: $VALUE[:$UPPER:$STEP]
+                      - pattern: $VALUE[$LOWER:$UPPER:$STEP]
+                      - pattern: $VALUE[:]
+                      - pattern: $VALUE[$KEY][$LOWER:]
+                      - pattern: $VALUE[$KEY][:$UPPER]
+                      - pattern: $VALUE[$KEY][$LOWER:$UPPER]
+                      - pattern: $VALUE.$METHOD(...)[$LOWER:]
+                      - pattern: $VALUE.$METHOD(...)[:$UPPER]
+                      - pattern: $VALUE.$METHOD(...)[$LOWER:$UPPER]
+                      - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:]
+                      - pattern: $VALUE[$KEY].$METHOD(...)[:$UPPER]
+                      - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:$UPPER]
           - metavariable-regex:
-              metavariable: $VALUE
+              metavariable: $INIT
               regex: &flask-request-chain ^((flask\.)?request\.(args|form|values|headers|cookies|json|data|files|view_args|path|full_path|url|query_string|get_json\([^()]*\)|get_data\([^()]*\))|json\.loads\((flask\.)?request\.(data|get_data\([^()]*\))\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
           - metavariable-pattern:
-              metavariable: $VALUE
-              pattern: flask.request.$ATTR
-          # Not a local named request (an outgoing urllib request in a helper).
-          - pattern-not-inside: |
-              request = $LOCAL
-              ...
-      - patterns:
-          - pattern-inside: |
-              $VALUE = $INIT
-              ...
-          - pattern-not-inside: |
-              $VALUE = $INIT
-              ...
-              $VALUE = $OTHER
-              ...
-          - pattern-either:
-              - pattern: $VALUE[$LOWER:]
-              - pattern: $VALUE[:$UPPER]
-              - pattern: $VALUE[$LOWER:$UPPER]
-              - pattern: $VALUE[::$STEP]
-              - pattern: $VALUE[$LOWER::$STEP]
-              - pattern: $VALUE[:$UPPER:$STEP]
-              - pattern: $VALUE[$LOWER:$UPPER:$STEP]
-              - pattern: $VALUE[:]
-              - pattern: $VALUE[$KEY][$LOWER:]
-              - pattern: $VALUE[$KEY][:$UPPER]
-              - pattern: $VALUE[$KEY][$LOWER:$UPPER]
-              - pattern: $VALUE.$METHOD(...)[$LOWER:]
-              - pattern: $VALUE.$METHOD(...)[:$UPPER]
-              - pattern: $VALUE.$METHOD(...)[$LOWER:$UPPER]
-              - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:]
-              - pattern: $VALUE[$KEY].$METHOD(...)[:$UPPER]
-              - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:$UPPER]
-          - metavariable-regex:
-              metavariable: $INIT
-              regex: *flask-request-chain
-          - metavariable-pattern:
               metavariable: $INIT
               pattern: flask.request.$ATTR
           # Not a local named request (an outgoing urllib request in a helper).
           - pattern-not-inside: |
               request = $LOCAL
               ...
+      # A view parameter: of a route-decorated view (Flask, FastAPI; not a dependency).
       - patterns:
-          # A module that imports Django. `import django` also matches `from django.x import y`
-          # and `import django.x as z`, and binds no metavariable: a finding counts
-          # once toward OpenGrep's match limit per file, however many names the
-          # module imports.
-          - pattern-inside: |
-              import django
-              ...
           - pattern-either:
               - pattern-inside: |
-                  def $VIEW(request, ...):
+                  @$APP.route(...)
+                  def $VIEW(..., $PARAM, ...):
                     ...
               - pattern-inside: |
-                  def $VIEW(self, request, ...):
-                    ...
-          - pattern-either:
-              - pattern: $VALUE[$LOWER:]
-              - pattern: $VALUE[:$UPPER]
-              - pattern: $VALUE[$LOWER:$UPPER]
-              - pattern: $VALUE[::$STEP]
-              - pattern: $VALUE[$LOWER::$STEP]
-              - pattern: $VALUE[:$UPPER:$STEP]
-              - pattern: $VALUE[$LOWER:$UPPER:$STEP]
-              - pattern: $VALUE[:]
-          - metavariable-regex:
-              metavariable: $VALUE
-              regex: &django-request-chain ^(request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|json\.loads\(request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
-      - patterns:
-          # A module that imports Django. `import django` also matches `from django.x import y`
-          # and `import django.x as z`, and binds no metavariable: a finding counts
-          # once toward OpenGrep's match limit per file, however many names the
-          # module imports.
-          - pattern-inside: |
-              import django
-              ...
-          - pattern-inside: |
-              class $CLS(...):
-                ...
-          - pattern-either:
-              - pattern: $VALUE[$LOWER:]
-              - pattern: $VALUE[:$UPPER]
-              - pattern: $VALUE[$LOWER:$UPPER]
-              - pattern: $VALUE[::$STEP]
-              - pattern: $VALUE[$LOWER::$STEP]
-              - pattern: $VALUE[:$UPPER:$STEP]
-              - pattern: $VALUE[$LOWER:$UPPER:$STEP]
-              - pattern: $VALUE[:]
-          - metavariable-regex:
-              metavariable: $VALUE
-              regex: &django-self-chain ^(self\.request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|self\.(args|kwargs)|json\.loads\(self\.request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
-      - patterns:
-          # A module that imports Django. `import django` also matches `from django.x import y`
-          # and `import django.x as z`, and binds no metavariable: a finding counts
-          # once toward OpenGrep's match limit per file, however many names the
-          # module imports.
-          - pattern-inside: |
-              import django
-              ...
-          - pattern-either:
-              - pattern-inside: |
-                  def $VIEW(request, ...):
+                  @$APP.get(...)
+                  def $VIEW(..., $PARAM, ...):
                     ...
               - pattern-inside: |
-                  def $VIEW(self, request, ...):
+                  @$APP.post(...)
+                  def $VIEW(..., $PARAM, ...):
                     ...
-          - pattern-inside: |
-              $VALUE = $INIT
-              ...
-          - pattern-not-inside: |
-              $VALUE = $INIT
-              ...
-              $VALUE = $OTHER
-              ...
-          - pattern-either:
-              - pattern: $VALUE[$LOWER:]
-              - pattern: $VALUE[:$UPPER]
-              - pattern: $VALUE[$LOWER:$UPPER]
-              - pattern: $VALUE[::$STEP]
-              - pattern: $VALUE[$LOWER::$STEP]
-              - pattern: $VALUE[:$UPPER:$STEP]
-              - pattern: $VALUE[$LOWER:$UPPER:$STEP]
-              - pattern: $VALUE[:]
-              - pattern: $VALUE[$KEY][$LOWER:]
-              - pattern: $VALUE[$KEY][:$UPPER]
-              - pattern: $VALUE[$KEY][$LOWER:$UPPER]
-              - pattern: $VALUE.$METHOD(...)[$LOWER:]
-              - pattern: $VALUE.$METHOD(...)[:$UPPER]
-              - pattern: $VALUE.$METHOD(...)[$LOWER:$UPPER]
-              - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:]
-              - pattern: $VALUE[$KEY].$METHOD(...)[:$UPPER]
-              - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:$UPPER]
-          - metavariable-regex:
-              metavariable: $INIT
-              regex: *django-request-chain
-      - patterns:
-          # A module that imports Django. `import django` also matches `from django.x import y`
-          # and `import django.x as z`, and binds no metavariable: a finding counts
-          # once toward OpenGrep's match limit per file, however many names the
-          # module imports.
-          - pattern-inside: |
-              import django
-              ...
-          - pattern-inside: |
-              class $CLS(...):
-                ...
-          - pattern-inside: |
-              $VALUE = $INIT
-              ...
-          - pattern-not-inside: |
-              $VALUE = $INIT
-              ...
-              $VALUE = $OTHER
-              ...
-          - pattern-either:
-              - pattern: $VALUE[$LOWER:]
-              - pattern: $VALUE[:$UPPER]
-              - pattern: $VALUE[$LOWER:$UPPER]
-              - pattern: $VALUE[::$STEP]
-              - pattern: $VALUE[$LOWER::$STEP]
-              - pattern: $VALUE[:$UPPER:$STEP]
-              - pattern: $VALUE[$LOWER:$UPPER:$STEP]
-              - pattern: $VALUE[:]
-              - pattern: $VALUE[$KEY][$LOWER:]
-              - pattern: $VALUE[$KEY][:$UPPER]
-              - pattern: $VALUE[$KEY][$LOWER:$UPPER]
-              - pattern: $VALUE.$METHOD(...)[$LOWER:]
-              - pattern: $VALUE.$METHOD(...)[:$UPPER]
-              - pattern: $VALUE.$METHOD(...)[$LOWER:$UPPER]
-              - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:]
-              - pattern: $VALUE[$KEY].$METHOD(...)[:$UPPER]
-              - pattern: $VALUE[$KEY].$METHOD(...)[$LOWER:$UPPER]
-          - metavariable-regex:
-              metavariable: $INIT
-              regex: *django-self-chain
-      # A view parameter: of a route-decorated view (Flask, FastAPI; not a dependency), and the
-      # URL arguments of a Django view.
-      - patterns:
-          - pattern-inside: |
-              @$APP.$ROUTE(...)
-              def $VIEW(..., $PARAM, ...):
-                ...
-          - metavariable-regex:
-              metavariable: $ROUTE
-              regex: ^(route|get|post|put|patch|delete)$
+              - pattern-inside: |
+                  @$APP.put(...)
+                  def $VIEW(..., $PARAM, ...):
+                    ...
+              - pattern-inside: |
+                  @$APP.patch(...)
+                  def $VIEW(..., $PARAM, ...):
+                    ...
+              - pattern-inside: |
+                  @$APP.delete(...)
+                  def $VIEW(..., $PARAM, ...):
+                    ...
           - pattern-not-inside: |
               def $VIEW(..., $PARAM = fastapi.Depends(...), ...):
                 ...
@@ -546,6 +346,11 @@ rules:
               - pattern: $PARAM.$FIELD[$LOWER:]
               - pattern: $PARAM.$FIELD[:$UPPER]
               - pattern: $PARAM.$FIELD[$LOWER:$UPPER]
+      # Django, in a module that imports it: the HttpRequest a view receives, the URL arguments
+      # passed to the view after it, and what View.setup() keeps on a class-based view, with
+      # their slices. Only an import at the module's top level counts; one nested in
+      # `if TYPE_CHECKING:` or `try:` does not (no test line: a fixture is one module, and it
+      # imports Django at the top level).
       - patterns:
           # A module that imports Django. `import django` also matches `from django.x import y`
           # and `import django.x as z`, and binds no metavariable: a finding counts
@@ -555,23 +360,208 @@ rules:
               import django
               ...
           - pattern-either:
-              - pattern-inside: |
-                  def $VIEW(request, ..., $PARAM, ...):
-                    ...
+              # The request: the first parameter of a function, the one after self of a method.
+              # The upper-case attributes exist only on Django's HttpRequest; the others count
+              # only on a parameter named request, and so do the slices of its chains.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW($REQ, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(self, $REQ, ...):
+                            ...
+                  - pattern-either:
+                      - pattern: $REQ.GET
+                      - pattern: $REQ.POST
+                      - pattern: $REQ.COOKIES
+                      - pattern: $REQ.META
+                      - pattern: $REQ.FILES
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW(request, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(self, request, ...):
+                            ...
+                  - pattern-either:
+                      - pattern: request.headers
+                      - pattern: request.body
+                      - pattern: request.path
+                      - pattern: request.path_info
+                      - pattern: request.get_full_path(...)
+                      - pattern: request.get_full_path_info(...)
+                      - pattern: request.build_absolute_uri(...)
+                      - pattern: request.read(...)
+                      - pattern: request.readline(...)
+                      - pattern: request.readlines(...)
+                      - patterns:
+                          - pattern-either: *chain-slices
+                          - metavariable-regex:
+                              metavariable: $INIT
+                              regex: &django-request-chain ^(request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|json\.loads\(request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
+              # Class-based views: View.setup() keeps the request on self.request and the URL
+              # arguments on self.args and self.kwargs.
               - patterns:
                   - pattern-inside: |
                       class $CLS(...):
                         ...
-                  - pattern-inside: |
-                      def $VIEW(self, request, ..., $PARAM, ...):
-                        ...
-                  - metavariable-regex:
-                      metavariable: $VIEW
-                      regex: ^(get|post|put|patch|delete|head|options|trace|dispatch)$
-          - pattern-either:
-              - pattern: $PARAM[$LOWER:]
-              - pattern: $PARAM[:$UPPER]
-              - pattern: $PARAM[$LOWER:$UPPER]
+                  - pattern-either:
+                      - pattern: self.request.GET
+                      - pattern: self.request.POST
+                      - pattern: self.request.COOKIES
+                      - pattern: self.request.META
+                      - pattern: self.request.FILES
+                      - pattern: self.request.headers
+                      - pattern: self.request.body
+                      - pattern: self.request.path
+                      - pattern: self.request.path_info
+                      - pattern: self.request.get_full_path(...)
+                      - pattern: self.request.get_full_path_info(...)
+                      - pattern: self.request.build_absolute_uri(...)
+                      - pattern: self.args
+                      - pattern: self.kwargs
+                      - patterns:
+                          - pattern-either: *chain-slices
+                          - metavariable-regex:
+                              metavariable: $INIT
+                              regex: &django-self-chain ^(self\.request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|self\.(args|kwargs)|json\.loads\(self\.request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
+              # URL arguments: the parameters after the request of a function-based view, and of
+              # a class-based view's handler method (dispatch() calls get(), post(), ...): a
+              # function get(self, request, ...), post(...), ... (inside a class or not: a class
+              # condition, or the method written inside its class, would be one more condition
+              # to multiply, or would miss a method defined under an `if`).
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW(request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def $VIEW(request, ..., **$PARAM):
+                            ...
+                      - pattern-inside: |
+                          def get(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def get(self, request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def get(self, request, ..., **$PARAM):
+                            ...
+                      - pattern-inside: |
+                          def post(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def post(self, request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def post(self, request, ..., **$PARAM):
+                            ...
+                      - pattern-inside: |
+                          def put(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def put(self, request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def put(self, request, ..., **$PARAM):
+                            ...
+                      - pattern-inside: |
+                          def patch(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def patch(self, request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def patch(self, request, ..., **$PARAM):
+                            ...
+                      - pattern-inside: |
+                          def delete(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def delete(self, request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def delete(self, request, ..., **$PARAM):
+                            ...
+                      - pattern-inside: |
+                          def head(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def head(self, request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def head(self, request, ..., **$PARAM):
+                            ...
+                      - pattern-inside: |
+                          def options(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def options(self, request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def options(self, request, ..., **$PARAM):
+                            ...
+                      - pattern-inside: |
+                          def trace(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def trace(self, request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def trace(self, request, ..., **$PARAM):
+                            ...
+                      - pattern-inside: |
+                          def dispatch(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def dispatch(self, request, ..., *$PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def dispatch(self, request, ..., **$PARAM):
+                            ...
+                  - focus-metavariable: $PARAM
+              # ... and their slices.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $VIEW(request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def get(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def post(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def put(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def patch(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def delete(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def head(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def options(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def trace(self, request, ..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          def dispatch(self, request, ..., $PARAM, ...):
+                            ...
+                  - pattern-either:
+                      - pattern: $PARAM[$LOWER:]
+                      - pattern: $PARAM[:$UPPER]
+                      - pattern: $PARAM[$LOWER:$UPPER]
       # (End of the shared Python source block; the items below are this rule's own.)
       # Starlette and FastAPI middleware (a BaseHTTPMiddleware's dispatch(), an
       # @app.middleware("http") function) see every request: its query string, path parameters,
