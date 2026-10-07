@@ -350,9 +350,11 @@ class PinningTrustManager implements X509TrustManager {
 
 class SignedByTrustManager extends X509ExtendedTrustManager {
     private final PublicKey issuer;
+    private final X509ExtendedTrustManager platform;
 
-    SignedByTrustManager(PublicKey issuer) {
+    SignedByTrustManager(PublicKey issuer, X509ExtendedTrustManager platform) {
         this.issuer = issuer;
+        this.platform = platform;
     }
 
     public void checkClientTrusted(X509Certificate[] chain, String authType) {
@@ -381,7 +383,7 @@ class SignedByTrustManager extends X509ExtendedTrustManager {
 
     // ok: java.tls-verification-disabled
     public void checkServerTrusted(X509Certificate[] chain, String authType, SSLEngine engine) throws CertificateException {
-        super.checkServerTrusted(chain, authType, engine);
+        platform.checkServerTrusted(chain, authType, engine);
     }
 
     private void requireSignedBy(X509Certificate[] chain) throws CertificateException {
@@ -392,6 +394,164 @@ class SignedByTrustManager extends X509ExtendedTrustManager {
 
     public X509Certificate[] getAcceptedIssuers() {
         return new X509Certificate[0];
+    }
+}
+
+// Safe trust managers that check one certificate of the chain, or a copy of it.
+class LeafCheckingTrustManager implements X509TrustManager {
+    private static final String PIN = "9d2e...";
+    private final X509TrustManager platform;
+
+    LeafCheckingTrustManager(X509TrustManager platform) {
+        this.platform = platform;
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+        platform.checkClientTrusted(chain, authType);
+    }
+
+    // The server certificate goes to a pin check of this class, which throws on a mismatch.
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+        requirePinned(chain[0]);
+    }
+
+    private static void requirePinned(X509Certificate server) throws CertificateException {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(server.getPublicKey().getEncoded());
+            if (!PIN.equals(HexFormat.of().formatHex(digest))) {
+                throw new CertificateException("unexpected server key");
+            }
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new CertificateException(e);
+        }
+    }
+
+    public X509Certificate[] getAcceptedIssuers() {
+        return platform.getAcceptedIssuers();
+    }
+}
+
+class CopyingTrustManager extends X509ExtendedTrustManager {
+    private final X509ExtendedTrustManager platform;
+
+    CopyingTrustManager(X509ExtendedTrustManager platform) {
+        this.platform = platform;
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+        platform.checkClientTrusted(chain, authType);
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType, Socket socket) throws CertificateException {
+        platform.checkClientTrusted(chain, authType, socket);
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType, SSLEngine engine) throws CertificateException {
+        platform.checkClientTrusted(chain, authType, engine);
+    }
+
+    // A copy of the chain, held in a variable.
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+        X509Certificate[] own = chain.clone();
+        platform.checkServerTrusted(own, authType);
+    }
+
+    // Only the server certificate, in a new array.
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType, Socket socket) throws CertificateException {
+        X509Certificate server = chain[0];
+        platform.checkServerTrusted(new X509Certificate[] {server}, authType, socket);
+    }
+
+    // Every certificate of the chain, one by one.
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType, SSLEngine engine) throws CertificateException {
+        for (X509Certificate certificate : chain) {
+            requireKnown(certificate);
+        }
+    }
+
+    private static void requireKnown(X509Certificate certificate) throws CertificateException {
+        if (certificate.getSubjectX500Principal() == null) {
+            throw new CertificateException("no subject");
+        }
+    }
+
+    public X509Certificate[] getAcceptedIssuers() {
+        return platform.getAcceptedIssuers();
+    }
+}
+
+class LeafVariantsTrustManager extends X509ExtendedTrustManager {
+    private final X509ExtendedTrustManager platform;
+
+    LeafVariantsTrustManager(X509ExtendedTrustManager platform) {
+        this.platform = platform;
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+        platform.checkClientTrusted(chain, authType);
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType, Socket socket) throws CertificateException {
+        platform.checkClientTrusted(chain, authType, socket);
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType, SSLEngine engine) throws CertificateException {
+        platform.checkClientTrusted(chain, authType, engine);
+    }
+
+    // Only the server certificate, in a new array written in place.
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+        platform.checkServerTrusted(new X509Certificate[] {chain[0]}, authType);
+    }
+
+    // The server certificate through a variable, to a check of this class.
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType, Socket socket) throws CertificateException {
+        X509Certificate server = chain[0];
+        requireCurrent(server);
+    }
+
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType, SSLEngine engine) throws CertificateException {
+        platform.checkServerTrusted(chain, authType, engine);
+    }
+
+    private static void requireCurrent(X509Certificate server) throws CertificateException {
+        server.checkValidity();
+        if (server.getBasicConstraints() != -1) {
+            throw new CertificateException("a CA certificate cannot be the server certificate");
+        }
+    }
+
+    public X509Certificate[] getAcceptedIssuers() {
+        return platform.getAcceptedIssuers();
+    }
+}
+
+class CopyOfTrustManager implements X509TrustManager {
+    private final X509TrustManager platform;
+
+    CopyOfTrustManager(X509TrustManager platform) {
+        this.platform = platform;
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+        platform.checkClientTrusted(chain, authType);
+    }
+
+    // The chain cut to its first two certificates, in place.
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+        platform.checkServerTrusted(Arrays.copyOf(chain, Math.min(2, chain.length)), authType);
+    }
+
+    public X509Certificate[] getAcceptedIssuers() {
+        return platform.getAcceptedIssuers();
     }
 }
 
@@ -420,6 +580,48 @@ class Limits {
             // todoruleid: java.tls-verification-disabled
             public void checkServerTrusted(X509Certificate[] chain, String authType) {
                 LOG.fine("server chain " + Arrays.toString(chain));
+            }
+
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        };
+    }
+
+    // A delegation whose CertificateException is caught and only logged trusts every chain, but
+    // the call to the default manager counts as the check.
+    X509TrustManager swallows(X509TrustManager platform) {
+        return new X509TrustManager() {
+            public void checkClientTrusted(X509Certificate[] chain, String authType) {
+            }
+
+            // todoruleid: java.tls-verification-disabled
+            public void checkServerTrusted(X509Certificate[] chain, String authType) {
+                try {
+                    platform.checkServerTrusted(chain, authType);
+                } catch (CertificateException e) {
+                    LOG.warning("untrusted server certificate ignored: " + e.getMessage());
+                }
+            }
+
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        };
+    }
+
+    // The only throw is the argument check the javadoc describes (a null or empty chain); any
+    // other chain is trusted, but every throw counts as a check.
+    X509TrustManager argumentCheckOnly() {
+        return new X509TrustManager() {
+            public void checkClientTrusted(X509Certificate[] chain, String authType) {
+            }
+
+            // todoruleid: java.tls-verification-disabled
+            public void checkServerTrusted(X509Certificate[] chain, String authType) {
+                if (chain == null || chain.length == 0) {
+                    throw new IllegalArgumentException("no server certificate");
+                }
             }
 
             public X509Certificate[] getAcceptedIssuers() {

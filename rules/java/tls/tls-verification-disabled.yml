@@ -47,8 +47,10 @@ rules:
     # Only client checks are reported: checkClientTrusted is what a server calls, and an empty one
     # means "clients need no certificate", so it is never reported.
     # Known limits (each has a `todo` line in the test file):
-    # - A checkServerTrusted that hands the chain to any call (a log message too) counts as
-    #   checking it; so does one that throws anywhere or calls another checkServerTrusted.
+    # - A checkServerTrusted that hands the chain (a copy, or one certificate of it) to any call
+    #   counts as checking it: also a log message, and a delegation to another trust manager whose
+    #   CertificateException is caught and only logged. One that throws anywhere counts too, also
+    #   when its only throw is the IllegalArgumentException for a null or empty chain.
     # - A trust-all manager given only to a server context (whose checkServerTrusted is never
     #   called) is still reported.
     # - A lambda is a HostnameVerifier only when it is given to setHostnameVerifier or
@@ -70,8 +72,8 @@ rules:
     pattern-either:
       # X509TrustManager / X509ExtendedTrustManager: a checkServerTrusted that returns normally
       # whatever the chain ("returns normally" means "trusted", javadoc). It checks something when
-      # it throws (CertificateException) or hands the chain to a call (another trust manager's
-      # checkServerTrusted, super's, a helper). A certificate's own checkValidity() or verify()
+      # it throws (CertificateException) or hands the chain, a copy of it or one of its
+      # certificates to a call (another trust manager's checkServerTrusted, a pin check, a helper). A certificate's own checkValidity() or verify()
       # whose failure is caught and not thrown again checks nothing.
       - patterns:
           - pattern: |
@@ -80,6 +82,20 @@ rules:
               void checkServerTrusted(...) { ... throw $E; ... }
           - pattern-not: |
               void checkServerTrusted(java.security.cert.X509Certificate[] $CHAIN, ...) { ... $F(..., $CHAIN, ...); ... }
+          # ... also one certificate of it (directly, in a new array or through a variable), a
+          # copy of it, or each certificate in a loop.
+          - pattern-not: |
+              void checkServerTrusted(java.security.cert.X509Certificate[] $CHAIN, ...) { ... $F(..., $CHAIN[$I], ...); ... }
+          - pattern-not: |
+              void checkServerTrusted(java.security.cert.X509Certificate[] $CHAIN, ...) { ... $F(..., new $T[] {..., $CHAIN[$I], ...}, ...); ... }
+          - pattern-not: |
+              void checkServerTrusted(java.security.cert.X509Certificate[] $CHAIN, ...) { ... $X = $CHAIN[$I]; ... $F(..., $X, ...); ... }
+          - pattern-not: |
+              void checkServerTrusted(java.security.cert.X509Certificate[] $CHAIN, ...) { ... $X = $CHAIN[$I]; ... $F(..., new $T[] {..., $X, ...}, ...); ... }
+          - pattern-not: |
+              void checkServerTrusted(java.security.cert.X509Certificate[] $CHAIN, ...) { ... $X = $CHAIN.clone(); ... $F(..., $X, ...); ... }
+          - pattern-not: |
+              void checkServerTrusted(java.security.cert.X509Certificate[] $CHAIN, ...) { ... for ($CT $C : $CHAIN) { ... $F(..., $C, ...); ... } ... }
       # HostnameVerifier: `return true` that is not under a condition, in a verify method or in a
       # lambda given where a HostnameVerifier is expected, whose body never returns false or
       # throws.
