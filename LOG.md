@@ -39,6 +39,7 @@ Entry format:
 - js-2 (js.regex-injection#hand-written-escape, js.command-injection#powershell-params, js.command-injection#fallback-from-request, js.command-injection#cmd-powershell-tail): APPROVED after 2 fix rounds (PowerShell modelled per about_pwsh / about_PowerShell_exe); merged 07d0832..d743983
 - java-3 (java.regex-injection, java.tls-verification-disabled, java.weak-cipher, java.xss#sink-results): APPROVED after 2 fix rounds (Benchmark crypto TPR 74.6 % FPR 0 %; ruling J2: fetched bodies clean only from a fixed origin; J3: misuse rules skip test code); merged aca8545..b6137cf
 - python-2 (python.open-redirect#middleware-path, python.open-redirect#django-guard, python.open-redirect#location-header-redirectview, python.path-traversal#shelve): APPROVED after 1 fix round (Location sink rebuilt: no match explosion; no findings lost vs base); merged 2cebfd2..8195036
+- re-plan: added `python.sql-injection#django-import-match-limit` (found in python-2: large Django modules lose every finding to the match limit) at the head of python-3; python-3 is now (python.sql-injection#django-import-match-limit, python.xss#json-reassign-or, python.xxe#lxml-dtd-hotspot, python.tls-verification-disabled#ssl-wrap-socket), python-4 (python.tls-verification-disabled#hostname-only, #aiohttp, #sdk-verify, #httpx-transport), python-5 (python.tar-extraction)
 
 ## 2026-10-06: release 2026.10.1 (`/release-pack`)
 
