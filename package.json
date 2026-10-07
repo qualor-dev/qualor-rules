@@ -1,6 +1,6 @@
 {
   "name": "qualor-rules",
-  "version": "2026.10.1",
+  "version": "2026.10.2",
   "private": true,
   "description": "Qualor's security rules for OpenGrep. Source-available under PolyForm Shield 1.0.0, not open source.",
   "license": "SEE LICENSE IN LICENSE",
