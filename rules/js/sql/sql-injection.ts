@@ -1,6 +1,6 @@
 import { Controller, Get, Param } from '@nestjs/common';
 import type { NextRequest } from 'next/server';
-import Fastify from 'fastify';
+import Fastify, { FastifyRequest } from 'fastify';
 import { headers } from 'next/headers';
 import express, { Request, Response } from 'express';
 import { Pool } from 'pg';
@@ -118,5 +118,41 @@ server.get<{ Querystring: { q: string } }>('/search', async (request) => {
   // ruleid: js.sql-injection
   return pool.query("SELECT * FROM posts WHERE title LIKE '%" + request.query.q + "%'");
 });
+
+// Typed handlers that destructure the request or the context.
+app.get('/books', async ({ query }: Request, res: Response) => {
+  // ruleid: js.sql-injection
+  await pool.query("SELECT * FROM books WHERE title = '" + query.title + "'");
+  res.end();
+});
+
+app.get('/books/:id', async ({ params: { id } }: Request<{ id: string }>, res: Response) => {
+  // ruleid: js.sql-injection
+  await pool.query(`SELECT * FROM books WHERE id = '${id}'`);
+  // ok: js.sql-injection
+  await pool.query('SELECT * FROM books WHERE id = $1', [id]);
+  res.end();
+});
+
+server.get('/tags', async ({ query }: FastifyRequest<{ Querystring: { q: string } }>) => {
+  // ruleid: js.sql-injection
+  return pool.query("SELECT * FROM tags WHERE name = '" + query.q + "'");
+});
+
+export async function GET({ nextUrl }: NextRequest, { params: { slug } }: { params: { slug: string } }) {
+  // ruleid: js.sql-injection
+  await pool.query("SELECT * FROM posts WHERE slug = '" + slug + "'");
+  // ruleid: js.sql-injection
+  await pool.query("SELECT * FROM posts WHERE tag = '" + nextUrl.searchParams.get('tag') + "'");
+  // ok: js.sql-injection
+  await pool.query('SELECT * FROM posts WHERE slug = $1', [slug]);
+  return Response.json({});
+}
+
+// A function that is not named after an HTTP method is no route handler.
+export async function preview({ url }: NextRequest) {
+  // ok: js.sql-injection
+  return pool.query("SELECT * FROM previews WHERE url = '" + url + "'");
+}
 
 export default app;

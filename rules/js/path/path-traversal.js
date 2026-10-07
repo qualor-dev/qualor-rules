@@ -258,4 +258,23 @@ fastify.post('/imports', async (request) => {
   return {};
 });
 
+// Handlers that destructure the request (parameter list or declaration) give request data too.
+app.get('/files/destructured/:name', ({ params: { name } }, res) => {
+  // ruleid: js.path-traversal
+  res.sendFile(path.join(UPLOADS, name));
+  // ok: js.path-traversal
+  res.sendFile(path.join(UPLOADS, path.basename(name)));
+});
+fastify.get('/files/destructured', async (request) => {
+  const { query: { file: wanted } } = request;
+  // ruleid: js.path-traversal
+  return fs.readFileSync(path.join(UPLOADS, wanted), 'utf8');
+});
+
+// A field with a default value in a destructured parameter is no source (Known limits).
+app.get('/files/defaults', ({ query = {} }, res) => {
+  // todoruleid: js.path-traversal
+  res.sendFile(path.join(UPLOADS, query.name));
+});
+
 module.exports = { app, fastify, loadTemplate };

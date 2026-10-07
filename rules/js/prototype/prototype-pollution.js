@@ -319,4 +319,24 @@ fastify.post('/fastify/keys', async (request) => {
   return settings;
 });
 
+// Handlers that destructure the request (parameter list or declaration) give request data too.
+app.post('/settings/destructured', ({ body: { section, key, value } }, res) => {
+  // ruleid: js.prototype-pollution
+  settings[section][key] = value;
+  res.end();
+});
+fastify.post('/counters/destructured', async (request) => {
+  const { params: { group: g }, body } = request;
+  // ruleid: js.prototype-pollution
+  counters[g][body.name] = 1;
+  return {};
+});
+
+// A field with a default value in a destructured parameter is no source (Known limits).
+app.post('/settings/defaults', ({ signedCookies = {} }, res) => {
+  // todoruleid: js.prototype-pollution
+  settings[signedCookies.section][signedCookies.key] = 1;
+  res.end();
+});
+
 module.exports = { app, fastify, store, setByPath };

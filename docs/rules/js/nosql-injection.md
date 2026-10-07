@@ -97,6 +97,9 @@ app.post('/orders/search', async (req, res) => {
   collections.
 - Request handlers are recognised by the name of their second parameter (`res`, `reply`, `ctx`,
   `next`, ...): a handler written as `(request, out)` is not checked.
+- Handlers that destructure the request are followed (`({ query }, res) => ...`,
+  `const { body: { name } } = req;`), except a field with a default value in the parameter list
+  (`({ query = {} }, res)`), which is not checked.
 <!-- end: known-limits -->
 
 ## References
@@ -117,6 +120,7 @@ app.post('/orders/search', async (req, res) => {
 - <https://mongoosejs.com/docs/api/mongoose.html>
 - <https://mongoosejs.com/docs/api/model.html>
 - <https://mongoosejs.com/docs/api/query.html>
+- <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Destructuring>
 
 ## Tests
 

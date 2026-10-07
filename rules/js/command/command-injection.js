@@ -434,4 +434,23 @@ fastify.post('/jobs', async (request) => {
   return {};
 });
 
+// Handlers that destructure the request (parameter list or declaration) give request data too.
+app.get('/ping/destructured', ({ query }, res) => {
+  // ruleid: js.command-injection
+  exec('ping -c 1 ' + query.host, (err, stdout) => res.send(stdout));
+  // ok: js.command-injection
+  execFile('ping', ['-c', '1', query.host], (err, stdout) => res.send(stdout));
+});
+fastify.post('/ping/destructured', async (request) => {
+  const { body: { host: target } } = request;
+  // ruleid: js.command-injection
+  return execSync('nslookup ' + target).toString();
+});
+
+// A field with a default value in a destructured parameter is no source (Known limits).
+app.get('/ping/defaults', ({ query = {} }, res) => {
+  // todoruleid: js.command-injection
+  exec('ping -c 1 ' + query.host, (err, stdout) => res.send(stdout));
+});
+
 module.exports = { app, fastify, archive };

@@ -297,4 +297,41 @@ fastify.route({
   },
 });
 
+// Handlers that destructure the request: the body and the query string can still carry operators.
+app.post('/login/destructured', async ({ body: { email, password } }, res) => {
+  // ruleid: js.nosql-injection
+  res.json(await users.findOne({ email, password }));
+});
+app.post('/users/destructured', async (req, res) => {
+  const { body: filter, params: { id } } = req;
+  // ruleid: js.nosql-injection
+  await users.find(filter).toArray();
+  // ok: js.nosql-injection
+  res.json(await users.findOne({ ref: id }));
+});
+fastify.post('/accounts/destructured', async ({ body }) => {
+  // ruleid: js.nosql-injection
+  return users.findOne({ login: body.login });
+});
+fastify.post('/accounts/destructured/claim', {
+  schema: { body: { type: 'object', properties: { code: { type: 'string' } } } },
+}, async ({ body: { code } }) => {
+  // ok: js.nosql-injection
+  return users.findOne({ code });
+});
+fastify.route({
+  method: 'POST',
+  url: '/accounts/destructured/search',
+  handler: async ({ query }) => {
+    // ruleid: js.nosql-injection
+    return users.find(query.filter).toArray();
+  },
+});
+
+// A field with a default value in a destructured parameter is no source (Known limits).
+app.post('/login/defaults', async ({ body = {} }, res) => {
+  // todoruleid: js.nosql-injection
+  res.json(await users.findOne({ email: body.email }));
+});
+
 module.exports = { app, fastify, byEmail };

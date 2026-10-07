@@ -400,4 +400,22 @@ fastify.post('/notify/:id', async (request) => {
   return {};
 });
 
+// Handlers that destructure the request (parameter list or declaration) give request data too.
+app.get('/proxy/destructured', async ({ query }, res) => {
+  // ruleid: js.ssrf
+  const r = await fetch(query.url);
+  res.send(await r.text());
+});
+fastify.post('/proxy/destructured', async (request) => {
+  const { body: { target: where } } = request;
+  // ruleid: js.ssrf
+  return (await axios.get(where)).data;
+});
+
+// A field with a default value in a destructured parameter is no source (Known limits).
+app.get('/proxy/defaults', async ({ query = {} }, res) => {
+  // todoruleid: js.ssrf
+  res.send(await (await fetch(query.url)).text());
+});
+
 module.exports = { app, fastify, download };

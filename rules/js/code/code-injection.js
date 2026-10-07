@@ -195,4 +195,21 @@ http
   })
   .listen(0);
 
+// Handlers that destructure the request (parameter list or declaration) give request data too.
+app.get('/calc/destructured', ({ query: { expr } }, res) => {
+  // ruleid: js.code-injection
+  res.json({ result: eval(expr) });
+});
+fastify.post('/calc/destructured', async (request) => {
+  const { body: { formula: source } } = request;
+  // ruleid: js.code-injection
+  return { result: new Function('x', source)(1) };
+});
+
+// A field with a default value in a destructured parameter is no source (Known limits).
+app.get('/calc/defaults', ({ query = {} }, res) => {
+  // todoruleid: js.code-injection
+  res.json({ result: eval(query.expr) });
+});
+
 module.exports = { app, fastify, preview };

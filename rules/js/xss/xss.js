@@ -411,4 +411,23 @@ fastify.get('/fsafe', async (request, reply) => {
   return reply.type('text/html').send('<p>' + escapeHtml(request.query.text) + '</p>');
 });
 
+// Handlers that destructure the request (parameter list or declaration) give request data too.
+app.get('/hello/destructured', ({ query }, res) => {
+  // ruleid: js.xss
+  res.send('Hello ' + query.name);
+  // ok: js.xss
+  res.send('Hello ' + escapeHtml(query.name));
+});
+app.get('/bye/destructured', (req, res) => {
+  const { params: { name: who } } = req;
+  // ruleid: js.xss
+  res.send(`<p>Bye ${who}</p>`);
+});
+
+// A field with a default value in a destructured parameter is no source (Known limits).
+app.get('/hello/defaults', ({ query = {} }, res) => {
+  // todoruleid: js.xss
+  res.send('Hello ' + query.name);
+});
+
 module.exports = { app, server, fastify, reply };

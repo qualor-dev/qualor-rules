@@ -351,4 +351,163 @@ app.get('/exports', async (request, out) => {
   out.end();
 });
 
+// Handlers that destructure the request: in the parameter list (also renamed or nested) or in a
+// declaration (also with a default value).
+router.get('/shelves/:shelf', async ({ query, params: { shelf } }, res) => {
+  // ruleid: js.sql-injection
+  await pool.query("SELECT * FROM books WHERE shelf = '" + shelf + "'");
+  // ruleid: js.sql-injection
+  await pool.query(`SELECT * FROM books WHERE title = '${query.title}'`);
+  // ok: js.sql-injection
+  await pool.query('SELECT * FROM books WHERE shelf = $1', [shelf]);
+  res.end();
+});
+
+router.post('/shelves', async function addBook({ body: { title: bookTitle }, headers }, res, next) {
+  // ruleid: js.sql-injection
+  await pool.query("INSERT INTO books (title) VALUES ('" + bookTitle + "')");
+  // ruleid: js.sql-injection
+  await pool.query("INSERT INTO agents (name) VALUES ('" + headers['user-agent'] + "')");
+  // ok: js.sql-injection
+  await pool.query('INSERT INTO books (title) VALUES ($1)', [bookTitle]);
+  next();
+});
+
+// A field with a default value in the parameter list is not matched by OpenGrep's object
+// patterns, so it is no source.
+async function emptyCart({ cookies = {} }, res) {
+  // todoruleid: js.sql-injection
+  await pool.query("DELETE FROM carts WHERE session = '" + cookies.cart + "'");
+  res.end();
+}
+
+router.delete('/cart', emptyCart);
+
+router.get('/shelves/search', async (req, res) => {
+  const { query: { author }, body } = req;
+  // ruleid: js.sql-injection
+  await pool.query("SELECT * FROM books WHERE author = '" + author + "'");
+  // ruleid: js.sql-injection
+  await pool.query("SELECT * FROM books WHERE isbn = '" + body.isbn + "'");
+  let { originalUrl: visited } = req;
+  // ruleid: js.sql-injection
+  await pool.query("INSERT INTO visits (path) VALUES ('" + visited + "')");
+  const { body: { note = '' } = {}, headers: { referer: from = '' } } = req;
+  // ruleid: js.sql-injection
+  await pool.query("INSERT INTO notes (text, source) VALUES ('" + note + "', '" + from + "')");
+  const { method } = req;
+  // ok: js.sql-injection
+  await pool.query("INSERT INTO visits (method) VALUES ('" + method + "')");
+  const { query: defaultTitle } = { query: 'all' };
+  // ok: js.sql-injection
+  await pool.query("SELECT * FROM books WHERE title = '" + defaultTitle + "'");
+  res.end();
+});
+
+router.post('/shelves/notes', async ({ body: { note: text = '' } }, res) => {
+  // ruleid: js.sql-injection
+  await pool.query("INSERT INTO notes (text) VALUES ('" + text + "')");
+  res.end();
+});
+
+router.get('/shelves/count', async ({ method }, res) => {
+  // ok: js.sql-injection
+  res.json(await pool.query("SELECT count(*) FROM visits WHERE method = '" + method + "'"));
+});
+
+// Functions that destructure their first parameter but are no handlers.
+function describeBook({ title }, options) {
+  // ok: js.sql-injection
+  return pool.query("SELECT * FROM books WHERE title = '" + title + "' LIMIT " + options.limit);
+}
+
+function summarize({ query }, options) {
+  // ok: js.sql-injection
+  return pool.query("SELECT * FROM reports WHERE name = '" + query + "' LIMIT " + options.limit);
+}
+
+[{ query: 'a' }].map(({ query }) => {
+  // ok: js.sql-injection
+  return pool.query("SELECT * FROM reports WHERE name = '" + query + "'");
+});
+
+app.get('/shelves/export', async ({ query }, out) => {
+  // todoruleid: js.sql-injection
+  await pool.query("SELECT * FROM exports WHERE shelf = '" + query.shelf + "'");
+  out.end();
+});
+
+// Fastify handlers that take only the request and destructure it.
+fastify.post('/notes', async ({ body: { text: noteText } }) => {
+  // ruleid: js.sql-injection
+  await pool.query("INSERT INTO notes (text) VALUES ('" + noteText + "')");
+  // ok: js.sql-injection
+  await pool.query('INSERT INTO notes (text) VALUES ($1)', [noteText]);
+  return {};
+});
+
+fastify.get('/notes', async (request) => {
+  const { query: { tag } } = request;
+  // ruleid: js.sql-injection
+  return pool.query("SELECT * FROM notes WHERE tag = '" + tag + "'");
+});
+
+fastify.route({
+  method: 'PUT',
+  url: '/notes/:id',
+  handler: async ({ params, body }) => {
+    // ruleid: js.sql-injection
+    await pool.query("UPDATE notes SET text = '" + body.text + "' WHERE id = " + params.id);
+    return {};
+  },
+});
+
+// A one-parameter callback is a Fastify handler only after a route method and a path literal.
+const store = { find: (key, done) => done({ query: key }) };
+store.find('/notes', ({ query }) => {
+  // ok: js.sql-injection
+  pool.query("SELECT * FROM notes WHERE tag = '" + query + "'");
+});
+client.get('reports', ({ query }) => {
+  // ok: js.sql-injection
+  pool.query("SELECT * FROM reports WHERE name = '" + query + "'");
+});
+client.get('/reports/latest', ({ query }) => {
+  // todook: js.sql-injection
+  pool.query("SELECT * FROM reports WHERE name = '" + query + "'");
+});
+
+// Next.js App Router handlers that destructure the request or the context.
+async function PUT(request, ctx) {
+  const { url } = request;
+  const { params } = ctx;
+  const { slug } = await params;
+  // ruleid: js.sql-injection
+  await pool.query("INSERT INTO visits (url) VALUES ('" + url + "')");
+  // ruleid: js.sql-injection
+  await pool.query("UPDATE posts SET views = views + 1 WHERE slug = '" + slug + "'");
+  return Response.json({});
+}
+
+async function PATCH({ nextUrl }, { params: { id } }) {
+  // ruleid: js.sql-injection
+  await pool.query("UPDATE posts SET tag = '" + nextUrl.searchParams.get('tag') + "' WHERE id = 1");
+  // ruleid: js.sql-injection
+  await pool.query("UPDATE posts SET draft = false WHERE id = '" + id + "'");
+  return Response.json({});
+}
+
+async function HEAD({ method }) {
+  // ok: js.sql-injection
+  await pool.query("INSERT INTO visits (method) VALUES ('" + method + "')");
+  return new Response(null);
+}
+
+async function preview({ url }) {
+  // ok: js.sql-injection
+  return pool.query("SELECT * FROM previews WHERE url = '" + url + "'");
+}
+
+module.exports.next = { PUT, PATCH, HEAD, preview, describeBook, summarize };
+
 app.use(router);

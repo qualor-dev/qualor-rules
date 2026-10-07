@@ -85,6 +85,9 @@ app.get('/report', (req, res) => {
 - Request handlers are recognised by the name of their second parameter (`res`, `response`,
   `reply`, `ctx`, `next`, ...): a handler written as `(request, out)` is not checked, and a
   one-parameter callback passed to `get()`/`post()` after a path is taken for a Fastify handler.
+- Handlers that destructure the request are followed (`({ query }, res) => ...`,
+  `const { body: { name } } = req;`), except a field with a default value in the parameter list
+  (`({ query = {} }, res)`), which is not checked.
 <!-- end: known-limits -->
 
 ## References
@@ -104,6 +107,7 @@ app.get('/report', (req, res) => {
 - <https://nextjs.org/docs/app/api-reference/file-conventions/route>
 - <https://fastify.dev/docs/latest/Reference/Routes/>
 - <https://fastify.dev/docs/latest/Reference/Request/>
+- <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Destructuring>
 
 ## Tests
 

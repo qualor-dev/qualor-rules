@@ -103,6 +103,9 @@ app.get('/search', (req, res) => {
   ...)`), only the value of the call is; a pattern built inside the callback is checked as usual.
 - Request handlers are recognised by the name of their second parameter (`res`, `reply`, `ctx`,
   `next`, ...): a handler written as `(request, out)` is not checked.
+- Handlers that destructure the request are followed (`({ query }, res) => ...`,
+  `const { body: { name } } = req;`), except a field with a default value in the parameter list
+  (`({ query = {} }, res)`), which is not checked.
 <!-- end: known-limits -->
 
 ## References
@@ -125,6 +128,7 @@ app.get('/search', (req, res) => {
 - <https://nextjs.org/docs/app/api-reference/file-conventions/route>
 - <https://fastify.dev/docs/latest/Reference/Routes/>
 - <https://fastify.dev/docs/latest/Reference/Request/>
+- <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Destructuring>
 
 ## Tests
 

@@ -679,4 +679,23 @@ fastify.get('/fastify/awaited', async (request, reply) => {
   return await reply.code(302).header('location', url).send();
 });
 
+// Handlers that destructure the request (parameter list or declaration) give request data too.
+app.get('/login/destructured', ({ query }, res) => {
+  // ruleid: js.open-redirect
+  res.redirect(query.next);
+});
+app.get('/logout/destructured', (req, res) => {
+  const { query: { returnTo: back } } = req;
+  // ruleid: js.open-redirect
+  res.redirect(back);
+  // ok: js.open-redirect
+  res.redirect('/');
+});
+
+// A field with a default value in a destructured parameter is no source (Known limits).
+app.get('/login/defaults', ({ query = {} }, res) => {
+  // todoruleid: js.open-redirect
+  res.redirect(query.next);
+});
+
 module.exports = { app, fastify, audit, pagesHandler };

@@ -93,6 +93,9 @@ to another host.
 - Next.js Server Actions and page props are not request sources.
 - Request handlers are recognised by the name of their second parameter (`res`, `reply`, `ctx`,
   `next`, ...): a handler written as `(request, out)` is not checked.
+- Handlers that destructure the request are followed (`({ query }, res) => ...`,
+  `const { body: { name } } = req;`), except a field with a default value in the parameter list
+  (`({ query = {} }, res)`), which is not checked.
 <!-- end: known-limits -->
 
 ## References
@@ -118,6 +121,7 @@ to another host.
 - <https://developer.mozilla.org/en-US/docs/Web/API/Response/redirect_static>
 - <https://developer.mozilla.org/en-US/docs/Web/API/URL/URL>
 - <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/encodeURIComponent>
+- <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Destructuring>
 
 ## Tests
 

@@ -463,4 +463,21 @@ http
   })
   .listen(0);
 
+// Handlers that destructure the request (parameter list or declaration) give request data too.
+app.get('/search/destructured', ({ query: { q } }, res) => {
+  // ruleid: js.regex-injection
+  res.json(ARTICLES.filter((a) => new RegExp(q, 'i').test(a)));
+});
+fastify.get('/search/destructured', async (request) => {
+  const { query: { term: needle } } = request;
+  // ruleid: js.regex-injection
+  return ARTICLES.filter((a) => RegExp(needle).test(a));
+});
+
+// A field with a default value in a destructured parameter is no source (Known limits).
+app.get('/search/defaults', ({ query = {} }, res) => {
+  // todoruleid: js.regex-injection
+  res.json(ARTICLES.filter((a) => new RegExp(query.q).test(a)));
+});
+
 module.exports = { app, fastify, buildFilter };

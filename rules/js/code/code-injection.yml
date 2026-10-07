@@ -33,6 +33,7 @@ rules:
         - https://nextjs.org/docs/app/api-reference/file-conventions/route
         - https://fastify.dev/docs/latest/Reference/Routes/
         - https://fastify.dev/docs/latest/Reference/Request/
+        - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Destructuring
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A check of the code before the call (a regular expression that allows only digits and
@@ -45,10 +46,15 @@ rules:
     #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
     #   source, and a one-parameter callback given to get/post/... after a path literal (also on
     #   an HTTP client) is taken for a Fastify route handler.
+    # - A request field with a default value in a destructured parameter (`({ query = {} }, res)`)
+    #   is not a source (OpenGrep's object patterns do not match it); one with a default in a
+    #   declaration is.
     pattern-sources:
       # Express: the request object, the first parameter of a handler `(req, res, ...)`, carries
       # the query string, route parameters (`/users/:id`), body, headers, cookies and the URL.
-      # The second parameter's name tells a handler from other two-parameter functions.
+      # The second parameter's name tells a handler from other two-parameter functions. A field
+      # destructured from the request in a declaration (`const { query: { q } } = req;`, also
+      # renamed or nested) is the same request data.
       - patterns:
           - pattern-either:
               - pattern-inside: function ($REQ, $RES, ...) { ... }
@@ -69,8 +75,35 @@ rules:
               - pattern: $REQ.url
               - pattern: $REQ.path
               - pattern: $REQ.raw
+              - patterns:
+                  - pattern-either:
+                      - pattern: 'var {..., query: $V, ...} = $REQ;'
+                      - pattern: 'var {..., params: $V, ...} = $REQ;'
+                      - pattern: 'var {..., body: $V, ...} = $REQ;'
+                      - pattern: 'var {..., headers: $V, ...} = $REQ;'
+                      - pattern: 'var {..., cookies: $V, ...} = $REQ;'
+                      - pattern: 'var {..., signedCookies: $V, ...} = $REQ;'
+                      - pattern: 'var {..., originalUrl: $V, ...} = $REQ;'
+                      - pattern: 'var {..., url: $V, ...} = $REQ;'
+                      - pattern: 'var {..., path: $V, ...} = $REQ;'
+                      - pattern: 'var {..., raw: $V, ...} = $REQ;'
+                  - focus-metavariable: $V
+              - patterns:
+                  - pattern-either:
+                      - pattern: 'var {..., query: $V, ...} = $REQ;'
+                      - pattern: 'var {..., params: $V, ...} = $REQ;'
+                      - pattern: 'var {..., body: $V, ...} = $REQ;'
+                      - pattern: 'var {..., headers: $V, ...} = $REQ;'
+                      - pattern: 'var {..., cookies: $V, ...} = $REQ;'
+                      - pattern: 'var {..., signedCookies: $V, ...} = $REQ;'
+                      - pattern: 'var {..., originalUrl: $V, ...} = $REQ;'
+                      - pattern: 'var {..., url: $V, ...} = $REQ;'
+                      - pattern: 'var {..., path: $V, ...} = $REQ;'
+                      - pattern: 'var {..., raw: $V, ...} = $REQ;'
+                  - pattern: 'var {..., $F: $V, ...} = $REQ;'
+                  - focus-metavariable: $F
       # Fastify: a handler registered with a route shorthand (`fastify.get('/path', [options],
-      # handler)`) or with `route({ handler })` may take only the request.
+      # handler)`) or with `route({ handler })` may take only the request, and may destructure it.
       - patterns:
           - pattern-either:
               - patterns:
@@ -95,8 +128,95 @@ rules:
               - pattern: $REQ.url
               - pattern: $REQ.path
               - pattern: $REQ.raw
+              - patterns:
+                  - pattern-either:
+                      - pattern: 'var {..., query: $V, ...} = $REQ;'
+                      - pattern: 'var {..., params: $V, ...} = $REQ;'
+                      - pattern: 'var {..., body: $V, ...} = $REQ;'
+                      - pattern: 'var {..., headers: $V, ...} = $REQ;'
+                      - pattern: 'var {..., cookies: $V, ...} = $REQ;'
+                      - pattern: 'var {..., signedCookies: $V, ...} = $REQ;'
+                      - pattern: 'var {..., originalUrl: $V, ...} = $REQ;'
+                      - pattern: 'var {..., url: $V, ...} = $REQ;'
+                      - pattern: 'var {..., path: $V, ...} = $REQ;'
+                      - pattern: 'var {..., raw: $V, ...} = $REQ;'
+                  - focus-metavariable: $V
+              - patterns:
+                  - pattern-either:
+                      - pattern: 'var {..., query: $V, ...} = $REQ;'
+                      - pattern: 'var {..., params: $V, ...} = $REQ;'
+                      - pattern: 'var {..., body: $V, ...} = $REQ;'
+                      - pattern: 'var {..., headers: $V, ...} = $REQ;'
+                      - pattern: 'var {..., cookies: $V, ...} = $REQ;'
+                      - pattern: 'var {..., signedCookies: $V, ...} = $REQ;'
+                      - pattern: 'var {..., originalUrl: $V, ...} = $REQ;'
+                      - pattern: 'var {..., url: $V, ...} = $REQ;'
+                      - pattern: 'var {..., path: $V, ...} = $REQ;'
+                      - pattern: 'var {..., raw: $V, ...} = $REQ;'
+                  - pattern: 'var {..., $F: $V, ...} = $REQ;'
+                  - focus-metavariable: $F
+      # The handlers above when they destructure the request in the parameter list
+      # (`({ query, params: { id } }, res) => ...`, `async ({ body }) => ...` for Fastify, also
+      # typed); each field binds its value. One branch with a generic field, whose handler and
+      # field tests are exclusions, and a text condition that the file names a field (over the
+      # whole file, intersected with the handler): OpenGrep keeps the rule's prefilter (its
+      # 50,000-clause limit) and the scan stays fast.
+      - patterns:
+          - pattern-either:
+              - pattern: 'function ({..., $F: $V, ...}, $RES, ...) { ... }'
+              - pattern: 'function ({..., $F: $V, ...}: $T, $RES, ...) { ... }'
+              - pattern: 'function $HANDLER({..., $F: $V, ...}, $RES, ...) { ... }'
+              - pattern: 'function $HANDLER({..., $F: $V, ...}: $T, $RES, ...) { ... }'
+              - pattern: '$APP.$ROUTE($PATH, ..., function ({..., $F: $V, ...}) { ... })'
+              - pattern: '$APP.$ROUTE($PATH, ..., function ({..., $F: $V, ...}: $T) { ... })'
+              - pattern: '$APP.route({..., handler: function ({..., $F: $V, ...}) { ... }, ...})'
+              - pattern: '$APP.route({..., handler: function ({..., $F: $V, ...}: $T) { ... }, ...})'
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern: 'function ({..., $F: $V, ...}, $RES, ...) { ... }'
+                    - pattern: 'function ({..., $F: $V, ...}: $T, $RES, ...) { ... }'
+                    - pattern: 'function $HANDLER({..., $F: $V, ...}, $RES, ...) { ... }'
+                    - pattern: 'function $HANDLER({..., $F: $V, ...}: $T, $RES, ...) { ... }'
+                - metavariable-regex:
+                    metavariable: $RES
+                    regex: ^(?!(res|resp|response|reply|rep|h|ctx|next|_res|_response)$)
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern: '$APP.$ROUTE($PATH, ..., function ({..., $F: $V, ...}) { ... })'
+                    - pattern: '$APP.$ROUTE($PATH, ..., function ({..., $F: $V, ...}: $T) { ... })'
+                - metavariable-regex:
+                    metavariable: $ROUTE
+                    regex: ^(?!(get|head|post|put|delete|options|patch|all)$)
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern: '$APP.$ROUTE($PATH, ..., function ({..., $F: $V, ...}) { ... })'
+                    - pattern: '$APP.$ROUTE($PATH, ..., function ({..., $F: $V, ...}: $T) { ... })'
+                - metavariable-regex:
+                    metavariable: $PATH
+                    regex: ^(?!["'`]/)
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern: 'function ({..., $F: $V, ...}, $RES, ...) { ... }'
+                    - pattern: 'function ({..., $F: $V, ...}: $T, $RES, ...) { ... }'
+                    - pattern: 'function $HANDLER({..., $F: $V, ...}, $RES, ...) { ... }'
+                    - pattern: 'function $HANDLER({..., $F: $V, ...}: $T, $RES, ...) { ... }'
+                    - pattern: '$APP.$ROUTE($PATH, ..., function ({..., $F: $V, ...}) { ... })'
+                    - pattern: '$APP.$ROUTE($PATH, ..., function ({..., $F: $V, ...}: $T) { ... })'
+                    - pattern: '$APP.route({..., handler: function ({..., $F: $V, ...}) { ... }, ...})'
+                    - pattern: '$APP.route({..., handler: function ({..., $F: $V, ...}: $T) { ... }, ...})'
+                - metavariable-regex:
+                    metavariable: $F
+                    regex: ^(?!(query|params|body|headers|cookies|signedCookies|originalUrl|url|path|raw)$)
+          - pattern-regex: (?s)\A.*\b(?:query|params|body|headers|cookies|signedCookies|originalUrl|url|path|raw)\b.*\z
+          - focus-metavariable: $V
       # Next.js App Router: route handlers are functions named after an HTTP method; the request is
-      # a Web Request (NextRequest) and the context's params hold the dynamic route segments.
+      # a Web Request (NextRequest) and the context's params hold the dynamic route segments. Both
+      # may be destructured, in a declaration or in the parameter list (`GET({ nextUrl })`,
+      # `POST(request, { params: { slug } })`).
       - patterns:
           - pattern-either:
               - pattern-inside: function $METHOD($REQ, ...) { ... }
@@ -113,6 +233,52 @@ rules:
               - pattern: $REQ.json()
               - pattern: $REQ.formData()
               - pattern: $REQ.text()
+              - patterns:
+                  - pattern-either:
+                      - pattern: 'var {..., nextUrl: $V, ...} = $REQ;'
+                      - pattern: 'var {..., url: $V, ...} = $REQ;'
+                      - pattern: 'var {..., headers: $V, ...} = $REQ;'
+                      - pattern: 'var {..., cookies: $V, ...} = $REQ;'
+                  - focus-metavariable: $V
+              - patterns:
+                  - pattern-either:
+                      - pattern: 'var {..., nextUrl: $V, ...} = $REQ;'
+                      - pattern: 'var {..., url: $V, ...} = $REQ;'
+                      - pattern: 'var {..., headers: $V, ...} = $REQ;'
+                      - pattern: 'var {..., cookies: $V, ...} = $REQ;'
+                  - pattern: 'var {..., $F: $V, ...} = $REQ;'
+                  - focus-metavariable: $F
+      - patterns:
+          - pattern-either:
+              - pattern-inside: 'function $METHOD({..., nextUrl: $V, ...}, ...) { ... }'
+              - pattern-inside: 'function $METHOD({..., url: $V, ...}, ...) { ... }'
+              - pattern-inside: 'function $METHOD({..., headers: $V, ...}, ...) { ... }'
+              - pattern-inside: 'function $METHOD({..., cookies: $V, ...}, ...) { ... }'
+              - pattern-inside: 'function $METHOD({..., nextUrl: $V, ...}: $T, ...) { ... }'
+              - pattern-inside: 'function $METHOD({..., url: $V, ...}: $T, ...) { ... }'
+              - pattern-inside: 'function $METHOD({..., headers: $V, ...}: $T, ...) { ... }'
+              - pattern-inside: 'function $METHOD({..., cookies: $V, ...}: $T, ...) { ... }'
+              - pattern-inside: '$METHOD = function ({..., nextUrl: $V, ...}, ...) { ... }'
+              - pattern-inside: '$METHOD = function ({..., url: $V, ...}, ...) { ... }'
+              - pattern-inside: '$METHOD = function ({..., headers: $V, ...}, ...) { ... }'
+              - pattern-inside: '$METHOD = function ({..., cookies: $V, ...}, ...) { ... }'
+              - pattern-inside: '$METHOD = function ({..., nextUrl: $V, ...}: $T, ...) { ... }'
+              - pattern-inside: '$METHOD = function ({..., url: $V, ...}: $T, ...) { ... }'
+              - pattern-inside: '$METHOD = function ({..., headers: $V, ...}: $T, ...) { ... }'
+              - pattern-inside: '$METHOD = function ({..., cookies: $V, ...}: $T, ...) { ... }'
+          - pattern-not-inside:
+              patterns:
+                - pattern: 'function $METHOD(...) { ... }'
+                - metavariable-regex:
+                    metavariable: $METHOD
+                    regex: ^(?!(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$)
+          - pattern-not-inside:
+              patterns:
+                - pattern: '$METHOD = function (...) { ... }'
+                - metavariable-regex:
+                    metavariable: $METHOD
+                    regex: ^(?!(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$)
+          - focus-metavariable: $V
       - patterns:
           - pattern-either:
               - pattern-inside: function $METHOD($REQ, $CTX, ...) { ... }
@@ -121,17 +287,36 @@ rules:
           - metavariable-regex:
               metavariable: $METHOD
               regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
-          - pattern: $CTX.params
+          - pattern-either:
+              - pattern: $CTX.params
+              - patterns:
+                  - pattern-either:
+                      - pattern: 'var {..., params: $V, ...} = $CTX;'
+                  - focus-metavariable: $V
+              - patterns:
+                  - pattern-either:
+                      - pattern: 'var {..., params: $V, ...} = $CTX;'
+                  - pattern: 'var {..., $F: $V, ...} = $CTX;'
+                  - focus-metavariable: $F
       - patterns:
           - pattern-either:
-              - pattern-inside: 'function $METHOD($REQ, {params}, ...) { ... }'
-              - pattern-inside: 'function $METHOD($REQ, {params}: $T, ...) { ... }'
-              - pattern-inside: '$METHOD = function ($REQ, {params}, ...) { ... }'
-              - pattern-inside: '$METHOD = function ($REQ, {params}: $T, ...) { ... }'
-          - metavariable-regex:
-              metavariable: $METHOD
-              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
-          - pattern: params
+              - pattern-inside: 'function $METHOD($REQ, {..., params: $V, ...}, ...) { ... }'
+              - pattern-inside: 'function $METHOD($REQ, {..., params: $V, ...}: $T, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {..., params: $V, ...}, ...) { ... }'
+              - pattern-inside: '$METHOD = function ($REQ, {..., params: $V, ...}: $T, ...) { ... }'
+          - pattern-not-inside:
+              patterns:
+                - pattern: 'function $METHOD(...) { ... }'
+                - metavariable-regex:
+                    metavariable: $METHOD
+                    regex: ^(?!(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$)
+          - pattern-not-inside:
+              patterns:
+                - pattern: '$METHOD = function (...) { ... }'
+                - metavariable-regex:
+                    metavariable: $METHOD
+                    regex: ^(?!(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$)
+          - focus-metavariable: $V
     # Values added to an array or a Map make the container carry them.
     pattern-propagators:
       - pattern: $LIST.push(..., $X, ...)

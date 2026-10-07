@@ -100,6 +100,9 @@ app.get('/orders', async (req, res) => {
 - Handlers are recognised by the name of their second parameter (`res`, `reply`, `ctx`, `next`,
   ...): a handler written as `(request, out)` is not checked, and a one-parameter callback passed
   to `get()`/`post()` after a path is taken for a Fastify handler, also on HTTP clients.
+- Handlers that destructure the request are followed (`({ query }, res) => ...`,
+  `const { body: { name } } = req;`), except a field with a default value in the parameter list
+  (`({ query = {} }, res)`), which is not checked.
 <!-- end: known-limits -->
 
 ## References
@@ -121,6 +124,7 @@ app.get('/orders', async (req, res) => {
 - <https://sequelize.org/api/v6/class/src/sequelize.js~sequelize>
 - <https://www.prisma.io/docs/orm/prisma-client/using-raw-sql/raw-queries>
 - <https://typeorm.io/docs/query-builder/select-query-builder/>
+- <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Destructuring>
 
 ## Tests
 

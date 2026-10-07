@@ -92,6 +92,9 @@ app.get('/hello', (req, res) => {
   string it sends (plain text in Fastify) is reported.
 - Request handlers are recognised by the name of their second parameter (`res`, `reply`, `ctx`,
   `next`, ...): a handler written as `(request, out)` is not checked.
+- Handlers that destructure the request are followed (`({ query }, res) => ...`,
+  `const { body: { name } } = req;`), except a field with a default value in the parameter list
+  (`({ query = {} }, res)`), which is not checked.
 <!-- end: known-limits -->
 
 ## References
@@ -113,6 +116,7 @@ app.get('/hello', (req, res) => {
 - <https://github.com/validatorjs/validator.js>
 - <https://github.com/apostrophecms/sanitize-html>
 - <https://github.com/cure53/DOMPurify>
+- <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Destructuring>
 
 ## Tests
 
