@@ -37,7 +37,7 @@ Entry format:
 - java-2 (java.xss#serialiser-string-var, java.xxe#schema-access, java.open-redirect#local-path-base, java.xpath-injection): APPROVED after 1 fix round (ruling J1: java.xpath-injection ships at Benchmark xpathi FPR 50.0 %, one case over the 47.5 % target, one-method precedent); merged 0b4f43a..8993b35
 - go-3 (go.zip-slip#exit-calls, go.tls-verification-disabled#noop-callback-var, go.insecure-cookie#helper-cookies, go.xss#sink-results): APPROVED in round 1 (Minors recorded before merge; go.xss leaves command output to go.command-injection); merged fa5fde3..2de831e
 - js-2 (js.regex-injection#hand-written-escape, js.command-injection#powershell-params, js.command-injection#fallback-from-request, js.command-injection#cmd-powershell-tail): APPROVED after 2 fix rounds (PowerShell modelled per about_pwsh / about_PowerShell_exe); merged 07d0832..d743983
-- java-3 (java.regex-injection, java.tls-verification-disabled, java.weak-cipher, java.xss#sink-results): APPROVED after 2 fix rounds (Benchmark crypto TPR 74.6 % FPR 0 %; ruling J2: fetched bodies clean only from a fixed origin; J3: misuse rules skip test code)
+- java-3 (java.regex-injection, java.tls-verification-disabled, java.weak-cipher, java.xss#sink-results): APPROVED after 2 fix rounds (Benchmark crypto TPR 74.6 % FPR 0 %; ruling J2: fetched bodies clean only from a fixed origin; J3: misuse rules skip test code); merged aca8545..b6137cf
 
 ## 2026-10-06: release 2026.10.1 (`/release-pack`)
 
