@@ -22,6 +22,70 @@ current rules).
   lists is a follow-up.
 - Entries are data, not code: no line of a measured project is quoted here.
 
+## 2026-10-07 rules 3fc89c9ec263ad9e4eee4ddb29412e7950c34dba (js, python, java, go)
+
+OpenGrep 1.30.0; 4 rule directories; results in `.tmp/probe/2026-10-07T17-31-11-196Z`.
+
+### juice-shop (js, 1618a611b173): 21 finding(s), 652 files, 18 error(s)
+
+- js.code-injection: 1
+- js.insecure-cookie: 2
+- js.nosql-injection: 2
+- js.open-redirect: 1
+- js.path-traversal: 8
+- js.sql-injection: 6
+- js.ssrf: 1
+
+### nodegoat (js, c5cb68a7084e): 5 finding(s), 51 files, 0 error(s)
+
+- js.code-injection: 3
+- js.insecure-cookie: 1
+- js.open-redirect: 1
+
+### pygoat (python, 19d17cc88748): 11 finding(s), 85 files, 0 error(s)
+
+- python.code-injection: 2
+- python.command-injection: 1
+- python.path-traversal: 1
+- python.sql-injection: 2
+- python.ssrf: 1
+- python.unsafe-deserialization: 3
+- python.xxe: 1
+
+### owasp-benchmark (java, 8b67a88d73b2): 1373 finding(s), 2772 files, 0 error(s)
+
+| Category | CWE | TP | FN | FP | TN | TPR | FPR | Score | FindSecBugs FPR |
+|---|---|---|---|---|---|---|---|---|---|
+| cmdi | 78 | 110 | 16 | 57 | 68 | 87.3% | 45.6% | 41.7% | 88.8% |
+| crypto | 327 | 97 | 33 | 0 | 116 | 74.6% | 0.0% | 74.6% | 0.0% |
+| hash | 328 | no rule |  |  |  |  |  |  | 0.0% |
+| ldapi | 90 | 24 | 3 | 17 | 15 | 88.9% | 53.1% | 35.8% | 84.4% |
+| pathtraver | 22 | 116 | 17 | 88 | 47 | 87.2% | 65.2% | 22.0% | 95.6% |
+| securecookie | 614 | no rule |  |  |  |  |  |  | 0.0% |
+| sqli | 89 | 242 | 30 | 125 | 107 | 89.0% | 53.9% | 35.1% | 90.5% |
+| trustbound | 501 | no rule |  |  |  |  |  |  | 81.4% |
+| weakrand | 330 | no rule |  |  |  |  |  |  | 0.0% |
+| xpathi | 643 | 14 | 1 | 10 | 10 | 93.3% | 50.0% | 43.3% | 95.0% |
+| xss | 79 | 212 | 34 | 100 | 109 | 86.2% | 47.8% | 38.3% | 52.2% |
+| **mean of covered categories** | | | | | | 86.6% | 45.1% | 41.6% | |
+
+§8.4 target (TPR ≥ 60 %, FPR ≤ 50 % of FindSecBugs' FPR) for the covered injection categories: cmdi NOT met (FPR 45.6% > 44.4%); ldapi NOT met (FPR 53.1% > 42.2%); pathtraver NOT met (FPR 65.2% > 47.8%); sqli NOT met (FPR 53.9% > 45.3%); xpathi NOT met (FPR 50.0% > 47.5%); xss NOT met (FPR 47.8% > 26.1%).
+
+- java.command-injection: 196
+- java.ldap-injection: 41
+- java.path-traversal: 204
+- java.sql-injection: 367
+- java.weak-cipher: 97
+- java.xpath-injection: 24
+- java.xss: 443
+- java.xxe: 1
+
+### govwa (go, 4058f79f31ee): 9 finding(s), 24 files, 0 error(s)
+
+- go.insecure-cookie: 1
+- go.weak-hash: 3
+- go.xss: 5
+
 ## 2026-10-07 rules 492d6265dc9a11a592f50281c6d8877d6370d281 (js, python, java, go)
 
 OpenGrep 1.30.0; 4 rule directories; results in `.tmp/probe/2026-10-07T12-56-37-888Z`.
