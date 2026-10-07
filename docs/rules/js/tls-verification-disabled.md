@@ -24,8 +24,8 @@ is reported too.
 
 Server options are not reported: for a TLS or HTTPS server, `rejectUnauthorized: false` only makes
 client certificates optional. That holds for `tls.createServer()`, `https.createServer()`,
-`http2.createSecureServer()`, an options object that also sets `requestCert`, and Fastify's `https`
-server option.
+`http2.createSecureServer()`, an options object that also sets `requestCert: true`, and Fastify's
+`https` server option.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -110,6 +110,9 @@ module.exports = { getStatus };
 - The bracket form `process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '0'` is matched as text: a
   constant on its right is missed, and the line is reported inside a block comment.
 - A client that turns verification off and checks `tlsSocket.authorized` itself is still reported.
+- Server options are told apart by `requestCert: true` or by Fastify's factory: a client object
+  that also sets `requestCert: true` is not reported, and Fastify options built in a variable first
+  are reported.
 <!-- end: known-limits -->
 
 ## References

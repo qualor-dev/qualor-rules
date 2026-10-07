@@ -381,7 +381,17 @@ function serverOptions() {
   const hapiOptions = { port: 443, tls: { key: CA, cert: CA, requestCert: true, rejectUnauthorized: false } };
   // ok: js.tls-verification-disabled
   const devServer = { https: { key: CA, cert: CA, requestCert: true, rejectUnauthorized: false } };
-  return [app, plain, hapiOptions, devServer];
+  // A client object whose requestCert is false is still a client's.
+  // ruleid: js.tls-verification-disabled
+  const db = new pg.Pool({ ssl: { rejectUnauthorized: false, requestCert: false } });
+  // A client object that also sets requestCert: true is taken for a server's.
+  // todoruleid: js.tls-verification-disabled
+  const mailer = nodemailer.createTransport({ tls: { rejectUnauthorized: false, requestCert: true } });
+  // Fastify server options built in a variable first are not recognised.
+  // todook: js.tls-verification-disabled
+  const serverTls = { https: { key: CA, cert: CA, rejectUnauthorized: false } };
+  const fromVariable = createFastify(serverTls);
+  return [app, plain, hapiOptions, devServer, db, mailer, fromVariable];
 }
 
 // Known limits of the other libraries.

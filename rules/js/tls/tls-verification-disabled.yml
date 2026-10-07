@@ -72,7 +72,7 @@ rules:
     # Servers are not reported: for tls.createServer(), https.createServer() and
     # http2.createSecureServer(), rejectUnauthorized: false only means "do not require a client
     # certificate"; the same for server options under an ssl/tls/https key (an object that also
-    # holds requestCert, and Fastify's `https` factory option).
+    # holds requestCert: true, and Fastify's `https` factory option).
     # APIs are bound to their modules (https, tls, http2 and undici, also with the
     # node: prefix): the same option given to http, net, fetch(), axios's request config (which
     # has no such option; axios takes an https.Agent as httpsAgent), undici's top-level options
@@ -86,6 +86,10 @@ rules:
     #   options (`{ ...insecureTls }`) is not followed, nor one built first and given to a module
     #   required in place (`require('tls').connect(port, host, options)`; options written in
     #   the call are).
+    # - Server options are told apart by requestCert: true in the object or by Fastify's factory
+    #   (default import, require, or the named export `fastify`): a client object that also sets
+    #   requestCert: true is missed (`todoruleid:`), and Fastify options built in a variable first
+    #   are reported (`todook:`).
     # - Of the other libraries, an ssl object assigned to the options after they are made
     #   (`opts.ssl = { rejectUnauthorized: false }`) and a ws client imported as an ES default under
     #   another name than WebSocket (`import WSClient from 'ws'`) are not followed (`todoruleid:`);
@@ -406,9 +410,9 @@ rules:
                   $OPTS = {..., rejectUnauthorized: false, ...};
                   ...
                   new WebSocket(..., $OPTS);
-          - pattern-not: '{..., ssl: {..., requestCert: $REQUESTCERT, ...}, ...}'
-          - pattern-not: '{..., tls: {..., requestCert: $REQUESTCERT, ...}, ...}'
-          - pattern-not: '{..., https: {..., requestCert: $REQUESTCERT, ...}, ...}'
+          - pattern-not: '{..., ssl: {..., requestCert: true, ...}, ...}'
+          - pattern-not: '{..., tls: {..., requestCert: true, ...}, ...}'
+          - pattern-not: '{..., https: {..., requestCert: true, ...}, ...}'
           - pattern-not-inside:
               patterns:
                 - pattern-either:
@@ -420,6 +424,12 @@ rules:
                         ...
                 - pattern: '$FASTIFY({..., https: $SERVERTLS, ...})'
           - pattern-not-inside: 'require("fastify")({..., https: $SERVERTLS, ...})'
+          - pattern-not-inside:
+              patterns:
+                - pattern-inside: |
+                    import {..., fastify, ...} from 'fastify';
+                    ...
+                - pattern: 'fastify({..., https: $SERVERTLS, ...})'
       # MongoDB (driver, Mongoose and the frameworks that pass client options on): the option
       # names are the driver's own. tlsAllowInvalidCertificates turns certificate validation
       # off, tlsInsecure turns off certificate and host name validation.

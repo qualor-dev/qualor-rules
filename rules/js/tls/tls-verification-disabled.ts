@@ -7,6 +7,7 @@ import * as undici from 'undici';
 import axios, { AxiosInstance } from 'axios';
 import WebSocket from 'ws';
 import WSClient from 'ws';
+import { fastify } from 'fastify';
 import { Pool, PoolConfig } from 'pg';
 import got from 'got';
 import { MongoClient, MongoClientOptions } from 'mongodb';
@@ -81,3 +82,7 @@ export async function otherTyped(url: string) {
   const ticker = new WSClient('wss://ticker.internal', { rejectUnauthorized: false });
   return [pool, feed, page, mongo, safe, ticker];
 }
+
+// Fastify's factory imported by name: its https option holds server options.
+// ok: js.tls-verification-disabled
+export const server = fastify({ https: { key: process.env.TLS_KEY, cert: process.env.TLS_CERT, rejectUnauthorized: false } });
