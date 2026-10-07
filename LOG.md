@@ -24,6 +24,13 @@ Entry format:
   branches left behind.
 ```
 
+## 2026-10-07: prefilter cost (in progress)
+
+- **Request:** qualor-cc CI failed on pack 2026.10.2 (a 20-file TypeScript dry run past 60 s on a 2-core runner); the maintainer chose to fix the rules before Qualor 0.7.0 ("Fix rules, then release").
+- **Finding:** OpenGrep builds each rule's prefilter again per target. Full pack on a one-line file: 6 s (2026.10.1) → 13 s; 20 generated TypeScript files: 15 → 26 s; 200 files: 20 → 35 s (24 cores). Builds: js.tls-verification-disabled 2.0 s / 90 kB, js.nosql-injection 1.2 s / 33 kB, js.open-redirect 0.6 s / 27 kB, python.tls-verification-disabled 0.6 s / 208 B, go.ssrf 0.58 s / 67 kB, go.insecure-cookie 0.43 s / 6.5 MB, js.insecure-cookie 0.14 s / 215 kB; a plain rule ~0.1 s.
+- **Plan:** the seven `#prefilter-cost` rows, one batch per language (js, python, go), then a prefilter budget check in `npm test` and pack 2026.10.3.
+- **Progress:**
+
 ## 2026-10-07: release 2026.10.2 (`/release-pack`)
 
 - **Request:** the maintainer asked to release what the 2026-10-06 run produced ("Давай зарелизим что есть").
