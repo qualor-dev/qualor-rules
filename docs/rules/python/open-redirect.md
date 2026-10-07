@@ -113,7 +113,8 @@ def after_login():
   route can receive a path that starts with `//` (or `/\` in Flask), which names another host.
 - A `Location` header counts on a response the code makes or receives (middleware, an
   `after_request` hook, a FastAPI `Response` parameter); headers collected in a dict variable
-  before the response is made are not followed. A `RedirectView` whose `url` attribute is filled
+  before the response is made are not followed, and a header set on a response must be written
+  `Location` or `location` (`LOCATION` is missed). A `RedirectView` whose `url` attribute is filled
   from URL arguments (`url = "https://%(host)s/"`) is not reported.
 - Values returned by a database query or another call are taken for stored data, unless the call
   receives request data whole; a request value passed to such a call through a variable is missed.

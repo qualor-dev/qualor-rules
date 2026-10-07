@@ -814,6 +814,20 @@ def django_location_header(request):
     return response
 
 
+def django_created(request, pk):
+    resp = HttpResponse(status=201)
+    # ok: python.open-redirect
+    resp["Location"] = request.build_absolute_uri(reverse("item-detail", args=[pk]))
+    # ok: python.open-redirect
+    resp.headers["Location"] = request.build_absolute_uri("/items/")
+    # ruleid: python.open-redirect
+    resp["Location"] = request.build_absolute_uri(request.GET["next"])
+    # The header name is matched as "Location" or "location"; other spellings are missed.
+    # todoruleid: python.open-redirect
+    resp["LOCATION"] = request.GET["next"]
+    return resp
+
+
 def django_location_init(request):
     # ruleid: python.open-redirect
     a = HttpResponse(status=303, headers={"Location": request.POST["next"]})
