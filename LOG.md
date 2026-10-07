@@ -24,6 +24,12 @@ Entry format:
   branches left behind.
 ```
 
+## 2026-10-07: release 2026.10.2 (`/release-pack`)
+
+- **Request:** the maintainer asked to release what the 2026-10-06 run produced ("Давай зарелизим что есть").
+- **Done:** qualor-rules-2026.10.2.tar.gz, sha256 29a40881f01c7e7689a166b545830c8c818e51901b30b499d13250e3c7242c86, OpenGrep 1.30.0; 57 rules (51 issues, 6 hotspots). New since 2026.10.1: python.command-injection, java.xpath-injection, java.regex-injection, java.tls-verification-disabled, java.weak-cipher, js.insecure-cookie, python.xxe-dtd-options, python.tar-extraction; 45 maintenance changes (the Python Django match limit that blanked large Django files, js.open-redirect speed, TLS rules for more libraries, shared request blocks). Reproducible: host twice and Linux, identical.
+- **Measurement:** MEASUREMENTS.md 2026-10-07 entry (rules 492d626): Benchmark mean of covered categories TPR 86.6 % / FPR 45.1 %; crypto 74.6 / 0.0, xpathi 93.3 / 50.0; §8.4 still not met for the Java injection categories (known one-method cause).
+
 ## 2026-10-06: rules run (`/write-rules 52`)
 
 - **Request:** the maintainer asked to finish the rules backlog for the next release ("Давай к след. релизу доделаем беклог по правилам"): the 42 maintenance rows queued by the 2026-10-04 reviews, the open rows (java-4 of that run, js.insecure-cookie, python.tar-extraction, the three xss#sink-results rows) and python.command-injection, reopened. The four `*.sql-injection#dedupe-other-engines` rows are qualor-cc work (equivalences.json) and are done outside this run.
