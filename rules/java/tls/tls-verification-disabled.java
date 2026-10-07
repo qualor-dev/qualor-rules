@@ -555,6 +555,220 @@ class CopyOfTrustManager implements X509TrustManager {
     }
 }
 
+// Methods of the class declared before the trust checks that call them.
+class HelperFirstTrustManager extends X509ExtendedTrustManager {
+    private static void requireServerUse(X509Certificate certificate) throws CertificateException {
+        if (certificate.getBasicConstraints() != -1) {
+            throw new CertificateException("a CA certificate cannot be the server certificate");
+        }
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType) {
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType, Socket socket) {
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType, SSLEngine engine) {
+    }
+
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+        requireServerUse(chain[0]);
+    }
+
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType, Socket socket) throws CertificateException {
+        X509Certificate server = chain[0];
+        requireServerUse(server);
+    }
+
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType, SSLEngine engine) throws CertificateException {
+        for (X509Certificate certificate : chain) {
+            requireServerUse(certificate);
+        }
+    }
+
+    public X509Certificate[] getAcceptedIssuers() {
+        return new X509Certificate[0];
+    }
+}
+
+// A copy of the chain given to a method of the class declared after, then before, the check.
+class CopyToHelperTrustManager extends X509ExtendedTrustManager {
+    private final X509ExtendedTrustManager platform;
+
+    CopyToHelperTrustManager(X509ExtendedTrustManager platform) {
+        this.platform = platform;
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType) {
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType, Socket socket) {
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType, SSLEngine engine) {
+    }
+
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+        X509Certificate[] own = chain.clone();
+        requireChain(own);
+    }
+
+    private static void requireChain(X509Certificate[] certificates) throws CertificateException {
+        if (certificates.length < 2) {
+            throw new CertificateException("the server sent no intermediate certificate");
+        }
+    }
+
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType, Socket socket) throws CertificateException {
+        X509Certificate[] own = chain.clone();
+        requireChain(own);
+    }
+
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType, SSLEngine engine) throws CertificateException {
+        platform.checkServerTrusted(chain, authType, engine);
+    }
+
+    public X509Certificate[] getAcceptedIssuers() {
+        return new X509Certificate[0];
+    }
+}
+
+// A certificate of the chain handed to a call that checks nothing (a log line, a print, a
+// null check, a conversion to text): every chain is still trusted.
+class NothingCheckedTrustManagers {
+    private static final Logger LOG = Logger.getLogger("tls");
+    private final java.util.List<String> audit = new java.util.ArrayList<>();
+
+    X509TrustManager logsServerCertificate() {
+        return new X509TrustManager() {
+            public void checkClientTrusted(X509Certificate[] chain, String authType) {
+            }
+
+            // ruleid: java.tls-verification-disabled
+            public void checkServerTrusted(X509Certificate[] chain, String authType) {
+                LOG.log(java.util.logging.Level.FINE, "server certificate {0}", chain[0]);
+            }
+
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        };
+    }
+
+    X509TrustManager printsEachCertificate() {
+        return new X509TrustManager() {
+            public void checkClientTrusted(X509Certificate[] chain, String authType) {
+            }
+
+            // ruleid: java.tls-verification-disabled
+            public void checkServerTrusted(X509Certificate[] chain, String authType) {
+                for (X509Certificate certificate : chain) {
+                    System.err.println(certificate);
+                }
+            }
+
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        };
+    }
+
+    X509TrustManager nullChecksServerCertificate() {
+        return new X509TrustManager() {
+            public void checkClientTrusted(X509Certificate[] chain, String authType) {
+            }
+
+            // ruleid: java.tls-verification-disabled
+            public void checkServerTrusted(X509Certificate[] chain, String authType) {
+                X509Certificate server = chain[0];
+                java.util.Objects.requireNonNull(server, "server certificate");
+            }
+
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        };
+    }
+
+    X509TrustManager recordsServerCertificate() {
+        return new X509TrustManager() {
+            public void checkClientTrusted(X509Certificate[] chain, String authType) {
+            }
+
+            // ruleid: java.tls-verification-disabled
+            public void checkServerTrusted(X509Certificate[] chain, String authType) {
+                audit.add(String.valueOf(chain[0]));
+            }
+
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        };
+    }
+
+    X509TrustManager logsCopy() {
+        return new X509TrustManager() {
+            public void checkClientTrusted(X509Certificate[] chain, String authType) {
+            }
+
+            // ruleid: java.tls-verification-disabled
+            public void checkServerTrusted(X509Certificate[] chain, String authType) {
+                X509Certificate[] copy = chain.clone();
+                LOG.fine(Arrays.toString(copy));
+            }
+
+            public X509Certificate[] getAcceptedIssuers() {
+                return new X509Certificate[0];
+            }
+        };
+    }
+}
+
+// A method of the class counts as a check only for the overload that calls it: the empty
+// overloads before and after its declaration are still reported.
+class BetweenMembersTrustManager extends X509ExtendedTrustManager {
+    private static final String PIN = "77aa...";
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType) {
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType, Socket socket) {
+    }
+
+    public void checkClientTrusted(X509Certificate[] chain, String authType, SSLEngine engine) {
+    }
+
+    // ok: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+        requireKnownKey(chain[0]);
+    }
+
+    // ruleid: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType, Socket socket) {
+    }
+
+    private static void requireKnownKey(X509Certificate server) throws CertificateException {
+        if (!PIN.equals(HexFormat.of().formatHex(server.getPublicKey().getEncoded()))) {
+            throw new CertificateException("unexpected server key");
+        }
+    }
+
+    // ruleid: java.tls-verification-disabled
+    public void checkServerTrusted(X509Certificate[] chain, String authType, SSLEngine engine) {
+    }
+
+    public X509Certificate[] getAcceptedIssuers() {
+        return new X509Certificate[0];
+    }
+}
+
 // Look-alikes: methods with the same names on other types.
 class TokenChecker {
     // ok: java.tls-verification-disabled

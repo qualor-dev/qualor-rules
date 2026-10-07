@@ -18,7 +18,7 @@ TLS client checks that accept anything (JSSE, `javax.net.ssl`):
   variable or cast to one.
 
 A trust manager that throws `CertificateException`, delegates to another trust manager or hands
-the chain, a copy of it or one of its certificates to a check of its own, and a verifier that returns `true` only under a condition, are
+the chain (or a certificate of it) to a check of its own, and a verifier that returns `true` only under a condition, are
 not reported. An empty `checkClientTrusted` is not reported either: a server calls it, and an
 empty one only means that clients need no certificate. Test code is skipped: the `src/test/`
 tree (also `src/testFixtures/`, `src/integrationTest/` and `src/intTest/`) and files whose
@@ -124,10 +124,11 @@ public class Clients {
 ## Known limits
 
 <!-- begin: known-limits -->
-- A `checkServerTrusted` that hands the chain (a copy, or one certificate of it) to any call
-  counts as checking it, even a log message or a delegation to the default trust manager whose
-  `CertificateException` is caught and only logged; one that throws anywhere counts too, even
-  when its only throw is the `IllegalArgumentException` for a null or empty chain.
+- A `checkServerTrusted` that hands the whole chain to any call counts as checking it, even a log
+  message or a delegation to the default trust manager whose `CertificateException` is caught and
+  only logged; one that throws anywhere counts too, even when its only throw is the
+  `IllegalArgumentException` for a null or empty chain. One certificate of the chain, or a copy
+  of it, counts only when it goes to another trust manager or to a method of the same class.
 - A lambda counts as a host name verifier only where the code shows it is one (the JDK setters, a
   `HostnameVerifier` variable, a cast): one given to another library's builder, such as OkHttp's
   `hostnameVerifier`, is missed, and so are other libraries' own trust-all and no-op classes
