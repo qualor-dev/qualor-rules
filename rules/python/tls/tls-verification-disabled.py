@@ -842,9 +842,12 @@ def known_limits(url, payload, make_session, host, self_made):
     # Options passed as a dict (`**kwargs`) are not seen.
     # todoruleid: python.tls-verification-disabled
     requests.get(url, **{"verify": False})
-    # httpx's transports take `verify` too, but the httpx documentation does not describe it.
+    # httpx's transports take `verify` too, but neither the httpx documentation nor the
+    # transports' docstrings describe it (only their signatures name it).
     # todoruleid: python.tls-verification-disabled
     transport = httpx.HTTPTransport(verify=False)
+    # todoruleid: python.tls-verification-disabled
+    async_transport = httpx.AsyncHTTPTransport(retries=1, verify=False)
     # Host name checking off on a context made by SSLContext() without PROTOCOL_TLS_CLIENT, or
     # by urllib3's create_urllib3_context(), is not reported: whether it serves a client that
     # relies on it is not known where it is made.
@@ -891,7 +894,7 @@ def known_limits(url, payload, make_session, host, self_made):
     # Pythons, is not followed.
     # todoruleid: python.tls-verification-disabled
     ssl._create_default_https_context = getattr(ssl, "_create_unverified_context")
-    return transport, generic_required, pooled, held, zero, unpacked
+    return transport, async_transport, generic_required, pooled, held, zero, unpacked
 
 
 # A parameter whose default is False is configurable by the caller; it is not reported.

@@ -110,8 +110,10 @@ rules:
     #   self in a method other than __init__ (followed only within that method), and a class
     #   attribute annotated `session: requests.Session`.
     # - Options passed as a dict (`requests.get(url, **{"verify": False})`) are not seen.
-    # - httpx.HTTPTransport(verify=False): the httpx documentation does not describe the
-    #   transports' verify option, so it is not in the rule.
+    # - httpx.HTTPTransport(verify=False) and AsyncHTTPTransport(verify=False): the transports
+    #   take verify in their signatures, but neither the httpx documentation (the Transports,
+    #   SSL and Developer Interface pages) nor the transports' docstrings describe it, so it is
+    #   not in the rule (checked again for #httpx-transport, 2026-10-07).
     # - check_hostname = False on a context made by SSLContext() without PROTOCOL_TLS_CLIENT or
     #   by urllib3's create_urllib3_context(), or made in another method or function, is not
     #   reported: whether a client relies on it is not known where it is made.

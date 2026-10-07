@@ -118,8 +118,10 @@ def fetch_status():
   function or module, in a `with` block, annotated parameters and `self` attributes set in
   `__init__` are.
 - Options passed as a dict (`requests.get(url, **{"verify": False})`) are not seen.
-- `httpx.HTTPTransport(verify=False)`, `getattr(ssl, "_create_unverified_context")` and a
-  parameter whose default is `False` (`def f(url, verify=False)`) are not reported.
+- `httpx.HTTPTransport(verify=False)` and `AsyncHTTPTransport(verify=False)` (the httpx
+  documentation does not describe a transport's `verify`),
+  `getattr(ssl, "_create_unverified_context")` and a parameter whose default is `False`
+  (`def f(url, verify=False)`) are not reported.
 - SDK switches are seen only as keyword arguments written in the call: boto3's `verify` given by
   position, options in a dict and a MongoDB connection string built at run time are missed, and so
   are other SDKs' switches (OpenSearch `ssl_assert_hostname`, redis `ssl_cert_reqs`).
