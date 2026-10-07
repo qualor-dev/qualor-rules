@@ -1,0 +1,337 @@
+rules:
+  - id: python.tar-extraction
+    languages: [python]
+    severity: WARNING
+    message: >-
+      This tar archive is extracted without a safe extraction filter: no `filter=` (or
+      `filter=None`), the `fully_trusted` filter, or a filter that keeps every member as it is.
+      Unfiltered, Python 3.13 and older honour everything the archive says: absolute names, `..`
+      components and links can create or overwrite files outside the target directory, and
+      device files and permission bits are created as stored (Python 3.14 defaults to the
+      `data` filter; `fully_trusted` keeps that behaviour on every version). Review where the
+      archive comes from: for one you build or verify yourself this is fine. Otherwise pass
+      `filter="data"` (or `tarfile.data_filter`; `"tar"` keeps UNIX features), also to
+      `shutil.unpack_archive()`, which refuses such members on every Python that has filters.
+    metadata:
+      title: Tar archive extracted without a safe extraction filter (Python)
+      cwe: ['CWE-22']
+      owasp: ['A01:2025', 'A01:2021']
+      kind: hotspot
+      severity: medium
+      confidence: high
+      frameworks: [tarfile, shutil]
+      sources:
+        - https://cwe.mitre.org/data/definitions/22.html
+        - https://top10.owasp.org/2025/A01_2025-Broken_Access_Control/
+        - https://owasp.org/Top10/2021/A01_2021-Broken_Access_Control/
+        - https://docs.python.org/3/library/tarfile.html
+        - https://docs.python.org/3/library/tarfile.html#tarfile.open
+        - https://docs.python.org/3/library/tarfile.html#tarfile.TarFile.extractall
+        - https://docs.python.org/3/library/tarfile.html#tarfile.TarFile.extract
+        - https://docs.python.org/3/library/tarfile.html#tarfile.TarFile.extraction_filter
+        - https://docs.python.org/3/library/tarfile.html#extraction-filters
+        - https://docs.python.org/3/library/tarfile.html#tarfile.fully_trusted_filter
+        - https://docs.python.org/3/library/tarfile.html#tarfile.tar_filter
+        - https://docs.python.org/3/library/tarfile.html#tarfile.data_filter
+        - https://docs.python.org/3/library/tarfile.html#hints-for-further-verification
+        - https://docs.python.org/3/library/tarfile.html#supporting-older-python-versions
+        - https://docs.python.org/3/library/shutil.html#shutil.unpack_archive
+        - https://docs.python.org/3/library/zipfile.html#zipfile.ZipFile.extractall
+        - https://peps.python.org/pep-0706/
+        - https://docs.pytest.org/en/stable/explanation/goodpractices.html#conventions-for-python-test-discovery
+        - https://docs.pytest.org/en/stable/reference/fixtures.html#conftest-py-sharing-fixtures-across-multiple-files
+      since: 2026.10.2
+    # A hotspot: an archive the program builds or verifies itself is fine unfiltered, and only a
+    # person knows where it comes from. Reported: TarFile.extractall() and extract() with no
+    # filter argument (unless the instance's extraction_filter was set to another filter first),
+    # filter=None, filter="fully_trusted" (also through a constant), tarfile.fully_trusted_filter
+    # or a lambda that returns its member unchanged (the docs' "fully trusted" form), and the
+    # same for shutil.unpack_archive() unless its format is "zip" or its file name a literal
+    # ending in ".zip" (zip takes no filter; zipfile sanitises member names). Any other filter
+    # (data, tar, their functions, a function of the application's own, a variable) is not
+    # reported. A call without filter in the else branch of the docs' `hasattr(tarfile,
+    # "data_filter")` fallback is reported: it runs where Python has no filters, and the docs call
+    # it possibly unsafe. Python 3.14 extracts with "data" by default; the rule cannot know a
+    # project's minimum version, and the explicit filter keeps older versions safe too.
+    # The TarFile must come from tarfile: tarfile.open(), TarFile(), a TarFile class method
+    # (gzopen, taropen, ...), assigned in the same function (in any branch) or earlier in the
+    # module, a with statement, a parameter typed tarfile.TarFile, or a self attribute set by
+    # __init__. Look-alikes (zipfile, py7zr and other archive libraries) are not tarfile objects.
+    # A per-member check counts as the docs' "own verification": an if in a for loop over the
+    # same archive (`for m in tar` or `tar.getmembers()`), on the member or on a name assigned
+    # from it in the loop, whose last statement raises, returns or calls sys.exit (the exit alone
+    # or after one statement), before extractall() or extract(); for extract() inside the loop,
+    # a continue counts too. A check that only logs, a continue before extractall(), and an if
+    # on something else are not checks (`ruleid:`).
+    # Test code is out of scope (as for python.tls-verification-disabled, ruling F10): files
+    # pytest collects (test_*.py, *_test.py), conftest.py, Django's tests.py, and everything under
+    # tests/ or test/.
+    # Known limits (each has a `todo` line in the test file):
+    # - A TarFile from an untyped parameter, a factory function or another module is not
+    #   followed (`todoruleid:`).
+    # - Options passed as a dict (`extractall(dest, **opts)`, `unpack_archive(f, d, **opts)`) are
+    #   not read and not reported (`todoruleid:`).
+    # - Any exiting check of the member counts, also one that does not look at its path or links
+    #   (`if member.isdev(): raise`), and one nested in another condition, which leaves only on
+    #   some paths (`todoruleid:`).
+    # - Checks the rule does not read are reported (`todook:`): a check in a helper function, a
+    #   members= generator that yields only checked members, an if with more than one statement
+    #   before its exit, and an exit by break.
+    # - A default filter set on the TarFile class for the whole program
+    #   (`tarfile.TarFile.extraction_filter = staticmethod(tarfile.data_filter)`) is not seen
+    #   (`todook:`).
+    # - shutil.unpack_archive() cannot tell a zip from a tar by a variable path: a zip extracted
+    #   that way is reported (`todook:`).
+    paths:
+      exclude: ['test_*.py', '*_test.py', 'conftest.py', 'tests.py', 'tests/', 'test/']
+    # Performance: the tarfile branch starts with a regex over the whole file that asks for the
+    # word tarfile (every pattern of the branch needs it, imported or written), so OpenGrep's
+    # prefilter skips files that do not name tarfile instead of every file that says "extract".
+    # The prefilter (`opengrep-core -prefilter_of_rules`) is 686 bytes; after a change it must
+    # stay small, and a large module that names tarfile must still scan in about a second with
+    # --timeout 0.
+    pattern-either:
+      # tarfile: a TarFile opened in this function or module (also in a with statement), a typed
+      # parameter, a self attribute set by __init__ ($X matches `self.tar` too), and a call on
+      # tarfile.open() itself.
+      - patterns:
+          - pattern-regex: (?s)\A(?=.*?\btarfile\b).*\z
+          - pattern-either:
+              - pattern-inside: |
+                  $X = tarfile.open(...)
+                  ...
+              - pattern-inside: |
+                  $X = tarfile.TarFile(...)
+                  ...
+              - pattern-inside: |
+                  $X = tarfile.TarFile.$OPEN(...)
+                  ...
+              # Assigned anywhere in the function (in a try or an if branch, say).
+              - pattern-inside: |
+                  def $FN(...):
+                      ...
+                      $X = tarfile.open(...)
+                      ...
+              - pattern-inside: |
+                  def $FN(...):
+                      ...
+                      $X = tarfile.TarFile(...)
+                      ...
+              - pattern-inside: |
+                  def $FN(...):
+                      ...
+                      $X = tarfile.TarFile.$OPEN(...)
+                      ...
+              - pattern-inside: |
+                  with tarfile.open(...) as $X:
+                      ...
+              - pattern-inside: |
+                  with tarfile.TarFile(...) as $X:
+                      ...
+              - pattern-inside: |
+                  with tarfile.TarFile.$OPEN(...) as $X:
+                      ...
+              - pattern-inside: |
+                  def $FN(..., $X: tarfile.TarFile, ...):
+                      ...
+              - pattern-inside: |
+                  class $C(...):
+                      ...
+                      def __init__(self, ...):
+                          ...
+                          $X = tarfile.open(...)
+                      ...
+              - patterns:
+                  - pattern: $X.$EXTRACT(...)
+                  - metavariable-pattern:
+                      metavariable: $X
+                      pattern-either:
+                        - pattern: tarfile.open(...)
+                        - pattern: tarfile.TarFile(...)
+                        - pattern: tarfile.TarFile.$OPEN(...)
+          - metavariable-regex:
+              metavariable: $EXTRACT
+              regex: ^(extractall|extract)$
+          - pattern-either:
+              # No filter argument: the instance's extraction_filter decides, then the default
+              # (fully_trusted before 3.14).
+              - patterns:
+                  - pattern: $X.$EXTRACT(...)
+                  - pattern-not: $X.$EXTRACT(..., filter=$F, ...)
+                  - pattern-not: $X.$EXTRACT(..., **$KW)
+                  - pattern-not-inside: |
+                      $X.extraction_filter = $DEFAULT
+                      ...
+              # ... or the instance's extraction_filter set to keep every member as it is.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $X.extraction_filter = tarfile.fully_trusted_filter
+                          ...
+                      - pattern-inside: |
+                          $X.extraction_filter = lambda $MEMBER, $PATH: $MEMBER
+                          ...
+                      - pattern-inside: |
+                          $X.extraction_filter = None
+                          ...
+                  - pattern: $X.$EXTRACT(...)
+                  - pattern-not: $X.$EXTRACT(..., filter=$F, ...)
+              # filter=None, or a filter that keeps every member as it is.
+              - pattern: $X.$EXTRACT(..., filter=None, ...)
+              - pattern: $X.$EXTRACT(..., filter="fully_trusted", ...)
+              - pattern: $X.$EXTRACT(..., filter=tarfile.fully_trusted_filter, ...)
+              - pattern: '$X.$EXTRACT(..., filter=lambda $MEMBER, $PATH: $MEMBER, ...)'
+          # A check of the members first: an `if` in a loop over this archive, on the member or on a
+          # value assigned from it in the loop, whose last statement leaves the function (raise,
+          # return, sys.exit) before extractall(), or, for extract() in the loop, skips the member
+          # (continue). The if's statements are spelled out (the exit alone, or one statement
+          # before it) so that an exit nested in an inner block does not count.
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  if <... $M ...>:
+                      raise ...
+                  ...
+              ...
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  if <... $M ...>:
+                      $S1
+                      raise ...
+                  ...
+              ...
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  if <... $M ...>:
+                      return ...
+                  ...
+              ...
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  if <... $M ...>:
+                      $S1
+                      return ...
+                  ...
+              ...
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  if <... $M ...>:
+                      sys.exit(...)
+                  ...
+              ...
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  if <... $M ...>:
+                      $S1
+                      sys.exit(...)
+                  ...
+              ...
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  if <... $M ...>:
+                      continue
+                  ...
+                  $X.extract(...)
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  if <... $M ...>:
+                      $S1
+                      continue
+                  ...
+                  $X.extract(...)
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  $P = <... $M ...>
+                  ...
+                  if <... $P ...>:
+                      raise ...
+                  ...
+              ...
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  $P = <... $M ...>
+                  ...
+                  if <... $P ...>:
+                      $S1
+                      raise ...
+                  ...
+              ...
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  $P = <... $M ...>
+                  ...
+                  if <... $P ...>:
+                      return ...
+                  ...
+              ...
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  $P = <... $M ...>
+                  ...
+                  if <... $P ...>:
+                      $S1
+                      return ...
+                  ...
+              ...
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  $P = <... $M ...>
+                  ...
+                  if <... $P ...>:
+                      sys.exit(...)
+                  ...
+              ...
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  $P = <... $M ...>
+                  ...
+                  if <... $P ...>:
+                      $S1
+                      sys.exit(...)
+                  ...
+              ...
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  $P = <... $M ...>
+                  ...
+                  if <... $P ...>:
+                      continue
+                  ...
+                  $X.extract(...)
+          - pattern-not-inside: |
+              for $M in <... $X ...>:
+                  ...
+                  $P = <... $M ...>
+                  ...
+                  if <... $P ...>:
+                      $S1
+                      continue
+                  ...
+                  $X.extract(...)
+      # shutil.unpack_archive: the filter goes to the tar unpacker; zip takes none.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern: shutil.unpack_archive(...)
+                  - pattern-not: shutil.unpack_archive(..., filter=$F, ...)
+                  - pattern-not: shutil.unpack_archive(..., **$KW)
+              - pattern: shutil.unpack_archive(..., filter=None, ...)
+              - pattern: shutil.unpack_archive(..., filter="fully_trusted", ...)
+              - pattern: shutil.unpack_archive(..., filter=tarfile.fully_trusted_filter, ...)
+          - pattern-not: shutil.unpack_archive($FILE, $DIR, "zip", ...)
+          - pattern-not: shutil.unpack_archive(..., format="zip", ...)
+          - pattern-not: shutil.unpack_archive("=~/\.zip$/", ...)
