@@ -510,6 +510,16 @@ def known_limits(url, payload, make_session, host):
     legacy = ssl.wrap_socket(sock, cert_reqs=ssl.CERT_REQUIRED, ca_certs=CA_BUNDLE)
     # todoruleid: python.tls-verification-disabled
     optional = ssl.wrap_socket(sock, None, None, False, ssl.CERT_OPTIONAL, ca_certs=CA_BUNDLE)
+    # ssl.wrap_socket()'s cert_reqs is read only as written in the call: a variable holding
+    # CERT_NONE, and the number 0 (CERT_NONE's value), are not seen.
+    reqs = ssl.CERT_NONE
+    # todoruleid: python.tls-verification-disabled
+    held = ssl.wrap_socket(sock, cert_reqs=reqs)
+    # todoruleid: python.tls-verification-disabled
+    zero = ssl.wrap_socket(sock, cert_reqs=0)
+    # Options passed as a dict are not seen, so cert_reqs in them is taken for missing.
+    # todook: python.tls-verification-disabled
+    unpacked = ssl.wrap_socket(sock, **{"cert_reqs": ssl.CERT_REQUIRED, "ca_certs": CA_BUNDLE})
     # A context made by the SSLContext constructor without PROTOCOL_TLS_CLIENT verifies nothing
     # by default; whether it serves a client is not known where it is made.
     generic = ssl.SSLContext(ssl.PROTOCOL_TLS)
@@ -522,7 +532,7 @@ def known_limits(url, payload, make_session, host):
     # Other libraries' TLS switches are not in this rule (boto3, aiohttp, ...).
     # todoruleid: python.tls-verification-disabled
     s3 = boto3.client("s3", verify=False)
-    return transport, pool, legacy, optional, s3
+    return transport, pool, legacy, optional, held, zero, unpacked, s3
 
 
 # A parameter whose default is False is configurable by the caller; it is not reported.

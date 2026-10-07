@@ -89,8 +89,11 @@ def fetch_status():
   `False` (`def f(url, verify=False)`) are not reported.
 - `check_hostname = False` alone (CWE-297) is a separate weakness and not reported here, and neither
   is a bare `ssl.SSLContext()`, whose use as a client cannot be seen where it is made. The same goes
-  for `ssl.wrap_socket()` with `cert_reqs=ssl.CERT_REQUIRED`: it checks the certificate but never
-  the host name.
+  for `ssl.wrap_socket()` with `cert_reqs=ssl.CERT_REQUIRED` or `ssl.CERT_OPTIONAL`: it checks the
+  certificate but never the host name.
+- `ssl.wrap_socket()`'s `cert_reqs` is read only as written in the call: a variable holding
+  `CERT_NONE`, or the number `0`, is missed, and options passed as a dict
+  (`ssl.wrap_socket(sock, **opts)`) are reported as if `cert_reqs` were missing.
 - An insecure context handed to a server API (`asyncio.start_server(..., ssl=ctx)`) is still
   reported.
 <!-- end: known-limits -->

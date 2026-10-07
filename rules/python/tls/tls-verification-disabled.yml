@@ -81,6 +81,9 @@ rules:
     #   check while the chain is still verified (CWE-297); not reported by this rule. Neither is
     #   ssl.wrap_socket() with cert_reqs CERT_REQUIRED or CERT_OPTIONAL, which verifies the chain
     #   but never matches the host name.
+    # - ssl.wrap_socket()'s cert_reqs is read only as written in the call: a variable holding
+    #   CERT_NONE and the number 0 are not seen (`todoruleid:`), and options passed as a dict
+    #   (`wrap_socket(sock, **opts)`) are taken for a missing cert_reqs, so reported (`todook:`).
     # - ssl.SSLContext(PROTOCOL_TLS) (or no protocol) verifies nothing by default; whether it
     #   serves a client is not known where it is made, so its use by a client is not reported.
     # - The unverified context looked up with getattr(ssl, "_create_unverified_context").
