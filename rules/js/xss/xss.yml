@@ -46,7 +46,8 @@ rules:
     # - The results of awaited methods of other objects are not request data (data loaded with a
     #   request value as its key, `await User.findById(req.params.id)`), except renderers,
     #   parsers, formatters, translators, promise helpers, request.json()/formData()/text(),
-    #   methods of the response and functions imported by name; another method that returns the
+    #   methods of the response, functions imported by name, and axios/got/superagent/undici
+    #   requests to a URL that the request may choose (see the results of other sinks below); another method that returns the
     #   request value it is given is missed, and so is a function called through a module object
     #   (`import * as widgets`, then `await widgets.drawWidget(req.params.id)`). An awaited helper
     #   that is given the response object (`await renderCard(id, res)`) is clean, also when it
@@ -62,6 +63,16 @@ rules:
     #   literal keys and values (comments allowed, optionally in Object.freeze) that the file never
     #   writes to; tables with escaped quotes in their strings, nested tables and tables of other
     #   modules are not recognised, so their lookups are reported.
+    # - The results of other rules' sinks (a decision, as in go.xss and java.xss): what exec(),
+    #   execSync() or util.promisify(exec) print and what readFileSync() reads are not request
+    #   data (request data in the command or the file name is js.command-injection's or
+    #   js.path-traversal's finding, not reported again); a page fetched from a URL that the
+    #   request may choose stays request data (ruling J2), one fetched from a fixed origin or a
+    #   path of this site does not. Limits of that: the output of execFileSync()/spawnSync() with
+    #   a request-chosen program is reported again (`todook:`); output given to a callback
+    #   (`execFile('echo', [x], (err, out) => ...)`) is not followed (`todoruleid:`); an origin
+    #   held in a constant (`API_BASE + '/pages/' + id`) is not recognised, so the page counts as
+    #   request data (`todook:`).
     # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
     #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
     #   source, and a one-parameter callback given to get/post/... after a path literal (also on
@@ -485,6 +496,18 @@ rules:
           - pattern-not: await $R.json()
           - pattern-not: await $R.formData()
           - pattern-not: await $R.text()
+          # The body of a response fetched by an HTTP client from a URL that the request may choose
+          # (anything but a literal that fixes the origin, or a path of this site) is the
+          # attacker's content (ruling J2 of java.xss).
+          - pattern-not:
+              patterns:
+                - pattern: await $OBJ.$M($URL, ...)
+                - metavariable-regex:
+                    metavariable: $OBJ
+                    regex: ^(?:axios|got|superagent|undici)$
+                - metavariable-regex:
+                    metavariable: $URL
+                    regex: ^(?!["'`](?:(?:https?:)?//[^/\\?#@"'`$]+(?:/(?![/\\])|[?#])|/(?![/\\])))
           # Not when a function is passed to it (`await db.transaction(async (t) => { ... })`):
           # a sink written inside that callback is still a sink, and the sanitizer would clean
           # everything inside the call. The function pattern also matches arrow functions.
@@ -558,6 +581,98 @@ rules:
           - metavariable-regex:
               metavariable: $RESARG
               regex: ^(?:res|resp|response|reply|rep|_res|_response)$
+      # The results of other rules' sinks are not request data here (as in go.xss and java.xss):
+      # - What exec()/execSync() (or util.promisify(exec)) print: they run a shell command, and
+      #   request data in it is js.command-injection's finding, not reported a second time. The
+      #   output of a fixed program given request data as an argument (execFileSync('echo',
+      #   [x])) can print it back and stays request data.
+      # - The content of a file read with readFileSync(), even when the request names the file
+      #   (js.path-traversal's finding); awaited readFile() is already stored data above.
+      # Only the value of the call is clean (exact): a sink in a callback given to exec() is still
+      # checked.
+      - exact: true
+        patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $CP = require($M)
+                          ...
+                      - pattern-inside: |
+                          import * as $CP from $M;
+                          ...
+                      - pattern-inside: |
+                          import $CP from $M;
+                          ...
+                  - pattern: $CP.$FN(...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., $FN, ...} = require($M);
+                          ...
+                      - pattern-inside: |
+                          import {..., $FN, ...} from $M;
+                          ...
+                  - pattern: $FN(...)
+              - pattern: require($M).$FN(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(?:node:)?(?:child_process|fs)["'`]?$
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(?:exec|execSync|readFileSync)$
+      - exact: true
+        patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $P = $PROMISIFY(require($M).exec)
+                  ...
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $CP = require($M)
+                          ...
+                      - pattern-inside: |
+                          import * as $CP from $M;
+                          ...
+                      - pattern-inside: |
+                          import $CP from $M;
+                          ...
+                  - pattern-inside: |
+                      $P = $PROMISIFY($CP.exec)
+                      ...
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          const {..., exec, ...} = require($M);
+                          ...
+                      - pattern-inside: |
+                          import {..., exec, ...} from $M;
+                          ...
+                  - pattern-inside: |
+                      $P = $PROMISIFY(exec)
+                      ...
+          - pattern: $P(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(?:node:)?child_process["'`]?$
+          - metavariable-regex:
+              metavariable: $PROMISIFY
+              regex: ^(?:\w+\.)?promisify$
+      # A response fetched from a URL whose literal start fixes the origin, or from a path of this
+      # site (`await fetch('https://api.example.com/pages/' + id)`), is data of that service (the
+      # awaited methods of axios and got are covered above). The origin is fixed only by a host
+      # followed by a path, query or fragment separator (a lone scheme or `//` + request data
+      # is not).
+      - exact: true
+        patterns:
+          - pattern: await $HTTP($URL, ...)
+          - metavariable-regex:
+              metavariable: $HTTP
+              regex: ^(?:fetch|axios|got)$
+          - metavariable-regex:
+              metavariable: $URL
+              regex: ^["'`](?:(?:https?:)?//[^/\\?#@"'`$]+(?:/(?![/\\])|[?#])|/(?![/\\]))
       # Comparisons and negations give booleans, which Express sends as JSON.
       - pattern-either:
           - pattern: $A === $B

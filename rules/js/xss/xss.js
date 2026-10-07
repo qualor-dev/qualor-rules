@@ -430,4 +430,82 @@ app.get('/hello/defaults', ({ query = {} }, res) => {
   res.send('Hello ' + query.name);
 });
 
+// The results of other rules' sinks. What exec()/execSync() print and what readFileSync() reads
+// are not request data: request data in the command is js.command-injection's finding, a
+// request-chosen file js.path-traversal's. A fixed program given request data as an argument may
+// print it back, and a page fetched from a URL the request chooses is the attacker's content.
+const fs = require('node:fs');
+const path = require('node:path');
+const util = require('node:util');
+const childProcess = require('node:child_process');
+const { exec, execSync, execFile, execFileSync } = require('child_process');
+const axios = require('axios');
+const execAsync = util.promisify(childProcess.exec);
+const PAGES = '/srv/pages';
+const API_BASE = 'https://api.example.com';
+
+app.get('/tools/ls', (req, res) => {
+  // ok: js.xss
+  exec('ls -l ' + req.query.dir, (err, stdout) => res.send('<pre>' + stdout + '</pre>'));
+  // ruleid: js.xss
+  exec('ls -l ' + req.query.dir, (err, stdout) => res.send('<pre>' + stdout + '</pre><p>' + req.query.dir + '</p>'));
+});
+
+app.get('/tools/cat', (req, res) => {
+  const out = execSync('cat ' + req.query.file);
+  // ok: js.xss
+  res.send('<pre>' + out.toString() + '</pre>');
+  // ok: js.xss
+  res.send(childProcess.execSync(`du -sh ${req.query.dir}`).toString());
+});
+
+app.get('/tools/uptime', async (req, res) => {
+  const { stdout } = await execAsync('uptime -p ' + req.query.flags);
+  // ok: js.xss
+  res.send('<p>' + stdout + '</p>');
+});
+
+app.get('/tools/echo', (req, res) => {
+  // ruleid: js.xss
+  res.send(execFileSync('echo', [req.query.msg]).toString());
+  // A request-chosen program is js.command-injection's finding; its output is reported again.
+  // todook: js.xss
+  res.send(execFileSync(req.query.tool, ['--version']).toString());
+  // The output given to a callback is not followed.
+  // todoruleid: js.xss
+  execFile('echo', [req.query.msg], (err, stdout) => res.send(stdout));
+});
+
+app.get('/pages/:name', (req, res) => {
+  // ok: js.xss
+  res.send(fs.readFileSync(path.join(PAGES, req.params.name), 'utf8'));
+  // ruleid: js.xss
+  fs.readFile(path.join(PAGES, req.params.name), 'utf8', (err, page) => res.send(page + '<p>' + req.params.name + '</p>'));
+});
+
+app.get('/preview', async (req, res) => {
+  const r = await fetch(req.query.url);
+  // ruleid: js.xss
+  res.send(await r.text());
+  const { data } = await axios.get(req.query.url);
+  // ruleid: js.xss
+  res.send(data);
+  const viaScheme = await fetch('https://' + req.query.host + '/status');
+  // ruleid: js.xss
+  res.send(await viaScheme.text());
+  const fixed = await fetch('https://api.example.com/pages/' + encodeURIComponent(req.query.id));
+  // ok: js.xss
+  res.send(await fixed.text());
+  const own = await fetch(`/pages/${req.query.id}`);
+  // ok: js.xss
+  res.send(await own.text());
+  const { data: card } = await axios.get('https://api.example.com/cards/' + req.query.id);
+  // ok: js.xss
+  res.send(card);
+  // An origin held in a constant is not recognised: the page counts as request data.
+  const viaConstant = await fetch(API_BASE + '/pages/' + req.query.id);
+  // todook: js.xss
+  res.send(await viaConstant.text());
+});
+
 module.exports = { app, server, fastify, reply };

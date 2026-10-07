@@ -13,6 +13,14 @@ Node's `http`): a string sent with `res.send()` (which Express answers as `text/
 `res.write()`/`res.end()` of visible HTML, and the bodies of Next.js API routes and route handlers
 that answer with HTML. Request data that is escaped, sanitised, rendered through a template engine,
 or sent as JSON is not reported.
+
+The results of other weaknesses are not reported a second time: what `exec()`/`execSync()` print
+and what `readFileSync()` reads are not taken for request data, because request data in the
+command or the file name is already a command injection or a path traversal finding of its own.
+The output of a fixed program given request data as an argument (`execFileSync('echo', [x])`)
+can print it back and is reported, and so is a page fetched from a URL that the request chooses
+(`fetch(req.query.url)`, `axios.get(req.query.url)`): its content belongs to whoever chose the URL.
+A page fetched from a fixed origin or from a path of this site is taken for that service's data.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -78,7 +86,7 @@ app.get('/hello', (req, res) => {
   HTML; a bare request value written without a content type is missed, although browsers may sniff
   it as HTML.
 - Results of awaited calls on other objects (a database lookup by a request value) are taken for
-  stored data, also when the method only hands the request value back. Functions imported by name
+  stored data (except HTTP clients given a URL the request may choose), also when the method only hands the request value back. Functions imported by name
   are followed, but a function called through a module object (`await widgets.draw(id)`) counts
   as such a method, and a method named like a function the file imports by name is followed.
 - An awaited helper that is given the response object (`await renderCard(id, res)`) is taken to
@@ -95,6 +103,10 @@ app.get('/hello', (req, res) => {
 - Handlers that destructure the request are followed (`({ query }, res) => ...`,
   `const { body: { name } } = req;`), except a field with a default value in the parameter list
   (`({ query = {} }, res)`), which is not checked.
+- Output of a request-chosen program (`execFileSync(req.query.tool)`) is reported here as well as
+  by the command injection rule; output handed to a callback (`execFile('echo', [x], (err, out)
+  => ...)`) is not followed; and an origin held in a constant (`API_BASE + '/pages/' + id`) is
+  not recognised, so such a page counts as request data.
 <!-- end: known-limits -->
 
 ## References
