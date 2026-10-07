@@ -232,6 +232,21 @@ says. Layout as the SQL rule: `message` (what is wrong and how to fix it), `meta
     `pattern-not` of the forms); exact only when every range a form reports is a range of Q.
     js.tls-verification-disabled: 2.0 s / 90 kB → 0.09 s / 1.4 kB, js.insecure-cookie: 215 kB →
     1.3 kB, identical findings.
+  - **Taint rules** (python.*#prefilter-restore, 2026-10-07): the product runs over every source
+    item and every sink item (each is a top-level branch) and over each nested `pattern-either`,
+    before anything is dropped, and past roughly 250,000 literals in total (well under 50,000
+    clauses) OpenGrep gives None too. Eleven source items of three to five conditions each
+    (the Python slice sources) took every Python taint rule to None. Besides writing names out,
+    join items that share a condition under it (one `import django` item with the Django shapes
+    as its branches). A class with its method as one multi-line `pattern-inside` is one
+    condition instead of two, but matches only a method written directly in the class body: one
+    defined under an `if`, a nested function or a nested class's method of that name is not
+    matched (two `pattern-inside`s match all three), so record the difference. A source item
+    without words (a slice `$X[$A:$B]` checked by a regex) leaves the source side empty, so the
+    prefilter is the sinks' alone: every sink item then needs a word, or the rule gets None (a
+    word anchor `pattern-regex: (?s)\A.*\bword\b.*\z` on an item whose words are all string
+    literals; with `(?si)` when the word may be written in another case, as an HTTP header name;
+    the prefilter keeps the flag).
   - **Time** on a large real or minified file that **contains** the rule's words (three.js or a
     900 kB bundle for JS, gitea's largest files for Go, a 100–200 kB Django module for Python),
     with `--timeout 0` (OpenGrep's 5 s default times out on a loaded host and drops findings), and
