@@ -94,9 +94,12 @@ app.get('/log', (req, res) => {
   `-CommandWithArgs`/`-cwa`, `-EncodedCommand`/`-e`/`-ec`, `-File`/`-f`, in any case); other
   shortened names (`-Comm`, `-enc`) are not. Request data after `-File` and its script, or after
   the command of `-CommandWithArgs`, is a parameter of the script or of the command, and is not
-  reported. For `pwsh`, a `.ps1` script given without `-File` is treated the same way, since
-  File is its default parameter; `powershell.exe` documents no default parameter, so there
-  `x.ps1 -c <request>` is reported as `-Command`.
+  reported. For `pwsh`, a script given without `-File` (a `.ps1`, or any first element that is
+  not a parameter name) is treated the same way, since File is its default parameter; a script
+  without `.ps1` after pwsh's own switches (`-NoProfile ./deploy -i <request>`) is not
+  recognised, so that request value is reported. `powershell.exe` documents no default
+  parameter, so there `x.ps1 -c <request>` and `x.ps1 <request>` are reported as a command; a
+  script after its switches (`-NoProfile x.ps1 <request>`) is not followed.
 - `child_process` functions are recognised through `require()` and `import`, destructured or not,
   and `util.promisify()`; renamed imports (`exec as run`) are not.
 - Request handlers are recognised by the name of their second parameter (`res`, `reply`, `ctx`,

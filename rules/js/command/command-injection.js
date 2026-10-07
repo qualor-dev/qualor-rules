@@ -335,6 +335,24 @@ app.get('/pwsh', (req, res) => {
   // given without -File is taken for -Command there.
   // ruleid: js.command-injection
   spawn('powershell.exe', ['./scripts/report.ps1', '-c', req.query.name]);
+  // ruleid: js.command-injection
+  spawn('powershell.exe', ['./scripts/report.ps1', req.query.name]);
+  // ruleid: js.command-injection
+  spawn('powershell.exe', ['-Version', '2.0', req.query.script]);
+  // A first element that is no parameter name is pwsh's script, even without .ps1: what follows
+  // are its parameters. pwsh -Version only prints the version.
+  // ok: js.command-injection
+  spawn('pwsh', ['./scripts/deploy', '-i', req.query.name]);
+  // ok: js.command-injection
+  spawn('pwsh', ['./scripts/deploy', '-o', 'out.txt', req.query.name]);
+  // ok: js.command-injection
+  spawn('pwsh', ['-Version', req.query.name]);
+  // A script without .ps1 after pwsh's own switches is not recognised as the script; for
+  // powershell.exe, a first positional element after switches is not followed.
+  // todook: js.command-injection
+  spawn('pwsh', ['-NoProfile', './scripts/deploy', '-i', req.query.name]);
+  // todoruleid: js.command-injection
+  spawn('powershell.exe', ['-NoProfile', './scripts/report.ps1', req.query.name]);
   // Shortened parameter names that the documentation does not list are not recognised.
   // todoruleid: js.command-injection
   spawn('pwsh', ['-Comm', req.query.cmd]);
