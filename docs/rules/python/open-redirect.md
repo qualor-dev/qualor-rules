@@ -21,7 +21,8 @@ In middleware (Django middleware, Flask `before_request` hooks, Starlette and Fa
 the current request's path counts as request data too: middleware runs for every path, also
 `//evil.example/`, so a redirect that starts with the path (`request.path + "/"`) can send the
 browser to another host. A host before the path (`"https://www.example.com" +
-request.get_full_path()`) keeps it on that host and is not reported.
+request.get_full_path()`) keeps it on that host and is not reported. In Starlette and FastAPI
+middleware, the request's query parameters, path parameters, headers and cookies count as well.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -76,8 +77,9 @@ def after_login():
   allowed_hosts={request.get_host()})` and redirect only where the check holds; fall back to a
   fixed URL otherwise.
 - In middleware, put the host before the current path (`request.build_absolute_uri()`,
-  `"https://www.example.com" + request.get_full_path()`), or collapse repeated slashes
-  (`re.sub(r"/+", "/", request.path)`) before you redirect to it.
+  `"https://www.example.com" + request.get_full_path()`). In Django and Starlette, collapsing
+  repeated slashes (`re.sub(r"/+", "/", request.path)`) also works; in Flask it does not, because
+  a backslash in the path survives it: use `request.url` or `url_for()` there.
 <!-- end: how-to-fix -->
 
 ## Frameworks and APIs covered
@@ -92,10 +94,11 @@ def after_login():
 ## Known limits
 
 <!-- begin: known-limits -->
-- A fixed origin is recognised as a literal, an upper-case module constant holding a literal URL
-  with a scheme and a host, or a Django setting, at the start of the URL text. `%`-formatting with
-  a constant origin (`"%s/items/%s" % (SITE, id)`), long chains of concatenation and a constant
-  imported from another module are not recognised, so such code is reported.
+- A fixed origin is recognised at the start of the URL text: a literal, an upper-case module
+  constant holding a literal URL with a scheme and a host, and, before a path segment, `?` or `#`,
+  a Django setting or a constant imported or read from the environment. A bare `/` after a
+  setting or such a constant, `//` after any constant, `%`-formatting with a constant origin
+  (`"%s/items/%s" % (SITE, id)`) and long chains of concatenation are reported.
 - In middleware, `%`-formatting with a host before the current path (`"https://%s%s" %
   (request.get_host(), request.path)`) is reported. Collapsing slashes is taken for safe, but a
   Flask path can still hold a backslash (`/\evil.example`), which browsers read as `//`.

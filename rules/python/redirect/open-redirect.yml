@@ -61,15 +61,19 @@ rules:
         - https://fastapi.tiangolo.com/advanced/response-headers/
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
-    # - A fixed origin is recognised as a literal, an upper-case module constant assigned a
-    #   literal URL with a scheme and a host, or a Django setting, at the start of the URL text
-    #   (concatenation, format(), f-string); %-formatting with a constant origin (`"%s/items/%s"
-    #   % (SITE, id)`) is not, nor a chain of more than five operands after a constant ending in
-    #   "host/", nor a constant imported from another module (its value is unknown) (todook).
+    # - A fixed origin is recognised at the start of the URL text (concatenation, format(),
+    #   f-string): a literal; an upper-case module constant assigned a literal URL with a scheme
+    #   and a host; and, before a path segment ("/x..."), "?" or "#" (not a bare "/"), a Django
+    #   setting (also %-formatting) or an upper-case constant imported or read from the
+    #   environment. %-formatting with a constant origin (`"%s/items/%s" % (SITE, id)`) is not,
+    #   nor a chain of more than five operands after a constant ending in "host/" (todook).
+    #   "//" after a constant is refused even when the constant holds a host.
     # - Middleware sees every path, so there the current path is request data: Django middleware
     #   methods (`__call__`, `process_request`, `process_view`, `process_response`, ...) and
     #   functions inside a `def ...(get_response)` factory, Flask before_request hooks, and
-    #   Starlette's request.url.path or an ASGI scope's path. A host before it keeps it on that
+    #   Starlette/FastAPI middleware (dispatch(), @app.middleware("http"): request.url.path, also
+    #   sliced, and the query string, path parameters, headers and cookies) or an ASGI scope's
+    #   path. A host before it keeps it on that
     #   host (a literal, `"https://" + request.get_host()`, an f-string, a URL constant); with
     #   %-formatting it is not recognised (todook). `re.sub(r"/+", "/", path)` is taken for
     #   safe, although Werkzeug keeps a backslash ("/\evil.example") in a Flask path
@@ -612,9 +616,11 @@ rules:
               - pattern: $PARAM[:$UPPER]
               - pattern: $PARAM[$LOWER:$UPPER]
       # (End of the shared Python source block; the items below are this rule's own.)
-      # Starlette and FastAPI middleware see every request path, also "//evil.example/": the
-      # path of the request in a BaseHTTPMiddleware's dispatch() or an @app.middleware("http")
-      # function, and the path in a pure ASGI middleware's scope.
+      # Starlette and FastAPI middleware (a BaseHTTPMiddleware's dispatch(), an
+      # @app.middleware("http") function) see every request: its query string, path parameters,
+      # headers and cookies, and its path (also "//evil.example/"), in place, sliced (OpenGrep
+      # does not carry taint through a slice) or a slice of a variable assigned it; and the path in
+      # a pure ASGI middleware's scope.
       - patterns:
           - pattern-either:
               - pattern-inside: |
@@ -626,12 +632,37 @@ rules:
                   @$APP.middleware("http")
                   def $MW($REQ, $CALL_NEXT):
                     ...
-          - pattern: $REQ.url.path
+          - pattern-either:
+              - pattern: $REQ.url.path
+              - pattern: $REQ.query_params
+              - pattern: $REQ.path_params
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.url.path[$LOWER:]
+              - pattern: $REQ.url.path[:$UPPER]
+              - pattern: $REQ.url.path[$LOWER:$UPPER]
+              - patterns:
+                  - pattern-inside: |
+                      $PATH = $REQ.url.path
+                      ...
+                  - pattern-not-inside: |
+                      $PATH = $REQ.url.path
+                      ...
+                      $PATH = $OTHER
+                      ...
+                  - pattern-either:
+                      - pattern: $PATH[$LOWER:]
+                      - pattern: $PATH[:$UPPER]
+                      - pattern: $PATH[$LOWER:$UPPER]
       - patterns:
           - pattern-inside: |
               def __call__(self, $SCOPE, $RECEIVE, $SEND):
                 ...
-          - pattern: $SCOPE["path"]
+          - pattern-either:
+              - pattern: $SCOPE["path"]
+              - pattern: $SCOPE["path"][$LOWER:]
+              - pattern: $SCOPE["path"][:$UPPER]
+              - pattern: $SCOPE["path"][$LOWER:$UPPER]
       # Django's RedirectView.get_redirect_url(*args, **kwargs): its arguments are the ones
       # captured from the URL pattern.
       - patterns:
@@ -982,6 +1013,10 @@ rules:
               - pattern: $REQUEST.url_for(...) + $A + $B + $C
               - pattern: $REQUEST.url_for(...) + $A + $B + $C + $D
               - pattern: f"{$REQUEST.url_for(...)}..."
+              - pattern: str($REQUEST.url_for(...)) + $A
+              - pattern: str($REQUEST.url_for(...)) + $A + $B
+              - pattern: str($REQUEST.url_for(...)) + $A + $B + $C
+              - pattern: str($REQUEST.url_for(...)) + $A + $B + $C + $D
               - pattern: $APP.url_path_for(...) + $A
               - pattern: $APP.url_path_for(...) + $A + $B
               - pattern: $APP.url_path_for(...) + $A + $B + $C
@@ -1325,7 +1360,82 @@ rules:
       #   followed by a literal that starts with "/" (not "//" or "/\"), "?" or "#", then a
       #   concatenation chain of up to seven operands, an f-string or str.format(); a constant
       #   that itself ends with "host/", then up to five operands or an f-string;
-      # - a Django setting followed by a literal that starts with "/".
+      # - a Django setting followed by a literal that starts with "/" and another character
+      #   than "/" or "\", or with "?" or "#" (also str.format() and %-formatting);
+      # - any upper-case name that the module does not assign a string literal (a constant
+      #   imported or read from the environment), the function does not assign and the module
+      #   does not assign twice, followed by such a literal: even an empty value leaves a
+      #   path, a query or a fragment on this site. A bare "/" needs a known host (above).
+      - patterns:
+          - pattern-not-inside: |
+              $ORIGIN = "..."
+              ...
+          - pattern-either:
+              - pattern: $ORIGIN + $SEP
+              - pattern: $ORIGIN + $SEP + $A
+              - pattern: $ORIGIN + $SEP + $A + $B
+              - pattern: $ORIGIN + $SEP + $A + $B + $C
+              - pattern: $ORIGIN + $SEP + $A + $B + $C + $D
+              - pattern: $ORIGIN + $SEP + $A + $B + $C + $D + $E
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $SEP
+              regex: ^[rbuRBU]{0,2}("|')(/[^/\\"'\s]|[?#])
+          - pattern-not-inside: |
+              def $FUNCTION(...):
+                ...
+                $ORIGIN = $LOCAL
+                ...
+          - pattern-not-inside: |
+              $ORIGIN = $VALUE
+              ...
+              $ORIGIN = $OTHER
+              ...
+      - patterns:
+          - pattern-not-inside: |
+              $ORIGIN = "..."
+              ...
+          - pattern: f"{$ORIGIN}..."
+          - pattern: $FSTRING
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $FSTRING
+              regex: ^[fF]("|')\{[A-Z][A-Z0-9_]*\}(/[^/\\"'{\s]|[?#])
+          - pattern-not-inside: |
+              def $FUNCTION(...):
+                ...
+                $ORIGIN = $LOCAL
+                ...
+          - pattern-not-inside: |
+              $ORIGIN = $VALUE
+              ...
+              $ORIGIN = $OTHER
+              ...
+      - patterns:
+          - pattern-not-inside: |
+              $ORIGIN = "..."
+              ...
+          - pattern: $FORMAT.format($ORIGIN, ...)
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $FORMAT
+              regex: ^[rbuRBU]{0,2}("|')\{0?\}(/[^/\\"'{\s]|[?#])
+          - pattern-not-inside: |
+              def $FUNCTION(...):
+                ...
+                $ORIGIN = $LOCAL
+                ...
+          - pattern-not-inside: |
+              $ORIGIN = $VALUE
+              ...
+              $ORIGIN = $OTHER
+              ...
       - patterns:
           - pattern-either:
               - pattern: $LEFT + $RIGHT
@@ -1450,7 +1560,7 @@ rules:
                   - pattern: $LEFT + $RIGHT
                   - metavariable-regex:
                       metavariable: $LEFT
-                      regex: ^settings\.[A-Za-z_][A-Za-z0-9_]*\s*\+\s*[rbuRBU]{0,2}("|')/
+                      regex: ^settings\.[A-Za-z_][A-Za-z0-9_]*\s*\+\s*[rbuRBU]{0,2}("|')(/[^/\\"'\s]|[?#])
                   - metavariable-pattern:
                       metavariable: $LEFT
                       pattern: django.conf.settings.$SETTING
@@ -1459,12 +1569,17 @@ rules:
                   - pattern: $FSTRING
                   - metavariable-regex:
                       metavariable: $FSTRING
-                      regex: ^[fF]("|')\{settings\.[A-Za-z_][A-Za-z0-9_]*\}/
+                      regex: ^[fF]("|')\{settings\.[A-Za-z_][A-Za-z0-9_]*\}(/[^/\\"'{\s]|[?#])
               - patterns:
                   - pattern: $FORMAT.format(django.conf.settings.$SETTING, ...)
                   - metavariable-regex:
                       metavariable: $FORMAT
-                      regex: ^[rbuRBU]{0,2}("|')\{0?\}/
+                      regex: ^[rbuRBU]{0,2}("|')\{0?\}(/[^/\\"'{\s]|[?#])
+              - patterns:
+                  - pattern: $FORMAT % (django.conf.settings.$SETTING, ...)
+                  - metavariable-regex:
+                      metavariable: $FORMAT
+                      regex: ^[rbuRBU]{0,2}("|')%s(/[^/\\"'%\s]|[?#])
     pattern-sinks:
       # Flask and Werkzeug redirect(location).
       - patterns:

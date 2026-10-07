@@ -1,3 +1,4 @@
+import os
 import re
 from typing import Annotated
 from urllib import parse
@@ -38,6 +39,8 @@ SITE = "https://www.example.com"
 SITE_ROOT = "https://www.example.com/"
 OAUTH_ROOT = "https://accounts.example.com/"
 SCHEME = "https:"
+ENV_SITE = os.environ["SITE_URL"]
+CFG_SITE = os.environ.get("SITE_URL", "https://www.example.com")
 DESTINATIONS = {
     # Partner sites the app may send users to.
     "docs": "https://docs.example.com/",
@@ -216,6 +219,9 @@ def hop():
     b = redirect(f"{SCHEME}//{host}/welcome")
     # ruleid: python.open-redirect
     c = redirect("{}//{}/welcome".format(SCHEME, host))
+    # "//" after a constant is refused even when the constant holds a host (conservative).
+    # ruleid: python.open-redirect
+    k = redirect(SITE + "//" + host)
     NEXT_URL = request.args["next"]
     # An upper-case local that holds request data is not a constant.
     # ruleid: python.open-redirect
@@ -226,11 +232,31 @@ def hop():
     return redirect(SITE + "/hosts/" + host + "/" + request.args["tab"] + "/" + request.args["page"])
 
 
-# A constant imported from another module is not taken for an origin: its value is unknown here.
+# A constant imported or read from the environment: its value is unknown, but a path segment, a
+# query or a fragment after it stays on a fixed origin (an empty value leaves a local path).
 @app.route("/portal-item/<item_id>")
 def portal_item(item_id):
-    # todook: python.open-redirect
+    # ok: python.open-redirect
     return redirect(PORTAL_ROOT + "/items/" + item_id)
+
+
+@app.route("/env-item/<item_id>")
+def env_item(item_id):
+    # ok: python.open-redirect
+    a = redirect(ENV_SITE + "/items/" + item_id)
+    # ok: python.open-redirect
+    b = redirect(CFG_SITE + "/items/" + item_id)
+    # ok: python.open-redirect
+    c = redirect(f"{ENV_SITE}/items/{item_id}")
+    # ok: python.open-redirect
+    d = redirect("{}/items/{}".format(ENV_SITE, item_id))
+    # ok: python.open-redirect
+    e = redirect(ENV_SITE + "?item=" + item_id)
+    # A bare "/" after a value that may be empty can start "//host".
+    # ruleid: python.open-redirect
+    f = redirect(ENV_SITE + "/" + item_id)
+    # ruleid: python.open-redirect
+    return redirect(f"{ENV_SITE}//{item_id}")
 
 
 # Nested tables and implicitly concatenated values are not recognised as allow-lists; an
@@ -768,6 +794,28 @@ class AppendSlashMiddleware:
         return self.get_response(request)
 
 
+class LoginRequiredMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if request.path.startswith("/account/") and not request.user.is_authenticated:
+            # A setting followed by a query or a path segment stays on its origin.
+            # ok: python.open-redirect
+            return django_redirect(settings.LOGIN_URL + "?next=" + request.path)
+        if request.path.startswith("/orders/") and not request.user.is_authenticated:
+            # ok: python.open-redirect
+            return django_redirect(f"{settings.LOGIN_URL}?next={request.get_full_path()}")
+        if request.path.startswith("/cart/") and not request.user.is_authenticated:
+            # ok: python.open-redirect
+            return django_redirect("%s?next=%s" % (settings.LOGIN_URL, request.path))
+        if request.path.startswith("/mirror/"):
+            # A bare "/" after a setting: an empty setting leaves "//" + path.
+            # ruleid: python.open-redirect
+            return django_redirect(settings.MIRROR_URL + "/" + request.path)
+        return self.get_response(request)
+
+
 class LegacyPathMiddleware(MiddlewareMixin):
     def process_request(self, request):
         if request.path_info.startswith("/v1/"):
@@ -982,6 +1030,19 @@ class TrailingSlashMiddleware(BaseHTTPMiddleware):
         if request.url.path.startswith("/go/"):
             # ruleid: python.open-redirect
             return RedirectResponse(str(request.url.replace(netloc=request.url.path.lstrip("/"))))
+        if request.url.path.endswith("/") and request.url.path != "/":
+            # ruleid: python.open-redirect
+            return RedirectResponse(request.url.path[:-1])
+        path = request.url.path
+        if path.endswith("/index"):
+            # ruleid: python.open-redirect
+            return RedirectResponse(path[:-6])
+        if "next" in request.query_params:
+            # ruleid: python.open-redirect
+            return RedirectResponse(request.query_params["next"])
+        if request.url.path.startswith("/account/"):
+            # ok: python.open-redirect
+            return RedirectResponse(str(request.url_for("login")) + "?next=" + request.url.path)
         return await call_next(request)
 
 
@@ -1001,6 +1062,11 @@ class AsgiSlashMiddleware:
         if scope["type"] == "http" and not scope["path"].endswith("/"):
             # ruleid: python.open-redirect
             response = RedirectResponse(scope["path"] + "/")
+            await response(scope, receive, send)
+            return
+        if scope["type"] == "http" and scope["path"].endswith("//"):
+            # ruleid: python.open-redirect
+            response = RedirectResponse(scope["path"][:-1])
             await response(scope, receive, send)
             return
         await self.app(scope, receive, send)
