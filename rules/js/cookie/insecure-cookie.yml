@@ -70,461 +70,497 @@ rules:
     #   call that sets the other is still reported (`todook:`), and in a file whose parseOptions
     #   set both, a flag given false in the call is missed (`todoruleid:`).
     # - A cookie deleted with another past expiry than the epoch is reported (`todook:`).
+    # Performance: OpenGrep builds the rule's prefilter (the words a file must hold) again for
+    # every file it scans, by multiplying the positive terms (pattern-inside, metavariable-regex,
+    # metavariable-pattern, nested patterns blocks) of the branches; exclusions cost nothing. With
+    # the forms below as positive terms the prefilter came to 215 kB. So each branch has one or
+    # two positive terms (the call, and the import it needs) and the forms are exclusions of it.
+    # Keep it so: `opengrep-core -prefilter_of_rules` (on a copy with the YAML anchors expanded)
+    # must print a prefilter of a few kB.
     paths:
       exclude: ['*.test.*', '*.spec.*', '*-test.*', '*_test.*', '__tests__/', 'test/', 'tests/']
     pattern-either:
-      # Express res.cookie() and Fastify reply.setCookie()/reply.cookie(): no options, or an
-      # options object in the call that leaves a flag out or false.
+      # Each branch below is written as "a call that is not outside these forms": a pattern-not of
+      # the call (with the receiver or the import) over a pattern-not of the forms. OpenGrep's
+      # prefilter multiplies the positive terms of the branches; the forms themselves are then
+      # exclusions and cost nothing there (see Performance above).
+      # Express res.cookie() and Fastify reply.setCookie()/reply.cookie().
       - patterns:
-          - pattern-either:
-              - pattern: $RES.$SET($NAME, $VALUE)
-              - pattern: $RES. ... .$SET($NAME, $VALUE)
-              - patterns:
-                  - pattern-either:
-                      - pattern: $RES.$SET($NAME, $VALUE, $OPTS)
-                      - pattern: $RES. ... .$SET($NAME, $VALUE, $OPTS)
-                  - metavariable-pattern:
-                      metavariable: $OPTS
-                      patterns:
-                        - pattern: '{...}'
-                        - pattern-either:
-                            - pattern: '{..., secure: false, ...}'
-                            - pattern: '{..., httpOnly: false, ...}'
-                            - patterns:
-                                - pattern: '{...}'
-                                - pattern-not: '{..., secure: $S, ...}'
-                            - patterns:
-                                - pattern: '{...}'
-                                - pattern-not: '{..., httpOnly: $H, ...}'
-                        - pattern-not: '{..., expires: new Date(0), ...}'
-                        - pattern-not: '{..., maxAge: 0, ...}'
-                        - pattern-not: '{..., ...$SPREAD, ...}'
-          - metavariable-regex:
-              metavariable: $SET
-              regex: ^(cookie|setCookie)$
+          - pattern-either: &cookie-calls
+              - pattern: $CK.cookie(...)
+              - pattern: $CK.setCookie(...)
           - pattern-not:
               patterns:
-                - pattern-either:
-                    - pattern: $RES.$SET(...)
-                    - pattern: $RES. ... .$SET(...)
-                - metavariable-regex:
-                    metavariable: $RES
-                    regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
-          # @fastify/cookie's parseOptions set the serialization of every set cookie: a file that
-          # registers @fastify/cookie with both flags set there (any value but false) is not reported.
-          - pattern-not-inside:
-              patterns:
-                - pattern-either:
-                    - pattern-inside: |
-                        $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        await $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        $PLUGIN = require($PLUGINMOD);
-                        ...
-                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        $PLUGIN = require($PLUGINMOD);
-                        ...
-                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        import $PLUGIN from $PLUGINMOD;
-                        ...
-                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        import $PLUGIN from $PLUGINMOD;
-                        ...
-                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
-                        ...
-                - metavariable-regex:
-                    metavariable: $PLUGINMOD
-                    regex: ^["'`]?(?:@fastify/cookie|fastify-cookie)["'`]?$
-                - metavariable-pattern:
-                    metavariable: $PARSE
-                    patterns:
-                      - pattern: '{..., secure: $PARSESECURE, ..., httpOnly: $PARSEHTTPONLY, ...}'
-                      - pattern-not: '{..., secure: false, ...}'
-                      - pattern-not: '{..., httpOnly: false, ...}'
-      # The same with the options built in a variable first (one branch per flag): the object
-      # literal holds cookie options and leaves the flag out (or false), and no assignment before
-      # the call sets it (also inside an if). Each statement sequence starts at such an object or
-      # at the assignment, never at any assignment: that took 45 s on a 900 kB bundle. Conditions
-      # on names are exclusions, which keep OpenGrep's prefilter (its clause limit).
-      - patterns:
-          - pattern-either:
-              - pattern: $RES.cookie($NAME, $VALUE, $OPTS)
-              - pattern: $RES. ... .cookie($NAME, $VALUE, $OPTS)
-              - pattern: $RES.setCookie($NAME, $VALUE, $OPTS)
-              - pattern: $RES. ... .setCookie($NAME, $VALUE, $OPTS)
-          - pattern-not:
-              patterns:
-                - pattern-either:
-                    - pattern: $RES.$SET($NAME, $VALUE, $OPTS)
-                    - pattern: $RES. ... .$SET($NAME, $VALUE, $OPTS)
-                - metavariable-regex:
-                    metavariable: $RES
-                    regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
-          # @fastify/cookie's parseOptions set the serialization of every set cookie: a file that
-          # registers @fastify/cookie with both flags set there (any value but false) is not reported.
-          - pattern-not-inside:
-              patterns:
-                - pattern-either:
-                    - pattern-inside: |
-                        $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        await $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        $PLUGIN = require($PLUGINMOD);
-                        ...
-                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        $PLUGIN = require($PLUGINMOD);
-                        ...
-                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        import $PLUGIN from $PLUGINMOD;
-                        ...
-                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        import $PLUGIN from $PLUGINMOD;
-                        ...
-                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
-                        ...
-                - metavariable-regex:
-                    metavariable: $PLUGINMOD
-                    regex: ^["'`]?(?:@fastify/cookie|fastify-cookie)["'`]?$
-                - metavariable-pattern:
-                    metavariable: $PARSE
-                    patterns:
-                      - pattern: '{..., secure: $PARSESECURE, ..., httpOnly: $PARSEHTTPONLY, ...}'
-                      - pattern-not: '{..., secure: false, ...}'
-                      - pattern-not: '{..., httpOnly: false, ...}'
-          - pattern-either:
-              - pattern-inside: |
-                  $OPTS = {..., maxAge: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., expires: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., httpOnly: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., secure: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., sameSite: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., path: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., domain: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., signed: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., partitioned: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., priority: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., encode: $KEYV, ...};
-                  ...
-          - pattern-not-inside:
-              patterns:
-                - pattern: |
-                    $OPTS = {..., secure: $FLAGV, ...};
-                    ...
-                - metavariable-regex:
-                    metavariable: $FLAGV
-                    regex: ^(?!false$)
-          - pattern-not-inside: |
-              $OPTS = {..., ...$SPREAD, ...};
-              ...
-          - pattern-not-inside: |
-              $OPTS = {..., expires: new Date(0), ...};
-              ...
-          - pattern-not-inside: |
-              $OPTS = {..., maxAge: 0, ...};
-              ...
-          - pattern-not-inside: |
-              $OPTS.secure = $FLAG;
-              ...
-              $CALL(..., $OPTS);
-          - pattern-not-inside: |
-              if ($COND) {
-                ...
-                $OPTS.secure = $FLAG;
-                ...
-              }
-              ...
-              $CALL(..., $OPTS);
-          - pattern-not-inside: |
-              if ($COND) {
-                ...
-              } else {
-                ...
-                $OPTS.secure = $FLAG;
-                ...
-              }
-              ...
-              $CALL(..., $OPTS);
-      - patterns:
-          - pattern-either:
-              - pattern: $RES.cookie($NAME, $VALUE, $OPTS)
-              - pattern: $RES. ... .cookie($NAME, $VALUE, $OPTS)
-              - pattern: $RES.setCookie($NAME, $VALUE, $OPTS)
-              - pattern: $RES. ... .setCookie($NAME, $VALUE, $OPTS)
-          - pattern-not:
-              patterns:
-                - pattern-either:
-                    - pattern: $RES.$SET($NAME, $VALUE, $OPTS)
-                    - pattern: $RES. ... .$SET($NAME, $VALUE, $OPTS)
-                - metavariable-regex:
-                    metavariable: $RES
-                    regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
-          # @fastify/cookie's parseOptions set the serialization of every set cookie: a file that
-          # registers @fastify/cookie with both flags set there (any value but false) is not reported.
-          - pattern-not-inside:
-              patterns:
-                - pattern-either:
-                    - pattern-inside: |
-                        $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        await $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        $PLUGIN = require($PLUGINMOD);
-                        ...
-                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        $PLUGIN = require($PLUGINMOD);
-                        ...
-                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        import $PLUGIN from $PLUGINMOD;
-                        ...
-                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
-                        ...
-                    - pattern-inside: |
-                        import $PLUGIN from $PLUGINMOD;
-                        ...
-                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
-                        ...
-                - metavariable-regex:
-                    metavariable: $PLUGINMOD
-                    regex: ^["'`]?(?:@fastify/cookie|fastify-cookie)["'`]?$
-                - metavariable-pattern:
-                    metavariable: $PARSE
-                    patterns:
-                      - pattern: '{..., secure: $PARSESECURE, ..., httpOnly: $PARSEHTTPONLY, ...}'
-                      - pattern-not: '{..., secure: false, ...}'
-                      - pattern-not: '{..., httpOnly: false, ...}'
-          - pattern-either:
-              - pattern-inside: |
-                  $OPTS = {..., maxAge: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., expires: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., httpOnly: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., secure: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., sameSite: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., path: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., domain: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., signed: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., partitioned: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., priority: $KEYV, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., encode: $KEYV, ...};
-                  ...
-          - pattern-not-inside:
-              patterns:
-                - pattern: |
-                    $OPTS = {..., httpOnly: $FLAGV, ...};
-                    ...
-                - metavariable-regex:
-                    metavariable: $FLAGV
-                    regex: ^(?!false$)
-          - pattern-not-inside: |
-              $OPTS = {..., ...$SPREAD, ...};
-              ...
-          - pattern-not-inside: |
-              $OPTS = {..., expires: new Date(0), ...};
-              ...
-          - pattern-not-inside: |
-              $OPTS = {..., maxAge: 0, ...};
-              ...
-          - pattern-not-inside: |
-              $OPTS.httpOnly = $FLAG;
-              ...
-              $CALL(..., $OPTS);
-          - pattern-not-inside: |
-              if ($COND) {
-                ...
-                $OPTS.httpOnly = $FLAG;
-                ...
-              }
-              ...
-              $CALL(..., $OPTS);
-          - pattern-not-inside: |
-              if ($COND) {
-                ...
-              } else {
-                ...
-                $OPTS.httpOnly = $FLAG;
-                ...
-              }
-              ...
-              $CALL(..., $OPTS);
+                - pattern-either: *cookie-calls
+                - pattern-not:
+                    pattern-either:
+                      # Express res.cookie() and Fastify reply.setCookie()/reply.cookie(): no options, or an
+                      # options object in the call that leaves a flag out or false.
+                      - patterns:
+                          - pattern-either:
+                              - pattern: $RES.$SET($NAME, $VALUE)
+                              - pattern: $RES. ... .$SET($NAME, $VALUE)
+                              - patterns:
+                                  - pattern-either:
+                                      - pattern: $RES.$SET($NAME, $VALUE, $OPTS)
+                                      - pattern: $RES. ... .$SET($NAME, $VALUE, $OPTS)
+                                  - metavariable-pattern:
+                                      metavariable: $OPTS
+                                      patterns:
+                                        - pattern: '{...}'
+                                        - pattern-either:
+                                            - pattern: '{..., secure: false, ...}'
+                                            - pattern: '{..., httpOnly: false, ...}'
+                                            - patterns:
+                                                - pattern: '{...}'
+                                                - pattern-not: '{..., secure: $S, ...}'
+                                            - patterns:
+                                                - pattern: '{...}'
+                                                - pattern-not: '{..., httpOnly: $H, ...}'
+                                        - pattern-not: '{..., expires: new Date(0), ...}'
+                                        - pattern-not: '{..., maxAge: 0, ...}'
+                                        - pattern-not: '{..., ...$SPREAD, ...}'
+                          - metavariable-regex:
+                              metavariable: $SET
+                              regex: ^(cookie|setCookie)$
+                          - pattern-not:
+                              patterns:
+                                - pattern-either:
+                                    - pattern: $RES.$SET(...)
+                                    - pattern: $RES. ... .$SET(...)
+                                - metavariable-regex:
+                                    metavariable: $RES
+                                    regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
+                          # @fastify/cookie's parseOptions set the serialization of every set cookie: a file that
+                          # registers @fastify/cookie with both flags set there (any value but false) is not reported.
+                          - pattern-not-inside:
+                              patterns:
+                                - pattern-either:
+                                    - pattern-inside: |
+                                        $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        await $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        $PLUGIN = require($PLUGINMOD);
+                                        ...
+                                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        $PLUGIN = require($PLUGINMOD);
+                                        ...
+                                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        import $PLUGIN from $PLUGINMOD;
+                                        ...
+                                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        import $PLUGIN from $PLUGINMOD;
+                                        ...
+                                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                                        ...
+                                - metavariable-regex:
+                                    metavariable: $PLUGINMOD
+                                    regex: ^["'`]?(?:@fastify/cookie|fastify-cookie)["'`]?$
+                                - metavariable-pattern:
+                                    metavariable: $PARSE
+                                    patterns:
+                                      - pattern: '{..., secure: $PARSESECURE, ..., httpOnly: $PARSEHTTPONLY, ...}'
+                                      - pattern-not: '{..., secure: false, ...}'
+                                      - pattern-not: '{..., httpOnly: false, ...}'
+                      # The same with the options built in a variable first (one branch per flag): the object
+                      # literal holds cookie options and leaves the flag out (or false), and no assignment before
+                      # the call sets it (also inside an if). Each statement sequence starts at such an object or
+                      # at the assignment, never at any assignment: that took 45 s on a 900 kB bundle. Conditions
+                      # on names are exclusions, which keep OpenGrep's prefilter (its clause limit).
+                      - patterns:
+                          - pattern-either:
+                              - pattern: $RES.cookie($NAME, $VALUE, $OPTS)
+                              - pattern: $RES. ... .cookie($NAME, $VALUE, $OPTS)
+                              - pattern: $RES.setCookie($NAME, $VALUE, $OPTS)
+                              - pattern: $RES. ... .setCookie($NAME, $VALUE, $OPTS)
+                          - pattern-not:
+                              patterns:
+                                - pattern-either:
+                                    - pattern: $RES.$SET($NAME, $VALUE, $OPTS)
+                                    - pattern: $RES. ... .$SET($NAME, $VALUE, $OPTS)
+                                - metavariable-regex:
+                                    metavariable: $RES
+                                    regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
+                          # @fastify/cookie's parseOptions set the serialization of every set cookie: a file that
+                          # registers @fastify/cookie with both flags set there (any value but false) is not reported.
+                          - pattern-not-inside:
+                              patterns:
+                                - pattern-either:
+                                    - pattern-inside: |
+                                        $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        await $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        $PLUGIN = require($PLUGINMOD);
+                                        ...
+                                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        $PLUGIN = require($PLUGINMOD);
+                                        ...
+                                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        import $PLUGIN from $PLUGINMOD;
+                                        ...
+                                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        import $PLUGIN from $PLUGINMOD;
+                                        ...
+                                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                                        ...
+                                - metavariable-regex:
+                                    metavariable: $PLUGINMOD
+                                    regex: ^["'`]?(?:@fastify/cookie|fastify-cookie)["'`]?$
+                                - metavariable-pattern:
+                                    metavariable: $PARSE
+                                    patterns:
+                                      - pattern: '{..., secure: $PARSESECURE, ..., httpOnly: $PARSEHTTPONLY, ...}'
+                                      - pattern-not: '{..., secure: false, ...}'
+                                      - pattern-not: '{..., httpOnly: false, ...}'
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $OPTS = {..., maxAge: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., expires: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., httpOnly: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., secure: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., sameSite: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., path: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., domain: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., signed: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., partitioned: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., priority: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., encode: $KEYV, ...};
+                                  ...
+                          - pattern-not-inside:
+                              patterns:
+                                - pattern: |
+                                    $OPTS = {..., secure: $FLAGV, ...};
+                                    ...
+                                - metavariable-regex:
+                                    metavariable: $FLAGV
+                                    regex: ^(?!false$)
+                          - pattern-not-inside: |
+                              $OPTS = {..., ...$SPREAD, ...};
+                              ...
+                          - pattern-not-inside: |
+                              $OPTS = {..., expires: new Date(0), ...};
+                              ...
+                          - pattern-not-inside: |
+                              $OPTS = {..., maxAge: 0, ...};
+                              ...
+                          - pattern-not-inside: |
+                              $OPTS.secure = $FLAG;
+                              ...
+                              $CALL(..., $OPTS);
+                          - pattern-not-inside: |
+                              if ($COND) {
+                                ...
+                                $OPTS.secure = $FLAG;
+                                ...
+                              }
+                              ...
+                              $CALL(..., $OPTS);
+                          - pattern-not-inside: |
+                              if ($COND) {
+                                ...
+                              } else {
+                                ...
+                                $OPTS.secure = $FLAG;
+                                ...
+                              }
+                              ...
+                              $CALL(..., $OPTS);
+                      - patterns:
+                          - pattern-either:
+                              - pattern: $RES.cookie($NAME, $VALUE, $OPTS)
+                              - pattern: $RES. ... .cookie($NAME, $VALUE, $OPTS)
+                              - pattern: $RES.setCookie($NAME, $VALUE, $OPTS)
+                              - pattern: $RES. ... .setCookie($NAME, $VALUE, $OPTS)
+                          - pattern-not:
+                              patterns:
+                                - pattern-either:
+                                    - pattern: $RES.$SET($NAME, $VALUE, $OPTS)
+                                    - pattern: $RES. ... .$SET($NAME, $VALUE, $OPTS)
+                                - metavariable-regex:
+                                    metavariable: $RES
+                                    regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
+                          # @fastify/cookie's parseOptions set the serialization of every set cookie: a file that
+                          # registers @fastify/cookie with both flags set there (any value but false) is not reported.
+                          - pattern-not-inside:
+                              patterns:
+                                - pattern-either:
+                                    - pattern-inside: |
+                                        $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        await $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        $PLUGIN = require($PLUGINMOD);
+                                        ...
+                                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        $PLUGIN = require($PLUGINMOD);
+                                        ...
+                                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        import $PLUGIN from $PLUGINMOD;
+                                        ...
+                                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                                        ...
+                                    - pattern-inside: |
+                                        import $PLUGIN from $PLUGINMOD;
+                                        ...
+                                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                                        ...
+                                - metavariable-regex:
+                                    metavariable: $PLUGINMOD
+                                    regex: ^["'`]?(?:@fastify/cookie|fastify-cookie)["'`]?$
+                                - metavariable-pattern:
+                                    metavariable: $PARSE
+                                    patterns:
+                                      - pattern: '{..., secure: $PARSESECURE, ..., httpOnly: $PARSEHTTPONLY, ...}'
+                                      - pattern-not: '{..., secure: false, ...}'
+                                      - pattern-not: '{..., httpOnly: false, ...}'
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $OPTS = {..., maxAge: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., expires: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., httpOnly: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., secure: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., sameSite: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., path: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., domain: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., signed: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., partitioned: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., priority: $KEYV, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., encode: $KEYV, ...};
+                                  ...
+                          - pattern-not-inside:
+                              patterns:
+                                - pattern: |
+                                    $OPTS = {..., httpOnly: $FLAGV, ...};
+                                    ...
+                                - metavariable-regex:
+                                    metavariable: $FLAGV
+                                    regex: ^(?!false$)
+                          - pattern-not-inside: |
+                              $OPTS = {..., ...$SPREAD, ...};
+                              ...
+                          - pattern-not-inside: |
+                              $OPTS = {..., expires: new Date(0), ...};
+                              ...
+                          - pattern-not-inside: |
+                              $OPTS = {..., maxAge: 0, ...};
+                              ...
+                          - pattern-not-inside: |
+                              $OPTS.httpOnly = $FLAG;
+                              ...
+                              $CALL(..., $OPTS);
+                          - pattern-not-inside: |
+                              if ($COND) {
+                                ...
+                                $OPTS.httpOnly = $FLAG;
+                                ...
+                              }
+                              ...
+                              $CALL(..., $OPTS);
+                          - pattern-not-inside: |
+                              if ($COND) {
+                                ...
+                              } else {
+                                ...
+                                $OPTS.httpOnly = $FLAG;
+                                ...
+                              }
+                              ...
+                              $CALL(..., $OPTS);
       # express-session: Secure off unless cookie.secure is set; HttpOnly on unless false.
       - patterns:
-          - pattern-either:
+          - pattern-either: &session-imports
               - pattern-inside: |
-                  $SESSION = require('express-session');
+                  $ES = require('express-session');
                   ...
               - pattern-inside: |
-                  import $SESSION from 'express-session';
+                  import $ES from 'express-session';
                   ...
-          - pattern-either:
-              - pattern: '$SESSION({..., cookie: {..., secure: false, ...}, ...})'
-              - pattern: '$SESSION({..., cookie: {..., httpOnly: false, ...}, ...})'
-              - patterns:
-                  - pattern: '$SESSION({..., cookie: {...}, ...})'
-                  - pattern-not: '$SESSION({..., cookie: {..., secure: $S, ...}, ...})'
-                  - pattern-not: '$SESSION({..., cookie: {..., ...$SPREAD, ...}, ...})'
-              - patterns:
-                  - pattern: '$SESSION({...})'
-                  - pattern-not: '$SESSION({..., cookie: $C, ...})'
-                  - pattern-not: '$SESSION({..., ...$SPREAD, ...})'
-      # express-session with the options in a variable: no secure in its cookie, and none set before
-      # the call (the docs set it inside an if for production); or a flag set to false.
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $SESSION = require('express-session');
-                  ...
-              - pattern-inside: |
-                  import $SESSION from 'express-session';
-                  ...
-          - pattern: $SESSION($OPTS)
-          - pattern-either:
-              - pattern-inside: |
-                  $OPTS = {..., secret: $SECRET, ...};
-                  ...
-              - pattern-inside: |
-                  $OPTS = {..., cookie: {..., secure: false, ...}, ...};
-                  ...
-          - pattern-not-inside:
+          - pattern: $ES(...)
+          - pattern-not:
               patterns:
-                - pattern: |
-                    $OPTS = {..., cookie: {..., secure: $FLAGV, ...}, ...};
-                    ...
-                - metavariable-regex:
-                    metavariable: $FLAGV
-                    regex: ^(?!false$)
-          - pattern-not-inside: |
-              $OPTS = {..., cookie: {..., ...$SPREAD, ...}, ...};
-              ...
-          - pattern-not-inside: |
-              $OPTS = {..., ...$SPREAD, ...};
-              ...
-          - pattern-not-inside:
-              patterns:
-                - pattern: |
-                    $OPTS = {..., cookie: $COOKIE, ...};
-                    ...
-                - metavariable-regex:
-                    metavariable: $COOKIE
-                    regex: ^[^{]
-          - pattern-not-inside: |
-              $OPTS.cookie.secure = $FLAG;
-              ...
-              <... $SESSION($OPTS) ...>;
-          - pattern-not-inside: |
-              if ($COND) {
-                ...
-                $OPTS.cookie.secure = $FLAG;
-                ...
-              }
-              ...
-              <... $SESSION($OPTS) ...>;
-          - pattern-not-inside: |
-              if ($COND) {
-                ...
-              } else {
-                ...
-                $OPTS.cookie.secure = $FLAG;
-                ...
-              }
-              ...
-              <... $SESSION($OPTS) ...>;
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $SESSION = require('express-session');
-                  ...
-              - pattern-inside: |
-                  import $SESSION from 'express-session';
-                  ...
-          - pattern: $SESSION($OPTS)
-          - pattern-inside: |
-              $OPTS = {..., cookie: {..., httpOnly: false, ...}, ...};
-              ...
-          - pattern-not-inside: |
-              $OPTS.cookie.httpOnly = $FLAG;
-              ...
-              <... $SESSION($OPTS) ...>;
-          - pattern-not-inside: |
-              if ($COND) {
-                ...
-                $OPTS.cookie.httpOnly = $FLAG;
-                ...
-              }
-              ...
-              <... $SESSION($OPTS) ...>;
-          - pattern-not-inside: |
-              if ($COND) {
-                ...
-              } else {
-                ...
-                $OPTS.cookie.httpOnly = $FLAG;
-                ...
-              }
-              ...
-              <... $SESSION($OPTS) ...>;
+                - pattern-either: *session-imports
+                - pattern: $ES(...)
+                - pattern-not:
+                    pattern-either:
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $SESSION = require('express-session');
+                                  ...
+                              - pattern-inside: |
+                                  import $SESSION from 'express-session';
+                                  ...
+                          - pattern-either:
+                              - pattern: '$SESSION({..., cookie: {..., secure: false, ...}, ...})'
+                              - pattern: '$SESSION({..., cookie: {..., httpOnly: false, ...}, ...})'
+                              - patterns:
+                                  - pattern: '$SESSION({..., cookie: {...}, ...})'
+                                  - pattern-not: '$SESSION({..., cookie: {..., secure: $S, ...}, ...})'
+                                  - pattern-not: '$SESSION({..., cookie: {..., ...$SPREAD, ...}, ...})'
+                              - patterns:
+                                  - pattern: '$SESSION({...})'
+                                  - pattern-not: '$SESSION({..., cookie: $C, ...})'
+                                  - pattern-not: '$SESSION({..., ...$SPREAD, ...})'
+                      # express-session with the options in a variable: no secure in its cookie, and none set before
+                      # the call (the docs set it inside an if for production); or a flag set to false.
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $SESSION = require('express-session');
+                                  ...
+                              - pattern-inside: |
+                                  import $SESSION from 'express-session';
+                                  ...
+                          - pattern: $SESSION($OPTS)
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $OPTS = {..., secret: $SECRET, ...};
+                                  ...
+                              - pattern-inside: |
+                                  $OPTS = {..., cookie: {..., secure: false, ...}, ...};
+                                  ...
+                          - pattern-not-inside:
+                              patterns:
+                                - pattern: |
+                                    $OPTS = {..., cookie: {..., secure: $FLAGV, ...}, ...};
+                                    ...
+                                - metavariable-regex:
+                                    metavariable: $FLAGV
+                                    regex: ^(?!false$)
+                          - pattern-not-inside: |
+                              $OPTS = {..., cookie: {..., ...$SPREAD, ...}, ...};
+                              ...
+                          - pattern-not-inside: |
+                              $OPTS = {..., ...$SPREAD, ...};
+                              ...
+                          - pattern-not-inside:
+                              patterns:
+                                - pattern: |
+                                    $OPTS = {..., cookie: $COOKIE, ...};
+                                    ...
+                                - metavariable-regex:
+                                    metavariable: $COOKIE
+                                    regex: ^[^{]
+                          - pattern-not-inside: |
+                              $OPTS.cookie.secure = $FLAG;
+                              ...
+                              <... $SESSION($OPTS) ...>;
+                          - pattern-not-inside: |
+                              if ($COND) {
+                                ...
+                                $OPTS.cookie.secure = $FLAG;
+                                ...
+                              }
+                              ...
+                              <... $SESSION($OPTS) ...>;
+                          - pattern-not-inside: |
+                              if ($COND) {
+                                ...
+                              } else {
+                                ...
+                                $OPTS.cookie.secure = $FLAG;
+                                ...
+                              }
+                              ...
+                              <... $SESSION($OPTS) ...>;
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $SESSION = require('express-session');
+                                  ...
+                              - pattern-inside: |
+                                  import $SESSION from 'express-session';
+                                  ...
+                          - pattern: $SESSION($OPTS)
+                          - pattern-inside: |
+                              $OPTS = {..., cookie: {..., httpOnly: false, ...}, ...};
+                              ...
+                          - pattern-not-inside: |
+                              $OPTS.cookie.httpOnly = $FLAG;
+                              ...
+                              <... $SESSION($OPTS) ...>;
+                          - pattern-not-inside: |
+                              if ($COND) {
+                                ...
+                                $OPTS.cookie.httpOnly = $FLAG;
+                                ...
+                              }
+                              ...
+                              <... $SESSION($OPTS) ...>;
+                          - pattern-not-inside: |
+                              if ($COND) {
+                                ...
+                              } else {
+                                ...
+                                $OPTS.cookie.httpOnly = $FLAG;
+                                ...
+                              }
+                              ...
+                              <... $SESSION($OPTS) ...>;
       # cookie-session: only an explicit false turns a flag off.
       - patterns:
           - pattern-either:
@@ -541,71 +577,89 @@ rules:
       # response.cookies.set() of a NextResponse; `set(name, value[, options])` or `set({ name,
       # value, ...options })`.
       - patterns:
-          - pattern-either:
-              - patterns:
-                  - pattern-inside: |
-                      import {..., cookies, ...} from 'next/headers';
-                      ...
-                  - pattern-either:
-                      - pattern: cookies().set(...)
-                      - pattern: (await cookies()).set(...)
+          - pattern-either: &next-cookie-stores
+              - pattern-inside: |
+                  import {..., cookies, ...} from 'next/headers';
+                  ...
+              - pattern-inside: |
+                  $NXRESPONSE = NextResponse.$NXMAKE(...);
+                  ...
+              - pattern-inside: |
+                  $NXRESPONSE = new NextResponse(...);
+                  ...
+          - pattern: $NXJAR.set(...)
+          - pattern-not:
+              patterns:
+                - pattern-either: *next-cookie-stores
+                - pattern: $NXJAR.set(...)
+                - pattern-not:
+                    pattern-either:
                       - patterns:
                           - pattern-either:
-                              - pattern-inside: |
-                                  $STORE = await cookies();
-                                  ...
-                              - pattern-inside: |
-                                  $STORE = cookies();
-                                  ...
-                          - pattern: $STORE.set(...)
-              - patterns:
-                  - pattern-either:
-                      - pattern-inside: |
-                          $RESPONSE = NextResponse.$MAKE(...);
-                          ...
-                      - pattern-inside: |
-                          $RESPONSE = new NextResponse(...);
-                          ...
-                  - pattern: $RESPONSE.cookies.set(...)
-          - pattern-either:
-              - patterns:
-                  - pattern: $JAR.set($NAME, $VALUE)
-                  - pattern-not: $JAR.set($NAME, "")
-              - patterns:
-                  - pattern: $JAR.set($NAME, $VALUE, $OPTS)
-                  - pattern-not: $JAR.set($NAME, "", $OPTS)
-                  - metavariable-pattern:
-                      metavariable: $OPTS
-                      patterns:
-                        - pattern: '{...}'
-                        - pattern-either:
-                            - pattern: '{..., secure: false, ...}'
-                            - pattern: '{..., httpOnly: false, ...}'
-                            - patterns:
-                                - pattern: '{...}'
-                                - pattern-not: '{..., secure: $S, ...}'
-                            - patterns:
-                                - pattern: '{...}'
-                                - pattern-not: '{..., httpOnly: $H, ...}'
-                        - pattern-not: '{..., expires: new Date(0), ...}'
-                        - pattern-not: '{..., maxAge: 0, ...}'
-                        - pattern-not: '{..., ...$SPREAD, ...}'
-              - patterns:
-                  - pattern: $JAR.set($COOKIE)
-                  - metavariable-pattern:
-                      metavariable: $COOKIE
-                      patterns:
-                        - pattern: '{...}'
-                        - pattern-either:
-                            - pattern: '{..., secure: false, ...}'
-                            - pattern: '{..., httpOnly: false, ...}'
-                            - patterns:
-                                - pattern: '{...}'
-                                - pattern-not: '{..., secure: $S, ...}'
-                            - patterns:
-                                - pattern: '{...}'
-                                - pattern-not: '{..., httpOnly: $H, ...}'
-                        - pattern-not: '{..., value: "", ...}'
-                        - pattern-not: '{..., expires: new Date(0), ...}'
-                        - pattern-not: '{..., maxAge: 0, ...}'
-                        - pattern-not: '{..., ...$SPREAD, ...}'
+                              - patterns:
+                                  - pattern-inside: |
+                                      import {..., cookies, ...} from 'next/headers';
+                                      ...
+                                  - pattern-either:
+                                      - pattern: cookies().set(...)
+                                      - pattern: (await cookies()).set(...)
+                                      - patterns:
+                                          - pattern-either:
+                                              - pattern-inside: |
+                                                  $STORE = await cookies();
+                                                  ...
+                                              - pattern-inside: |
+                                                  $STORE = cookies();
+                                                  ...
+                                          - pattern: $STORE.set(...)
+                              - patterns:
+                                  - pattern-either:
+                                      - pattern-inside: |
+                                          $RESPONSE = NextResponse.$MAKE(...);
+                                          ...
+                                      - pattern-inside: |
+                                          $RESPONSE = new NextResponse(...);
+                                          ...
+                                  - pattern: $RESPONSE.cookies.set(...)
+                          - pattern-either:
+                              - patterns:
+                                  - pattern: $JAR.set($NAME, $VALUE)
+                                  - pattern-not: $JAR.set($NAME, "")
+                              - patterns:
+                                  - pattern: $JAR.set($NAME, $VALUE, $OPTS)
+                                  - pattern-not: $JAR.set($NAME, "", $OPTS)
+                                  - metavariable-pattern:
+                                      metavariable: $OPTS
+                                      patterns:
+                                        - pattern: '{...}'
+                                        - pattern-either:
+                                            - pattern: '{..., secure: false, ...}'
+                                            - pattern: '{..., httpOnly: false, ...}'
+                                            - patterns:
+                                                - pattern: '{...}'
+                                                - pattern-not: '{..., secure: $S, ...}'
+                                            - patterns:
+                                                - pattern: '{...}'
+                                                - pattern-not: '{..., httpOnly: $H, ...}'
+                                        - pattern-not: '{..., expires: new Date(0), ...}'
+                                        - pattern-not: '{..., maxAge: 0, ...}'
+                                        - pattern-not: '{..., ...$SPREAD, ...}'
+                              - patterns:
+                                  - pattern: $JAR.set($COOKIE)
+                                  - metavariable-pattern:
+                                      metavariable: $COOKIE
+                                      patterns:
+                                        - pattern: '{...}'
+                                        - pattern-either:
+                                            - pattern: '{..., secure: false, ...}'
+                                            - pattern: '{..., httpOnly: false, ...}'
+                                            - patterns:
+                                                - pattern: '{...}'
+                                                - pattern-not: '{..., secure: $S, ...}'
+                                            - patterns:
+                                                - pattern: '{...}'
+                                                - pattern-not: '{..., httpOnly: $H, ...}'
+                                        - pattern-not: '{..., value: "", ...}'
+                                        - pattern-not: '{..., expires: new Date(0), ...}'
+                                        - pattern-not: '{..., maxAge: 0, ...}'
+                                        - pattern-not: '{..., ...$SPREAD, ...}'
