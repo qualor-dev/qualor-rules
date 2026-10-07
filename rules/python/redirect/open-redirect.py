@@ -1010,7 +1010,7 @@ class FlaggedRedirectView(RedirectView):
 
 class HelperRedirectView(RedirectView):
     def get(self, *args, **kwargs):
-        def get_redirect_url(target):
+        def get_redirect_url(self, target):
             # ok: python.open-redirect
             return target
         return super().get(*args, **kwargs)
