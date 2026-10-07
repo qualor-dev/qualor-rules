@@ -64,8 +64,9 @@ rules:
     # every file it scans, by multiplying the positive terms (pattern-inside, metavariable-regex,
     # nested patterns blocks) of all sources; exclusions cost nothing. The request sources are
     # the shared block of the JS taint rules; this rule's own OBJ sources each have one positive
-    # term, the value, with the handlers it must sit in as exclusions (with them as positive
-    # terms the prefilter took 1.2 s per scan and file). `opengrep-core -prefilter_of_rules` must
+    # term, the value, with the handler it must sit in as an exclusion (with it as a positive
+    # term the prefilter took 1.2 s per scan and file). An exclusion that uses the handler's
+    # metavariables (the Fastify schema checks) goes inside the handler's formula. `opengrep-core -prefilter_of_rules` must
     # stay near a plain rule's 0.1 s.
     pattern-sources:
       # Express: the request object, the first parameter of a handler `(req, res, ...)`, carries
@@ -337,10 +338,10 @@ rules:
           - focus-metavariable: $V
       # Operator injection needs a value that can be an object: the parsed JSON body and the
       # query string (Express 4's default extended parser builds objects from `a[$ne]=1`), in an
-      # Express handler or a Fastify route handler. Written as "a value that is not outside these
-      # handlers" (a pattern-not of the value with each handler as a pattern-not-inside), so that
-      # OpenGrep's prefilter takes only the value as a term: each positive term of a source
-      # multiplies the clauses it builds over all sources (see Performance above).
+      # Express handler. Written as "a value that is not outside these handlers" (a pattern-not of
+      # the value with the handler as a pattern-not-inside), so that OpenGrep's prefilter takes
+      # only the value as a term: each positive term of a source multiplies the clauses it builds
+      # over all sources (see Performance above).
       - label: OBJ
         patterns:
           - pattern-either: &obj-values
@@ -360,7 +361,6 @@ rules:
           - pattern-not:
               patterns:
                 - pattern-either: *obj-values
-                # Express: a handler `(req, res, ...)`.
                 - pattern-not-inside:
                     patterns:
                       - pattern-either:
@@ -369,22 +369,34 @@ rules:
                       - metavariable-regex:
                           metavariable: $RES
                           regex: ^(res|resp|response|reply|rep|h|ctx|next|_res|_response)$
-                # Fastify: a route handler that may take only the request.
-                - pattern-not-inside:
-                    pattern-either:
-                      - patterns:
-                          - pattern-inside: $APP.$ROUTE($PATH, ..., function ($REQ) { ... })
-                          - metavariable-regex:
-                              metavariable: $ROUTE
-                              regex: ^(get|head|post|put|delete|options|patch|all)$
-                          - metavariable-regex:
-                              metavariable: $PATH
-                              regex: ^["'`]/
-                      - pattern-inside: '$APP.route({..., handler: function ($REQ) { ... }, ...})'
           # Fastify validates a body against the route's schema (Ajv cannot turn an object into a
           # string), so routes that declare schema.body are left out.
           - pattern-not-inside: '$APP.$ROUTE($PATH, {..., schema: {..., body: $BODY, ...}, ...}, ...)'
           - pattern-not-inside: '$APP.route({..., schema: {..., body: $BODY, ...}, ...})'
+      # The same in a Fastify route handler, which may take only the request. The schema
+      # exclusions belong to the route of the handler (they share $APP, $ROUTE and $PATH with it),
+      # so they sit inside the handler's formula, not next to the value: a route registered inside
+      # another route's handler is still checked.
+      - label: OBJ
+        patterns:
+          - pattern-either: *obj-values
+          - pattern-not:
+              patterns:
+                - pattern-either: *obj-values
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-either:
+                          - patterns:
+                              - pattern-inside: $APP.$ROUTE($PATH, ..., function ($REQ) { ... })
+                              - metavariable-regex:
+                                  metavariable: $ROUTE
+                                  regex: ^(get|head|post|put|delete|options|patch|all)$
+                              - metavariable-regex:
+                                  metavariable: $PATH
+                                  regex: ^["'`]/
+                          - pattern-inside: '$APP.route({..., handler: function ($REQ) { ... }, ...})'
+                      - pattern-not-inside: '$APP.$ROUTE($PATH, {..., schema: {..., body: $BODY, ...}, ...}, ...)'
+                      - pattern-not-inside: '$APP.route({..., schema: {..., body: $BODY, ...}, ...})'
       # The same, destructured in the parameter list (`({ body }, res) => ...`).
       - label: OBJ
         patterns:

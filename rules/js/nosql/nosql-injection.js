@@ -254,6 +254,32 @@ fastify.route({
   },
 });
 
+// A route registered inside the handler of a route with a body schema has no schema itself.
+fastify.post('/accounts/batch', {
+  schema: { body: { type: 'object', properties: { ids: { type: 'array' } } } },
+}, async (request) => {
+  fastify.get('/accounts/batch/status', async (req) => {
+    // ruleid: js.nosql-injection
+    return users.findOne({ batch: req.query.batch });
+  });
+  return { queued: request.body.ids.length };
+});
+
+// The same with route() registering a route of another instance.
+const admin = require('fastify')();
+fastify.route({
+  method: 'POST',
+  url: '/accounts/merge',
+  schema: { body: { type: 'object', properties: { into: { type: 'string' } } } },
+  handler: async () => {
+    admin.post('/accounts/merge/preview', async (req) => {
+      // ruleid: js.nosql-injection
+      return users.findOne({ owner: req.body.owner });
+    });
+    return { merged: true };
+  },
+});
+
 // Body schemas are not read: one that allows an object for the field is left out too.
 fastify.post('/accounts/query', {
   schema: { body: { type: 'object', properties: { filter: { type: 'object' } } } },
