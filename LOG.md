@@ -38,7 +38,7 @@ Entry format:
 - go-3 (go.zip-slip#exit-calls, go.tls-verification-disabled#noop-callback-var, go.insecure-cookie#helper-cookies, go.xss#sink-results): APPROVED in round 1 (Minors recorded before merge; go.xss leaves command output to go.command-injection); merged fa5fde3..2de831e
 - js-2 (js.regex-injection#hand-written-escape, js.command-injection#powershell-params, js.command-injection#fallback-from-request, js.command-injection#cmd-powershell-tail): APPROVED after 2 fix rounds (PowerShell modelled per about_pwsh / about_PowerShell_exe); merged 07d0832..d743983
 - java-3 (java.regex-injection, java.tls-verification-disabled, java.weak-cipher, java.xss#sink-results): APPROVED after 2 fix rounds (Benchmark crypto TPR 74.6 % FPR 0 %; ruling J2: fetched bodies clean only from a fixed origin; J3: misuse rules skip test code); merged aca8545..b6137cf
-- python-2 (python.open-redirect#middleware-path, python.open-redirect#django-guard, python.open-redirect#location-header-redirectview, python.path-traversal#shelve): APPROVED after 1 fix round (Location sink rebuilt: no match explosion; no findings lost vs base)
+- python-2 (python.open-redirect#middleware-path, python.open-redirect#django-guard, python.open-redirect#location-header-redirectview, python.path-traversal#shelve): APPROVED after 1 fix round (Location sink rebuilt: no match explosion; no findings lost vs base); merged 2cebfd2..8195036
 
 ## 2026-10-06: release 2026.10.1 (`/release-pack`)
 
