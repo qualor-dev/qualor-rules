@@ -2,7 +2,7 @@
 
 # Qualor security rules
 
-The security rules of Qualor's `qualor` engine, 53 in all. Each page says what the rule finds, why
+The security rules of Qualor's `qualor` engine, 54 in all. Each page says what the rule finds, why
 it matters, how to fix it, what the rule misses or may wrongly report, and shows a short example.
 Qualor links every finding to its page.
 
@@ -65,6 +65,7 @@ The key `qualor:<lang>/<name>` is how Qualor names a rule; the rule itself is
 | [`qualor:java/template-injection`](java/template-injection.md) | Template text built from HTTP request data (Java) | Issue | High | [CWE-1336](https://cwe.mitre.org/data/definitions/1336.html), [CWE-94](https://cwe.mitre.org/data/definitions/94.html) |
 | [`qualor:java/tls-verification-disabled`](java/tls-verification-disabled.md) | TLS certificate or host name verification disabled (Java) | Issue | High | [CWE-295](https://cwe.mitre.org/data/definitions/295.html) |
 | [`qualor:java/unsafe-deserialization`](java/unsafe-deserialization.md) | Java deserialization of HTTP request data | Issue | High | [CWE-502](https://cwe.mitre.org/data/definitions/502.html) |
+| [`qualor:java/weak-cipher`](java/weak-cipher.md) | Broken cipher, ECB mode or unpadded RSA (Java) | Issue | Medium | [CWE-327](https://cwe.mitre.org/data/definitions/327.html) |
 | [`qualor:java/xpath-injection`](java/xpath-injection.md) | XPath expression built from HTTP request data (Java) | Issue | High | [CWE-643](https://cwe.mitre.org/data/definitions/643.html) |
 | [`qualor:java/xss`](java/xss.md) | HTML response built from HTTP request data (Java) | Issue | High | [CWE-79](https://cwe.mitre.org/data/definitions/79.html) |
 | [`qualor:java/xxe`](java/xxe.md) | XML parser that resolves external entities (Java) | Issue | High | [CWE-611](https://cwe.mitre.org/data/definitions/611.html), [CWE-776](https://cwe.mitre.org/data/definitions/776.html) |

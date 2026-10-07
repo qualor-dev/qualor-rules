@@ -1,0 +1,87 @@
+rules:
+  - id: java.weak-cipher
+    languages: [java]
+    severity: WARNING
+    message: >-
+      This cipher does not protect the data: DES, Triple DES (DESede), RC2, RC4 (ARCFOUR) and
+      Blowfish are broken or have a 64-bit block that leaks data after a few gigabytes, ECB mode
+      (also the provider default when only "AES" is named) encrypts equal blocks to equal
+      ciphertext, RSA without padding is deterministic and malleable, and NullCipher does not
+      encrypt at all. Use an authenticated cipher with the mode and padding written out:
+      "AES/GCM/NoPadding" or "ChaCha20-Poly1305", and "RSA/ECB/OAEPWithSHA-256AndMGF1Padding" for
+      RSA.
+    metadata:
+      title: Broken cipher, ECB mode or unpadded RSA (Java)
+      cwe: ['CWE-327']
+      owasp: ['A04:2025', 'A02:2021']
+      kind: issue
+      severity: medium
+      confidence: high
+      frameworks: [javax.crypto]
+      sources:
+        - https://cwe.mitre.org/data/definitions/327.html
+        - https://top10.owasp.org/2025/A04_2025-Cryptographic_Failures/
+        - https://top10.owasp.org/2021/A02_2021-Cryptographic_Failures/
+        - https://cheatsheetseries.owasp.org/cheatsheets/Cryptographic_Storage_Cheat_Sheet.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/crypto/Cipher.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/crypto/NullCipher.html
+        - https://docs.oracle.com/en/java/javase/25/docs/specs/security/standard-names.html
+        - https://docs.oracle.com/en/java/javase/25/security/oracle-providers.html
+        - https://pkg.go.dev/crypto/des
+        - https://pkg.go.dev/crypto/rc4
+        - https://pkg.go.dev/golang.org/x/crypto/blowfish
+        - https://www.rfc-editor.org/rfc/rfc8017.html
+        - https://maven.apache.org/guides/introduction/introduction-to-the-standard-directory-layout.html
+        - https://maven.apache.org/surefire/maven-surefire-plugin/test-mojo.html#includes
+        - https://maven.apache.org/surefire/maven-failsafe-plugin/integration-test-mojo.html#includes
+        - https://docs.gradle.org/current/userguide/java_testing.html
+        - https://docs.gradle.org/current/userguide/jvm_test_suite_plugin.html
+      since: 2026.10.2
+    # Test code is out of scope, as in java.tls-verification-disabled (ruling F10): the Maven and
+    # Gradle test source trees (src/test/, also Gradle's src/testFixtures/, src/integrationTest/
+    # and src/intTest/, at any depth) and the class files the Surefire and Failsafe plugins run by
+    # default whose names end in Test, Tests, TestCase, IT or ITCase (their Test*.java and
+    # IT*.java defaults would also skip production classes such as TestimonialService). A test
+    # that decrypts legacy DES data or checks that ECB is refused is not a weakness.
+    # Which transformations (Java Security Standard Algorithm Names, Oracle providers' SunJCE
+    # section; the names are case-insensitive):
+    # - DES, DESede (TripleDES), DESedeWrap, RC2, RC4 (ARCFOUR) and Blowfish in any mode, and the
+    #   PBE names built on them (PBEWithMD5AndDES, PBEWithSHA1AndRC4_128, ...): DES has a 56-bit
+    #   key, RC4 is broken, and the others have 64-bit blocks (birthday-bound attacks after a few
+    #   gigabytes under one key).
+    # - ECB with any other block cipher, and "AES" (AES_128, AES_192, AES_256) without a mode:
+    #   SunJCE and SunPKCS11 then use ECB, which the names page says "generally ... should not be
+    #   used for multiple blocks of data".
+    # - RSA with NoPadding (textbook RSA). "RSA/ECB/..." with OAEP or PKCS1Padding is not reported:
+    #   the ECB there is nominal, and PKCS #1 v1.5 padding is still an RFC 8017 encryption
+    #   scheme ("included only for compatibility"; OAEP is required for new applications).
+    # - NullCipher, which does not transform the data.
+    # Not reported: unauthenticated modes (CBC, CTR) of AES, and names that are not constants. A
+    # name read from configuration is not reported even when the literal default of the lookup is
+    # weak: the deployment decides (on the OWASP Benchmark, reporting such defaults found the 33
+    # remaining real cases and 27 safe ones whose configured value is AES/CCM).
+    # Known limits (each has a `todo` line in the test file):
+    # - Only constant names are checked (literals, constants and locals assigned once, also
+    #   concatenated literals): a name chosen by a condition, passed to a helper, or read from
+    #   configuration with a weak default (`getProperty(key, "DESede/ECB/PKCS5Padding")`) is missed.
+    # - Only the JCA Cipher API is checked: Bouncy Castle's lightweight engines (DESEngine,
+    #   RC4Engine, ...) are not.
+    # - ECB on a single block (wrapping one AES key), which the names page allows, is reported.
+    paths:
+      exclude:
+        - 'src/test/'
+        - 'src/testFixtures/'
+        - 'src/integrationTest/'
+        - 'src/intTest/'
+        - '*Test.java'
+        - '*Tests.java'
+        - '*TestCase.java'
+        - '*IT.java'
+        - '*ITCase.java'
+    pattern-either:
+      - patterns:
+          - pattern: javax.crypto.Cipher.getInstance("$NAME", ...)
+          - metavariable-regex:
+              metavariable: $NAME
+              regex: (?i)^((DES|DESede|TripleDES|DESedeWrap|RC2|RC4|ARCFOUR|Blowfish)(/.*)?|PBEWith\w+And(DES|DESede|TripleDES|RC2_\d+|RC4_\d+)|AES(_\d+)?|(?!(RSA|ECIES)/)[^/]+/ECB(/.*)?|RSA/[^/]+/NoPadding)$
+      - pattern: new javax.crypto.NullCipher()
