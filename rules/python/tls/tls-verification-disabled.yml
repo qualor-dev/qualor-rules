@@ -43,7 +43,8 @@ rules:
         - https://github.com/boto/botocore/blob/develop/botocore/session.py
         - https://www.elastic.co/docs/reference/elasticsearch/clients/python/configuration
         - https://elasticsearch-py.readthedocs.io/en/stable/api/elasticsearch.html
-        - https://docs.opensearch.org/latest/clients/python-low-level/
+        - https://opensearch-project.github.io/opensearch-py/api-ref/clients/opensearch_client.html
+        - https://opensearch-project.github.io/opensearch-py/api-ref/connection.html
         - https://www.mongodb.com/docs/languages/python/pymongo-driver/current/security/tls/
         - https://python-hvac.org/en/stable/source/hvac_v1.html
         - https://docs.python.org/3/library/ssl.html#ssl.SSLContext.check_hostname
@@ -130,10 +131,11 @@ rules:
     # - The unverified context looked up with getattr(ssl, "_create_unverified_context").
     # - SDK switches are read only as keywords written in the call (`todoruleid:`): boto3's
     #   verify given by position (client()'s fifth parameter), options in a dict, and a PyMongo
-    #   connection string built at run time are missed. Clients of boto3 or botocore sessions
-    #   made in the same function or module are followed, not sessions from a factory. Other SDK
-    #   switches (OpenSearch ssl_assert_hostname, redis ssl_cert_reqs, motor, aioboto3) are not
-    #   checked.
+    #   connection string built at run time are missed, and so is an Elasticsearch or OpenSearch
+    #   host list that starts with an http:// host and goes on with https:// ones (only the
+    #   first host is read). Clients of boto3 or botocore sessions made in the same function or
+    #   module are followed, not sessions from a factory. Other SDK switches (OpenSearch
+    #   ssl_assert_hostname, redis ssl_cert_reqs, motor, aioboto3) are not checked.
     # - An aiohttp ClientSession is followed as a requests Session is (assigned earlier, `async
     #   with`, a typed parameter, a self attribute set by __init__); one from a factory function
     #   is not, nor are options passed as a dict (`todoruleid:`).
@@ -338,12 +340,20 @@ rules:
               - pattern-not: $CALL(..., ssl_assert_fingerprint=$FP, ...)
               - pattern-not: $CALL("=~/^http:\/\//", ...)
               - pattern-not: $CALL(..., hosts="=~/^http:\/\//", ...)
-          # PyMongo: tlsInsecure, tlsAllowInvalidCertificates or tlsAllowInvalidHostnames set to
-          # True, as keywords or in a connection string written in the call.
+              # A list of hosts whose first is written as http://.
+              - pattern-not: $CALL(["=~/^http:\/\//", ...], ...)
+              - pattern-not: $CALL(..., hosts=["=~/^http:\/\//", ...], ...)
+          # PyMongo (MongoClient, and AsyncMongoClient, its asyncio client): tlsInsecure,
+          # tlsAllowInvalidCertificates or tlsAllowInvalidHostnames set to True, as keywords or in
+          # a connection string written in the call.
           - pattern: pymongo.MongoClient(..., tlsInsecure=True, ...)
           - pattern: pymongo.MongoClient(..., tlsAllowInvalidCertificates=True, ...)
           - pattern: pymongo.MongoClient(..., tlsAllowInvalidHostnames=True, ...)
           - pattern: pymongo.MongoClient("=~/[?&](tlsInsecure|tlsAllowInvalidCertificates|tlsAllowInvalidHostnames)=true/i", ...)
+          - pattern: pymongo.AsyncMongoClient(..., tlsInsecure=True, ...)
+          - pattern: pymongo.AsyncMongoClient(..., tlsAllowInvalidCertificates=True, ...)
+          - pattern: pymongo.AsyncMongoClient(..., tlsAllowInvalidHostnames=True, ...)
+          - pattern: pymongo.AsyncMongoClient("=~/[?&](tlsInsecure|tlsAllowInvalidCertificates|tlsAllowInvalidHostnames)=true/i", ...)
           # hvac (HashiCorp Vault): verify=False.
           - pattern: hvac.Client(..., verify=False, ...)
           # ssl: the unverified context (PEP 476) and its old name.

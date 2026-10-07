@@ -21,10 +21,11 @@ client:
   `ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)`), even when the certificate chain is still checked;
 - urllib3's `cert_reqs="CERT_NONE"` and `assert_hostname=False`;
 - SDK switches their documentation describes: `verify=False` for boto3 and botocore clients and
-  hvac's Vault client, `verify_certs=False` for Elasticsearch and OpenSearch, and PyMongo's
-  `tlsInsecure`, `tlsAllowInvalidCertificates` and `tlsAllowInvalidHostnames` (as arguments or in
-  the connection string). Plain HTTP (`use_ssl=False`, an `http://` endpoint) and a certificate
-  pinned with `ssl_assert_fingerprint` are not reported;
+  hvac's Vault client, `verify_certs=False` for Elasticsearch and OpenSearch, and the
+  `tlsInsecure`, `tlsAllowInvalidCertificates` and `tlsAllowInvalidHostnames` options of PyMongo's
+  `MongoClient` and `AsyncMongoClient` (as arguments or in the connection string). Plain HTTP
+  (`use_ssl=False`, an `http://` endpoint or host, also first in a list of hosts) and a
+  certificate pinned with `ssl_assert_fingerprint` are not reported;
 - the legacy `ssl.wrap_socket()` on the client side, which never checks the host name and accepts
   any certificate unless `cert_reqs` asks for one (a socket wrapped with `server_side=True` is not
   reported).
@@ -124,7 +125,9 @@ def fetch_status():
   (`def f(url, verify=False)`) are not reported.
 - SDK switches are seen only as keyword arguments written in the call: boto3's `verify` given by
   position, options in a dict and a MongoDB connection string built at run time are missed, and so
-  are other SDKs' switches (OpenSearch `ssl_assert_hostname`, redis `ssl_cert_reqs`).
+  are other SDKs' switches (OpenSearch `ssl_assert_hostname`, redis `ssl_cert_reqs`). A list of
+  hosts that starts with an `http://` host is taken for plain HTTP, even when `https://` hosts
+  follow.
 - A bare `ssl.SSLContext()` (without `PROTOCOL_TLS_CLIENT`) verifies nothing by default, and its use
   as a client cannot be seen where it is made: it is not reported, nor is `check_hostname = False`
   on it, on a urllib3 `create_urllib3_context()`, or on a context made in another function or
@@ -163,7 +166,8 @@ def fetch_status():
 - <https://github.com/boto/botocore/blob/develop/botocore/session.py>
 - <https://www.elastic.co/docs/reference/elasticsearch/clients/python/configuration>
 - <https://elasticsearch-py.readthedocs.io/en/stable/api/elasticsearch.html>
-- <https://docs.opensearch.org/latest/clients/python-low-level/>
+- <https://opensearch-project.github.io/opensearch-py/api-ref/clients/opensearch_client.html>
+- <https://opensearch-project.github.io/opensearch-py/api-ref/connection.html>
 - <https://www.mongodb.com/docs/languages/python/pymongo-driver/current/security/tls/>
 - <https://python-hvac.org/en/stable/source/hvac_v1.html>
 - <https://docs.python.org/3/library/ssl.html#ssl.SSLContext.check_hostname>

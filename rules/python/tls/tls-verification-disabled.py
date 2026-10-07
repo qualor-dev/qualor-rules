@@ -23,7 +23,7 @@ from elasticsearch import AsyncElasticsearch, Elasticsearch
 from flask import Flask, current_app
 from httpx import AsyncClient
 from opensearchpy import OpenSearch
-from pymongo import MongoClient
+from pymongo import AsyncMongoClient, MongoClient
 from requests import Session
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
@@ -360,10 +360,25 @@ def sdk_clients(url, endpoint, token, region):
     mongo_uri = MongoClient("mongodb://db.example.com:27017/?tls=true&tlsInsecure=true")
     # ruleid: python.tls-verification-disabled
     mongo_srv = pymongo.MongoClient("mongodb+srv://cluster.example.com/?tlsAllowInvalidCertificates=true")
+    # PyMongo's asyncio client takes the same options.
+    # ruleid: python.tls-verification-disabled
+    amongo = pymongo.AsyncMongoClient(url, tls=True, tlsInsecure=True)
+    # ruleid: python.tls-verification-disabled
+    amongo_certs = AsyncMongoClient(url, tls=True, tlsAllowInvalidCertificates=True)
+    # ruleid: python.tls-verification-disabled
+    amongo_hosts = AsyncMongoClient(url, tls=True, tlsAllowInvalidHostnames=True)
+    # ruleid: python.tls-verification-disabled
+    amongo_uri = AsyncMongoClient("mongodb://db.example.com:27017/?tls=true&tlsAllowInvalidHostnames=true")
     # ruleid: python.tls-verification-disabled
     vault = hvac.Client(url=url, token=token, verify=False)
+    # A list of https hosts, or of hosts given as dicts, is TLS.
+    # ruleid: python.tls-verification-disabled
+    es_list = Elasticsearch(["https://es1.example.com:9200"], verify_certs=False)
+    # ruleid: python.tls-verification-disabled
+    es_hosts = Elasticsearch(hosts=["https://es1.example.com:9200", "https://es2.example.com:9200"], verify_certs=False)
     return (s3, dynamo, sqs, sns, ec2, kms, sts, es, es_async, search, mongo, mongo_certs,
-            mongo_hosts, mongo_uri, mongo_srv, vault)
+            mongo_hosts, mongo_uri, mongo_srv, amongo, amongo_certs, amongo_hosts, amongo_uri,
+            vault, es_list, es_hosts)
 
 
 class SearchWrapper:
@@ -388,6 +403,10 @@ def safe_sdk_clients(url, endpoint, token, fingerprint, make_client):
     # ok: python.tls-verification-disabled
     local_hosts = Elasticsearch(hosts="http://localhost:9200", verify_certs=False)
     # ok: python.tls-verification-disabled
+    local_list = Elasticsearch(["http://localhost:9200"], verify_certs=False)
+    # ok: python.tls-verification-disabled
+    local_hosts_list = Elasticsearch(hosts=["http://es1:9200", "http://es2:9200"], verify_certs=False)
+    # ok: python.tls-verification-disabled
     search = OpenSearch(hosts=[{"host": endpoint, "port": 9200}], use_ssl=False, verify_certs=False)
     # ok: python.tls-verification-disabled
     es = Elasticsearch(url, ca_certs=CA_BUNDLE)
@@ -403,6 +422,10 @@ def safe_sdk_clients(url, endpoint, token, fingerprint, make_client):
     # ok: python.tls-verification-disabled
     mongo_off = MongoClient(url, tlsInsecure=False)
     # ok: python.tls-verification-disabled
+    amongo = AsyncMongoClient(url, tls=True, tlsCAFile=CA_BUNDLE)
+    # ok: python.tls-verification-disabled
+    amongo_uri = AsyncMongoClient("mongodb://db.example.com:27017/?tls=true&tlsInsecure=false")
+    # ok: python.tls-verification-disabled
     vault = hvac.Client(url=url, token=token, verify=CA_BUNDLE)
     # The setting from configuration: the deployment decides.
     # ok: python.tls-verification-disabled
@@ -412,8 +435,9 @@ def safe_sdk_clients(url, endpoint, token, fingerprint, make_client):
     other = make_client("s3", verify=False)
     # ok: python.tls-verification-disabled
     other_es = SearchWrapper(url, verify_certs=False)
-    return (s3, s3_ca, local, emulator, local_es, local_hosts, search, es, es_verified, es_pinned,
-            mongo, mongo_uri, mongo_off, vault, configured, other, other_es)
+    return (s3, s3_ca, local, emulator, local_es, local_hosts, local_list, local_hosts_list, search,
+            es, es_verified, es_pinned, mongo, mongo_uri, mongo_off, amongo, amongo_uri, vault,
+            configured, other, other_es)
 
 
 def sdk_limits(url, region):
@@ -426,7 +450,11 @@ def sdk_limits(url, region):
     # A connection string built at run time is not read.
     # todoruleid: python.tls-verification-disabled
     mongo = MongoClient(url + "/?tls=true&tlsInsecure=true")
-    return s3, es, mongo
+    # Only a list whose first host is written as http:// is taken for plain HTTP: a list that
+    # mixes http:// and https:// hosts is not reported.
+    # todoruleid: python.tls-verification-disabled
+    mixed = Elasticsearch(["http://es1:9200", "https://es2.example.com:9200"], verify_certs=False)
+    return s3, es, mongo, mixed
 
 # ssl: the unverified context (PEP 476), used directly, passed to urllib and http.client, or
 # installed as the default for every HTTPS connection of the process.
