@@ -19,9 +19,10 @@ numbers, and every known limit written into the repository (a `todoruleid:`/`tod
 
 ## Hard rules
 
-- Never push, never add a remote, never tag. Never run `npm run release` for a release, never
-  touch `dist/` or the qualor-cc repository (that is `/release-pack`). The probe only reads a clone
-  of qualor-cc.
+- Never push, never tag, never add a remote. The repository has one remote, `origin`
+  (github.com/qualor-dev/qualor-rules, public); pushing to it happens only on the maintainer's
+  word, never as part of a run. Never run `npm run release` for a release, never touch `dist/` or
+  the qualor-cc repository (that is `/release-pack`). The probe only reads a clone of qualor-cc.
 - **Everything lands on `main`, linearly** (the maintainer's choice): no pull requests, no merge
   commits. Branches exist only for parallel implementers and are fast-forwarded (`--ff-only`).
 - Never weaken a test that existed before this run: never delete or rewrite its `ruleid:`/`ok:`
@@ -55,7 +56,7 @@ Run in the main tree (`E:\Personal\qualor\qualor-rules`):
 ```sh
 git status --porcelain            # must print nothing
 git branch --show-current         # must print main
-git remote -v                     # must print nothing
+git remote -v                     # origin (qualor-dev/qualor-rules) only
 git worktree list                 # the main tree only
 git branch --list 'rules/*'       # nothing
 grep -c '| in-progress |' BACKLOG.md   # 0
@@ -66,8 +67,8 @@ npm run test:docker               # baseline: check, tool tests, opengrep --test
 Read `AGENTS.md`, `CLEAN-ROOM.md`, `BACKLOG.md`, `REFERENCE.md` and the newest three entries of
 `LOG.md` (their open questions and notes apply to this run).
 
-- **Dirty tree, another branch, a remote:** stop and ask. Never stash, commit or reset what you
-  did not write.
+- **Dirty tree, another branch, another remote:** stop and ask. Never stash, commit or reset what
+  you did not write.
 - **`in-progress` rows, `rules/*` branches, `qualor-rules-*` worktrees, or a LOG.md entry marked
   "(in progress)":** an earlier run was interrupted. Finish it first with "Resume" below, then
   start this request from step 1 again.
@@ -203,7 +204,13 @@ git merge --ff-only rules/$L-$D-$K
 ```
 
 If `--ff-only` refuses (`main` moved: another batch merged, or a progress commit):
-`git -C "$W" rebase main`, then `npm --prefix "$W" run test:docker`, then merge again.
+`git -C "$W" rebase main`, then `npm --prefix "$W" run check`; when it reports
+`docs/rules/README.md` out of date (another batch added rules), run `npm --prefix "$W" run docs`
+and commit the index on the branch (`git -C "$W" commit -s -m "docs(rules): regenerate the index"
+-- docs/rules/README.md`). Then `npm --prefix "$W" run test:docker`, and merge again **only if it
+is green**: a red rebased branch goes back to its implementer as a fix round (inline: you fix it)
+and is never merged red.
+
 Implementers never touch the shared files, so conflicts should not happen; if `BACKLOG.md` or
 `LOG.md` conflicts anyway, keep both sides' rows and, for the same row, the later status
 (`done`/`blocked` over `in-progress` over `todo`). `docs/rules/README.md`, the generated index of
@@ -213,12 +220,15 @@ the rule pages, does conflict when both sides added rules: rebuild it with
 
 ```sh
 L=python; K=1; D=<yyyymmdd>; W=E:/Personal/qualor/worktrees/qualor-rules-$L-$D-$K
-npm run test:docker               # must be green on main
+npm run test:docker               # must be green on main: if not, stop here (below)
 git worktree remove "$W"
 git branch -d rules/$L-$D-$K      # -d, never -D: an unmerged branch is a question for the maintainer
 ```
 
-Record the merge (Progress line), then start that language's next batch (step 4).
+If `npm run test:docker` is red on `main` after a merge, do not record the merge, remove the
+worktree or start another batch: fix `main` first (a commit of yours, with `Backlog: <id>` of the
+row it fixes) or ask the maintainer. Otherwise record the merge (Progress line), then start that
+language's next batch (step 4).
 
 ## 7. Finish
 
@@ -229,7 +239,9 @@ Record the merge (Progress line), then start that language's next batch (step 4)
    the one-line question. Add the implementers' and reviewers' proposals: a limit worth fixing
    later is a `todo` maintenance row `<id>#<topic>` above the first `todo` rule row; a new category
    or API goes into COVERAGE.md as a `candidate`; a new or changed source block goes into
-   COVERAGE.md "Frameworks in scope" / "Source blocks". When a source block changed, add a
+   COVERAGE.md "Frameworks in scope" / "Source blocks". Tooling follow-ups (a check, a sweep,
+   a generator) are not rows (`BACKLOG.md` ids are rule ids): they go into the LOG entry's Notes and
+   COVERAGE.md "Growing the map". When a source block changed, add a
    `#<topic>` row for every other `done` taint rule of that language whose block does not match
    yet (COVERAGE.md "Source blocks").
 3. **LOG.md:** complete the run's entry (drop "(in progress)", fill every field; keep Progress).
@@ -297,6 +309,7 @@ Its rows go back to `todo`. A rule already on `main` is never discarded silently
 | "The ORM call looks like the sink, report it" | Idiomatic safe ORM and query-builder code flagged at ERROR is a Critical review finding. Write its `ok:` lines first. |
 | "Path parameters and JSON bodies are edge cases" | They are the most common inputs. Every in-scope framework needs `ruleid:` lines for route parameters and decoded or bound bodies (taint rules). |
 | "I'll paste the probe's FP line into the fixture" | That copies someone else's code (GPL in the Benchmark). Describe the shape, write a fresh minimal line from the docs. |
+| "The rule is fast on its fixture" | Fixtures are tiny. Check the prefilter size and time a large real file with `--timeout 0` (rule-procedure.md step 3); one rule over the match limit blanks a whole file for every rule. |
 | "I'll mention the limit in the report" | Reports are not shipped. `todoruleid:`/`todook:` line plus a "Known limits" comment, or it did not happen. |
 | "Change the old `ok:` to `todook:` so it passes" | That weakens a test. Fix the rule, or stop and ask. |
 | "The docs page is down, I know the API" | No docs, no row: the doc gate is the clean-room record. Block the row with the question. |

@@ -27,6 +27,11 @@
 - `/write-rules [N] [language]` (`.claude/skills/write-rules/`): takes the next N rows and writes,
   reviews, merges and logs them. `/release-pack` (`.claude/skills/release-pack/`): builds a pack
   release and pins it in qualor-cc, only when the maintainer asks.
+- Tooling follow-ups (a check, a mutation sweep, a generator) are not `BACKLOG.md` rows, whose ids
+  are rule ids: they are listed in COVERAGE.md "Growing the map" and in the LOG entries' Notes.
+  Open ones: a prefilter-size check in `npm test`, a per-alternative mutation sweep tool,
+  `--timeout 0` in the probe and measure tools, generators for the JS, Java and Python source
+  blocks.
 
 ## Rules
 
@@ -41,4 +46,5 @@
    the rule (`npm run docs`, then the hand-written sections; rule-procedure.md step 7). Qualor links
    findings to these paths: never rename or move a page without its rule.
 6. Commits: `git commit -s`, conventional messages, stage by path. No attribution trailers.
-7. Never push, tag a release or publish anything without the maintainer's word.
+7. Never push, tag a release or publish anything without the maintainer's word. `origin` is the
+   public GitHub repository qualor-dev/qualor-rules; add no other remote.

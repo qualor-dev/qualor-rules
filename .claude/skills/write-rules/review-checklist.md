@@ -64,7 +64,22 @@ Scan it the same way. Every miss is a defect unless the fixture records it as `t
 - **No weakened pre-existing test:** every removed `ruleid:`/`ok:` line in the diff above has a
   matching added line for the same code (a move), never a `todoruleid:`/`todook:` in its place.
 - **Limits are in the repository:** every limit the report names, and every one you found, has a
-  `todoruleid:`/`todook:` line and a line in the rule's "Known limits" comment.
+  `todoruleid:`/`todook:` line, a line in the rule's "Known limits" comment and one on its page.
+  `--test` does not check todo lines: scan them yourself.
+- **The recurring shapes** of rule-procedure.md step 2 (allow-lists and request-data fallbacks,
+  fixed origins with a host and a separator, fixed program + argument list, shell flags, real
+  request vectors, sanitizers bound to their types) each have their lines.
+- **Sanitizers on calls:** a sanitizer that matches a call must not clean sinks inside a callback
+  passed to it; probe `await helper(res, async () => { <sink with request data> })` and the
+  object-method form.
+- **Shared blocks:** a change to a source block, shared propagator or shared sanitizer is
+  byte-identical in every rule that carries it (compare them with a script); a generated block
+  matches its generator.
+- **Performance:** run `opengrep-core -prefilter_of_rules` on the rule (rule-procedure.md step 3,
+  "Performance"): it must give `Some` and a small size; time the rule with `--timeout 0` on a large
+  file that contains its words and on one that lacks them. A module or import condition that binds
+  a metavariable is a defect (match limit): check a generated file with a few hundred findings
+  reports them all.
 - **Fixture lines are the implementer's own:** a line that matches code of a reference or recall
   project (identifiers, string literals, comments copied from a probe finding) is a defect.
 - **Tests are not vacuous:** `ok:` lines are near misses (they would be reported if the safe form
@@ -72,7 +87,9 @@ Scan it the same way. Every miss is a defect unless the fixture records it as `t
   parameters and bodies of each framework. Repeat one mutation yourself: copy the rule to
   `.tmp/review/<name>/mutant.yml`, break its main source, sink or pattern, and run
   `npm run scan -- .tmp/review/<name>/mutant.yml -- rules/<lang>/<category>/<name>.<ext>`; the
-  `ruleid:` lines must go missing from the findings it prints.
+  `ruleid:` lines must go missing from the findings it prints. For a rule with many alternatives
+  or a shared-block change, check the implementer's per-alternative sweep result (0 survivors)
+  and repeat it for one alternative of your choice.
 - **Metadata:** `npm run check` passes (it also compares `kind` and `cwe` with the backlog row);
   `severity`, `confidence` and `owasp` follow COVERAGE.md "Kind and severity"; the title and
   message are accurate and the message says how to fix it; `frameworks` matches the fixture;
@@ -91,8 +108,12 @@ reviewed usage is harmless.
 ## 5. Commits
 
 One commit per rule, signed off (`Signed-off-by:`), conventional subject, a `Backlog: <id>` line
-in the body, only that rule's files, no attribution trailers, nothing in `BACKLOG.md`, `LOG.md`,
-`COVERAGE.md`, `REFERENCE.md`, `MEASUREMENTS.md` or `dist/`.
+in the body, only that rule's files (its page in the same commit, and `docs/rules/README.md`), no
+attribution trailers, nothing in `BACKLOG.md`, `LOG.md`, `COVERAGE.md`, `REFERENCE.md`,
+`MEASUREMENTS.md` or `dist/`. `git log --format=%(trailers) <base>..<branch>` shows only
+`Signed-off-by:` (a body ending in `Key: value` lines is parsed as trailers).
+
+Probe timeouts on a loaded host are not the rule's fault until re-timed alone with `--timeout 0`.
 
 ## Severity of findings
 
@@ -102,7 +123,8 @@ in the body, only that rule's files, no attribution trailers, nothing in `BACKLO
 - **Important:** for taint rules, a missed path parameter or bound body of an in-scope framework;
   for misuse and hotspot rules, a missed API form the docs show; a limit that is only in the
   report; an over-wide source or a bare-name sink; the wrong kind; more than half FP on the noise
-  projects.
+  projects; a change that drops the prefilter or makes it large, or a condition that multiplies
+  matches toward the per-file limit; a shared block that differs between rules.
 - **Minor:** rare shapes, wording, metadata details.
 
 APPROVED needs zero Critical and zero Important findings.

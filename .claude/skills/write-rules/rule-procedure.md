@@ -94,8 +94,42 @@ request-shape lines are needed.
   (`hashlib.md5(usedforsecurity=False)`).
 
 **All shapes:** each shape you decide not to handle gets `todoruleid:` (a missed true finding) or
-`todook:` (an accepted false finding), with a comment line above saying why. Aim for at least ten
-`ruleid:` and ten `ok:` lines; taint rules need at least one of each per framework.
+`todook:` (an accepted false finding), with a comment line above saying why, **and** a line in the
+rule's Known limits and on its page: a limit that is only in a report is lost. OpenGrep 1.30
+`--test` does not check `todoruleid:`/`todook:` lines: verify each with a separate scan and say so
+in the report. Aim for at least ten `ruleid:` and ten `ok:` lines; taint rules need at least one
+of each per framework.
+
+**Shapes the reviews asked for in every run** (write them before you report):
+
+- **Allow-lists are `ok:`** only for literal, untouched tables: a lookup by request data in a table
+  of literal constants (JS object, array, `Map`, `Object.freeze`; Python upper-case dict, list or
+  tuple of literals; Java `Map.of` of literals, static final maps, enums; Go map literals), in
+  subscript and `.get()` forms, with comments and multi-line tables. A table built from or changed
+  by request data anywhere in the file is `ruleid:`, and so is a lookup with a request-data
+  fallback (`T.get(k, req…)`, `getOrDefault(k, req…)`, `T[k] || req…`, `T[k] ?? req…`).
+- **Fixed origins** (SSRF, redirects, fetched bodies): a constant base is safe only when it holds a
+  host and ends with a separator after it (`"https://api.example.com/"`, then request data; `/`
+  not followed by `/` or `\`, or `?`/`#` after a host). A lone scheme (`'https:' + '//' + req`)
+  or a base without the separator (`API + u`, where `@evil.example` sets the host) is `ruleid:`.
+  Format-string and URI-builder forms with a separator are `ok:`; so are clients built with a
+  fixed base URL given a relative path.
+- **Commands:** a fixed program with an argument list is `ok:` in every container form (lists,
+  tuples, `List.of`, `Arrays.asList`, arrays, concatenation, helpers); only a request-chosen
+  program, or request data in shell code, is a sink. For POSIX shells only the element after `-c`
+  is shell code; for `cmd /c` and `/k` and PowerShell `-Command`/`-c` every later element is (and
+  PowerShell's `-File`, `-CommandWithArgs` follow about_pwsh). Whole-argument-vector sinks fire
+  only on real request vectors (`getParameterValues`, a split of tainted text, an annotated
+  collection parameter, a decoded JSON array), never by excluding a list of "safe" constructors.
+- **Sources** are request objects of real handlers; framework coercion that guarantees a scalar
+  (Fastify schema `type: string`, FastAPI `int`, typed Spring parameters) is no source for
+  structure injection. Copy the source block's own limits (handler name filter, typed
+  converters, helpers named `request`) into each new taint rule as todo lines.
+- **Look-alikes are `ok:`:** same-name methods of other libraries (GraphQL `execute`, job queues,
+  `headers.set`), and sanitizers bound to their real types (`getFileName()` on `Path`, `valueOf`
+  on enums, `.extra()` on Django QuerySets), never by bare method name.
+- **Test code:** misuse and hotspot rules skip it with their language's `paths: exclude` globs
+  (COVERAGE.md "Test code"); taint rules do not.
 
 **RED.** Write the rule file (step 3) with its main pattern replaced by a never-matching
 `never_called_qualor_probe(...)` (the sinks of a taint rule, the pattern of a search rule), run
@@ -122,11 +156,59 @@ says. Layout as the SQL rule: `message` (what is wrong and how to fix it), `meta
   unsafe value, the call with the unsafe argument), bind the API by type or import, and exclude
   the safe forms with `pattern-not` / `pattern-not-inside` (a config that also sets
   `VerifyConnection`, a trust manager that delegates).
-- **OpenGrep 1.30.0 pitfalls** (all hit before): a metavariable used in `metavariable-regex` must
-  be bound in every branch of its `pattern-either` (split the branches otherwise); `var` and `:=`
-  declarations lose their type (add a `pattern-inside` binding from the constructor or factory);
-  `metavariable-regex` does not interpolate other metavariables; OpenGrep's own file selection
-  skips `tests/` (the probe passes `--x-ignore-semgrepignore-files`).
+- **Shared blocks stay byte-identical.** A change to a language's source block (or its shared
+  propagators and sanitizers) goes into every rule that carries it, identically; compare the
+  copies with a script, and keep rule-specific items after the shared ones. A generated block
+  (tools/xxe-exclusions.mjs) is changed in its generator, then regenerated.
+- **OpenGrep 1.30.0 pitfalls** (all hit before):
+  - a metavariable used in `metavariable-regex` must be bound in every branch of its
+    `pattern-either`; a branch that binds it only sometimes matches anything in a
+    `pattern-not-inside`. `metavariable-regex` is anchored at the start and does not interpolate
+    other metavariables. Nested inside a `pattern-either` branch it silently breaks taint
+    sanitizers, and `metavariable-pattern` on an outer metavariable fails there ("not in scope"):
+    lift such branches to the top level;
+  - in taint mode `metavariable-pattern` does not unify with metavariables bound outside it
+    (write the shapes out); `metavariable-type` needs the type declared in the same file; `var` and
+    `:=` declarations lose their type (bind from the constructor with a `pattern-inside`);
+  - positive patterns in one `patterns` block match by inclusion, not equality (pin a callee
+    with `metavariable-pattern`); `pattern-inside: if C: ...` also covers the else branch (use the
+    body metavariable with `focus-metavariable`); a positive `pattern-regex` intersects by range,
+    so a whole-file condition must span the file (`(?s)\A.*\bword\b.*\z`) next to a positive
+    `pattern`;
+  - **a sanitizer that matches a call also cleans every sink inside a function passed to that
+    call.** Exclude function arguments (`pattern-not: 'await $F(..., <... function (...) { ... }
+    ...>, ...)'` and the object-method form; it matches arrows too) and add an `exact: true` twin
+    for the calls with function arguments: it cleans the call's value only;
+  - `--test` ignores annotations in JSX children (`{/* ruleid */}`); OpenGrep's own file selection
+    skips `tests/` (the probe passes `--x-ignore-semgrepignore-files`); Git Bash heredocs turn `\\`
+    into `\`: write rules and scripts with backslashes through the editor and check them.
+- **Performance** (every new rule, and every change that adds alternatives, sources or module
+  conditions). Run `opengrep scan` once in the scanner container; `opengrep-core` is then at
+  `/home/node/.cache/opengrep/v1.30.0/semgrep/bin/opengrep-core` (expand YAML anchors first: it
+  does not read them).
+  - **Prefilter:** `opengrep-core -prefilter_of_rules <rule>` must give `Some` **and a small
+    size** (a few kB; 283 kB already cost 0.4 s per large file, 31 MB cost 20–110 s per module).
+    OpenGrep multiplies the conditions of the top-level branches into a CNF and gives up past
+    about 50,000 clauses, or when one branch alone grows too large: then the whole rule has no
+    prefilter and every file is matched. Every positive conjunct in a branch (`pattern-inside`,
+    `metavariable-regex`, `metavariable-pattern`) multiplies it; `pattern-not` and
+    `pattern-not-inside` cost nothing. A branch without a literal drops the source words; string
+    literals give no words, and words match as substrings ("set" in "offset"): the sink clause
+    needs a rare word.
+  - **Time** on a large real or minified file that **contains** the rule's words (three.js or a
+    900 kB bundle for JS, gitea's largest files for Go, a 100–200 kB Django module for Python),
+    with `--timeout 0` (OpenGrep's 5 s default times out on a loaded host and drops findings), and
+    once on a large real module without them (pip's `pkg_resources/__init__.py`): a synthetic file
+    holding every word hides the prefilter cost. For JS taint rules the file needs a source word
+    and the sink's import, not only the sink name. A statement sequence that starts at any
+    assignment (`$X = $INIT; ...`) or a `pattern-inside` that starts with `...` costs minutes:
+    anchor it on the specific statement.
+  - **Match limit:** OpenGrep stops at 10,000 matches per rule and file, and then the file
+    reports nothing, and in a combined run (all rules on a file, as Qualor scans) one overflowing
+    rule blanks the file **for every rule**. A condition that binds a metavariable once per import
+    or per statement (`from $DJ import $NAME` + a regex, a header name `$X[$K]` with a regex)
+    multiplies every finding. Anchor module checks with a literal `pattern-inside` that binds
+    nothing (`import django` + `...`), and test a generated file with a few hundred findings.
 
 Iterate until `npm run test:docker` is green.
 
@@ -142,6 +224,13 @@ apply each change alone, run `npm run test:docker`, record what it reports, and 
 
 A mutation that leaves the test green means the fixture lacks a line for that part: add it and
 repeat. Restore with `cp .tmp/<name>.yml.bak <rule>.yml` and check `git diff` shows only your work.
+
+**Per-alternative sweep** (rules with more than a handful of alternatives, and every shared-block
+change): generate one mutant per pattern item, removing each source, propagator, sanitizer and
+each `pattern-either` alternative at any depth alone, and run `opengrep scan --test` on each in one
+container. Every mutant must fail; a surviving one is an untested alternative (add a fixture line)
+or a dead one (drop it). For a shared block, sweep every rule that carries it. Earlier runs found
+7 to 124 surviving mutants this way where the three mutations above passed.
 
 ## 5. Probe
 
@@ -199,6 +288,13 @@ One commit per rule, and its body always holds the line `Backlog: <id>` (the con
 interrupted run's work by it). Maintenance rows: `fix(<lang>): ...` for behaviour,
 `test(<lang>): record ...` for limits only, with `Backlog: <lang>.<name>#<topic>`.
 
+- A new rule's page goes into the **same commit** as the rule; a maintenance change updates the
+  page sections it affects in the same commit.
+- After a rebase onto `main`, run `npm run docs`: `docs/rules/README.md` (the index) is generated
+  and goes stale or conflicts when another batch added rules. Commit the regenerated index.
+- End the body with a plain sentence, not `Key: value` lines: git takes a last paragraph of
+  `Fixtures: …` / `Probe: …` lines as trailers and joins `Signed-off-by:` to it.
+
 ## Report
 
 Your final message holds one block per row, in this shape and nothing else:
@@ -209,7 +305,8 @@ Your final message holds one block per row, in this shape and nothing else:
 - commit: <sha> <subject>
 - fixture: <n> ruleid, <n> ok, <n> todoruleid, <n> todook (<files>)
 - red: expected [<lines>], reported []
-- mutations: <1> -> missing [<lines>]; <2> -> missing [<lines>]; <3> -> extra [<lines>]
+- mutations: <1> -> missing [<lines>]; <2> -> missing [<lines>]; <3> -> extra [<lines>]; sweep: <k> mutants, <s> survived
+- perf: prefilter Some, <size>; <large file with the words> <s> s, <file without them> <s> s (--timeout 0)
 - probe: <project> <n> (<tp> TP, <fp> FP: <reason>; "<k> of <n> reviewed" if sampled); ... ; qualor-cc 0
 - recall: <set> <n> or not run
 - limits: <one line per todo line>
