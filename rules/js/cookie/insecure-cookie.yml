@@ -1,0 +1,484 @@
+rules:
+  - id: js.insecure-cookie
+    languages: [javascript, typescript]
+    severity: INFO
+    message: >-
+      This cookie is set without `Secure` or without `HttpOnly`. Without `Secure` the browser also
+      sends it over plain HTTP, where anyone on the network path can read it; without `HttpOnly`
+      any script on the page, an injected one too, can read it. Review what the cookie holds: a
+      session id, a token or other sensitive data needs both flags (`{ secure: true, httpOnly:
+      true }` in the cookie options; `cookie: { secure: true }` for express-session).
+    metadata:
+      title: Cookie without Secure or HttpOnly (Node.js)
+      cwe: ['CWE-614', 'CWE-1004']
+      owasp: ['A02:2025', 'A05:2021']
+      kind: hotspot
+      severity: low
+      confidence: medium
+      frameworks: [express, express-session, cookie-session, fastify, nextjs]
+      sources:
+        - https://cwe.mitre.org/data/definitions/614.html
+        - https://cwe.mitre.org/data/definitions/1004.html
+        - https://top10.owasp.org/2025/A02_2025-Security_Misconfiguration/
+        - https://top10.owasp.org/2021/A05_2021-Security_Misconfiguration/
+        - https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html
+        - https://expressjs.com/en/5x/api/response/
+        - https://github.com/expressjs/session
+        - https://github.com/expressjs/cookie-session
+        - https://github.com/fastify/fastify-cookie
+        - https://nextjs.org/docs/app/api-reference/functions/cookies
+        - https://nextjs.org/docs/app/api-reference/functions/next-response
+      since: 2026.10.2
+    # A hotspot: what the cookie holds decides whether a missing flag matters. Reported where the
+    # cookie is set, with each library's documented defaults:
+    # - Express res.cookie(name, value, options) and @fastify/cookie reply.setCookie() (and its
+    #   alias reply.cookie()): both flags are off unless the options set them. The receiver is a
+    #   response object by its name (res, resp, response, reply, rep, _res, _response), also
+    #   chained (`res.status(201).cookie(...)`); jQuery's `$.cookie()` and other objects are not.
+    # - express-session: HttpOnly is on by default, Secure is off; reported when cookie.secure is
+    #   missing or false, or cookie.httpOnly is false.
+    # - cookie-session: Secure follows the connection by default and HttpOnly is on; reported
+    #   only for an explicit `secure: false` or `httpOnly: false`.
+    # - Next.js cookies().set() (next/headers) and NextResponse's response.cookies.set(): only the
+    #   path has a default, so both flags are missing unless set (request.cookies.set() in
+    #   middleware sets the request's cookies and is not reported).
+    # As in go.insecure-cookie: a flag counts as set when the options give it any value but the
+    # literal false (a value from configuration, `'auto'`, is reviewed where it is decided), in
+    # the call or in an options object built in a variable of the file, also by an assignment
+    # before the call at any depth (`sess.cookie.secure = true` inside an if, as the
+    # express-session docs show). Options with a spread (`{ ...base }`) are decided elsewhere and
+    # not reported. A cookie that deletes itself (`expires: new Date(0)`, `maxAge: 0`, and for
+    # Next.js an empty value) holds nothing and is not reported; res.clearCookie(),
+    # reply.clearCookie() and cookies().delete() are not cookie writes. Test code is left out
+    # (ruling F10, the globs of js.tls-verification-disabled).
+    # Known limits (each has a `todo` line in the test file):
+    # - Options passed in as a parameter or imported from another module are not followed
+    #   (`todoruleid:`).
+    # - A Set-Cookie header written by hand (`res.setHeader('Set-Cookie', ...)`) is not parsed
+    #   (`todoruleid:`).
+    # - Options built in a variable are followed from an object literal that holds a cookie
+    #   option (maxAge, expires, httpOnly, secure, sameSite, path, domain, signed, partitioned,
+    #   priority, encode; express-session's secret): an empty or unrelated object filled later is
+    #   not (`todoruleid:`).
+    # - An assignment of false after the literal (`opts.secure = false`) counts as deciding the
+    #   flag (`todoruleid:`).
+    # - A cookie deleted with another past expiry than the epoch is reported (`todook:`).
+    paths:
+      exclude: ['*.test.*', '*.spec.*', '*-test.*', '*_test.*', '__tests__/', 'test/', 'tests/']
+    pattern-either:
+      # Express res.cookie() and Fastify reply.setCookie()/reply.cookie(): no options, or an
+      # options object in the call that leaves a flag out or false.
+      - patterns:
+          - pattern-either:
+              - pattern: $RES.$SET($NAME, $VALUE)
+              - pattern: $RES. ... .$SET($NAME, $VALUE)
+              - patterns:
+                  - pattern-either:
+                      - pattern: $RES.$SET($NAME, $VALUE, $OPTS)
+                      - pattern: $RES. ... .$SET($NAME, $VALUE, $OPTS)
+                  - metavariable-pattern:
+                      metavariable: $OPTS
+                      patterns:
+                        - pattern: '{...}'
+                        - pattern-either:
+                            - pattern: '{..., secure: false, ...}'
+                            - pattern: '{..., httpOnly: false, ...}'
+                            - patterns:
+                                - pattern: '{...}'
+                                - pattern-not: '{..., secure: $S, ...}'
+                            - patterns:
+                                - pattern: '{...}'
+                                - pattern-not: '{..., httpOnly: $H, ...}'
+                        - pattern-not: '{..., expires: new Date(0), ...}'
+                        - pattern-not: '{..., maxAge: 0, ...}'
+                        - pattern-not: '{..., ...$SPREAD, ...}'
+          - metavariable-regex:
+              metavariable: $SET
+              regex: ^(cookie|setCookie)$
+          - pattern-not:
+              patterns:
+                - pattern-either:
+                    - pattern: $RES.$SET(...)
+                    - pattern: $RES. ... .$SET(...)
+                - metavariable-regex:
+                    metavariable: $RES
+                    regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
+      # The same with the options built in a variable first (one branch per flag): the object
+      # literal holds cookie options and leaves the flag out (or false), and no assignment before
+      # the call sets it (also inside an if). Each statement sequence starts at such an object or
+      # at the assignment, never at any assignment: that took 45 s on a 900 kB bundle. Conditions
+      # on names are exclusions, which keep OpenGrep's prefilter (its clause limit).
+      - patterns:
+          - pattern-either:
+              - pattern: $RES.cookie($NAME, $VALUE, $OPTS)
+              - pattern: $RES. ... .cookie($NAME, $VALUE, $OPTS)
+              - pattern: $RES.setCookie($NAME, $VALUE, $OPTS)
+              - pattern: $RES. ... .setCookie($NAME, $VALUE, $OPTS)
+          - pattern-not:
+              patterns:
+                - pattern-either:
+                    - pattern: $RES.$SET($NAME, $VALUE, $OPTS)
+                    - pattern: $RES. ... .$SET($NAME, $VALUE, $OPTS)
+                - metavariable-regex:
+                    metavariable: $RES
+                    regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
+          - pattern-either:
+              - pattern-inside: |
+                  $OPTS = {..., maxAge: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., expires: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., httpOnly: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., secure: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., sameSite: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., path: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., domain: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., signed: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., partitioned: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., priority: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., encode: $KEYV, ...};
+                  ...
+          - pattern-not-inside:
+              patterns:
+                - pattern: |
+                    $OPTS = {..., secure: $FLAGV, ...};
+                    ...
+                - metavariable-regex:
+                    metavariable: $FLAGV
+                    regex: ^(?!false$)
+          - pattern-not-inside: |
+              $OPTS = {..., ...$SPREAD, ...};
+              ...
+          - pattern-not-inside: |
+              $OPTS = {..., expires: new Date(0), ...};
+              ...
+          - pattern-not-inside: |
+              $OPTS = {..., maxAge: 0, ...};
+              ...
+          - pattern-not-inside: |
+              $OPTS.secure = $FLAG;
+              ...
+              $CALL(..., $OPTS);
+          - pattern-not-inside: |
+              if ($COND) {
+                ...
+                $OPTS.secure = $FLAG;
+                ...
+              }
+              ...
+              $CALL(..., $OPTS);
+          - pattern-not-inside: |
+              if ($COND) {
+                ...
+              } else {
+                ...
+                $OPTS.secure = $FLAG;
+                ...
+              }
+              ...
+              $CALL(..., $OPTS);
+      - patterns:
+          - pattern-either:
+              - pattern: $RES.cookie($NAME, $VALUE, $OPTS)
+              - pattern: $RES. ... .cookie($NAME, $VALUE, $OPTS)
+              - pattern: $RES.setCookie($NAME, $VALUE, $OPTS)
+              - pattern: $RES. ... .setCookie($NAME, $VALUE, $OPTS)
+          - pattern-not:
+              patterns:
+                - pattern-either:
+                    - pattern: $RES.$SET($NAME, $VALUE, $OPTS)
+                    - pattern: $RES. ... .$SET($NAME, $VALUE, $OPTS)
+                - metavariable-regex:
+                    metavariable: $RES
+                    regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
+          - pattern-either:
+              - pattern-inside: |
+                  $OPTS = {..., maxAge: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., expires: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., httpOnly: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., secure: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., sameSite: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., path: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., domain: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., signed: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., partitioned: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., priority: $KEYV, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., encode: $KEYV, ...};
+                  ...
+          - pattern-not-inside:
+              patterns:
+                - pattern: |
+                    $OPTS = {..., httpOnly: $FLAGV, ...};
+                    ...
+                - metavariable-regex:
+                    metavariable: $FLAGV
+                    regex: ^(?!false$)
+          - pattern-not-inside: |
+              $OPTS = {..., ...$SPREAD, ...};
+              ...
+          - pattern-not-inside: |
+              $OPTS = {..., expires: new Date(0), ...};
+              ...
+          - pattern-not-inside: |
+              $OPTS = {..., maxAge: 0, ...};
+              ...
+          - pattern-not-inside: |
+              $OPTS.httpOnly = $FLAG;
+              ...
+              $CALL(..., $OPTS);
+          - pattern-not-inside: |
+              if ($COND) {
+                ...
+                $OPTS.httpOnly = $FLAG;
+                ...
+              }
+              ...
+              $CALL(..., $OPTS);
+          - pattern-not-inside: |
+              if ($COND) {
+                ...
+              } else {
+                ...
+                $OPTS.httpOnly = $FLAG;
+                ...
+              }
+              ...
+              $CALL(..., $OPTS);
+      # express-session: Secure off unless cookie.secure is set; HttpOnly on unless false.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $SESSION = require('express-session');
+                  ...
+              - pattern-inside: |
+                  import $SESSION from 'express-session';
+                  ...
+          - pattern-either:
+              - pattern: '$SESSION({..., cookie: {..., secure: false, ...}, ...})'
+              - pattern: '$SESSION({..., cookie: {..., httpOnly: false, ...}, ...})'
+              - patterns:
+                  - pattern: '$SESSION({..., cookie: {...}, ...})'
+                  - pattern-not: '$SESSION({..., cookie: {..., secure: $S, ...}, ...})'
+                  - pattern-not: '$SESSION({..., cookie: {..., ...$SPREAD, ...}, ...})'
+              - patterns:
+                  - pattern: '$SESSION({...})'
+                  - pattern-not: '$SESSION({..., cookie: $C, ...})'
+                  - pattern-not: '$SESSION({..., ...$SPREAD, ...})'
+      # express-session with the options in a variable: no secure in its cookie, and none set before
+      # the call (the docs set it inside an if for production); or a flag set to false.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $SESSION = require('express-session');
+                  ...
+              - pattern-inside: |
+                  import $SESSION from 'express-session';
+                  ...
+          - pattern: $SESSION($OPTS)
+          - pattern-either:
+              - pattern-inside: |
+                  $OPTS = {..., secret: $SECRET, ...};
+                  ...
+              - pattern-inside: |
+                  $OPTS = {..., cookie: {..., secure: false, ...}, ...};
+                  ...
+          - pattern-not-inside:
+              patterns:
+                - pattern: |
+                    $OPTS = {..., cookie: {..., secure: $FLAGV, ...}, ...};
+                    ...
+                - metavariable-regex:
+                    metavariable: $FLAGV
+                    regex: ^(?!false$)
+          - pattern-not-inside: |
+              $OPTS = {..., cookie: {..., ...$SPREAD, ...}, ...};
+              ...
+          - pattern-not-inside: |
+              $OPTS = {..., ...$SPREAD, ...};
+              ...
+          - pattern-not-inside:
+              patterns:
+                - pattern: |
+                    $OPTS = {..., cookie: $COOKIE, ...};
+                    ...
+                - metavariable-regex:
+                    metavariable: $COOKIE
+                    regex: ^[^{]
+          - pattern-not-inside: |
+              $OPTS.cookie.secure = $FLAG;
+              ...
+              <... $SESSION($OPTS) ...>;
+          - pattern-not-inside: |
+              if ($COND) {
+                ...
+                $OPTS.cookie.secure = $FLAG;
+                ...
+              }
+              ...
+              <... $SESSION($OPTS) ...>;
+          - pattern-not-inside: |
+              if ($COND) {
+                ...
+              } else {
+                ...
+                $OPTS.cookie.secure = $FLAG;
+                ...
+              }
+              ...
+              <... $SESSION($OPTS) ...>;
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $SESSION = require('express-session');
+                  ...
+              - pattern-inside: |
+                  import $SESSION from 'express-session';
+                  ...
+          - pattern: $SESSION($OPTS)
+          - pattern-inside: |
+              $OPTS = {..., cookie: {..., httpOnly: false, ...}, ...};
+              ...
+          - pattern-not-inside: |
+              $OPTS.cookie.httpOnly = $FLAG;
+              ...
+              <... $SESSION($OPTS) ...>;
+          - pattern-not-inside: |
+              if ($COND) {
+                ...
+                $OPTS.cookie.httpOnly = $FLAG;
+                ...
+              }
+              ...
+              <... $SESSION($OPTS) ...>;
+          - pattern-not-inside: |
+              if ($COND) {
+                ...
+              } else {
+                ...
+                $OPTS.cookie.httpOnly = $FLAG;
+                ...
+              }
+              ...
+              <... $SESSION($OPTS) ...>;
+      # cookie-session: only an explicit false turns a flag off.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $CS = require('cookie-session');
+                  ...
+              - pattern-inside: |
+                  import $CS from 'cookie-session';
+                  ...
+          - pattern-either:
+              - pattern: '$CS({..., secure: false, ...})'
+              - pattern: '$CS({..., httpOnly: false, ...})'
+      # Next.js: cookies().set() of next/headers (in place, awaited, or through a variable) and
+      # response.cookies.set() of a NextResponse; `set(name, value[, options])` or `set({ name,
+      # value, ...options })`.
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      import {..., cookies, ...} from 'next/headers';
+                      ...
+                  - pattern-either:
+                      - pattern: cookies().set(...)
+                      - pattern: (await cookies()).set(...)
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $STORE = await cookies();
+                                  ...
+                              - pattern-inside: |
+                                  $STORE = cookies();
+                                  ...
+                          - pattern: $STORE.set(...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $RESPONSE = NextResponse.$MAKE(...);
+                          ...
+                      - pattern-inside: |
+                          $RESPONSE = new NextResponse(...);
+                          ...
+                  - pattern: $RESPONSE.cookies.set(...)
+          - pattern-either:
+              - patterns:
+                  - pattern: $JAR.set($NAME, $VALUE)
+                  - pattern-not: $JAR.set($NAME, "")
+              - patterns:
+                  - pattern: $JAR.set($NAME, $VALUE, $OPTS)
+                  - pattern-not: $JAR.set($NAME, "", $OPTS)
+                  - metavariable-pattern:
+                      metavariable: $OPTS
+                      patterns:
+                        - pattern: '{...}'
+                        - pattern-either:
+                            - pattern: '{..., secure: false, ...}'
+                            - pattern: '{..., httpOnly: false, ...}'
+                            - patterns:
+                                - pattern: '{...}'
+                                - pattern-not: '{..., secure: $S, ...}'
+                            - patterns:
+                                - pattern: '{...}'
+                                - pattern-not: '{..., httpOnly: $H, ...}'
+                        - pattern-not: '{..., expires: new Date(0), ...}'
+                        - pattern-not: '{..., maxAge: 0, ...}'
+                        - pattern-not: '{..., ...$SPREAD, ...}'
+              - patterns:
+                  - pattern: $JAR.set($COOKIE)
+                  - metavariable-pattern:
+                      metavariable: $COOKIE
+                      patterns:
+                        - pattern: '{...}'
+                        - pattern-either:
+                            - pattern: '{..., secure: false, ...}'
+                            - pattern: '{..., httpOnly: false, ...}'
+                            - patterns:
+                                - pattern: '{...}'
+                                - pattern-not: '{..., secure: $S, ...}'
+                            - patterns:
+                                - pattern: '{...}'
+                                - pattern-not: '{..., httpOnly: $H, ...}'
+                        - pattern-not: '{..., value: "", ...}'
+                        - pattern-not: '{..., expires: new Date(0), ...}'
+                        - pattern-not: '{..., maxAge: 0, ...}'
+                        - pattern-not: '{..., ...$SPREAD, ...}'

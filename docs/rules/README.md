@@ -2,7 +2,7 @@
 
 # Qualor security rules
 
-The security rules of Qualor's `qualor` engine, 54 in all. Each page says what the rule finds, why
+The security rules of Qualor's `qualor` engine, 55 in all. Each page says what the rule finds, why
 it matters, how to fix it, what the rule misses or may wrongly report, and shows a short example.
 Qualor links every finding to its page.
 
@@ -20,6 +20,7 @@ The key `qualor:<lang>/<name>` is how Qualor names a rule; the rule itself is
 |---|---|---|---|---|
 | [`qualor:js/code-injection`](js/code-injection.md) | JavaScript code built from HTTP request data (Node.js) | Issue | High | [CWE-94](https://cwe.mitre.org/data/definitions/94.html), [CWE-95](https://cwe.mitre.org/data/definitions/95.html) |
 | [`qualor:js/command-injection`](js/command-injection.md) | OS command built from HTTP request data (Node.js) | Issue | High | [CWE-78](https://cwe.mitre.org/data/definitions/78.html) |
+| [`qualor:js/insecure-cookie`](js/insecure-cookie.md) | Cookie without Secure or HttpOnly (Node.js) | Security hotspot | Low | [CWE-614](https://cwe.mitre.org/data/definitions/614.html), [CWE-1004](https://cwe.mitre.org/data/definitions/1004.html) |
 | [`qualor:js/nosql-injection`](js/nosql-injection.md) | MongoDB query built from HTTP request data (Node.js) | Issue | High | [CWE-943](https://cwe.mitre.org/data/definitions/943.html) |
 | [`qualor:js/open-redirect`](js/open-redirect.md) | Redirect to a URL from HTTP request data (Node.js) | Issue | Medium | [CWE-601](https://cwe.mitre.org/data/definitions/601.html) |
 | [`qualor:js/path-traversal`](js/path-traversal.md) | File path built from HTTP request data (Node.js) | Issue | High | [CWE-22](https://cwe.mitre.org/data/definitions/22.html) |
