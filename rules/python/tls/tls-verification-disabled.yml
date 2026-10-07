@@ -5,8 +5,10 @@ rules:
     message: >-
       TLS certificate or host name verification is turned off here (requests or httpx
       `verify=False`, aiohttp `ssl=False`, an unverified ssl context, `check_hostname = False`,
-      urllib3 `cert_reqs='CERT_NONE'` or `assert_hostname=False`, or the legacy `ssl.wrap_socket()`,
-      which never checks the host name and by default not the certificate either). The client
+      urllib3 `cert_reqs='CERT_NONE'` or `assert_hostname=False`, an SDK switch such as boto3
+      `verify=False`, Elasticsearch `verify_certs=False` or PyMongo `tlsInsecure=True`, or the
+      legacy `ssl.wrap_socket()`, which never checks the host name and by default not the
+      certificate either). The client
       then accepts any certificate, or a valid certificate issued for another host, so anyone on
       the network path who holds one can pose as the server and read and change the traffic.
       Keep the default verification; to trust a private CA, pass its bundle
@@ -21,7 +23,7 @@ rules:
       kind: issue
       severity: high
       confidence: high
-      frameworks: [requests, httpx, aiohttp, ssl, urllib3]
+      frameworks: [requests, httpx, aiohttp, ssl, urllib3, boto3, botocore, elasticsearch, opensearch-py, pymongo, hvac]
       sources:
         - https://cwe.mitre.org/data/definitions/295.html
         - https://cwe.mitre.org/data/definitions/297.html
@@ -36,6 +38,14 @@ rules:
         - https://docs.aiohttp.org/en/stable/client_reference.html
         - https://docs.aiohttp.org/en/stable/client_advanced.html#ssl-control-for-tcp-sockets
         - https://docs.aiohttp.org/en/v3.9.5/client_reference.html
+        - https://docs.aws.amazon.com/boto3/latest/reference/core/session.html
+        - https://docs.aws.amazon.com/boto3/latest/reference/core/boto3.html
+        - https://github.com/boto/botocore/blob/develop/botocore/session.py
+        - https://www.elastic.co/docs/reference/elasticsearch/clients/python/configuration
+        - https://elasticsearch-py.readthedocs.io/en/stable/api/elasticsearch.html
+        - https://docs.opensearch.org/latest/clients/python-low-level/
+        - https://www.mongodb.com/docs/languages/python/pymongo-driver/current/security/tls/
+        - https://python-hvac.org/en/stable/source/hvac_v1.html
         - https://docs.python.org/3/library/ssl.html#ssl.SSLContext.check_hostname
         - https://docs.python.org/3/library/ssl.html#ssl.SSLContext.verify_mode
         - https://docs.python.org/3/library/ssl.html#ssl.CERT_NONE
@@ -116,7 +126,12 @@ rules:
     # - ssl.SSLContext(PROTOCOL_TLS) (or no protocol) verifies nothing by default; whether it
     #   serves a client is not known where it is made, so its use by a client is not reported.
     # - The unverified context looked up with getattr(ssl, "_create_unverified_context").
-    # - Other libraries' TLS switches (boto3 verify=False, ...).
+    # - SDK switches are read only as keywords written in the call (`todoruleid:`): boto3's
+    #   verify given by position (client()'s fifth parameter), options in a dict, and a PyMongo
+    #   connection string built at run time are missed. Clients of boto3 or botocore sessions
+    #   made in the same function or module are followed, not sessions from a factory. Other SDK
+    #   switches (OpenSearch ssl_assert_hostname, redis ssl_cert_reqs, motor, aioboto3) are not
+    #   checked.
     # - An aiohttp ClientSession is followed as a requests Session is (assigned earlier, `async
     #   with`, a typed parameter, a self attribute set by __init__); one from a factory function
     #   is not, nor are options passed as a dict (`todoruleid:`).
@@ -138,11 +153,14 @@ rules:
     # branch has no word: OpenGrep stops building the branches' prefilter there (it must stay
     # first), and the rule's prefilter is the import regex alone: a module that imports none of
     # these libraries is skipped. The regex matches the whole file, so it holds wherever a branch
-    # matches. After a change, the prefilter (opengrep-core -prefilter_of_rules) must stay that
+    # matches. OpenGrep still multiplies the branches once per scan worker (about 1 s for the
+    # first file), and gives up the whole prefilter, regex included, when one branch alone grows
+    # too large (it did for the boto3 session forms below with one shared metavariable-regex).
+    # After a change, the prefilter (opengrep-core -prefilter_of_rules) must stay that
     # one regex, and a large module that imports the libraries must scan in about a second with
     # --timeout 0.
     patterns:
-      - pattern-regex: (?sm)\A(?=.*?^[ \t]*(?:import|from)[ \t][^\n]*?\b(?:requests|httpx|aiohttp|ssl|urllib3)\b).*\z
+      - pattern-regex: (?sm)\A(?=.*?^[ \t]*(?:import|from)[ \t][^\n]*?\b(?:requests|httpx|aiohttp|ssl|urllib3|boto3|botocore|elasticsearch|opensearchpy|pymongo|hvac)\b).*\z
       - pattern-either:
           # No word, and no code writes it (`x is not x is not x`): see Performance above.
           - pattern: $NOWORD is not $NOWORD is not $NOWORD
@@ -263,6 +281,69 @@ rules:
               - metavariable-regex:
                   metavariable: $M
                   regex: ^(get|post|put|patch|delete|head|options|request|ws_connect)$
+          # SDKs that document a switch that turns certificate validation off, bound to their
+          # modules. Plain HTTP (use_ssl=False, an http:// endpoint written in the call) has no
+          # certificate to verify and is left alone.
+          # boto3 and botocore clients: verify=False ("do not validate SSL certificates"), from the
+          # default session (boto3.client / boto3.resource) or a session made here.
+          - patterns:
+              - pattern-either:
+                  - pattern: boto3.client(..., verify=False, ...)
+                  - pattern: boto3.resource(..., verify=False, ...)
+              - pattern-not: $CALL(..., use_ssl=False, ...)
+              - pattern-not: $CALL(..., endpoint_url="=~/^http:\/\//", ...)
+          # A session made in place, or assigned earlier in the function or module. (Written as
+          # explicit method names: a metavariable-regex shared with the assigned form made
+          # OpenGrep give up the rule's prefilter.)
+          - patterns:
+              - pattern-either:
+                  - pattern: boto3.Session(...).client(..., verify=False, ...)
+                  - pattern: boto3.Session(...).resource(..., verify=False, ...)
+                  - pattern: boto3.session.Session(...).client(..., verify=False, ...)
+                  - pattern: boto3.session.Session(...).resource(..., verify=False, ...)
+                  - pattern: botocore.session.get_session(...).create_client(..., verify=False, ...)
+                  - pattern: botocore.session.Session(...).create_client(..., verify=False, ...)
+              - pattern-not: $CALL(..., use_ssl=False, ...)
+              - pattern-not: $CALL(..., endpoint_url="=~/^http:\/\//", ...)
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      $S = boto3.Session(...)
+                      ...
+                  - pattern-inside: |
+                      $S = boto3.session.Session(...)
+                      ...
+                  - pattern-inside: |
+                      $S = botocore.session.get_session(...)
+                      ...
+                  - pattern-inside: |
+                      $S = botocore.session.Session(...)
+                      ...
+              - pattern-either:
+                  - pattern: $S.client(..., verify=False, ...)
+                  - pattern: $S.resource(..., verify=False, ...)
+                  - pattern: $S.create_client(..., verify=False, ...)
+              - pattern-not: $CALL(..., use_ssl=False, ...)
+              - pattern-not: $CALL(..., endpoint_url="=~/^http:\/\//", ...)
+          # Elasticsearch and OpenSearch: verify_certs=False, unless ssl_assert_fingerprint pins
+          # the certificate.
+          - patterns:
+              - pattern-either:
+                  - pattern: elasticsearch.Elasticsearch(..., verify_certs=False, ...)
+                  - pattern: elasticsearch.AsyncElasticsearch(..., verify_certs=False, ...)
+                  - pattern: opensearchpy.OpenSearch(..., verify_certs=False, ...)
+              - pattern-not: $CALL(..., use_ssl=False, ...)
+              - pattern-not: $CALL(..., ssl_assert_fingerprint=$FP, ...)
+              - pattern-not: $CALL("=~/^http:\/\//", ...)
+              - pattern-not: $CALL(..., hosts="=~/^http:\/\//", ...)
+          # PyMongo: tlsInsecure, tlsAllowInvalidCertificates or tlsAllowInvalidHostnames set to
+          # True, as keywords or in a connection string written in the call.
+          - pattern: pymongo.MongoClient(..., tlsInsecure=True, ...)
+          - pattern: pymongo.MongoClient(..., tlsAllowInvalidCertificates=True, ...)
+          - pattern: pymongo.MongoClient(..., tlsAllowInvalidHostnames=True, ...)
+          - pattern: pymongo.MongoClient("=~/[?&](tlsInsecure|tlsAllowInvalidCertificates|tlsAllowInvalidHostnames)=true/i", ...)
+          # hvac (HashiCorp Vault): verify=False.
+          - pattern: hvac.Client(..., verify=False, ...)
           # ssl: the unverified context (PEP 476) and its old name.
           - pattern: ssl._create_unverified_context
           - pattern: ssl._create_stdlib_context

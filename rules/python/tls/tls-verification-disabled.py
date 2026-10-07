@@ -9,15 +9,21 @@ from ssl import CERT_NONE, _create_unverified_context, wrap_socket
 import aiohttp
 import asyncpg
 import boto3
+import botocore.session
 import certifi
 import httpx
+import hvac
 import jwt
+import pymongo
 import requests
 import urllib3
 from aiohttp import ClientSession, TCPConnector
 from django.conf import settings
+from elasticsearch import AsyncElasticsearch, Elasticsearch
 from flask import Flask, current_app
 from httpx import AsyncClient
+from opensearchpy import OpenSearch
+from pymongo import MongoClient
 from requests import Session
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
@@ -315,6 +321,112 @@ async def aiohttp_limits(url):
     async with aiohttp.ClientSession() as known:
         # todoruleid: python.tls-verification-disabled
         await known.get(url, **{"ssl": False})
+
+# SDKs whose documentation names a switch that turns certificate validation off: boto3 and
+# botocore clients (verify=False), Elasticsearch and OpenSearch (verify_certs=False), PyMongo
+# (tlsInsecure, tlsAllowInvalidCertificates, tlsAllowInvalidHostnames, also in the connection
+# string) and hvac (verify=False).
+def sdk_clients(url, endpoint, token, region):
+    # ruleid: python.tls-verification-disabled
+    s3 = boto3.client("s3", verify=False)
+    # ruleid: python.tls-verification-disabled
+    dynamo = boto3.resource("dynamodb", region_name=region, verify=False)
+    aws = boto3.Session(profile_name="ops")
+    # ruleid: python.tls-verification-disabled
+    sqs = aws.client("sqs", endpoint_url=endpoint, verify=False)
+    full = boto3.session.Session()
+    # ruleid: python.tls-verification-disabled
+    sns = full.resource("sns", verify=VERIFY_TLS)
+    # ruleid: python.tls-verification-disabled
+    ec2 = boto3.Session().client("ec2", verify=False)
+    # ruleid: python.tls-verification-disabled
+    kms = botocore.session.get_session().create_client("kms", verify=False)
+    core = botocore.session.get_session()
+    # ruleid: python.tls-verification-disabled
+    sts = core.create_client("sts", region_name=region, verify=False)
+    # ruleid: python.tls-verification-disabled
+    es = Elasticsearch(url, verify_certs=False)
+    # ruleid: python.tls-verification-disabled
+    es_async = AsyncElasticsearch(url, api_key=token, verify_certs=False)
+    # ruleid: python.tls-verification-disabled
+    search = OpenSearch(hosts=[{"host": endpoint, "port": 9200}], use_ssl=True, verify_certs=False)
+    # ruleid: python.tls-verification-disabled
+    mongo = pymongo.MongoClient(url, tls=True, tlsInsecure=True)
+    # ruleid: python.tls-verification-disabled
+    mongo_certs = MongoClient(url, tls=True, tlsAllowInvalidCertificates=True)
+    # ruleid: python.tls-verification-disabled
+    mongo_hosts = MongoClient(url, tls=True, tlsAllowInvalidHostnames=True)
+    # ruleid: python.tls-verification-disabled
+    mongo_uri = MongoClient("mongodb://db.example.com:27017/?tls=true&tlsInsecure=true")
+    # ruleid: python.tls-verification-disabled
+    mongo_srv = pymongo.MongoClient("mongodb+srv://cluster.example.com/?tlsAllowInvalidCertificates=true")
+    # ruleid: python.tls-verification-disabled
+    vault = hvac.Client(url=url, token=token, verify=False)
+    return (s3, dynamo, sqs, sns, ec2, kms, sts, es, es_async, search, mongo, mongo_certs,
+            mongo_hosts, mongo_uri, mongo_srv, vault)
+
+
+class SearchWrapper:
+    def __init__(self, url, verify_certs=True):
+        self.url = url
+        self.verify_certs = verify_certs
+
+
+def safe_sdk_clients(url, endpoint, token, fingerprint, make_client):
+    # ok: python.tls-verification-disabled
+    s3 = boto3.client("s3")
+    # ok: python.tls-verification-disabled
+    s3_ca = boto3.client("s3", verify=CA_BUNDLE)
+    # Plain HTTP (use_ssl=False, or an http:// endpoint such as a local emulator): there is no
+    # certificate to verify.
+    # ok: python.tls-verification-disabled
+    local = boto3.client("s3", endpoint_url=endpoint, use_ssl=False, verify=False)
+    # ok: python.tls-verification-disabled
+    emulator = boto3.client("s3", endpoint_url="http://localhost:4566", verify=False)
+    # ok: python.tls-verification-disabled
+    local_es = Elasticsearch("http://localhost:9200", verify_certs=False)
+    # ok: python.tls-verification-disabled
+    local_hosts = Elasticsearch(hosts="http://localhost:9200", verify_certs=False)
+    # ok: python.tls-verification-disabled
+    search = OpenSearch(hosts=[{"host": endpoint, "port": 9200}], use_ssl=False, verify_certs=False)
+    # ok: python.tls-verification-disabled
+    es = Elasticsearch(url, ca_certs=CA_BUNDLE)
+    # ok: python.tls-verification-disabled
+    es_verified = Elasticsearch(url, verify_certs=True)
+    # The certificate pinned by its fingerprint.
+    # ok: python.tls-verification-disabled
+    es_pinned = Elasticsearch(url, verify_certs=False, ssl_assert_fingerprint=fingerprint)
+    # ok: python.tls-verification-disabled
+    mongo = MongoClient(url, tls=True, tlsCAFile=CA_BUNDLE)
+    # ok: python.tls-verification-disabled
+    mongo_uri = MongoClient("mongodb://db.example.com:27017/?tls=true&tlsCAFile=/etc/ca.pem")
+    # ok: python.tls-verification-disabled
+    mongo_off = MongoClient(url, tlsInsecure=False)
+    # ok: python.tls-verification-disabled
+    vault = hvac.Client(url=url, token=token, verify=CA_BUNDLE)
+    # The setting from configuration: the deployment decides.
+    # ok: python.tls-verification-disabled
+    configured = boto3.client("s3", verify=settings.AWS_VERIFY)
+    # Look-alikes: a verify or verify_certs keyword on functions of other libraries.
+    # ok: python.tls-verification-disabled
+    other = make_client("s3", verify=False)
+    # ok: python.tls-verification-disabled
+    other_es = SearchWrapper(url, verify_certs=False)
+    return (s3, s3_ca, local, emulator, local_es, local_hosts, search, es, es_verified, es_pinned,
+            mongo, mongo_uri, mongo_off, vault, configured, other, other_es)
+
+
+def sdk_limits(url, region):
+    # The switch passed by position (verify is client()'s fifth parameter) or in a dict is not
+    # seen.
+    # todoruleid: python.tls-verification-disabled
+    s3 = boto3.client("s3", region, None, True, False)
+    # todoruleid: python.tls-verification-disabled
+    es = Elasticsearch(url, **{"verify_certs": False})
+    # A connection string built at run time is not read.
+    # todoruleid: python.tls-verification-disabled
+    mongo = MongoClient(url + "/?tls=true&tlsInsecure=true")
+    return s3, es, mongo
 
 # ssl: the unverified context (PEP 476), used directly, passed to urllib and http.client, or
 # installed as the default for every HTTPS connection of the process.
@@ -779,10 +891,7 @@ def known_limits(url, payload, make_session, host, self_made):
     # Pythons, is not followed.
     # todoruleid: python.tls-verification-disabled
     ssl._create_default_https_context = getattr(ssl, "_create_unverified_context")
-    # Other libraries' TLS switches are not in this rule (boto3, aiohttp, ...).
-    # todoruleid: python.tls-verification-disabled
-    s3 = boto3.client("s3", verify=False)
-    return transport, generic_required, pooled, held, zero, unpacked, s3
+    return transport, generic_required, pooled, held, zero, unpacked
 
 
 # A parameter whose default is False is configurable by the caller; it is not reported.
