@@ -52,20 +52,22 @@ Apply them in this order; a later rule only breaks ties of the earlier ones.
 ## The matrix
 
 Cells hold the backlog id, `candidate: <id> — <API lead>` (the id the row would get), or `n/a` with
-the reason. `dir` is the category directory under `rules/<lang>/`; `kind` applies to every cell of
-the row. Hints in cells are leads for the doc gate, not facts.
+the reason. A cell with a rule id may also list maintenance candidates on that rule,
+`candidate: <id>#<topic> — <lead>` (a framework or API to add; it becomes a maintenance row).
+`dir` is the category directory under `rules/<lang>/`; `kind` applies to every cell of the row.
+Hints in cells are leads for the doc gate, not facts.
 
 | category | dir | CWE | kind | js | python | java | go |
 |---|---|---|---|---|---|---|---|
 | SQL injection | sql | CWE-89 | issue | js.sql-injection | python.sql-injection | java.sql-injection | go.sql-injection |
 | NoSQL injection | nosql | CWE-943 | issue | js.nosql-injection | candidate: python.nosql-injection — pymongo filters and `$where` from request JSON | candidate: java.nosql-injection — Spring Data MongoDB `BasicQuery` from a JSON string | candidate: go.nosql-injection — mongo-go-driver filters decoded from request JSON |
 | Command injection | command | CWE-78 | issue | js.command-injection | python.command-injection | java.command-injection | go.command-injection |
-| Code injection | code | CWE-94, CWE-95 | issue | js.code-injection | python.code-injection | candidate: java.code-injection — `javax.script` ScriptEngine.eval, GroovyShell.evaluate | n/a: no eval in the standard library |
-| Template injection | template | CWE-1336, CWE-94 | issue | js.template-injection | python.template-injection | java.template-injection | go.template-injection |
-| Expression language injection | expression | CWE-917 | issue | n/a | n/a | java.expression-injection | n/a |
+| Code injection | code | CWE-94, CWE-95 | issue | js.code-injection; candidate: js.code-injection#browser — setTimeout/setInterval with a string and DOM sources (`location`, `document.URL`) in browser code (browser code is out of scope: the maintainer's word first) | python.code-injection | candidate: java.code-injection — `javax.script` ScriptEngine.eval, GroovyShell.evaluate | n/a: no eval in the standard library |
+| Template injection | template | CWE-1336, CWE-94 | issue | js.template-injection | python.template-injection; candidate: python.template-injection#mako — `mako.template.Template(x)`; candidate: python.template-injection#compile-expression — Jinja `Environment.compile_expression(x)` | java.template-injection; candidate: java.template-injection#spring-view-names — request data in a returned view name (Thymeleaf before 3.0.12; needs a view-resolver signal) | go.template-injection |
+| Expression language injection | expression | CWE-917 | issue | n/a | n/a | java.expression-injection; candidate: java.expression-injection#jexl — Apache Commons JEXL `createExpression`/`createScript`, `JexlSandbox` as the safe form | n/a |
 | Unsafe reflection | reflection | CWE-470 | issue | candidate: js.unsafe-require — `require(x)`, `import(x)` | candidate: python.unsafe-import — `importlib.import_module(x)`, `getattr(obj, x)` | candidate: java.unsafe-reflection — `Class.forName(x)` | n/a |
 | Path traversal | path | CWE-22 | issue | js.path-traversal | python.path-traversal | java.path-traversal | go.path-traversal |
-| Archive extraction (zip slip), taint from the entry name | archive | CWE-22 | issue | candidate: js.zip-slip — tar, adm-zip, unzipper entry paths (check each library's defaults) | n/a: zipfile sanitises names; tar is the hotspot row below | java.zip-slip | go.zip-slip |
+| Archive extraction (zip slip), taint from the entry name | archive | CWE-22 | issue | candidate: js.zip-slip — tar, adm-zip, unzipper entry paths (check each library's defaults) | n/a: zipfile sanitises names; tar is the hotspot row below | java.zip-slip; candidate: java.zip-slip#zipfs — paths of a zip `FileSystem` (`FileSystems.newFileSystem`, `Files.walk`) resolved under a destination | go.zip-slip |
 | Archive extraction without a filter | archive | CWE-22 | hotspot | n/a | python.tar-extraction | n/a | n/a |
 | SSRF | ssrf | CWE-918 | issue | js.ssrf | python.ssrf | java.ssrf | go.ssrf |
 | XSS | xss | CWE-79 | issue | js.xss | python.xss | java.xss | go.xss |
@@ -73,19 +75,20 @@ the row. Hints in cells are leads for the doc gate, not facts.
 | Open redirect | redirect | CWE-601 | issue | js.open-redirect | python.open-redirect | java.open-redirect | go.open-redirect |
 | Header injection, response splitting | header | CWE-113 | issue | candidate: js.header-injection — check whether Node's http rejects CR/LF in header values (n/a if so) | candidate: python.header-injection — check Werkzeug and Django (n/a if they reject newlines) | candidate: java.header-injection — servlet setHeader/addHeader, check the containers | candidate: go.header-injection — check net/http's header writing (n/a if it sanitises) |
 | XXE (parser configuration) | xxe | CWE-611, CWE-776 | issue | candidate: js.xxe — libxmljs `parseXml(x, { noent: true })` | python.xxe | java.xxe | n/a: encoding/xml does not resolve external entities (confirm in the docs) |
-| XPath injection | xpath | CWE-643 | issue | candidate: js.xpath-injection — the xpath npm package | python.xpath-injection | java.xpath-injection | n/a: no XPath in the standard library |
-| LDAP injection | ldap | CWE-90 | issue | candidate: js.ldap-injection — ldapjs search filters | candidate: python.ldap-injection — ldap3 search filters, `escape_filter_chars` | java.ldap-injection | candidate: go.ldap-injection — go-ldap search filters, `ldap.EscapeFilter` |
+| XXE: DTD loading or lifted parser limits (review) | xxe | CWE-611, CWE-776 | hotspot | n/a until js.xxe exists | python.xxe-dtd-options | n/a: java.xxe reports DTD-enabled parsers as an issue | n/a: encoding/xml has no DTD processing |
+| XPath injection | xpath | CWE-643 | issue | candidate: js.xpath-injection — the xpath npm package | python.xpath-injection | java.xpath-injection; candidate: java.xpath-injection#dom4j-jdom — dom4j `selectNodes`/`selectSingleNode`/`valueOf`, `DocumentHelper.createXPath`; JDOM2 `XPathFactory.compile` (library scope: the maintainer's word) | n/a: no XPath in the standard library |
+| LDAP injection | ldap | CWE-90 | issue | candidate: js.ldap-injection — ldapjs search filters | candidate: python.ldap-injection — ldap3 search filters, `escape_filter_chars` | java.ldap-injection; candidate: java.ldap-injection#dn — request data in a DN (search base, `lookup`, `bind`), `LdapNameBuilder` and DN encoding as sanitizers | candidate: go.ldap-injection — go-ldap search filters, `ldap.EscapeFilter` |
 | Unsafe deserialization of request data | deserialization | CWE-502 | issue | candidate: js.unsafe-deserialization — check node-serialize-like libraries' docs | python.unsafe-deserialization | java.unsafe-deserialization | n/a: encoding/gob and encoding/json build data only (confirm) |
 | Unsafe deserializer configuration | deserialization | CWE-502 | issue | candidate: js.unsafe-yaml-schema — js-yaml custom schemas with functions | candidate: python.unsafe-yaml-load — `yaml.load` with an unsafe Loader on any data | candidate: java.jackson-default-typing — Jackson `activateDefaultTyping`/`enableDefaultTyping`; SnakeYAML without SafeConstructor (version-dependent) | n/a |
 | Prototype pollution | prototype | CWE-1321 | issue | js.prototype-pollution | n/a | n/a | n/a |
-| Regex injection (ReDoS) | regex | CWE-1333, CWE-400 | issue | js.regex-injection | python.regex-injection | java.regex-injection | n/a: the regexp package (RE2) runs in linear time |
+| Regex injection (ReDoS) | regex | CWE-1333, CWE-400 | issue | js.regex-injection | python.regex-injection; candidate: python.regex-injection#regex-module — the third-party `regex` module (re's API); candidate: python.regex-injection#django-lookups — Django ORM `__regex`/`__iregex` lookups with request data | java.regex-injection | n/a: the regexp package (RE2) runs in linear time |
 | Log injection | log | CWE-117 | hotspot | candidate: js.log-injection — request data into `console.log` or a logger without encoding | candidate: python.log-injection — request data into `logging` calls | candidate: java.log-injection — request data into SLF4J/Log4j calls | candidate: go.log-injection — request data into `log`/`slog` calls |
 | TLS verification disabled | tls | CWE-295 | issue | js.tls-verification-disabled | python.tls-verification-disabled | java.tls-verification-disabled | go.tls-verification-disabled |
-| Weak cipher or mode | crypto | CWE-327 | issue | candidate: js.weak-cipher — `createCipheriv` with des, rc4 or ecb names | candidate: python.weak-cipher — cryptography's TripleDES/ECB, PyCryptodome DES/ARC4/MODE_ECB | java.weak-cipher | go.weak-cipher |
+| Weak cipher or mode | crypto | CWE-327 | issue | candidate: js.weak-cipher — `createCipheriv` with des, rc4 or ecb names | candidate: python.weak-cipher — cryptography's TripleDES/ECB, PyCryptodome DES/ARC4/MODE_ECB | java.weak-cipher; candidate: java.weak-cipher#bouncycastle — Bouncy Castle lightweight engines (`DESEngine`, `ECBBlockCipher`) | go.weak-cipher |
 | Weak hash | crypto | CWE-328 | hotspot | candidate: js.weak-hash — `createHash('md5' / 'sha1')` | candidate: python.weak-hash — hashlib md5/sha1 without `usedforsecurity=False` | candidate: java.weak-hash — `MessageDigest.getInstance("MD5" / "SHA-1")` | go.weak-hash |
 | Insecure randomness | random | CWE-330, CWE-338 | hotspot | candidate: js.insecure-random — `Math.random()` for tokens | candidate: python.insecure-random — `random` for tokens (docs point to `secrets`) | candidate: java.insecure-random — `java.util.Random` for tokens | candidate: go.insecure-random — `math/rand` for tokens |
 | JWT signature not verified | jwt | CWE-347 | issue | candidate: js.jwt-unverified — jsonwebtoken `algorithms: ['none']`, `decode` for auth | candidate: python.jwt-unverified — PyJWT `options={"verify_signature": False}` | candidate: java.jwt-unverified — jjwt unsigned parsing | candidate: go.jwt-unverified — golang-jwt `ParseUnverified` |
-| Insecure cookie flags | cookie | CWE-614, CWE-1004 | hotspot | js.insecure-cookie | candidate: python.insecure-cookie — `set_cookie` without secure/httponly, Django `SESSION_COOKIE_SECURE = False` | candidate: java.insecure-cookie — `new Cookie` without setSecure/setHttpOnly | go.insecure-cookie |
+| Insecure cookie flags | cookie | CWE-614, CWE-1004 | hotspot | js.insecure-cookie | candidate: python.insecure-cookie — `set_cookie` without secure/httponly, Django `SESSION_COOKIE_SECURE = False` | candidate: java.insecure-cookie — `new Cookie` without setSecure/setHttpOnly | go.insecure-cookie; candidate: go.insecure-cookie#gorilla-sessions — gorilla/sessions `Options{Secure, HttpOnly}`, `NewCookieStore` defaults; candidate: go.insecure-cookie#gin-sessions — gin-contrib/sessions `Options` |
 | CORS: any origin with credentials | cors | CWE-942 | hotspot | candidate: js.cors-credentials — cors `origin: true` with `credentials: true` | candidate: python.cors-credentials — flask-cors, django-cors-headers allow-all with credentials | candidate: java.cors-credentials — Spring `allowedOriginPatterns("*")` with `allowCredentials(true)` | candidate: go.cors-credentials — rs/cors, gin-contrib/cors allow-all with credentials |
 | CSRF protection disabled | csrf | CWE-352 | hotspot | n/a | candidate: python.csrf-disabled — Django `@csrf_exempt`, Flask-WTF CSRF off | candidate: java.csrf-disabled — Spring Security `csrf().disable()` | n/a |
 | Debug mode on | debug | CWE-489, CWE-215 | hotspot | n/a | candidate: python.debug-enabled — Flask `app.run(debug=True)`, Django `DEBUG = True` | n/a | n/a |
@@ -95,10 +98,10 @@ the row. Hints in cells are leads for the doc gate, not facts.
 
 | lang | frameworks | where the source block lives |
 |---|---|---|
-| js | Node `http`, Express 4 and 5, Next.js API routes (pages router `(req, res)` and App Router route handlers), Fastify | `rules/js/sql/sql-injection.yml`: Express-style handlers `(req, res, ...)`. Next.js App Router and Fastify: added by `js.sql-injection#nextjs-fastify-sequelize-literal` (its implementer proposes the block in the report; the controller copies it here). |
-| python | Django, Flask, FastAPI | `rules/python/sql/sql-injection.yml`: `flask.request.*` and the parameters of route-decorated views (which also matches FastAPI path operations). Django: added by `python.sql-injection#django` (proposed by its implementer, copied here by the controller). |
-| java | Servlet (javax and jakarta), Spring MVC, Jakarta REST (JAX-RS) | `rules/java/sql/sql-injection.yml`: servlet request getters and annotated controller parameters except scalar types. |
-| go | `net/http`, Gin, Echo (also chi and gorilla/mux route variables) | `rules/go/sql/sql-injection.yml`: request fields and methods, Gin/Echo getters, binders (by side effect) and the encoding/json propagators. |
+| js | Node `http`, Express 4 and 5, Next.js API routes (pages router `(req, res)` and App Router route handlers), Fastify | `rules/js/sql/sql-injection.yml`: Express-style handlers `(req, res, ...)`, Next.js App Router route handlers, Fastify routes, and handlers that destructure the request. |
+| python | Django, Flask, FastAPI | `rules/python/sql/sql-injection.yml`: `flask.request.*`, the parameters of route-decorated views (which also matches FastAPI path operations), and Django views in a module that imports Django. |
+| java | Servlet (javax and jakarta), Spring MVC, Jakarta REST (JAX-RS) | `rules/java/sql/sql-injection.yml`: servlet request getters, annotated controller parameters except scalar types (`@RequestPart` included), and `HttpEntity`/`RequestEntity` bodies. |
+| go | `net/http`, Gin, Echo (also chi and gorilla/mux route variables) | `rules/go/sql/sql-injection.yml`: request fields and methods, Gin/Echo getters, binders (by side effect, also inside a condition) and the encoding/json propagators. The test-support skip lives in `rules/go/path/path-traversal.yml`. |
 
 ### Source blocks
 
@@ -117,6 +120,76 @@ language's request sources.
   framework's decoder or binder all belong in the block.
 - Not in scope yet: Koa, NestJS (`@Param`/`@Query`/`@Body`), Hapi; aiohttp, Tornado, Starlette
   without FastAPI; Quarkus-specific APIs beyond the Jakarta REST annotations, Micronaut, Spring WebFlux; Fiber, Beego. Each is a framework to add.
+- The shared items (sources, request propagators, shared sanitizers) must stay **byte-identical**
+  in every rule that carries them. Compare them with a script after every change to the block,
+  and run the per-alternative mutation sweep (rule-procedure.md step 4) on each rule. Items that
+  belong to one rule only follow the shared ones (Python marks the end with the comment
+  `# (End of the shared Python source block; the items below are this rule's own.)`).
+
+What each language's block holds today (2026-10-06 run):
+
+- **js** (11 rules: sql, nosql, command, path, ssrf, xss, open-redirect, code, template,
+  prototype-pollution, regex). Express-style handlers, Next.js pages and App Router handlers,
+  Fastify routes, and handlers that **destructure** the request, in the parameter list (shorthand,
+  renamed, nested, typed; Fastify and Next.js forms too) or in a declaration
+  (`const { query: { q } } = req`). The parameter forms are one branch whose handler and field
+  tests are exclusions plus a whole-file field condition: keep it that way, a positive condition
+  there costs the prefilter. Limit to copy into each new rule: a field with a default value in a
+  destructured parameter (`todoruleid:`). **Awaited calls** (xss, open-redirect, regex): the value
+  of an awaited method or of an awaited helper given the response object is stored data, not
+  request data; when a function is passed to such a call, only the call's value is clean (an
+  `exact: true` twin), so sinks written inside the callback are still checked.
+- **python** (11 rules: sql, command, path, ssrf, xss, unsafe-deserialization, open-redirect,
+  code, template, xpath, regex). Flask `request`, route-decorated views (FastAPI too), and Django
+  views in a module that imports Django. **Slices** are sources themselves (OpenGrep carries no
+  taint through a slice): of a request chain, of a variable assigned one, of a view parameter;
+  a variable assigned again after the request value is not. **Allow-lists**: a lookup in a dict
+  (or list or tuple) literal of literals, with r/b/u prefixes and comments, assigned to an
+  upper-case name the module never changes, with no default or a literal default; or a ternary of
+  constants. **The Django module check is `pattern-inside: import django` + `...`**, a literal that
+  binds no metavariable and also matches `from django.x import y`. The old form
+  (`from $DJ import $NAME` plus a regex) counted every finding once per imported name toward
+  OpenGrep's 10,000-match limit per file; a large Django module went over it and reported nothing
+  (python.sql-injection#django-import-match-limit). A Django import nested in `if TYPE_CHECKING:`
+  or `try:` does not count.
+- **java** (12 rules: sql, command, path, ssrf, xss, open-redirect, ldap, template, expression,
+  unsafe-deserialization, xpath, regex). Three shared sources (servlet getters; annotated
+  controller parameters except scalar types, `@RequestPart` included; `HttpEntity`/`RequestEntity`
+  bodies), two propagators (`append` and an append chain), nine shared sanitizers (four number
+  conversions, two `Map.of` allow-lists, `Enum.valueOf` twice, an enum declared in the file).
+  java.ssrf and java.open-redirect add the **builder fixed-origin model**: a `StringBuilder` or
+  `StringBuffer` created with a fixed origin or local path, or given it by its first append, is
+  clean unless edited (`setLength`, `delete`, `replace`, `insert`, `setCharAt`) or assigned again.
+  `insert` and `replace` carry no taint yet (java.sql-injection#builder-insert).
+- **go** (7 rules: sql, command, path, ssrf, xss, open-redirect, template). Request fields and
+  methods, Gin and Echo getters, binders by side effect, encoding/json propagators, and the
+  number/boolean type sanitizer. **Bind in a condition** (`if c.ShouldBindJSON(&in) == nil`):
+  the type sanitizer leaves out a boolean whose text holds a bind, `.Decode(` or `json.Unmarshal(`
+  call (one `metavariable-regex` on `$E`), so the bound struct stays a source; in go.sql-injection
+  so far. **Test support**: findings inside a function with a `*testing.T`, `B`, `F`, `M` or
+  `testing.TB` parameter are skipped (ruling F6); in go.path-traversal so far. The `#test-support`
+  and `#bind-in-comparison` rows carry both to the other rules.
+
+### Test code
+
+Misuse and hotspot rules skip test code at rule level with `paths: exclude` (rulings F10 and J3):
+a test that turns TLS verification off or uses a weak cipher on purpose is not a finding. Taint
+rules do not: request data in a test is still a flow (Go skips test-support functions instead,
+see above). The globs in use, the same in every rule of a language:
+
+- **go:** `*_test.go`.
+- **python:** `test_*.py`, `*_test.py`, `conftest.py`, `tests.py`, `tests/`, `test/`.
+- **js:** `*.test.*`, `*.spec.*`, `*-test.*`, `*_test.*`, `__tests__/`, `test/`, `tests/`.
+- **java:** `src/test/`, `src/testFixtures/`, `src/integrationTest/`, `src/intTest/` (Maven and
+  Gradle layouts), `*Test.java`, `*Tests.java`, `*TestCase.java`, `*IT.java`, `*ITCase.java`
+  (Surefire and Failsafe defaults). Their `Test*.java` and `IT*.java` defaults are left out: they
+  also hit production names (`TestimonialService`, `ITunesClient`).
+
+A new misuse or hotspot rule copies its language's list; the page says that test code is skipped.
+Rules that skip it today: the four TLS rules, java.weak-cipher, go.weak-hash, go.insecure-cookie,
+js.insecure-cookie, python.xxe-dtd-options and python.tar-extraction. Not yet: go.weak-cipher
+(row go.weak-cipher#test-code), java.xxe, python.xxe and js.react-dangerous-html (decide when the
+rule is next changed).
 
 ## Growing the map
 
@@ -129,6 +202,15 @@ language's request sources.
   a category with an issue form and a hotspot form gets two rows. A category outside the CWE Top
   25 and the OWASP Top 10 needs the maintainer's word.
 - Commit map changes with the backlog rows they produce.
+- **Tooling** is not a map or backlog item (`BACKLOG.md` ids are rule ids). Open follow-ups from
+  the 2026-10-06 run, for a setup change: a prefilter check in `npm test` (every rule:
+  `opengrep-core -prefilter_of_rules` is not None and below a size budget; it would have caught
+  the 31 MB python.tls-verification-disabled prefilter and the rules that have none); a
+  per-alternative mutation sweep in tools/ (remove one pattern item or alternative at a time,
+  the rule's test must fail; implementers wrote it three times in `.tmp/`); `--timeout 0` in
+  `npm run probe` and `npm run measure` (OpenGrep's 5 s default times out on a loaded host and
+  drops findings); generators for the shared source blocks of JS, Java and Python, as
+  tools/xxe-exclusions.mjs does for java.xxe, so the copies stay byte-identical.
 
 ## Kind and severity (ruling M1 of 6A)
 
@@ -142,6 +224,8 @@ usage", where context decides, is `hotspot` (never counted).
 | Definite misuse: TLS verification off, broken ciphers or modes, XXE-enabled parser configuration | issue | high (TLS, XXE) or medium (ciphers) | ERROR or WARNING |
 | Hotspots: weak hashes, cookie flags, CORS, randomness, debug mode, unfiltered archive extraction, raw-HTML React props | hotspot | medium or low | WARNING or INFO |
 
+- "TLS verification off" includes a host-name check turned off (CWE-297 in substance; ruling P1):
+  an issue in the language's TLS rule, CWE-295 as its row, not a rule of its own.
 - `blocker` is not used for single rules. `info` only for rules that inform, not warn.
 - `confidence: high` when sources are request objects of real handlers and sinks are typed or
   bound in the same function; `medium` when a sink is matched by method name only; a rule that
