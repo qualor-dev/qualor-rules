@@ -80,8 +80,10 @@ rules:
     #   (todoruleid).
     # - A check of the parsed host (`urlparse(x).netloc`) is not recognised. Django's
     #   `url_has_allowed_host_and_scheme()` (`is_safe_url()` before 3.0) is: the checked value in
-    #   the branch where it holds, after a failing branch that returns, raises or assigns a fixed
-    #   value, and in a ternary; but `allowed_hosts` taken from the request is not checked
+    #   the branch where it holds (also an elif, and the else of a failing check), after a failing
+    #   branch that returns, raises or assigns a fixed value (a whole literal, a constant, a
+    #   setting, reverse(), resolve_url() of a literal or setting), and in a ternary; but
+    #   `allowed_hosts` taken from the request is not checked
     #   (todoruleid), and another library's check of the same name is not trusted.
     # - OpenGrep does not carry taint through a slice, so a slice of request data is a source
     #   itself: of a request access chain (`request.args["next"][:200]`), of a variable assigned one in
@@ -764,6 +766,16 @@ rules:
                   if $CHECK($X, ...) and $B:
                     $...BODY
               - pattern-inside: |
+                  if not $CHECK($X, ...):
+                    ...
+                  else:
+                    $...BODY
+              - pattern-inside: |
+                  if not $CHECK(..., url=$X, ...):
+                    ...
+                  else:
+                    $...BODY
+              - pattern-inside: |
                   if $CHECK(..., url=$X, ...) and $B:
                     $...BODY
               - pattern-inside: |
@@ -970,7 +982,7 @@ rules:
                 ...
           - metavariable-regex:
               metavariable: $FIXED
-              regex: ^([rbuRBU]{0,2}("|')|None$|[A-Z][A-Z0-9_]*$|settings\.\w+$|([\w.]*\.)?(reverse|reverse_lazy|resolve_url)\()
+              regex: ^([rbuRBU]{0,2}("[^"\\\n]*"|'[^'\\\n]*')$|None$|[A-Z][A-Z0-9_]*$|settings\.\w+$|([\w.]*\.)?(reverse|reverse_lazy)\([^()]*(\([^()]*\)[^()]*)*\)$|([\w.]*\.)?resolve_url\(([rbuRBU]{0,2}("[^"\\\n]*"|'[^'\\\n]*')|settings\.\w+|[A-Z][A-Z0-9_]*)\)$)
           - metavariable-pattern:
               metavariable: $CHECK
               pattern-either:

@@ -13,7 +13,8 @@ from django.http import (
     HttpResponseRedirect,
     JsonResponse,
 )
-from django.shortcuts import get_object_or_404, redirect as django_redirect
+from django.shortcuts import get_object_or_404, resolve_url
+from django.shortcuts import redirect as django_redirect
 from django.urls import reverse
 from django.utils.deprecation import MiddlewareMixin
 from django.utils.http import is_safe_url, url_has_allowed_host_and_scheme
@@ -699,6 +700,44 @@ def django_replaced_with_request(request):
         target = request.GET["back"]
     # ruleid: python.open-redirect
     return HttpResponseRedirect(target)
+
+
+def django_replaced_with_built(request):
+    target = request.GET.get("next", "")
+    if not url_has_allowed_host_and_scheme(target, allowed_hosts=None):
+        target = "https://" + request.GET["host"]
+    # ruleid: python.open-redirect
+    return HttpResponseRedirect(target)
+
+
+def django_replaced_with_resolved(request):
+    target = request.GET.get("next", "")
+    if not url_has_allowed_host_and_scheme(target, allowed_hosts=None):
+        target = resolve_url(request.GET["back"])
+    # ruleid: python.open-redirect
+    return HttpResponseRedirect(target)
+
+
+def django_else_of_failing_check(request):
+    target = request.GET.get("next", "")
+    if not url_has_allowed_host_and_scheme(target, allowed_hosts={request.get_host()}):
+        # ruleid: python.open-redirect
+        return HttpResponseRedirect(target)
+    else:
+        # ok: python.open-redirect
+        return HttpResponseRedirect(target)
+
+
+def django_elif_check(request):
+    target = request.GET.get("next", "")
+    if not target:
+        return HttpResponseRedirect("/")
+    elif url_has_allowed_host_and_scheme(target, allowed_hosts={request.get_host()}):
+        # ok: python.open-redirect
+        return HttpResponseRedirect(target)
+    else:
+        # ruleid: python.open-redirect
+        return HttpResponseRedirect(target)
 
 
 def django_own_check(request):

@@ -104,8 +104,8 @@ def after_login():
   Flask path can still hold a backslash (`/\evil.example`), which browsers read as `//`.
 - A check of the parsed host (`urlparse(x).netloc`) is not recognised. Django's
   `url_has_allowed_host_and_scheme()` (`is_safe_url()` before Django 3.0) is recognised in the
-  branch where it holds, after a failing branch that returns, raises or sets a fixed value, and in
-  a ternary; `allowed_hosts` taken from request data is not checked, and a project's own function
+  branch where it holds (also an `elif`, and the `else` of a failing check), after a failing
+  branch that returns, raises or sets a fixed value, and in a ternary; `allowed_hosts` taken from request data is not checked, and a project's own function
   of the same name does not count.
 - A slice is followed when it slices request data in place (`request.args["next"][:200]`),
   a variable assigned request data, or a view parameter; a slice of a value built from request
