@@ -140,21 +140,13 @@ rules:
       # Django, in a module that imports it: the HttpRequest a view receives, the URL arguments
       # passed to the view after it, and what View.setup() keeps on a class-based view.
       - patterns:
-          - pattern-either:
-              - patterns:
-                  - pattern-inside: |
-                      from $DJ import $NAME
-                      ...
-                  - metavariable-regex:
-                      metavariable: $DJ
-                      regex: ^django(\.|$)
-              - patterns:
-                  - pattern-inside: |
-                      import $DJ
-                      ...
-                  - metavariable-regex:
-                      metavariable: $DJ
-                      regex: ^django(\.|$)
+          # A module that imports Django. `import django` also matches `from django.x import y`
+          # and `import django.x as z`, and binds no metavariable: a finding counts
+          # once toward OpenGrep's match limit per file, however many names the
+          # module imports.
+          - pattern-inside: |
+              import django
+              ...
           - pattern-either:
               # The request: the first parameter of a function, the one after self of a method.
               # The upper-case attributes exist only on Django's HttpRequest; the others count
@@ -304,21 +296,13 @@ rules:
               request = $LOCAL
               ...
       - patterns:
-          - pattern-either:
-              - patterns:
-                  - pattern-inside: |
-                      from $DJ import $NAME
-                      ...
-                  - metavariable-regex:
-                      metavariable: $DJ
-                      regex: ^django(\.|$)
-              - patterns:
-                  - pattern-inside: |
-                      import $DJ
-                      ...
-                  - metavariable-regex:
-                      metavariable: $DJ
-                      regex: ^django(\.|$)
+          # A module that imports Django. `import django` also matches `from django.x import y`
+          # and `import django.x as z`, and binds no metavariable: a finding counts
+          # once toward OpenGrep's match limit per file, however many names the
+          # module imports.
+          - pattern-inside: |
+              import django
+              ...
           - pattern-either:
               - pattern-inside: |
                   def $VIEW(request, ...):
@@ -339,21 +323,13 @@ rules:
               metavariable: $VALUE
               regex: &django-request-chain ^(request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|json\.loads\(request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
       - patterns:
-          - pattern-either:
-              - patterns:
-                  - pattern-inside: |
-                      from $DJ import $NAME
-                      ...
-                  - metavariable-regex:
-                      metavariable: $DJ
-                      regex: ^django(\.|$)
-              - patterns:
-                  - pattern-inside: |
-                      import $DJ
-                      ...
-                  - metavariable-regex:
-                      metavariable: $DJ
-                      regex: ^django(\.|$)
+          # A module that imports Django. `import django` also matches `from django.x import y`
+          # and `import django.x as z`, and binds no metavariable: a finding counts
+          # once toward OpenGrep's match limit per file, however many names the
+          # module imports.
+          - pattern-inside: |
+              import django
+              ...
           - pattern-inside: |
               class $CLS(...):
                 ...
@@ -370,21 +346,13 @@ rules:
               metavariable: $VALUE
               regex: &django-self-chain ^(self\.request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|self\.(args|kwargs)|json\.loads\(self\.request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
       - patterns:
-          - pattern-either:
-              - patterns:
-                  - pattern-inside: |
-                      from $DJ import $NAME
-                      ...
-                  - metavariable-regex:
-                      metavariable: $DJ
-                      regex: ^django(\.|$)
-              - patterns:
-                  - pattern-inside: |
-                      import $DJ
-                      ...
-                  - metavariable-regex:
-                      metavariable: $DJ
-                      regex: ^django(\.|$)
+          # A module that imports Django. `import django` also matches `from django.x import y`
+          # and `import django.x as z`, and binds no metavariable: a finding counts
+          # once toward OpenGrep's match limit per file, however many names the
+          # module imports.
+          - pattern-inside: |
+              import django
+              ...
           - pattern-either:
               - pattern-inside: |
                   def $VIEW(request, ...):
@@ -422,21 +390,13 @@ rules:
               metavariable: $INIT
               regex: *django-request-chain
       - patterns:
-          - pattern-either:
-              - patterns:
-                  - pattern-inside: |
-                      from $DJ import $NAME
-                      ...
-                  - metavariable-regex:
-                      metavariable: $DJ
-                      regex: ^django(\.|$)
-              - patterns:
-                  - pattern-inside: |
-                      import $DJ
-                      ...
-                  - metavariable-regex:
-                      metavariable: $DJ
-                      regex: ^django(\.|$)
+          # A module that imports Django. `import django` also matches `from django.x import y`
+          # and `import django.x as z`, and binds no metavariable: a finding counts
+          # once toward OpenGrep's match limit per file, however many names the
+          # module imports.
+          - pattern-inside: |
+              import django
+              ...
           - pattern-inside: |
               class $CLS(...):
                 ...
@@ -511,21 +471,13 @@ rules:
               - pattern: $PARAM.$FIELD[:$UPPER]
               - pattern: $PARAM.$FIELD[$LOWER:$UPPER]
       - patterns:
-          - pattern-either:
-              - patterns:
-                  - pattern-inside: |
-                      from $DJ import $NAME
-                      ...
-                  - metavariable-regex:
-                      metavariable: $DJ
-                      regex: ^django(\.|$)
-              - patterns:
-                  - pattern-inside: |
-                      import $DJ
-                      ...
-                  - metavariable-regex:
-                      metavariable: $DJ
-                      regex: ^django(\.|$)
+          # A module that imports Django. `import django` also matches `from django.x import y`
+          # and `import django.x as z`, and binds no metavariable: a finding counts
+          # once toward OpenGrep's match limit per file, however many names the
+          # module imports.
+          - pattern-inside: |
+              import django
+              ...
           - pattern-either:
               - pattern-inside: |
                   def $VIEW(request, ..., $PARAM, ...):
