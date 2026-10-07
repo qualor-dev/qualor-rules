@@ -91,6 +91,9 @@ rules:
     # - A Django-module function whose first parameter is named request is taken for a view: its
     #   other parameters count as URL arguments, and the request attributes (`headers`, `body`,
     #   ...) of that parameter count even when it is another library's request object.
+    # - A Django-module function named get, post, put, patch, delete, head, options, trace or
+    #   dispatch that takes `(self, request, ...)` is taken for a class-based view's handler also
+    #   outside a class: its parameters after request count as URL arguments.
     # - A Flask view parameter annotated int, float or bool is not a source (the FastAPI rule
     #   below), although Flask passes a str for a rule without a converter (todoruleid).
     # FastAPI parameters annotated int, float or bool (also `Annotated[int, ...]`), and
@@ -323,7 +326,9 @@ rules:
           - pattern-either:
               # The request: the first parameter of a function, the one after self of a method.
               # The upper-case attributes exist only on Django's HttpRequest; the others count
-              # only on a parameter named request, and so do the slices of its chains.
+              # only on a parameter named request (the parameter itself, not a lambda, loop or
+              # comprehension variable of that name). Slices of its chains count in a function
+              # whose first parameter (after self) is named request.
               - patterns:
                   - pattern-either:
                       - pattern-inside: |
@@ -338,6 +343,21 @@ rules:
                       - pattern: $REQ.COOKIES
                       - pattern: $REQ.META
                       - pattern: $REQ.FILES
+                      - patterns:
+                          - pattern-either:
+                              - pattern: $REQ.headers
+                              - pattern: $REQ.body
+                              - pattern: $REQ.path
+                              - pattern: $REQ.path_info
+                              - pattern: $REQ.get_full_path(...)
+                              - pattern: $REQ.get_full_path_info(...)
+                              - pattern: $REQ.build_absolute_uri(...)
+                              - pattern: $REQ.read(...)
+                              - pattern: $REQ.readline(...)
+                              - pattern: $REQ.readlines(...)
+                          - metavariable-regex:
+                              metavariable: $REQ
+                              regex: ^request$
               - patterns:
                   - pattern-either:
                       - pattern-inside: |
@@ -346,22 +366,10 @@ rules:
                       - pattern-inside: |
                           def $VIEW(self, request, ...):
                             ...
-                  - pattern-either:
-                      - pattern: request.headers
-                      - pattern: request.body
-                      - pattern: request.path
-                      - pattern: request.path_info
-                      - pattern: request.get_full_path(...)
-                      - pattern: request.get_full_path_info(...)
-                      - pattern: request.build_absolute_uri(...)
-                      - pattern: request.read(...)
-                      - pattern: request.readline(...)
-                      - pattern: request.readlines(...)
-                      - patterns:
-                          - pattern-either: *chain-slices
-                          - metavariable-regex:
-                              metavariable: $INIT
-                              regex: ^(request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|json\.loads\(request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
+                  - pattern-either: *chain-slices
+                  - metavariable-regex:
+                      metavariable: $INIT
+                      regex: ^(request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|json\.loads\(request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
               # Class-based views: View.setup() keeps the request on self.request and the URL
               # arguments on self.args and self.kwargs.
               - patterns:

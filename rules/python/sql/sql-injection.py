@@ -553,6 +553,13 @@ def person_by_id(request, pk):
     return HttpResponse("ok")
 
 
+# A function named like a class-based view's handler (get, post, ...) that takes (self, request,
+# ...) is taken for one also outside a class: its parameters after request count as URL arguments.
+def get(self, request, pk):
+    # todook: python.sql-injection
+    Person.objects.raw("SELECT * FROM myapp_person WHERE id = %s" % pk)
+
+
 # Class-based views: dispatch() calls the method named after the HTTP method; setup() keeps the
 # request and the URL arguments on self.request, self.args and self.kwargs.
 class PersonView(View):

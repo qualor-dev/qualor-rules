@@ -330,6 +330,13 @@ def django_nth(request, pk):
     return HttpResponse(str(catalog.xpath("//book[%s]" % pk)))
 
 
+# A function named like a class-based view's handler (get, post, ...) that takes (self, request,
+# ...) is taken for one also outside a class: its parameters after request count as URL arguments.
+def get(self, request, pk):
+    # todook: python.xpath-injection
+    return HttpResponse(str(catalog.xpath("//book[%s]" % pk)))
+
+
 # A default value: Django passes the URL value when the pattern captures one.
 def django_default(request, path="//book"):
     # todook: python.xpath-injection

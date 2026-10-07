@@ -73,9 +73,10 @@ rules:
     #   methods (`__call__`, `process_request`, `process_view`, `process_response`, ...) and
     #   functions inside a `def ...(get_response)` factory, Flask before_request hooks, and
     #   Starlette/FastAPI middleware (dispatch(), @app.middleware("http"): request.url.path, also
-    #   sliced, and the query string, path parameters, headers and cookies) or an ASGI scope's
-    #   path. A host before it keeps it on that
-    #   host (a literal, `"https://" + request.get_host()`, an f-string, a URL constant); with
+    #   sliced, the query string, path parameters, headers and cookies, and request["path"]: a
+    #   Starlette request is a mapping of its scope) or the path of an ASGI
+    #   `__call__(self, scope, receive, send)`. A host before it keeps it on that host (a
+    #   literal, `"https://" + request.get_host()`, an f-string, a URL constant); with
     #   %-formatting it is not recognised (todook). `re.sub(r"/+", "/", path)` is taken for
     #   safe, although Werkzeug keeps a backslash ("/\evil.example") in a Flask path
     #   (todoruleid).
@@ -122,7 +123,10 @@ rules:
     #   response class not listed is not followed. build_absolute_uri() of reverse() or of a
     #   literal path is this site's URL. RedirectView's get_redirect_url() is a sink and its
     #   arguments are URL arguments; a `url` class attribute with a placeholder filled from them
-    #   is not followed (todoruleid).
+    #   is not followed (todoruleid). get_redirect_url() counts only written directly in the
+    #   RedirectView subclass: one defined under an `if` in the class body is missed
+    #   (todoruleid); a nested function or a nested class's method of that name is not the
+    #   view's.
     # Inherited from the request source block (python.sql-injection), each with a `todook` line:
     # - A Flask route parameter with a typed converter (`<int:n>`) is still a source.
     # - A Django URL argument is still a source when its converter (`<int:pk>`, in urls.py) or a
@@ -130,6 +134,9 @@ rules:
     # - A Django-module function whose first parameter is named request is taken for a view: its
     #   other parameters count as URL arguments, and the request attributes (`headers`, `body`,
     #   ...) of that parameter count even when it is another library's request object.
+    # - A Django-module function named get, post, put, patch, delete, head, options, trace or
+    #   dispatch that takes `(self, request, ...)` is taken for a class-based view's handler also
+    #   outside a class: its parameters after request count as URL arguments.
     # - A Flask view parameter annotated int, float or bool is not a source (the FastAPI rule
     #   below), although Flask passes a str for a rule without a converter (todoruleid).
     # FastAPI parameters annotated int, float or bool (also `Annotated[int, ...]`), and
@@ -362,7 +369,9 @@ rules:
           - pattern-either:
               # The request: the first parameter of a function, the one after self of a method.
               # The upper-case attributes exist only on Django's HttpRequest; the others count
-              # only on a parameter named request, and so do the slices of its chains.
+              # only on a parameter named request (the parameter itself, not a lambda, loop or
+              # comprehension variable of that name). Slices of its chains count in a function
+              # whose first parameter (after self) is named request.
               - patterns:
                   - pattern-either:
                       - pattern-inside: |
@@ -377,6 +386,21 @@ rules:
                       - pattern: $REQ.COOKIES
                       - pattern: $REQ.META
                       - pattern: $REQ.FILES
+                      - patterns:
+                          - pattern-either:
+                              - pattern: $REQ.headers
+                              - pattern: $REQ.body
+                              - pattern: $REQ.path
+                              - pattern: $REQ.path_info
+                              - pattern: $REQ.get_full_path(...)
+                              - pattern: $REQ.get_full_path_info(...)
+                              - pattern: $REQ.build_absolute_uri(...)
+                              - pattern: $REQ.read(...)
+                              - pattern: $REQ.readline(...)
+                              - pattern: $REQ.readlines(...)
+                          - metavariable-regex:
+                              metavariable: $REQ
+                              regex: ^request$
               - patterns:
                   - pattern-either:
                       - pattern-inside: |
@@ -385,22 +409,10 @@ rules:
                       - pattern-inside: |
                           def $VIEW(self, request, ...):
                             ...
-                  - pattern-either:
-                      - pattern: request.headers
-                      - pattern: request.body
-                      - pattern: request.path
-                      - pattern: request.path_info
-                      - pattern: request.get_full_path(...)
-                      - pattern: request.get_full_path_info(...)
-                      - pattern: request.build_absolute_uri(...)
-                      - pattern: request.read(...)
-                      - pattern: request.readline(...)
-                      - pattern: request.readlines(...)
-                      - patterns:
-                          - pattern-either: *chain-slices
-                          - metavariable-regex:
-                              metavariable: $INIT
-                              regex: ^(request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|json\.loads\(request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
+                  - pattern-either: *chain-slices
+                  - metavariable-regex:
+                      metavariable: $INIT
+                      regex: ^(request\.(GET|POST|COOKIES|META|FILES|headers|body|path|path_info|get_full_path\(\)|get_full_path_info\(\)|build_absolute_uri\([^()]*\))|json\.loads\(request\.body\))(\[[^\[\]]*\]|\.\w+(\([^()]*\))?)*$
               # Class-based views: View.setup() keeps the request on self.request and the URL
               # arguments on self.args and self.kwargs.
               - patterns:
@@ -568,8 +580,10 @@ rules:
       # headers and cookies, and its path (also "//evil.example/"), in place, sliced (OpenGrep
       # does not carry taint through a slice) or a slice of a variable assigned it; and the path in
       # a pure ASGI middleware's scope. (One item for both, so that the prefilter formula stays
-      # small: the ASGI scope is bound as $REQ too. A Starlette request is also a mapping of its
-      # scope, so request["path"] in a middleware is its path as well.)
+      # small: the ASGI scope is bound as $REQ too. The request attributes do not count in a
+      # `__call__(self, scope, receive, send)`, which any callable class may have; only
+      # scope["path"] does there. A Starlette request is also a mapping of its scope, so
+      # request["path"] in a middleware is its path as well.)
       - patterns:
           - pattern-either:
               - pattern-inside: |
@@ -585,27 +599,32 @@ rules:
                   def __call__(self, $REQ, $RECEIVE, $SEND):
                     ...
           - pattern-either:
-              - pattern: $REQ.url.path
-              - pattern: $REQ.query_params
-              - pattern: $REQ.path_params
-              - pattern: $REQ.headers
-              - pattern: $REQ.cookies
-              - pattern: $REQ.url.path[$LOWER:]
-              - pattern: $REQ.url.path[:$UPPER]
-              - pattern: $REQ.url.path[$LOWER:$UPPER]
               - patterns:
-                  - pattern-inside: |
-                      $PATH = $REQ.url.path
-                      ...
-                  - pattern-not-inside: |
-                      $PATH = $REQ.url.path
-                      ...
-                      $PATH = $OTHER
-                      ...
                   - pattern-either:
-                      - pattern: $PATH[$LOWER:]
-                      - pattern: $PATH[:$UPPER]
-                      - pattern: $PATH[$LOWER:$UPPER]
+                      - pattern: $REQ.url.path
+                      - pattern: $REQ.query_params
+                      - pattern: $REQ.path_params
+                      - pattern: $REQ.headers
+                      - pattern: $REQ.cookies
+                      - pattern: $REQ.url.path[$LOWER:]
+                      - pattern: $REQ.url.path[:$UPPER]
+                      - pattern: $REQ.url.path[$LOWER:$UPPER]
+                      - patterns:
+                          - pattern-inside: |
+                              $PATH = $REQ.url.path
+                              ...
+                          - pattern-not-inside: |
+                              $PATH = $REQ.url.path
+                              ...
+                              $PATH = $OTHER
+                              ...
+                          - pattern-either:
+                              - pattern: $PATH[$LOWER:]
+                              - pattern: $PATH[:$UPPER]
+                              - pattern: $PATH[$LOWER:$UPPER]
+                  - pattern-not-inside: |
+                      def __call__(self, $REQ, $RECEIVE, $SEND):
+                        ...
               - pattern: $REQ["path"]
               - pattern: $REQ["path"][$LOWER:]
               - pattern: $REQ["path"][:$UPPER]

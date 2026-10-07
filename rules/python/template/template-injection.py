@@ -274,6 +274,13 @@ def django_count(request, pk):
     return HttpResponse(Template("<p>%s</p>" % pk).render(Context({})))
 
 
+# A function named like a class-based view's handler (get, post, ...) that takes (self, request,
+# ...) is taken for one also outside a class: its parameters after request count as URL arguments.
+def get(self, request, pk):
+    # todook: python.template-injection
+    return HttpResponse(Template("<p>%s</p>" % pk).render(Context({})))
+
+
 # A default value: Django passes the URL value when the pattern captures one.
 def django_default(request, layout="plain"):
     # todook: python.template-injection

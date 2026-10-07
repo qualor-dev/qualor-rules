@@ -998,6 +998,36 @@ class PlaceholderRedirectView(RedirectView):
     url = "https://%(host)s/"
 
 
+# get_redirect_url() is the view's method only when written directly in the RedirectView
+# subclass: one defined under an if is missed; a nested function or a nested class's method of
+# that name is not the view's (Django never calls it).
+class FlaggedRedirectView(RedirectView):
+    if settings.DEBUG:
+        def get_redirect_url(self, *args, **kwargs):
+            # todoruleid: python.open-redirect
+            return kwargs["target"]
+
+
+class HelperRedirectView(RedirectView):
+    def get(self, *args, **kwargs):
+        def get_redirect_url(target):
+            # ok: python.open-redirect
+            return target
+        return super().get(*args, **kwargs)
+
+    class Links:
+        def get_redirect_url(self, target):
+            # ok: python.open-redirect
+            return target
+
+
+# A function named like a class-based view's handler (get, post, ...) that takes (self, request,
+# ...) is taken for one also outside a class: its parameters after request count as URL arguments.
+def get(self, request, target):
+    # todook: python.open-redirect
+    return django_redirect(target)
+
+
 # FastAPI: RedirectResponse, and a path operation with response_class=RedirectResponse.
 class Checkout(BaseModel):
     cart_id: str
@@ -1098,6 +1128,10 @@ class TrailingSlashMiddleware(BaseHTTPMiddleware):
         if "next" in request.query_params:
             # ruleid: python.open-redirect
             return RedirectResponse(request.query_params["next"])
+        # A Starlette request is a mapping of its ASGI scope: request["path"] is its path.
+        if request["path"].startswith("/old/"):
+            # ruleid: python.open-redirect
+            return RedirectResponse(request["path"][4:])
         if request.url.path.startswith("/account/"):
             # ok: python.open-redirect
             return RedirectResponse(str(request.url_for("login")) + "?next=" + request.url.path)
@@ -1128,6 +1162,15 @@ class AsgiSlashMiddleware:
             await response(scope, receive, send)
             return
         await self.app(scope, receive, send)
+
+
+
+# A callable class with three parameters is not an ASGI middleware by that alone: only its first
+# parameter's "path" item counts there, not the attributes of a Starlette request.
+class EventHandler:
+    def __call__(self, event, context, extra):
+        # ok: python.open-redirect
+        return RedirectResponse(event.headers["Location"])
 
 
 # FastAPI and Starlette: a Location header on a Response parameter, a response made in place or

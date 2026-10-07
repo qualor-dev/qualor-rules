@@ -212,6 +212,13 @@ def django_square(request, pk):
     return HttpResponse(str(eval("%s ** 2" % pk)))
 
 
+# A function named like a class-based view's handler (get, post, ...) that takes (self, request,
+# ...) is taken for one also outside a class: its parameters after request count as URL arguments.
+def get(self, request, pk):
+    # todook: python.code-injection
+    return HttpResponse(str(eval("%s ** 2" % pk)))
+
+
 # A default value: Django passes the URL value when the pattern captures one.
 def django_default(request, expr="1"):
     # todook: python.code-injection

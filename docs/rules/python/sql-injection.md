@@ -106,6 +106,9 @@ def orders():
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
   (`q = q.strip()`, also `q = q + request.args["b"]` or a fallback `q = request.form["q"]`), is
   missed.
+- A function named like a class-based view's handler (`get`, `post`, ..., `dispatch`) that takes
+  `(self, request, ...)` in a Django module is taken for one also outside a class: its parameters
+  after `request` count as URL arguments.
 <!-- end: known-limits -->
 
 ## References

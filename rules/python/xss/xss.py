@@ -693,6 +693,13 @@ def django_post(request, pk):
     return HttpResponse(f"<p>Post {pk}</p>")
 
 
+# A function named like a class-based view's handler (get, post, ...) that takes (self, request,
+# ...) is taken for one also outside a class: its parameters after request count as URL arguments.
+def get(self, request, pk):
+    # todook: python.xss
+    return HttpResponse(f"<p>Post {pk}</p>")
+
+
 # A default value: Django passes the URL value when the pattern captures one.
 def django_page(request, page="1"):
     # todook: python.xss

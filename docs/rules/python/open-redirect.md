@@ -22,7 +22,9 @@ the current request's path counts as request data too: middleware runs for every
 `//evil.example/`, so a redirect that starts with the path (`request.path + "/"`) can send the
 browser to another host. A host before the path (`"https://www.example.com" +
 request.get_full_path()`) keeps it on that host and is not reported. In Starlette and FastAPI
-middleware, the request's query parameters, path parameters, headers and cookies count as well.
+middleware, the request's query parameters, path parameters, headers and cookies count as well,
+and so does `request["path"]` (a Starlette request is a mapping of its ASGI scope); in a pure ASGI
+middleware's `__call__(self, scope, receive, send)`, `scope["path"]`.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -121,7 +123,9 @@ def after_login():
   `Location` or `location` (`LOCATION` is missed), on a response made by one of the common
   response classes and factories (a response from your own helper or another class is not
   followed). A `RedirectView` whose `url` attribute is filled
-  from URL arguments (`url = "https://%(host)s/"`) is not reported.
+  from URL arguments (`url = "https://%(host)s/"`) is not reported, nor is a
+  `get_redirect_url()` defined under an `if` in the class body (one written directly in the class
+  is; a nested function or a nested class's method of that name is not the view's).
 - Values returned by a database query or another call are taken for stored data, unless the call
   receives request data whole; a request value passed to such a call through a variable is missed.
 - An allow-list is recognised only as a lookup in a module-level dict of literals assigned to an
@@ -129,6 +133,9 @@ def after_login():
 - Request sources are recognised by their shape: a Flask `<int:n>` route parameter and a numeric
   Django URL argument still count as request data, and a function whose first parameter is named
   `request` in a Django module is taken for a view.
+- A function named like a class-based view's handler (`get`, `post`, ..., `dispatch`) that takes
+  `(self, request, ...)` in a Django module is taken for one also outside a class: its parameters
+  after `request` count as URL arguments.
 <!-- end: known-limits -->
 
 ## References

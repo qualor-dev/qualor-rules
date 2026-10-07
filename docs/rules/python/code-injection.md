@@ -88,6 +88,9 @@ def report():
   for a view; a Flask view parameter annotated `int` is not a source. Only a top-level Django
   import counts: a module that imports Django only inside `if TYPE_CHECKING:` or `try:` is not
   checked for Django views.
+- A function named like a class-based view's handler (`get`, `post`, ..., `dispatch`) that takes
+  `(self, request, ...)` in a Django module is taken for one also outside a class: its parameters
+  after `request` count as URL arguments.
 <!-- end: known-limits -->
 
 ## References

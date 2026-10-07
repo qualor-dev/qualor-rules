@@ -509,6 +509,13 @@ def django_sleep(request, pk):
     return HttpResponse("ok")
 
 
+# A function named like a class-based view's handler (get, post, ...) that takes (self, request,
+# ...) is taken for one also outside a class: its parameters after request count as URL arguments.
+def get(self, request, pk):
+    # todook: python.command-injection
+    os.system("sleep %s" % pk)
+
+
 # A default value: Django passes the URL value when the pattern captures one.
 def django_default(request, seconds="1"):
     # todook: python.command-injection
