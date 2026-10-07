@@ -45,12 +45,14 @@ rules:
     #   is not a sink either.
     # - A pattern first validated by a constant pattern (`if (!/^[\w ]+$/.test(word)) return`) and
     #   a value stripped of everything but letters and digits (`q.replace(/[^a-z0-9]/gi, '')`) are
-    #   still reported. Hand-written escaping is recognised only in its common form (a global
-    #   replace() or replaceAll() with one character class that holds every syntax character, and
-    #   the "\\$&" replacement), inline or in a local helper whose body only returns it, declared
-    #   before the call; a helper declared after the call, a replacement function, a pattern held
-    #   in a constant and helpers of other modules are still reported (MDN advises
-    #   RegExp.escape() over hand-written escaping).
+    #   still reported. Hand-written escaping is recognised only in its common form (a global, not
+    #   sticky replace() or replaceAll() with one character class that names every syntax
+    #   character, and the "\\$&" replacement), inline or in a local helper whose body only returns
+    #   it, declared before the call; a helper declared after the call, a replacement function, a
+    #   pattern held in a constant, helpers of other modules and a class that holds the syntax
+    #   characters only inside a range (`[!-~]`) are still reported (MDN advises RegExp.escape()
+    #   over hand-written escaping). A call chained after an escape written in place
+    #   (`.replace(/\\/g, '')`, which takes the escapes out again) is not checked.
     # - A check against a literal allow-list is followed only with an early return or throw
     #   (`if (!LIST.includes(x)) return ...;`, also has() on a Set) on a const array or Set of
     #   string literals (also in Object.freeze) that the file never changes; the check as the
@@ -372,7 +374,8 @@ rules:
       # lodash/escapeRegExp, lodash.escaperegexp) and escape-string-regexp, bound to their imports.
       - pattern: RegExp.escape(...)
       # The common hand-written escape, `s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')` (also
-      # replaceAll): a global regular expression that is one character class, not negated, holding
+      # replaceAll): a global, not sticky regular expression (with y, replace() stops at the first
+      # character outside the class) that is one character class, not negated, holding
       # each syntax character (^ $ \ . * + ? ( ) [ ] { } |) as itself or escaped, and the
       # replacement "\\$&" (a backslash before the whole match). The class is read token by
       # token (`\` and the next character, or one character other than `]`), so a character
@@ -386,7 +389,7 @@ rules:
           - metavariable-regex:
               metavariable: $SPECIAL
               regex: >-
-                ^/\[(?!\^)(?=(?:[^\]\\]|\\.)*?\\?\^)(?=(?:[^\]\\]|\\.)*?\\?\$)(?=(?:[^\]\\]|\\.)*?\\\\)(?=(?:[^\]\\]|\\.)*?\\?\.)(?=(?:[^\]\\]|\\.)*?\\?\*)(?=(?:[^\]\\]|\\.)*?\\?\+)(?=(?:[^\]\\]|\\.)*?\\?\?)(?=(?:[^\]\\]|\\.)*?\\?\()(?=(?:[^\]\\]|\\.)*?\\?\))(?=(?:[^\]\\]|\\.)*?\\?\[)(?=(?:[^\]\\]|\\.)*?\\\])(?=(?:[^\]\\]|\\.)*?\\?\{)(?=(?:[^\]\\]|\\.)*?\\?\})(?=(?:[^\]\\]|\\.)*?\\?\|)(?:[^\]\\]|\\.)+\]/(?=[a-z]*g)[a-z]*$
+                ^/\[(?!\^)(?=(?:[^\]\\]|\\.)*?\\?\^)(?=(?:[^\]\\]|\\.)*?\\?\$)(?=(?:[^\]\\]|\\.)*?\\\\)(?=(?:[^\]\\]|\\.)*?\\?\.)(?=(?:[^\]\\]|\\.)*?\\?\*)(?=(?:[^\]\\]|\\.)*?\\?\+)(?=(?:[^\]\\]|\\.)*?\\?\?)(?=(?:[^\]\\]|\\.)*?\\?\()(?=(?:[^\]\\]|\\.)*?\\?\))(?=(?:[^\]\\]|\\.)*?\\?\[)(?=(?:[^\]\\]|\\.)*?\\\])(?=(?:[^\]\\]|\\.)*?\\?\{)(?=(?:[^\]\\]|\\.)*?\\?\})(?=(?:[^\]\\]|\\.)*?\\?\|)(?:[^\]\\]|\\.)+\]/(?=[a-z]*g)(?![a-z]*y)[a-z]*$
           - metavariable-regex:
               metavariable: $INSERT
               regex: ^(["'`])\\\\\$&\1$
@@ -415,7 +418,7 @@ rules:
           - metavariable-regex:
               metavariable: $SPECIAL
               regex: >-
-                ^/\[(?!\^)(?=(?:[^\]\\]|\\.)*?\\?\^)(?=(?:[^\]\\]|\\.)*?\\?\$)(?=(?:[^\]\\]|\\.)*?\\\\)(?=(?:[^\]\\]|\\.)*?\\?\.)(?=(?:[^\]\\]|\\.)*?\\?\*)(?=(?:[^\]\\]|\\.)*?\\?\+)(?=(?:[^\]\\]|\\.)*?\\?\?)(?=(?:[^\]\\]|\\.)*?\\?\()(?=(?:[^\]\\]|\\.)*?\\?\))(?=(?:[^\]\\]|\\.)*?\\?\[)(?=(?:[^\]\\]|\\.)*?\\\])(?=(?:[^\]\\]|\\.)*?\\?\{)(?=(?:[^\]\\]|\\.)*?\\?\})(?=(?:[^\]\\]|\\.)*?\\?\|)(?:[^\]\\]|\\.)+\]/(?=[a-z]*g)[a-z]*$
+                ^/\[(?!\^)(?=(?:[^\]\\]|\\.)*?\\?\^)(?=(?:[^\]\\]|\\.)*?\\?\$)(?=(?:[^\]\\]|\\.)*?\\\\)(?=(?:[^\]\\]|\\.)*?\\?\.)(?=(?:[^\]\\]|\\.)*?\\?\*)(?=(?:[^\]\\]|\\.)*?\\?\+)(?=(?:[^\]\\]|\\.)*?\\?\?)(?=(?:[^\]\\]|\\.)*?\\?\()(?=(?:[^\]\\]|\\.)*?\\?\))(?=(?:[^\]\\]|\\.)*?\\?\[)(?=(?:[^\]\\]|\\.)*?\\\])(?=(?:[^\]\\]|\\.)*?\\?\{)(?=(?:[^\]\\]|\\.)*?\\?\})(?=(?:[^\]\\]|\\.)*?\\?\|)(?:[^\]\\]|\\.)+\]/(?=[a-z]*g)(?![a-z]*y)[a-z]*$
           - metavariable-regex:
               metavariable: $INSERT
               regex: ^(["'`])\\\\\$&\1$

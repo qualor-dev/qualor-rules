@@ -85,9 +85,12 @@ app.get('/search', (req, res) => {
   `value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')` (also `replaceAll`), whose character class holds
   every syntax character `^ $ \ . * + ? ( ) [ ] { } |`, written in place or in a helper of the
   same file that only returns it and is declared before the call. An escape that misses a
-  character or the `g` flag is reported, as it should be; a helper declared after the call, a
-  replacement function, a pattern kept in a constant and helpers of other modules are reported
-  too. MDN advises `RegExp.escape()` over hand-written escaping.
+  character or the `g` flag, or has the sticky `y` flag, is reported, as it should be; a helper
+  declared after the call, a replacement function, a pattern kept in a constant, helpers of other
+  modules and a class that covers the characters only with a range (`[!-~]`) are reported too.
+  A call chained after an escape written in place is not checked, so one that removes the
+  escapes again (`.replace(/\\/g, '')`) is missed. MDN advises `RegExp.escape()` over
+  hand-written escaping.
 - An allow-list check is recognised only as an early `return` or `throw` after `includes()` or
   `has()` on a constant list of string literals; the same check as the condition of an `if` around
   the use is not. The check covers the value up to its next assignment; an assignment inside a
