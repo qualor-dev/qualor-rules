@@ -13,7 +13,9 @@ Code that turns off TLS certificate verification in an HTTP or TLS client:
 - `verify=False` in `requests` and `httpx` calls, on a `requests.Session` or an `httpx` client;
 - `ssl._create_unverified_context()`, and an SSL context with `check_hostname = False` and
   `verify_mode = ssl.CERT_NONE`;
-- urllib3's `cert_reqs="CERT_NONE"`.
+- urllib3's `cert_reqs="CERT_NONE"`;
+- the legacy `ssl.wrap_socket()` on the client side, which accepts any certificate unless
+  `cert_reqs` asks for one (a socket wrapped with `server_side=True` is not reported).
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -61,6 +63,9 @@ def fetch_status():
 - Keep the default verification.
 - To trust a private CA, pass its bundle: `verify="/path/to/ca.pem"` in `requests` or `httpx`,
   `ca_certs=...` in urllib3, or an SSL context from `ssl.create_default_context(cafile=...)`.
+- Replace `ssl.wrap_socket(sock)` with
+  `ssl.create_default_context().wrap_socket(sock, server_hostname=host)`, which checks the
+  certificate and the host name.
 - For local development, add your development CA to the bundle rather than turning checks off in
   code that may ship.
 <!-- end: how-to-fix -->
@@ -83,7 +88,9 @@ def fetch_status():
   libraries' switches (boto3 `verify=False`, aiohttp `ssl=False`) and a parameter whose default is
   `False` (`def f(url, verify=False)`) are not reported.
 - `check_hostname = False` alone (CWE-297) is a separate weakness and not reported here, and neither
-  is a bare `ssl.SSLContext()`, whose use as a client cannot be seen where it is made.
+  is a bare `ssl.SSLContext()`, whose use as a client cannot be seen where it is made. The same goes
+  for `ssl.wrap_socket()` with `cert_reqs=ssl.CERT_REQUIRED`: it checks the certificate but never
+  the host name.
 - An insecure context handed to a server API (`asyncio.start_server(..., ssl=ctx)`) is still
   reported.
 <!-- end: known-limits -->
@@ -107,6 +114,8 @@ def fetch_status():
 - <https://docs.python.org/3/library/ssl.html#ssl.Purpose.CLIENT_AUTH>
 - <https://docs.python.org/3/library/ssl.html#ssl.PROTOCOL_TLS_SERVER>
 - <https://docs.python.org/3/library/ssl.html#verifying-certificates>
+- <https://docs.python.org/3.11/library/ssl.html#ssl.wrap_socket>
+- <https://docs.python.org/3.11/library/ssl.html#ssl.CERT_OPTIONAL>
 - <https://peps.python.org/pep-0476/>
 - <https://urllib3.readthedocs.io/en/stable/user-guide.html#certificate-verification>
 - <https://urllib3.readthedocs.io/en/stable/reference/urllib3.poolmanager.html>

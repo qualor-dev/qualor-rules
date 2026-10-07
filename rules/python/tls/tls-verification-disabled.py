@@ -3,7 +3,7 @@ import os
 import socket
 import ssl
 import urllib.request
-from ssl import CERT_NONE, _create_unverified_context
+from ssl import CERT_NONE, _create_unverified_context, wrap_socket
 
 import boto3
 import certifi
@@ -371,6 +371,44 @@ def safe_ssl(url, host):
     return http.client.HTTPSConnection(host, context=ssl.create_default_context())
 
 
+# ssl.wrap_socket() (deprecated since Python 3.7): cert_reqs defaults to CERT_NONE, so the client
+# socket it makes accepts any certificate.
+def legacy_wrap_socket(host, certfile, keyfile):
+    sock = socket.create_connection((host, 443))
+    # ruleid: python.tls-verification-disabled
+    tls = ssl.wrap_socket(sock)
+    # The CA bundle is loaded, but nothing asks for it to be used.
+    # ruleid: python.tls-verification-disabled
+    bundled = ssl.wrap_socket(sock, ca_certs=CA_BUNDLE)
+    # ruleid: python.tls-verification-disabled
+    explicit = ssl.wrap_socket(sock, cert_reqs=ssl.CERT_NONE, ssl_version=ssl.PROTOCOL_TLS)
+    # ruleid: python.tls-verification-disabled
+    client_cert = ssl.wrap_socket(sock, keyfile, certfile, False, ssl.CERT_NONE)
+    # ruleid: python.tls-verification-disabled
+    client_side = ssl.wrap_socket(sock, server_side=False, certfile=certfile)
+    # ruleid: python.tls-verification-disabled
+    imported = wrap_socket(sock, cert_reqs=CERT_NONE)
+    # ruleid: python.tls-verification-disabled
+    enum_none = ssl.wrap_socket(sock, keyfile, certfile, cert_reqs=ssl.VerifyMode.CERT_NONE)
+    return tls, bundled, explicit, client_cert, client_side, imported, enum_none
+
+
+def safe_wrap_socket(host, certfile, keyfile, conn):
+    sock = socket.create_connection((host, 443))
+    # A server socket: CERT_NONE there means "ask the client for no certificate".
+    # ok: python.tls-verification-disabled
+    server = ssl.wrap_socket(conn, server_side=True, certfile=certfile, keyfile=keyfile)
+    # ok: python.tls-verification-disabled
+    positional_server = ssl.wrap_socket(conn, keyfile, certfile, True)
+    # cert_reqs from the configuration: the deployment decides.
+    # ok: python.tls-verification-disabled
+    configured = ssl.wrap_socket(sock, cert_reqs=settings.TLS_CERT_REQS, ca_certs=CA_BUNDLE)
+    # The documented replacement: a default context checks the chain and the host name.
+    # ok: python.tls-verification-disabled
+    modern = ssl.create_default_context().wrap_socket(sock, server_hostname=host)
+    return server, positional_server, configured, modern
+
+
 # A generic context the function then wraps on the server side of a connection.
 def generic_server(certfile, keyfile, port):
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS)
@@ -442,7 +480,9 @@ def look_alikes(token, key, url, api, form: Form, settings_obj):
     settings_obj.verify_mode = "none"
     # ok: python.tls-verification-disabled
     report = {"verify": False, "url": url}
-    return claims, report
+    # ok: python.tls-verification-disabled
+    wrapped = api.wrap_socket(url)
+    return claims, report, wrapped
 
 
 # Known limits.
@@ -464,6 +504,12 @@ def known_limits(url, payload, make_session, host):
     ctx.check_hostname = False
     # todoruleid: python.tls-verification-disabled
     pool = urllib3.PoolManager(assert_hostname=False)
+    # ssl.wrap_socket() checks the chain with CERT_REQUIRED, but never the host name.
+    sock = socket.create_connection((host, 443))
+    # todoruleid: python.tls-verification-disabled
+    legacy = ssl.wrap_socket(sock, cert_reqs=ssl.CERT_REQUIRED, ca_certs=CA_BUNDLE)
+    # todoruleid: python.tls-verification-disabled
+    optional = ssl.wrap_socket(sock, None, None, False, ssl.CERT_OPTIONAL, ca_certs=CA_BUNDLE)
     # A context made by the SSLContext constructor without PROTOCOL_TLS_CLIENT verifies nothing
     # by default; whether it serves a client is not known where it is made.
     generic = ssl.SSLContext(ssl.PROTOCOL_TLS)
@@ -476,7 +522,7 @@ def known_limits(url, payload, make_session, host):
     # Other libraries' TLS switches are not in this rule (boto3, aiohttp, ...).
     # todoruleid: python.tls-verification-disabled
     s3 = boto3.client("s3", verify=False)
-    return transport, pool, s3
+    return transport, pool, legacy, optional, s3
 
 
 # A parameter whose default is False is configurable by the caller; it is not reported.

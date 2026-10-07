@@ -4,11 +4,13 @@ rules:
     severity: ERROR
     message: >-
       TLS certificate verification is turned off here (requests or httpx `verify=False`, an
-      unverified ssl context, `check_hostname = False` with `CERT_NONE`, or urllib3
-      `cert_reqs='CERT_NONE'`). The client then accepts any certificate for any host, so anyone on
+      unverified ssl context, `check_hostname = False` with `CERT_NONE`, urllib3
+      `cert_reqs='CERT_NONE'`, or the legacy `ssl.wrap_socket()`, which verifies nothing by
+      default). The client then accepts any certificate for any host, so anyone on
       the network path can read and change the traffic. Keep the default verification; to trust
       a private CA, pass its bundle (`verify='/path/to/ca.pem'`, `ca_certs=...`) or a context
-      from `ssl.create_default_context(cafile=...)`.
+      from `ssl.create_default_context(cafile=...)`, and wrap sockets with that context's
+      `wrap_socket(sock, server_hostname=host)`.
     metadata:
       title: TLS certificate verification disabled (Python)
       cwe: ['CWE-295']
@@ -35,6 +37,8 @@ rules:
         - https://docs.python.org/3/library/ssl.html#ssl.Purpose.CLIENT_AUTH
         - https://docs.python.org/3/library/ssl.html#ssl.PROTOCOL_TLS_SERVER
         - https://docs.python.org/3/library/ssl.html#verifying-certificates
+        - https://docs.python.org/3.11/library/ssl.html#ssl.wrap_socket
+        - https://docs.python.org/3.11/library/ssl.html#ssl.CERT_OPTIONAL
         - https://peps.python.org/pep-0476/
         - https://urllib3.readthedocs.io/en/stable/user-guide.html#certificate-verification
         - https://urllib3.readthedocs.io/en/stable/reference/urllib3.poolmanager.html
@@ -74,7 +78,9 @@ rules:
     # - httpx.HTTPTransport(verify=False): the httpx documentation does not describe the
     #   transports' verify option, so it is not in the rule.
     # - check_hostname = False alone, and urllib3 assert_hostname=False, turn off the host name
-    #   check while the chain is still verified (CWE-297); not reported by this rule.
+    #   check while the chain is still verified (CWE-297); not reported by this rule. Neither is
+    #   ssl.wrap_socket() with cert_reqs CERT_REQUIRED or CERT_OPTIONAL, which verifies the chain
+    #   but never matches the host name.
     # - ssl.SSLContext(PROTOCOL_TLS) (or no protocol) verifies nothing by default; whether it
     #   serves a client is not known where it is made, so its use by a client is not reported.
     # - The unverified context looked up with getattr(ssl, "_create_unverified_context").
@@ -167,6 +173,27 @@ rules:
       # ssl: the unverified context (PEP 476) and its old name.
       - pattern: ssl._create_unverified_context
       - pattern: ssl._create_stdlib_context
+      # ssl.wrap_socket() (deprecated since Python 3.7): its cert_reqs defaults to CERT_NONE, so
+      # the client socket it makes accepts any certificate unless cert_reqs (keyword, or the
+      # fifth argument) asks for one. A socket wrapped with a server_side argument other than
+      # False is left alone: CERT_NONE on a server only means "no client certificate".
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern: ssl.wrap_socket(...)
+                  - pattern-not: ssl.wrap_socket(..., cert_reqs=$REQS, ...)
+                  - pattern-not: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, $REQS, ...)
+              - pattern: ssl.wrap_socket(..., cert_reqs=ssl.CERT_NONE, ...)
+              - pattern: ssl.wrap_socket(..., cert_reqs=ssl.VerifyMode.CERT_NONE, ...)
+              - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, ssl.CERT_NONE, ...)
+              - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SERVER, ssl.VerifyMode.CERT_NONE, ...)
+          - pattern-either:
+              - patterns:
+                  - pattern: ssl.wrap_socket(...)
+                  - pattern-not: ssl.wrap_socket(..., server_side=$SIDE, ...)
+                  - pattern-not: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, $SIDE, ...)
+              - pattern: ssl.wrap_socket(..., server_side=False, ...)
+              - pattern: ssl.wrap_socket($SOCK, $KEYFILE, $CERTFILE, False, ...)
       # ssl: hostname checking off and CERT_NONE on the same context (either order), unless the
       # context is made for a server, where CERT_NONE only means "no client certificate".
       - patterns:
