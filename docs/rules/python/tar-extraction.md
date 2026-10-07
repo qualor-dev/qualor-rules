@@ -19,6 +19,9 @@ archive comes from:
   `fully_trusted` filter: `filter="fully_trusted"`, `tarfile.fully_trusted_filter`, or a filter
   that returns each member unchanged (`lambda member, path: member`, also set as
   `extraction_filter`);
+- the Python documentation's fallbacks for versions without filters, which extract unfiltered
+  there: a call without a filter in the `else` branch of `if hasattr(tarfile, "data_filter")`,
+  and `getattr(tarfile, "data_filter", lambda member, path: member)`;
 - `shutil.unpack_archive()` with no filter or the same unsafe ones, unless the archive is a zip
   (`format="zip"` or a literal `.zip` file name).
 
@@ -28,6 +31,9 @@ function or module, in a `with` statement, as a parameter typed `tarfile.TarFile
 `tarfile.tar_filter`, or a filter function of your own. So is a check of each member before
 extracting it: an `if` in a loop over the archive, on the member or a path computed from it, that
 raises, returns or exits (or, for `extract()` inside the loop, skips the member with `continue`).
+A check on a character prefix stays reported, since `/srv/data-evil` starts with `/srv/data`:
+`startswith(root)` without a separator at the end, and `os.path.commonprefix()`. Compare with
+`os.path.commonpath()`, or with `root + os.sep`.
 Other archive libraries (`zipfile`, `py7zr`) are not reported, and test code is not scanned.
 <!-- end: what-it-finds -->
 
@@ -59,8 +65,8 @@ def install_release(archive_path, dest):
         tar.extractall(dest)
 ```
 
-**Compliant:** the `data` filter refuses absolute names, members outside `dest`, links that
-leave it, and device files.
+**Compliant:** the `data` filter strips leading slashes from names, refuses members that would
+land outside `dest` and links that point outside it or to absolute paths, and refuses device files.
 
 ```python
 import tarfile
@@ -98,7 +104,15 @@ def install_release(archive_path, dest):
   is not followed.
 - Options passed as a dict (`extractall(dest, **opts)`) are not read and not reported.
 - Any check of the member that raises, returns or exits counts, even one that does not look at
-  its name or links, and even one nested in another condition.
+  its path (`if not member.isfile(): continue` lets a regular file named `../x` through), one
+  made by a helper function in the condition, and one nested in another condition. A literal
+  prefix (`startswith("/srv/data")`) is not judged.
+- Checks of the member names before extraction do not stop links: a symbolic or hard link
+  member can point outside the directory and a later member be written through it. Only the
+  `data` filter refuses such links.
+- A named filter function that returns each member unchanged is not reported.
+- A prefix that ends in a separator but is kept in a variable (`prefix = root + os.sep`) is
+  taken for a character prefix, so its check is reported.
 - Checks the rule does not read are reported: a check in a helper function, a `members=`
   generator that yields only checked members, an `if` with more than one statement before its
   exit, and an exit by `break`.
