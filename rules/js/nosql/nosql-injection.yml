@@ -60,6 +60,13 @@ rules:
     #   by `mongoose.model(...)` in the same file or an import from a path with a `models` segment.
     # - Code after `mongoose.set('sanitizeFilter', true)` in the same file is not checked for
     #   operator injection, also on driver collections, which that setting does not cover.
+    # Performance: OpenGrep builds the rule's prefilter (the words a file must hold) again for
+    # every file it scans, by multiplying the positive terms (pattern-inside, metavariable-regex,
+    # nested patterns blocks) of all sources; exclusions cost nothing. The request sources are
+    # the shared block of the JS taint rules; this rule's own OBJ sources each have one positive
+    # term, the value, with the handlers it must sit in as exclusions (with them as positive
+    # terms the prefilter took 1.2 s per scan and file). `opengrep-core -prefilter_of_rules` must
+    # stay near a plain rule's 0.1 s.
     pattern-sources:
       # Express: the request object, the first parameter of a handler `(req, res, ...)`, carries
       # the query string, route parameters (`/users/:id`), body, headers, cookies and the URL.
@@ -329,16 +336,14 @@ rules:
                     regex: ^(?!(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$)
           - focus-metavariable: $V
       # Operator injection needs a value that can be an object: the parsed JSON body and the
-      # query string (Express 4's default extended parser builds objects from `a[$ne]=1`).
+      # query string (Express 4's default extended parser builds objects from `a[$ne]=1`), in an
+      # Express handler or a Fastify route handler. Written as "a value that is not outside these
+      # handlers" (a pattern-not of the value with each handler as a pattern-not-inside), so that
+      # OpenGrep's prefilter takes only the value as a term: each positive term of a source
+      # multiplies the clauses it builds over all sources (see Performance above).
       - label: OBJ
         patterns:
-          - pattern-either:
-              - pattern-inside: function ($REQ, $RES, ...) { ... }
-              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
-          - metavariable-regex:
-              metavariable: $RES
-              regex: ^(res|resp|response|reply|rep|h|ctx|next|_res|_response)$
-          - pattern-either:
+          - pattern-either: &obj-values
               - pattern: $REQ.query
               - pattern: $REQ.body
               - patterns:
@@ -352,36 +357,30 @@ rules:
                       - pattern: 'var {..., body: $V, ...} = $REQ;'
                   - pattern: 'var {..., $F: $V, ...} = $REQ;'
                   - focus-metavariable: $F
-          # Fastify validates a body against the route's schema (Ajv cannot turn an object into a
-          # string), so routes that declare schema.body are left out.
-          - pattern-not-inside: '$APP.$ROUTE($PATH, {..., schema: {..., body: $BODY, ...}, ...}, ...)'
-          - pattern-not-inside: '$APP.route({..., schema: {..., body: $BODY, ...}, ...})'
-      - label: OBJ
-        patterns:
-          - pattern-either:
-              - patterns:
-                  - pattern-inside: $APP.$ROUTE($PATH, ..., function ($REQ) { ... })
-                  - metavariable-regex:
-                      metavariable: $ROUTE
-                      regex: ^(get|head|post|put|delete|options|patch|all)$
-                  - metavariable-regex:
-                      metavariable: $PATH
-                      regex: ^["'`]/
-              - pattern-inside: '$APP.route({..., handler: function ($REQ) { ... }, ...})'
-          - pattern-either:
-              - pattern: $REQ.query
-              - pattern: $REQ.body
-              - patterns:
-                  - pattern-either:
-                      - pattern: 'var {..., query: $V, ...} = $REQ;'
-                      - pattern: 'var {..., body: $V, ...} = $REQ;'
-                  - focus-metavariable: $V
-              - patterns:
-                  - pattern-either:
-                      - pattern: 'var {..., query: $V, ...} = $REQ;'
-                      - pattern: 'var {..., body: $V, ...} = $REQ;'
-                  - pattern: 'var {..., $F: $V, ...} = $REQ;'
-                  - focus-metavariable: $F
+          - pattern-not:
+              patterns:
+                - pattern-either: *obj-values
+                # Express: a handler `(req, res, ...)`.
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-either:
+                          - pattern-inside: function ($REQ, $RES, ...) { ... }
+                          - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+                      - metavariable-regex:
+                          metavariable: $RES
+                          regex: ^(res|resp|response|reply|rep|h|ctx|next|_res|_response)$
+                # Fastify: a route handler that may take only the request.
+                - pattern-not-inside:
+                    pattern-either:
+                      - patterns:
+                          - pattern-inside: $APP.$ROUTE($PATH, ..., function ($REQ) { ... })
+                          - metavariable-regex:
+                              metavariable: $ROUTE
+                              regex: ^(get|head|post|put|delete|options|patch|all)$
+                          - metavariable-regex:
+                              metavariable: $PATH
+                              regex: ^["'`]/
+                      - pattern-inside: '$APP.route({..., handler: function ($REQ) { ... }, ...})'
           # Fastify validates a body against the route's schema (Ajv cannot turn an object into a
           # string), so routes that declare schema.body are left out.
           - pattern-not-inside: '$APP.$ROUTE($PATH, {..., schema: {..., body: $BODY, ...}, ...}, ...)'
@@ -453,14 +452,19 @@ rules:
           - focus-metavariable: $V
       - label: OBJ
         patterns:
-          - pattern-either:
-              - pattern-inside: function $METHOD($REQ, ...) { ... }
-              - pattern-inside: |
-                  $METHOD = function ($REQ, ...) { ... }
-          - metavariable-regex:
-              metavariable: $METHOD
-              regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
           - pattern: $REQ.json()
+          - pattern-not:
+              patterns:
+                - pattern: $REQ.json()
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-either:
+                          - pattern-inside: function $METHOD($REQ, ...) { ... }
+                          - pattern-inside: |
+                              $METHOD = function ($REQ, ...) { ... }
+                      - metavariable-regex:
+                          metavariable: $METHOD
+                          regex: ^(GET|HEAD|POST|PUT|DELETE|PATCH|OPTIONS)$
     pattern-sanitizers:
       - pattern: Number.parseInt(...)
       - pattern: Number.parseFloat(...)
