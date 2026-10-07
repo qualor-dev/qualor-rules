@@ -20,9 +20,9 @@ security limits, for a person to check what they parse:
   expansion.
 
 It covers `etree.XMLParser` (and `ETCompatXMLParser`, `XMLTreeBuilder`), `html.XHTMLParser`,
-`etree.XMLPullParser`, `etree.iterparse()` and `objectify.makeparser()`. A parser that also
-resolves external entities or allows network access is reported by
-[python.xxe](xxe.md) instead, once.
+`etree.XMLPullParser`, `etree.iterparse()` and `objectify.makeparser()`. A parser that [python.xxe](xxe.md) reports (external entities
+resolved, or network access with entities or a DTD) is left to it, so that each parser gets one
+finding; a parser with network access on, entities off and `huge_tree=True` is reported here.
 <!-- end: what-it-finds -->
 
 ## Why it matters
