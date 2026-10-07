@@ -17,7 +17,7 @@ Fastify, Next.js):
 - the command given to a shell program: the element after `sh -c` (or `bash -lc`, ...); every
   element after `cmd.exe /c` or `/k`; for PowerShell (`pwsh`, `powershell.exe`), every element
   after `-Command`, the command after `-CommandWithArgs` or `-EncodedCommand`, and the script
-  after `-File`.
+  after `-File` or given as the first positional element.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -92,8 +92,11 @@ app.get('/log', (req, res) => {
   (`spawn('sh', ['-c', cmd])`), not when it is built before.
 - PowerShell parameters are recognised by the names its documentation lists (`-Command`/`-c`,
   `-CommandWithArgs`/`-cwa`, `-EncodedCommand`/`-e`/`-ec`, `-File`/`-f`, in any case); other
-  shortened names (`-Comm`, `-enc`) are not. Request data after `-File` and its script is a
-  parameter of the script, and is not reported.
+  shortened names (`-Comm`, `-enc`) are not. Request data after `-File` and its script, or after
+  the command of `-CommandWithArgs`, is a parameter of the script or of the command, and is not
+  reported. For `pwsh`, a `.ps1` script given without `-File` is treated the same way, since
+  File is its default parameter; `powershell.exe` documents no default parameter, so there
+  `x.ps1 -c <request>` is reported as `-Command`.
 - `child_process` functions are recognised through `require()` and `import`, destructured or not,
   and `util.promisify()`; renamed imports (`exec as run`) are not.
 - Request handlers are recognised by the name of their second parameter (`res`, `reply`, `ctx`,

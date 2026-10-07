@@ -316,6 +316,25 @@ app.get('/pwsh', (req, res) => {
   spawn('pwsh', ['-WorkingDirectory', req.query.dir, '-Command', 'Get-ChildItem']);
   // ok: js.command-injection
   spawn('pwsh', ['-NoProfile', '-Command', 'Get-Date']);
+  // After the command of -cwa, every element fills $args, also one that reads like a parameter.
+  // ok: js.command-injection
+  spawn('pwsh', ['-cwa', 'Write-Output $args', '-c', req.query.name]);
+  // The first positional element is pwsh's File parameter: the script to run. It may follow
+  // switches, or parameters with their values.
+  // ruleid: js.command-injection
+  spawn('pwsh', [req.query.script]);
+  // ruleid: js.command-injection
+  spawn('pwsh', ['-NoProfile', '-NonInteractive', req.query.script, 'first']);
+  // ruleid: js.command-injection
+  spawnSync('pwsh.exe', ['-ExecutionPolicy', 'Bypass', req.query.script]);
+  // ok: js.command-injection
+  spawn('pwsh', ['./scripts/report.ps1', req.query.name]);
+  // ok: js.command-injection
+  spawn('pwsh', ['-NoProfile', './scripts/report.ps1', '-NoExit', req.query.name]);
+  // about_PowerShell_exe names no default parameter for powershell.exe, so a -c after a script
+  // given without -File is taken for -Command there.
+  // ruleid: js.command-injection
+  spawn('powershell.exe', ['./scripts/report.ps1', '-c', req.query.name]);
   // Shortened parameter names that the documentation does not list are not recognised.
   // todoruleid: js.command-injection
   spawn('pwsh', ['-Comm', req.query.cmd]);

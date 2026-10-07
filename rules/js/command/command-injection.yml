@@ -44,7 +44,12 @@ rules:
     #   (`spawn('sh', ['-c', cmd])`); an array built before the call is not.
     # - PowerShell parameters are recognised by the names about_pwsh lists (-Command/-c,
     #   -CommandWithArgs/-cwa, -EncodedCommand/-e/-ec, -File/-f; any case), for pwsh and
-    #   powershell.exe alike; other shortened names (`-Comm`, `-enc`) are not.
+    #   powershell.exe alike; other shortened names (`-Comm`, `-enc`) are not. A script given
+    #   without -File exempts the elements after it for pwsh only (File is pwsh's default
+    #   parameter); about_PowerShell_exe names no default parameter, so for powershell.exe
+    #   `x.ps1 -c <request>` is reported as -Command. A request value as the first positional
+    #   element (a script for pwsh) is reported; a positional script whose name does not end in
+    #   .ps1 is not recognised as one, so a switch name after it reads as pwsh's own.
     # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
     #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
     #   source, and a one-parameter callback given to get/post/... after a path literal (also on
@@ -326,14 +331,26 @@ rules:
               # element after -Command (-c) is part of the command; the first element after
               # -CommandWithArgs (-cwa) and the element after -EncodedCommand (-e, -ec) are the
               # command; the element after -File (-f) is the script to run. Not after -File (all
-              # later elements are the script's parameters) or, for pwsh, after a .ps1 script
-              # given without it (File is pwsh's default parameter).
+              # later elements are the script's parameters), after the command of -cwa (all
+              # later elements fill $args) or, for pwsh, after a .ps1 script given without -File
+              # (File is pwsh's default parameter). about_PowerShell_exe names no default
+              # parameter for powershell.exe, so there `x.ps1 -c <request>` is taken as -Command.
               - patterns:
                   - pattern-either:
                       - pattern: '$CALL("=~/(?i)^([a-z]:)?(.*[/\\])?(pwsh|powershell)(\.exe)?$/", [..., "=~/(?i)^-(c|command)$/", ..., $SCRIPT, ...], ...)'
                       - pattern: '$CALL("=~/(?i)^([a-z]:)?(.*[/\\])?(pwsh|powershell)(\.exe)?$/", [..., "=~/(?i)^-(cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", $SCRIPT, ...], ...)'
-                  - pattern-not: '$CALL($PS, [..., "=~/(?i)^-(f|file)$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...], ...)'
+                  - pattern-not: '$CALL($PS, [..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...], ...)'
                   - pattern-not: '$CALL("=~/(?i)^([a-z]:)?(.*[/\\])?pwsh(\.exe)?$/", [..., "=~/(?i)\.ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...], ...)'
+              # The first positional element, before any command parameter: for pwsh the script
+              # to run (File is the default parameter); for powershell.exe either a script or a
+              # command. Positional means first, or after a switch (about_pwsh's parameters
+              # without a value), or after a parameter with its value.
+              - patterns:
+                  - pattern-either:
+                      - pattern: '$CALL("=~/(?i)^([a-z]:)?(.*[/\\])?(pwsh|powershell)(\.exe)?$/", [$SCRIPT, ...], ...)'
+                      - pattern: '$CALL("=~/(?i)^([a-z]:)?(.*[/\\])?(pwsh|powershell)(\.exe)?$/", [..., "=~/(?i)^-(login|l|interactive|i|mta|sta|noexit|noe|nologo|nol|noninteractive|noni|noprofile|nop|noprofileloadtime|sshservermode|sshs)$/", $SCRIPT, ...], ...)'
+                      - pattern: '$CALL("=~/(?i)^([a-z]:)?(.*[/\\])?(pwsh|powershell)(\.exe)?$/", [..., "=~/(?i)^-(configurationfile|configurationname|config|custompipename|executionpolicy|ex|ep|inputformat|inp|if|outputformat|o|of|settingsfile|settings|windowstyle|w|workingdirectory|wd|wo|psconsolefile)$/", $VALUE, $SCRIPT, ...], ...)'
+                  - pattern-not: '$CALL($PS, [..., "=~/(?i)(^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$|\.ps1$)/", ..., $SCRIPT, ...], ...)'
           - focus-metavariable: $SCRIPT
       # util.promisify() of exec or execFile, as in the Node.js documentation.
       - patterns:
