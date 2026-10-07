@@ -567,7 +567,9 @@ rules:
       # @app.middleware("http") function) see every request: its query string, path parameters,
       # headers and cookies, and its path (also "//evil.example/"), in place, sliced (OpenGrep
       # does not carry taint through a slice) or a slice of a variable assigned it; and the path in
-      # a pure ASGI middleware's scope.
+      # a pure ASGI middleware's scope. (One item for both, so that the prefilter formula stays
+      # small: the ASGI scope is bound as $REQ too. A Starlette request is also a mapping of its
+      # scope, so request["path"] in a middleware is its path as well.)
       - patterns:
           - pattern-either:
               - pattern-inside: |
@@ -578,6 +580,9 @@ rules:
               - pattern-inside: |
                   @$APP.middleware("http")
                   def $MW($REQ, $CALL_NEXT):
+                    ...
+              - pattern-inside: |
+                  def __call__(self, $REQ, $RECEIVE, $SEND):
                     ...
           - pattern-either:
               - pattern: $REQ.url.path
@@ -601,15 +606,10 @@ rules:
                       - pattern: $PATH[$LOWER:]
                       - pattern: $PATH[:$UPPER]
                       - pattern: $PATH[$LOWER:$UPPER]
-      - patterns:
-          - pattern-inside: |
-              def __call__(self, $SCOPE, $RECEIVE, $SEND):
-                ...
-          - pattern-either:
-              - pattern: $SCOPE["path"]
-              - pattern: $SCOPE["path"][$LOWER:]
-              - pattern: $SCOPE["path"][:$UPPER]
-              - pattern: $SCOPE["path"][$LOWER:$UPPER]
+              - pattern: $REQ["path"]
+              - pattern: $REQ["path"][$LOWER:]
+              - pattern: $REQ["path"][:$UPPER]
+              - pattern: $REQ["path"][$LOWER:$UPPER]
       # Django's RedirectView.get_redirect_url(*args, **kwargs): its arguments are the ones
       # captured from the URL pattern.
       - patterns:
@@ -617,19 +617,33 @@ rules:
               - pattern-inside: |
                   class $CLS(..., django.views.generic.RedirectView, ...):
                     ...
+                    def get_redirect_url(self, ..., $PARAM, ...):
+                      ...
+              - pattern-inside: |
+                  class $CLS(..., django.views.generic.RedirectView, ...):
+                    ...
+                    def get_redirect_url(self, ..., *$PARAM, ...):
+                      ...
+              - pattern-inside: |
+                  class $CLS(..., django.views.generic.RedirectView, ...):
+                    ...
+                    def get_redirect_url(self, ..., **$PARAM):
+                      ...
               - pattern-inside: |
                   class $CLS(..., django.views.generic.base.RedirectView, ...):
                     ...
-          - pattern-either:
+                    def get_redirect_url(self, ..., $PARAM, ...):
+                      ...
               - pattern-inside: |
-                  def get_redirect_url(self, ..., $PARAM, ...):
+                  class $CLS(..., django.views.generic.base.RedirectView, ...):
                     ...
+                    def get_redirect_url(self, ..., *$PARAM, ...):
+                      ...
               - pattern-inside: |
-                  def get_redirect_url(self, ..., *$PARAM, ...):
+                  class $CLS(..., django.views.generic.base.RedirectView, ...):
                     ...
-              - pattern-inside: |
-                  def get_redirect_url(self, ..., **$PARAM):
-                    ...
+                    def get_redirect_url(self, ..., **$PARAM):
+                      ...
           - focus-metavariable: $PARAM
     pattern-sanitizers:
       - pattern: int(...)
@@ -1755,6 +1769,10 @@ rules:
           - metavariable-regex:
               metavariable: $HEADER
               regex: ^[rbuRBU]{0,2}("|')(?i:location)("|')$
+          # The header name as a word of the file: this item's patterns have no other word that
+          # OpenGrep's prefilter can use (string literals give none), and without one the rule
+          # has no prefilter and matches every file.
+          - pattern-regex: (?si)\A.*\blocation\b.*\z
           - focus-metavariable: $URL
       # Django's RedirectView: the URL its get_redirect_url() returns.
       - patterns:
