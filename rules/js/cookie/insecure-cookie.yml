@@ -80,10 +80,11 @@ rules:
     paths:
       exclude: ['*.test.*', '*.spec.*', '*-test.*', '*_test.*', '__tests__/', 'test/', 'tests/']
     pattern-either:
-      # Each branch below is written as "a call that is not outside these forms": a pattern-not of
-      # the call (with the receiver or the import) over a pattern-not of the forms. OpenGrep's
-      # prefilter multiplies the positive terms of the branches; the forms themselves are then
-      # exclusions and cost nothing there (see Performance above).
+      # Each branch below but cookie-session (two plain terms) is written as "a call that is not
+      # outside these forms": a pattern-not of the call (with the receiver or the import) over a
+      # pattern-not of the forms. OpenGrep's prefilter multiplies the positive terms of the
+      # branches; the forms themselves are then exclusions and cost nothing there (see Performance
+      # above).
       # Express res.cookie() and Fastify reply.setCookie()/reply.cookie().
       - patterns:
           - pattern-either: &cookie-calls

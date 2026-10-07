@@ -223,8 +223,15 @@ says. Layout as the SQL rule: `message` (what is wrong and how to fix it), `meta
     condition that gives no word as a `pattern-not` of the same shape with the condition
     reversed. Such an exclusion's own pattern must match few places (a template, a header name, a
     `new X(...)` with an object): one that matches every call costs its size squared on large
-    files. Keep the term that holds the rare word positive. js.tls-verification-disabled: 2.0 s /
-    90 kB → 0.09 s / 1.4 kB, js.insecure-cookie: 215 kB → 1.3 kB, identical findings.
+    files. Keep the term that holds the rare word positive. An exclusion left outside the new
+    `pattern-not` (one at the branch level) no longer sees the metavariables the moved context
+    bound: if it uses them (a Fastify schema check on the route's `$APP`, `$ROUTE`, `$PATH`),
+    move it into the context's formula, or the rule changes. A group of forms that report the
+    same call can also be one branch: a cheap pattern Q of that call with fresh metavariables and
+    the forms' rare words, minus Q where it is not one of the forms (a `pattern-not` of Q over a
+    `pattern-not` of the forms); exact only when every range a form reports is a range of Q.
+    js.tls-verification-disabled: 2.0 s / 90 kB → 0.09 s / 1.4 kB, js.insecure-cookie: 215 kB →
+    1.3 kB, identical findings.
   - **Time** on a large real or minified file that **contains** the rule's words (three.js or a
     900 kB bundle for JS, gitea's largest files for Go, a 100–200 kB Django module for Python),
     with `--timeout 0` (OpenGrep's 5 s default times out on a loaded host and drops findings), and
