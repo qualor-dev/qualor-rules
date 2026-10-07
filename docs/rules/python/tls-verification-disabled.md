@@ -12,6 +12,9 @@ Code that turns off TLS certificate verification, or the host name check, in an 
 client:
 
 - `verify=False` in `requests` and `httpx` calls, on a `requests.Session` or an `httpx` client;
+- aiohttp's `ssl=False` (and the deprecated `verify_ssl=False`) on `aiohttp.request()`, a
+  `ClientSession`'s requests and `ws_connect()`, and a `TCPConnector`, also one given to
+  `ClientSession(connector=...)`;
 - `ssl._create_unverified_context()`, and an SSL context with `verify_mode = ssl.CERT_NONE` and
   `check_hostname = False`;
 - `check_hostname = False` on a client context (`ssl.create_default_context()`,
@@ -75,7 +78,8 @@ def fetch_status():
 <!-- begin: how-to-fix -->
 - Keep the default verification.
 - To trust a private CA, pass its bundle: `verify="/path/to/ca.pem"` in `requests` or `httpx`,
-  `ca_certs=...` in urllib3, or an SSL context from `ssl.create_default_context(cafile=...)`.
+  `ca_certs=...` in urllib3, or an SSL context from `ssl.create_default_context(cafile=...)`
+  (aiohttp takes it as `ssl=ctx`; `ssl=aiohttp.Fingerprint(...)` pins one certificate).
 - Replace `ssl.wrap_socket(sock)` with
   `ssl.create_default_context().wrap_socket(sock, server_hostname=host)`, which checks the
   certificate and the host name.
@@ -91,19 +95,21 @@ def fetch_status():
 
 - Requests
 - HTTPX
+- aiohttp
 - `ssl`
 - urllib3
 
 ## Known limits
 
 <!-- begin: known-limits -->
-- A `requests.Session` that comes from a factory function, another module or a parameter without a
-  type annotation is not followed. Sessions made in the same function or module, in a `with` block,
-  annotated parameters and `self` attributes set in `__init__` are.
+- A `requests.Session` or aiohttp `ClientSession` that comes from a factory function, another
+  module or a parameter without a type annotation is not followed. Sessions made in the same
+  function or module, in a `with` block, annotated parameters and `self` attributes set in
+  `__init__` are.
 - Options passed as a dict (`requests.get(url, **{"verify": False})`) are not seen.
 - `httpx.HTTPTransport(verify=False)`, `getattr(ssl, "_create_unverified_context")`, other
-  libraries' switches (boto3 `verify=False`, aiohttp `ssl=False`) and a parameter whose default is
-  `False` (`def f(url, verify=False)`) are not reported.
+  libraries' switches (boto3 `verify=False`) and a parameter whose default is `False`
+  (`def f(url, verify=False)`) are not reported.
 - A bare `ssl.SSLContext()` (without `PROTOCOL_TLS_CLIENT`) verifies nothing by default, and its use
   as a client cannot be seen where it is made: it is not reported, nor is `check_hostname = False`
   on it, on a urllib3 `create_urllib3_context()`, or on a context made in another function or
@@ -131,6 +137,9 @@ def fetch_status():
 - <https://requests.readthedocs.io/en/latest/api/#requests.Session.verify>
 - <https://www.python-httpx.org/advanced/ssl/>
 - <https://www.python-httpx.org/api/>
+- <https://docs.aiohttp.org/en/stable/client_reference.html>
+- <https://docs.aiohttp.org/en/stable/client_advanced.html#ssl-control-for-tcp-sockets>
+- <https://docs.aiohttp.org/en/v3.9.5/client_reference.html>
 - <https://docs.python.org/3/library/ssl.html#ssl.SSLContext.check_hostname>
 - <https://docs.python.org/3/library/ssl.html#ssl.SSLContext.verify_mode>
 - <https://docs.python.org/3/library/ssl.html#ssl.CERT_NONE>

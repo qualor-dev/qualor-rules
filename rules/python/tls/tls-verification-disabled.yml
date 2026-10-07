@@ -4,8 +4,8 @@ rules:
     severity: ERROR
     message: >-
       TLS certificate or host name verification is turned off here (requests or httpx
-      `verify=False`, an unverified ssl context, `check_hostname = False`, urllib3
-      `cert_reqs='CERT_NONE'` or `assert_hostname=False`, or the legacy `ssl.wrap_socket()`,
+      `verify=False`, aiohttp `ssl=False`, an unverified ssl context, `check_hostname = False`,
+      urllib3 `cert_reqs='CERT_NONE'` or `assert_hostname=False`, or the legacy `ssl.wrap_socket()`,
       which never checks the host name and by default not the certificate either). The client
       then accepts any certificate, or a valid certificate issued for another host, so anyone on
       the network path who holds one can pose as the server and read and change the traffic.
@@ -21,7 +21,7 @@ rules:
       kind: issue
       severity: high
       confidence: high
-      frameworks: [requests, httpx, ssl, urllib3]
+      frameworks: [requests, httpx, aiohttp, ssl, urllib3]
       sources:
         - https://cwe.mitre.org/data/definitions/295.html
         - https://cwe.mitre.org/data/definitions/297.html
@@ -33,6 +33,9 @@ rules:
         - https://requests.readthedocs.io/en/latest/api/#requests.Session.verify
         - https://www.python-httpx.org/advanced/ssl/
         - https://www.python-httpx.org/api/
+        - https://docs.aiohttp.org/en/stable/client_reference.html
+        - https://docs.aiohttp.org/en/stable/client_advanced.html#ssl-control-for-tcp-sockets
+        - https://docs.aiohttp.org/en/v3.9.5/client_reference.html
         - https://docs.python.org/3/library/ssl.html#ssl.SSLContext.check_hostname
         - https://docs.python.org/3/library/ssl.html#ssl.SSLContext.verify_mode
         - https://docs.python.org/3/library/ssl.html#ssl.CERT_NONE
@@ -113,7 +116,10 @@ rules:
     # - ssl.SSLContext(PROTOCOL_TLS) (or no protocol) verifies nothing by default; whether it
     #   serves a client is not known where it is made, so its use by a client is not reported.
     # - The unverified context looked up with getattr(ssl, "_create_unverified_context").
-    # - Other libraries' TLS switches (boto3 verify=False, aiohttp ssl=False, ...).
+    # - Other libraries' TLS switches (boto3 verify=False, ...).
+    # - An aiohttp ClientSession is followed as a requests Session is (assigned earlier, `async
+    #   with`, a typed parameter, a self attribute set by __init__); one from a factory function
+    #   is not, nor are options passed as a dict (`todoruleid:`).
     # - A function parameter whose default is False (`def f(url, verify=False)`).
     # - A generic context (PROTOCOL_TLS) with check_hostname = False and CERT_NONE that the code
     #   hands to a server API instead of wrapping it (`asyncio.start_server(..., ssl=ctx)`,
@@ -199,6 +205,47 @@ rules:
                       metavariable: $M
                       regex: ^(get|post|put|patch|delete|head|options|request|send)$
               - pattern: self.$A.verify = False
+      # aiohttp: ssl=False ("skip SSL certificate validation") on aiohttp.request(), a
+      # TCPConnector, or a ClientSession's request methods and ws_connect; verify_ssl=False, its
+      # deprecated spelling, on a TCPConnector and the session methods.
+      - pattern: aiohttp.request(..., ssl=False, ...)
+      - pattern: aiohttp.TCPConnector(..., ssl=False, ...)
+      - pattern: aiohttp.TCPConnector(..., verify_ssl=False, ...)
+      - pattern: aiohttp.connector.TCPConnector(..., ssl=False, ...)
+      - pattern: aiohttp.connector.TCPConnector(..., verify_ssl=False, ...)
+      # A ClientSession assigned earlier, opened by `async with`, or a typed parameter.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $S = aiohttp.ClientSession(...)
+                  ...
+              - pattern-inside: |
+                  async with aiohttp.ClientSession(...) as $S:
+                      ...
+              - pattern-inside: |
+                  def $F(..., $S: aiohttp.ClientSession, ...):
+                      ...
+          - pattern-either:
+              - pattern: $S.$M(..., ssl=False, ...)
+              - pattern: $S.$M(..., verify_ssl=False, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(get|post|put|patch|delete|head|options|request|ws_connect)$
+      # A ClientSession kept in an attribute of self by __init__.
+      - patterns:
+          - pattern-inside: |
+              class $C(...):
+                  ...
+                  def __init__(self, ...):
+                      ...
+                      self.$A = aiohttp.ClientSession(...)
+                  ...
+          - pattern-either:
+              - pattern: self.$A.$M(..., ssl=False, ...)
+              - pattern: self.$A.$M(..., verify_ssl=False, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(get|post|put|patch|delete|head|options|request|ws_connect)$
       # ssl: the unverified context (PEP 476) and its old name.
       - pattern: ssl._create_unverified_context
       - pattern: ssl._create_stdlib_context

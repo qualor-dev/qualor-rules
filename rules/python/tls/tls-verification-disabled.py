@@ -6,12 +6,15 @@ import ssl
 import urllib.request
 from ssl import CERT_NONE, _create_unverified_context, wrap_socket
 
+import aiohttp
+import asyncpg
 import boto3
 import certifi
 import httpx
 import jwt
 import requests
 import urllib3
+from aiohttp import ClientSession, TCPConnector
 from django.conf import settings
 from flask import Flask, current_app
 from httpx import AsyncClient
@@ -205,6 +208,113 @@ async def httpx_clients(url, payload):
     imported = AsyncClient(timeout=10, verify=VERIFY_TLS)
     return client, imported
 
+
+# aiohttp: ssl=False skips certificate validation on a request, a session's request methods,
+# ws_connect and a TCPConnector; verify_ssl=False is the deprecated spelling (TCPConnector since
+# 2.3, the request methods since 3.0).
+async def aiohttp_requests(url, payload):
+    # ruleid: python.tls-verification-disabled
+    async with aiohttp.request("GET", url, ssl=False) as resp:
+        await resp.text()
+    async with aiohttp.ClientSession() as session:
+        # ruleid: python.tls-verification-disabled
+        await session.get(url, ssl=False)
+        # ruleid: python.tls-verification-disabled
+        await session.post(url, json=payload, ssl=False)
+        # ruleid: python.tls-verification-disabled
+        await session.request("PUT", url, data=payload, ssl=False)
+        # ruleid: python.tls-verification-disabled
+        await session.get(url, verify_ssl=False)
+        # ruleid: python.tls-verification-disabled
+        ws = await session.ws_connect(url, ssl=False)
+        # ruleid: python.tls-verification-disabled
+        async with session.delete(url, ssl=VERIFY_TLS) as deleted:
+            await deleted.release()
+    plain = ClientSession()
+    # ruleid: python.tls-verification-disabled
+    await plain.head(url, ssl=False)
+    await plain.close()
+    return ws
+
+
+async def aiohttp_connectors(url):
+    # ruleid: python.tls-verification-disabled
+    connector = aiohttp.TCPConnector(ssl=False)
+    # ruleid: python.tls-verification-disabled
+    legacy = TCPConnector(limit=10, verify_ssl=False)
+    # ruleid: python.tls-verification-disabled
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as session:
+        await session.get(url)
+    # ruleid: python.tls-verification-disabled
+    async with ClientSession(connector=TCPConnector(ssl=False), raise_for_status=True) as s:
+        await s.get(url)
+    return connector, legacy
+
+
+async def typed_aiohttp_session(session: aiohttp.ClientSession, url):
+    # ruleid: python.tls-verification-disabled
+    return await session.get(url, ssl=False)
+
+
+class AioClient:
+    def __init__(self):
+        self.http = aiohttp.ClientSession()
+
+    async def fetch(self, url):
+        # ruleid: python.tls-verification-disabled
+        return await self.http.get(url, ssl=False)
+
+
+def make_aiohttp_session():
+    return aiohttp.ClientSession()
+
+
+async def safe_aiohttp(url, digest):
+    ctx = ssl.create_default_context(cafile=CA_BUNDLE)
+    async with aiohttp.ClientSession() as session:
+        # ok: python.tls-verification-disabled
+        await session.get(url)
+        # ok: python.tls-verification-disabled
+        await session.get(url, ssl=True)
+        # ok: python.tls-verification-disabled
+        await session.post(url, ssl=ctx)
+        # The certificate pinned by its SHA-256 fingerprint.
+        # ok: python.tls-verification-disabled
+        await session.get(url, ssl=aiohttp.Fingerprint(digest))
+        # The setting from configuration: the deployment decides.
+        # ok: python.tls-verification-disabled
+        await session.get(url, ssl=settings.AIOHTTP_SSL)
+        # ok: python.tls-verification-disabled
+        await session.get(url, verify_ssl=True)
+    # ok: python.tls-verification-disabled
+    connector = aiohttp.TCPConnector(ssl=ctx)
+    # ok: python.tls-verification-disabled
+    pooled = TCPConnector(limit=10)
+    # ok: python.tls-verification-disabled
+    async with aiohttp.request("GET", url, ssl=ctx) as resp:
+        await resp.text()
+    return connector, pooled
+
+
+# Look-alikes: `ssl=False` on clients that are not aiohttp's (for a database driver it means "no
+# TLS", not "TLS without verification"), and on an object of unknown type.
+async def ssl_keyword_look_alikes(dsn, api, url):
+    # ok: python.tls-verification-disabled
+    conn = await asyncpg.connect(dsn, ssl=False)
+    # ok: python.tls-verification-disabled
+    resp = await api.get(url, ssl=False)
+    return conn, resp
+
+
+async def aiohttp_limits(url):
+    # A session that comes from a factory function has no type to bind to.
+    session = make_aiohttp_session()
+    # todoruleid: python.tls-verification-disabled
+    await session.get(url, ssl=False)
+    # Options passed as a dict are not seen.
+    async with aiohttp.ClientSession() as known:
+        # todoruleid: python.tls-verification-disabled
+        await known.get(url, **{"ssl": False})
 
 # ssl: the unverified context (PEP 476), used directly, passed to urllib and http.client, or
 # installed as the default for every HTTPS connection of the process.
