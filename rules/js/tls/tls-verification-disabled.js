@@ -280,10 +280,10 @@ function knownLimits(url, options, verify = false) {
   // An options object from another module or a parameter is not followed.
   // todoruleid: js.tls-verification-disabled
   https.get(url, sharedTls.insecure);
-  // Other libraries' TLS options (pg, ws, nodemailer, got, ...) are not in this rule.
-  // todoruleid: js.tls-verification-disabled
+  // Other libraries' TLS options (node-postgres ssl, ws) are reported.
+  // ruleid: js.tls-verification-disabled
   const db = new PgClient({ ssl: { rejectUnauthorized: false } });
-  // todoruleid: js.tls-verification-disabled
+  // ruleid: js.tls-verification-disabled
   const ws = new WebSocket('wss://feed.internal', { rejectUnauthorized: false });
   // A host name check that accepts any host, with the chain still verified, is a narrower
   // weakness (CWE-297) than this rule's; it is not reported.
@@ -301,6 +301,86 @@ function knownLimits(url, options, verify = false) {
   // todoruleid: js.tls-verification-disabled
   const socket = tls.connect({ host: 'x.internal', port: 443, ...insecureTls });
   return [db, ws, agent, socket];
+}
+
+// Other libraries that pass their options to tls.connect() or https.request(): node-postgres
+// (ssl), ws, nodemailer (tls), got (https), and MongoDB's tlsAllowInvalidCertificates and
+// tlsInsecure (driver and Mongoose).
+const pg = require('pg');
+const { Pool: PgPool } = require('pg');
+const nodemailer = require('nodemailer');
+const got = require('got');
+const { MongoClient } = require('mongodb');
+const mongoose = require('mongoose');
+const knex = require('knex');
+async function otherLibraries(url) {
+  // ruleid: js.tls-verification-disabled
+  const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  // A literal off switch in a configuration branch, as in the knex docs.
+  // ruleid: js.tls-verification-disabled
+  const reports = knex({ client: 'pg', connection: { host: 'db.internal', ssl: process.env.DB_SSL ? { rejectUnauthorized: false } : false } });
+  // ruleid: js.tls-verification-disabled
+  const pgConfig = { host: 'db.internal', ssl: { rejectUnauthorized: SKIP_VERIFY } };
+  const pool2 = new PgPool(pgConfig);
+  // ruleid: js.tls-verification-disabled
+  const feed = new WebSocket('wss://feed.internal', ['v2'], { rejectUnauthorized: false });
+  // ruleid: js.tls-verification-disabled
+  const mailer = nodemailer.createTransport({ host: 'smtp.internal', port: 465, secure: true, tls: { rejectUnauthorized: false } });
+  // ruleid: js.tls-verification-disabled
+  const page = await got(url, { https: { rejectUnauthorized: false } });
+  // ruleid: js.tls-verification-disabled
+  const api = got.extend({ prefixUrl: url, https: { rejectUnauthorized: false } });
+  // ruleid: js.tls-verification-disabled
+  const gotOptions = { responseType: 'json', https: { rejectUnauthorized: false } };
+  const data = await got.post(url, gotOptions);
+  // ruleid: js.tls-verification-disabled
+  const mongo = new MongoClient('mongodb://db.internal:27017', { tls: true, tlsAllowInvalidCertificates: true });
+  // ruleid: js.tls-verification-disabled
+  await mongoose.connect('mongodb://db.internal:27017/app', { tlsInsecure: true });
+  // ruleid: js.tls-verification-disabled
+  const mongoOptions = { tls: true, tlsInsecure: true };
+  const mongo2 = await MongoClient.connect('mongodb://db.internal:27017', mongoOptions);
+  // ruleid: js.tls-verification-disabled
+  const mongo3 = new MongoClient('mongodb://db.internal:27017/?tls=true&tlsAllowInvalidCertificates=true');
+  return [pool, reports, pool2, feed, mailer, page, api, data, mongo, mongo2, mongo3];
+}
+
+function otherLibrariesSafe(url) {
+  // ok: js.tls-verification-disabled
+  const pool = new pg.Pool({ ssl: { rejectUnauthorized: true, ca: CA } });
+  // ok: js.tls-verification-disabled
+  const pool2 = new PgPool({ ssl: true });
+  // ok: js.tls-verification-disabled
+  const feed = new WebSocket('wss://feed.internal', { ca: CA });
+  // ok: js.tls-verification-disabled
+  const mailer = nodemailer.createTransport({ host: 'smtp.internal', tls: { rejectUnauthorized: true, minVersion: 'TLSv1.2' } });
+  // ok: js.tls-verification-disabled
+  const page = got(url, { https: { rejectUnauthorized: true, certificateAuthority: CA } });
+  // ok: js.tls-verification-disabled
+  const mongo = new MongoClient('mongodb://db.internal:27017/?tls=true', { tlsAllowInvalidCertificates: false });
+  // An options object under an https key is taken for TLS options, also where the library has
+  // no such option (axios takes an https.Agent as httpsAgent).
+  // todook: js.tls-verification-disabled
+  const viaAxios = axios.get(url, { https: { rejectUnauthorized: false } });
+  // A connection string in a comment is not code.
+  // ok: js.tls-verification-disabled
+  // const legacy = 'mongodb://db.internal/?tlsInsecure=true';
+  return [pool, pool2, feed, mailer, page, mongo, viaAxios];
+}
+
+// Known limits of the other libraries.
+function otherLibrariesLimits() {
+  // A TLS object in its own variable, given by shorthand, is not followed.
+  const ssl = { rejectUnauthorized: false };
+  // todoruleid: js.tls-verification-disabled
+  const pool = new pg.Pool({ ssl });
+  // An ssl object handed on to node-postgres by knex (also Sequelize, TypeORM) is reported too.
+  // ruleid: js.tls-verification-disabled
+  const db = knex({ client: 'pg', connection: { host: 'db.internal', ssl: { rejectUnauthorized: false } } });
+  // Host name checks off with the certificate chain still verified (CWE-297) are not reported.
+  // todoruleid: js.tls-verification-disabled
+  const mongo = new MongoClient('mongodb://db.internal:27017', { tlsAllowInvalidHostnames: true });
+  return [pool, db, mongo];
 }
 
 // The bracket form of NODE_TLS_REJECT_UNAUTHORIZED is matched as text: a constant is not followed
@@ -331,4 +411,4 @@ function selfChecked(host) {
   return socket;
 }
 
-module.exports = { api, getStatus, fetchReport, mergedOptions, inlineRequire, builtOptions, patchedOptions, makeAgent, relaxAgent, pinnedButOff, rawTls, configured, allowSelfSigned, undiciClients, fetchWithDispatcher, safeClients, fromConfig, servers, lookAlikes, knownLimits, selfChecked };
+module.exports = { api, getStatus, fetchReport, mergedOptions, inlineRequire, builtOptions, patchedOptions, makeAgent, relaxAgent, pinnedButOff, rawTls, configured, allowSelfSigned, undiciClients, fetchWithDispatcher, safeClients, fromConfig, servers, lookAlikes, knownLimits, selfChecked, otherLibraries, otherLibrariesSafe, otherLibrariesLimits };

@@ -5,6 +5,10 @@ import { connect as http2Connect } from 'node:http2';
 import { Agent, ProxyAgent as Proxy, fetch as undiciFetch } from 'undici';
 import * as undici from 'undici';
 import axios, { AxiosInstance } from 'axios';
+import WebSocket from 'ws';
+import { Pool, PoolConfig } from 'pg';
+import got from 'got';
+import { MongoClient, MongoClientOptions } from 'mongodb';
 
 // TypeScript: typed option objects, ES module imports (default, namespace, named and renamed).
 export function typedClient(url: string): https.Agent {
@@ -55,4 +59,21 @@ export function safeTyped(url: string, verify: boolean) {
   // ok: js.tls-verification-disabled
   const server = tls.createServer({ requestCert: true, rejectUnauthorized: false });
   return [https.get(url, options), socket, server];
+}
+
+// Other libraries, with ES module imports and typed option objects.
+export async function otherTyped(url: string) {
+  // ruleid: js.tls-verification-disabled
+  const config: PoolConfig = { host: 'db.internal', ssl: { rejectUnauthorized: false } };
+  const pool = new Pool(config);
+  // ruleid: js.tls-verification-disabled
+  const feed = new WebSocket('wss://feed.internal', { rejectUnauthorized: false });
+  // ruleid: js.tls-verification-disabled
+  const page = await got.get(url, { https: { rejectUnauthorized: false } });
+  // ruleid: js.tls-verification-disabled
+  const options: MongoClientOptions = { tlsAllowInvalidCertificates: true };
+  const mongo = new MongoClient('mongodb://db.internal:27017', options);
+  // ok: js.tls-verification-disabled
+  const safe = new Pool({ ssl: { ca: process.env.CA_PEM } });
+  return [pool, feed, page, mongo, safe];
 }

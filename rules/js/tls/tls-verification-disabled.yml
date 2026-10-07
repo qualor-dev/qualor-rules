@@ -4,7 +4,9 @@ rules:
     severity: ERROR
     message: >-
       TLS certificate verification is turned off here (`rejectUnauthorized: false` for an https
-      request or Agent, tls.connect(), http2.connect() or an undici dispatcher, or
+      request or Agent, tls.connect(), http2.connect(), an undici dispatcher, a ws client, or in
+      the `ssl`, `tls` or `https` options of a client library such as node-postgres,
+      nodemailer or got; MongoDB's tlsAllowInvalidCertificates or tlsInsecure; or
       NODE_TLS_REJECT_UNAUTHORIZED set to '0'). The client then accepts any certificate, so
       anyone on the network path can read and change the traffic; a `ca` or
       `checkServerIdentity` option does not help while rejectUnauthorized is false. Keep the
@@ -17,7 +19,7 @@ rules:
       kind: issue
       severity: high
       confidence: high
-      frameworks: [node-https, node-tls, node-http2, axios, undici]
+      frameworks: [node-https, node-tls, node-http2, axios, undici, pg, ws, nodemailer, got, mongodb, mongoose]
       sources:
         - https://cwe.mitre.org/data/definitions/295.html
         - https://top10.owasp.org/2025/A07_2025-Authentication_Failures/
@@ -39,6 +41,15 @@ rules:
         - https://github.com/nodejs/undici/blob/main/docs/docs/api/Agent.md
         - https://github.com/nodejs/undici/blob/main/docs/docs/api/ProxyAgent.md
         - https://github.com/nodejs/undici/blob/main/docs/docs/api/Connector.md
+        - https://node-postgres.com/features/ssl
+        - https://knexjs.org/guide/
+        - https://github.com/websockets/ws/blob/master/doc/ws.md
+        - https://nodemailer.com/smtp
+        - https://github.com/sindresorhus/got/blob/main/documentation/2-options.md
+        - https://github.com/sindresorhus/got/blob/main/documentation/5-https.md
+        - https://www.mongodb.com/docs/drivers/node/current/security/tls/
+        - https://www.mongodb.com/docs/manual/reference/connection-string-options/
+        - https://mongoosejs.com/docs/connections.html
         - https://jestjs.io/docs/configuration#testmatch-arraystring
         - https://vitest.dev/config/#include
       since: 2026.10.1
@@ -63,14 +74,22 @@ rules:
     # certificate". APIs are bound to their modules (https, tls, http2 and undici, also with the
     # node: prefix): the same option given to http, net, fetch(), axios's request config (which
     # has no such option; axios takes an https.Agent as httpsAgent), undici's top-level options
-    # or a module of the application is not reported.
+    # or a module of the application is not reported. Other libraries are recognised by their
+    # options: rejectUnauthorized: false under an `ssl`, `tls` or `https` key, the options of a
+    # ws client (by import, or a WebSocket constructor given an options object), and MongoDB's
+    # own option names; their safe settings (rejectUnauthorized: true, a `ca`,
+    # tlsAllowInvalidCertificates: false) are not reported.
     # Known limits (each has a `todo` line in the test file):
     # - An options object from another module, a function's parameter, or spread into the
     #   options (`{ ...insecureTls }`) is not followed, nor one built first and given to a module
     #   required in place (`require('tls').connect(port, host, options)`; options written in
     #   the call are).
-    # - Other libraries' TLS options (pg `ssl`, ws, nodemailer `tls`, got `https`, ...) are not in
-    #   this rule.
+    # - Of the other libraries, a TLS object held in its own variable and given by shorthand
+    #   (`new pg.Pool({ ssl })`) is not followed (`todoruleid:`), and an object under an `https`
+    #   key is taken for TLS options also where the library has no such option (axios)
+    #   (`todook:`).
+    # - MongoDB's tlsAllowInvalidHostnames (host name check off, chain still verified, CWE-297) is
+    #   not reported, like a checkServerIdentity that accepts any host.
     # - A checkServerIdentity that accepts any host while the chain is still verified (CWE-297)
     #   is not reported.
     # - The options of the global agent or of an Agent imported by name (`const { globalAgent } =
@@ -90,10 +109,15 @@ rules:
     # minified file (a 900 kB bundle) with `opengrep scan --time --timeout 0`, once as it is and
     # once with `var o={rejectUnauthorized:!0};` prepended:
     # - Without the literal, the match time must stay 0: OpenGrep 1.30 skips a file only through
-    #   the rule's literal prefilter (rejectUnauthorized, NODE_TLS_REJECT_UNAUTHORIZED), and gives
+    #   the rule's literal prefilter (rejectUnauthorized, NODE_TLS_REJECT_UNAUTHORIZED,
+    #   tlsAllowInvalidCertificates, tlsInsecure, the mongodb:// text), and gives
     #   it up when the rule has more alternatives than this one or a branch yields no literal (a
     #   string key such as process.env['...']). (Variable forms for a module required in place
-    #   were one alternative too many.)
+    #   were one alternative too many.) OpenGrep multiplies the conditions of the top-level
+    #   branches and gives up past 50,000 clauses; this rule is close to that, so a new branch
+    #   must be plain patterns (a pattern-either of patterns), not a patterns block with a second
+    #   condition. Check it with `opengrep-core -prefilter_of_rules` on a copy with the YAML
+    #   anchor expanded (the tool does not read anchors): it must not print "None".
     # - With the literal, the match time must stay near 1 s: every statement sequence
     #   (`$OPTS = ...; ... call($OPTS)`) starts at a statement that holds the literal (or at a
     #   rare one, `new https.Agent(...)`). A sequence that starts at any assignment
@@ -342,6 +366,43 @@ rules:
                       $AGENT = new $MOD.Agent(...);
                       ...
                   - pattern: $AGENT.options.rejectUnauthorized = false
+      # Other libraries. An options object held under an `ssl`, `tls` or `https` key is the TLS
+      # configuration that a client library hands to tls.connect() or https.request()
+      # (node-postgres `ssl`, also handed on by knex; nodemailer `tls`; got `https`):
+      # rejectUnauthorized: false there is reported wherever the object is written, also as a
+      # branch of a ternary (knex's documented `ssl: config.DB_SSL ? { rejectUnauthorized: false }
+      # : false`, a literal off switch like the one inside an if). A ws client takes https.request() options directly (a WebSocket constructor
+      # given an options object is the ws one: the browser's takes only protocols). Plain
+      # patterns only: a branch with a second condition here makes OpenGrep drop the rule's
+      # literal prefilter, and every pattern adds to the time OpenGrep spends preparing it.
+      - pattern-either:
+          - pattern: '{..., ssl: {..., rejectUnauthorized: false, ...}, ...}'
+          - pattern: '{..., tls: {..., rejectUnauthorized: false, ...}, ...}'
+          - pattern: '{..., https: {..., rejectUnauthorized: false, ...}, ...}'
+          - pattern: '{..., ssl: $COND ? {..., rejectUnauthorized: false, ...} : $OTHER, ...}'
+          - pattern: 'new ws(..., {..., rejectUnauthorized: false, ...})'
+          - pattern: 'new ws.WebSocket(..., {..., rejectUnauthorized: false, ...})'
+          - pattern: 'new WebSocket(..., {..., rejectUnauthorized: false, ...})'
+          - pattern: |
+              $OPTS = {..., rejectUnauthorized: false, ...};
+              ...
+              new ws(..., $OPTS);
+          - pattern: |
+              $OPTS = {..., rejectUnauthorized: false, ...};
+              ...
+              new ws.WebSocket(..., $OPTS);
+          - pattern: |
+              $OPTS = {..., rejectUnauthorized: false, ...};
+              ...
+              new WebSocket(..., $OPTS);
+      # MongoDB (driver, Mongoose and the frameworks that pass client options on): the option
+      # names are the driver's own. tlsAllowInvalidCertificates turns certificate validation
+      # off, tlsInsecure turns off certificate and host name validation.
+      - pattern: '{..., tlsAllowInvalidCertificates: true, ...}'
+      - pattern: '{..., tlsInsecure: true, ...}'
+      # The same two options in a MongoDB connection string literal (`?tlsInsecure=true`), as text:
+      # a string gives the prefilter no word (see the bracket form below).
+      - pattern-regex: (?m)^[^\n/*]*?["'`]mongodb(?:\+srv)?://[^"'`\s]*[?&](?:tlsAllowInvalidCertificates|tlsInsecure)=true\b
       # NODE_TLS_REJECT_UNAUTHORIZED = '0' turns verification off for every TLS connection of the
       # process: set on process.env, or in an environment object (Object.assign(process.env, ...),
       # a child process's env).

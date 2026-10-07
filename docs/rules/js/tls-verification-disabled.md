@@ -12,6 +12,11 @@ Code that turns off TLS certificate verification in Node.js clients:
 
 - `rejectUnauthorized: false` for an `https` request or `Agent` (also `https.globalAgent`),
   `tls.connect()`, `http2.connect()`, an axios `httpsAgent` or an undici dispatcher;
+- the TLS options of other client libraries: `rejectUnauthorized: false` under an `ssl`, `tls` or
+  `https` key (node-postgres `ssl`, also handed on by knex, and as a branch of a ternary; nodemailer
+  `tls`; got `https`), and in the options of a `ws` client;
+- MongoDB's `tlsAllowInvalidCertificates` or `tlsInsecure` set to `true`, as an option of the driver
+  or Mongoose, or in a `mongodb://` connection string;
 - `NODE_TLS_REJECT_UNAUTHORIZED` set to `'0'` from the code.
 
 A `ca` or `checkServerIdentity` option next to `rejectUnauthorized: false` does not make it safe and
@@ -75,6 +80,12 @@ module.exports = { getStatus };
 - Node.js http2
 - axios
 - undici
+- node-postgres (pg)
+- `ws`
+- `nodemailer`
+- Got
+- MongoDB Node.js driver
+- Mongoose
 
 ## Known limits
 
@@ -82,9 +93,11 @@ module.exports = { getStatus };
 - Options from another module, from a function parameter, or spread into the options
   (`{ ...insecureTls }`) are not followed, nor are options built first and given to a module
   required in place (`require('tls').connect(port, host, options)`).
-- Other libraries' TLS options (pg `ssl`, ws, nodemailer `tls`, got `https`, ...) are not checked.
-- A `checkServerIdentity` that accepts any host while the chain is still verified (CWE-297) is not
-  reported.
+- For the other libraries, a TLS object kept in its own variable and given by shorthand
+  (`new pg.Pool({ ssl })`) is not followed, and an object under an `https` key is taken for TLS
+  options also where the library has no such option (axios).
+- A `checkServerIdentity` that accepts any host, or MongoDB's `tlsAllowInvalidHostnames`, while the
+  chain is still verified (CWE-297) is not reported.
 - The global agent or an `Agent` imported by name and changed after the import is not followed.
 - A function parameter whose default is `false` (`function makeAgent(verify = false)`) is not
   reported.
@@ -115,6 +128,15 @@ module.exports = { getStatus };
 - <https://github.com/nodejs/undici/blob/main/docs/docs/api/Agent.md>
 - <https://github.com/nodejs/undici/blob/main/docs/docs/api/ProxyAgent.md>
 - <https://github.com/nodejs/undici/blob/main/docs/docs/api/Connector.md>
+- <https://node-postgres.com/features/ssl>
+- <https://knexjs.org/guide/>
+- <https://github.com/websockets/ws/blob/master/doc/ws.md>
+- <https://nodemailer.com/smtp>
+- <https://github.com/sindresorhus/got/blob/main/documentation/2-options.md>
+- <https://github.com/sindresorhus/got/blob/main/documentation/5-https.md>
+- <https://www.mongodb.com/docs/drivers/node/current/security/tls/>
+- <https://www.mongodb.com/docs/manual/reference/connection-string-options/>
+- <https://mongoosejs.com/docs/connections.html>
 - <https://jestjs.io/docs/configuration#testmatch-arraystring>
 - <https://vitest.dev/config/#include>
 
