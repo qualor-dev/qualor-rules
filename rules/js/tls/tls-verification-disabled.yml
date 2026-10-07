@@ -71,7 +71,9 @@ rules:
     # failed check lets the connection go on.
     # Servers are not reported: for tls.createServer(), https.createServer() and
     # http2.createSecureServer(), rejectUnauthorized: false only means "do not require a client
-    # certificate". APIs are bound to their modules (https, tls, http2 and undici, also with the
+    # certificate"; the same for server options under an ssl/tls/https key (an object that also
+    # holds requestCert, and Fastify's `https` factory option).
+    # APIs are bound to their modules (https, tls, http2 and undici, also with the
     # node: prefix): the same option given to http, net, fetch(), axios's request config (which
     # has no such option; axios takes an https.Agent as httpsAgent), undici's top-level options
     # or a module of the application is not reported. Other libraries are recognised by their
@@ -84,6 +86,10 @@ rules:
     #   options (`{ ...insecureTls }`) is not followed, nor one built first and given to a module
     #   required in place (`require('tls').connect(port, host, options)`; options written in
     #   the call are).
+    # - Of the other libraries, an ssl object assigned to the options after they are made
+    #   (`opts.ssl = { rejectUnauthorized: false }`) and a ws client imported as an ES default under
+    #   another name than WebSocket (`import WSClient from 'ws'`) are not followed (`todoruleid:`);
+    #   a form for the latter makes OpenGrep drop the prefilter.
     # - Of the other libraries, a TLS object held in its own variable and given by shorthand
     #   (`new pg.Pool({ ssl })`) is not followed (`todoruleid:`), and an object under an `https`
     #   key is taken for TLS options also where the library has no such option (axios)
@@ -371,30 +377,49 @@ rules:
       # (node-postgres `ssl`, also handed on by knex; nodemailer `tls`; got `https`):
       # rejectUnauthorized: false there is reported wherever the object is written, also as a
       # branch of a ternary (knex's documented `ssl: config.DB_SSL ? { rejectUnauthorized: false }
-      # : false`, a literal off switch like the one inside an if). A ws client takes https.request() options directly (a WebSocket constructor
-      # given an options object is the ws one: the browser's takes only protocols). Plain
-      # patterns only: a branch with a second condition here makes OpenGrep drop the rule's
-      # literal prefilter, and every pattern adds to the time OpenGrep spends preparing it.
-      - pattern-either:
-          - pattern: '{..., ssl: {..., rejectUnauthorized: false, ...}, ...}'
-          - pattern: '{..., tls: {..., rejectUnauthorized: false, ...}, ...}'
-          - pattern: '{..., https: {..., rejectUnauthorized: false, ...}, ...}'
-          - pattern: '{..., ssl: $COND ? {..., rejectUnauthorized: false, ...} : $OTHER, ...}'
-          - pattern: 'new ws(..., {..., rejectUnauthorized: false, ...})'
-          - pattern: 'new ws.WebSocket(..., {..., rejectUnauthorized: false, ...})'
-          - pattern: 'new WebSocket(..., {..., rejectUnauthorized: false, ...})'
-          - pattern: |
-              $OPTS = {..., rejectUnauthorized: false, ...};
-              ...
-              new ws(..., $OPTS);
-          - pattern: |
-              $OPTS = {..., rejectUnauthorized: false, ...};
-              ...
-              new ws.WebSocket(..., $OPTS);
-          - pattern: |
-              $OPTS = {..., rejectUnauthorized: false, ...};
-              ...
-              new WebSocket(..., $OPTS);
+      # : false`, a literal off switch like the one inside an if). A ws client takes
+      # https.request() options directly (a WebSocket constructor given an options object is the ws
+      # one: the browser's takes only protocols).
+      # Server options under such a key are not reported, as for tls.createServer() above: an object
+      # that also holds requestCert (optional client certificates), and Fastify's `https` factory
+      # option (https.createServer options). Only exclusions besides the patterns: a positive
+      # condition here makes OpenGrep drop the rule's literal prefilter, and every pattern adds to
+      # the time OpenGrep spends preparing it.
+      - patterns:
+          - pattern-either:
+              - pattern: '{..., ssl: {..., rejectUnauthorized: false, ...}, ...}'
+              - pattern: '{..., tls: {..., rejectUnauthorized: false, ...}, ...}'
+              - pattern: '{..., https: {..., rejectUnauthorized: false, ...}, ...}'
+              - pattern: '{..., ssl: $COND ? {..., rejectUnauthorized: false, ...} : $OTHER, ...}'
+              - pattern: 'new ws(..., {..., rejectUnauthorized: false, ...})'
+              - pattern: 'new ws.WebSocket(..., {..., rejectUnauthorized: false, ...})'
+              - pattern: 'new WebSocket(..., {..., rejectUnauthorized: false, ...})'
+              - pattern: |
+                  $OPTS = {..., rejectUnauthorized: false, ...};
+                  ...
+                  new ws(..., $OPTS);
+              - pattern: |
+                  $OPTS = {..., rejectUnauthorized: false, ...};
+                  ...
+                  new ws.WebSocket(..., $OPTS);
+              - pattern: |
+                  $OPTS = {..., rejectUnauthorized: false, ...};
+                  ...
+                  new WebSocket(..., $OPTS);
+          - pattern-not: '{..., ssl: {..., requestCert: $REQUESTCERT, ...}, ...}'
+          - pattern-not: '{..., tls: {..., requestCert: $REQUESTCERT, ...}, ...}'
+          - pattern-not: '{..., https: {..., requestCert: $REQUESTCERT, ...}, ...}'
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        $FASTIFY = require('fastify');
+                        ...
+                    - pattern-inside: |
+                        import $FASTIFY from 'fastify';
+                        ...
+                - pattern: '$FASTIFY({..., https: $SERVERTLS, ...})'
+          - pattern-not-inside: 'require("fastify")({..., https: $SERVERTLS, ...})'
       # MongoDB (driver, Mongoose and the frameworks that pass client options on): the option
       # names are the driver's own. tlsAllowInvalidCertificates turns certificate validation
       # off, tlsInsecure turns off certificate and host name validation.

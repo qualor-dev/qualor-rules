@@ -21,6 +21,11 @@ Code that turns off TLS certificate verification in Node.js clients:
 
 A `ca` or `checkServerIdentity` option next to `rejectUnauthorized: false` does not make it safe and
 is reported too.
+
+Server options are not reported: for a TLS or HTTPS server, `rejectUnauthorized: false` only makes
+client certificates optional. That holds for `tls.createServer()`, `https.createServer()`,
+`http2.createSecureServer()`, an options object that also sets `requestCert`, and Fastify's `https`
+server option.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -94,7 +99,8 @@ module.exports = { getStatus };
   (`{ ...insecureTls }`) are not followed, nor are options built first and given to a module
   required in place (`require('tls').connect(port, host, options)`).
 - For the other libraries, a TLS object kept in its own variable and given by shorthand
-  (`new pg.Pool({ ssl })`) is not followed, and an object under an `https` key is taken for TLS
+  (`new pg.Pool({ ssl })`) or assigned to the options later (`opts.ssl = {...}`), and a `ws` client
+  imported as an ES default under another name than `WebSocket`, are not followed, and an object under an `https` key is taken for TLS
   options also where the library has no such option (axios).
 - A `checkServerIdentity` that accepts any host, or MongoDB's `tlsAllowInvalidHostnames`, while the
   chain is still verified (CWE-297) is not reported.

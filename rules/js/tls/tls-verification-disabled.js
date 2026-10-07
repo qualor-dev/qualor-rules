@@ -368,6 +368,22 @@ function otherLibrariesSafe(url) {
   return [pool, pool2, feed, mailer, page, mongo, viaAxios];
 }
 
+// Server options under such a key are not client settings: with requestCert, rejectUnauthorized:
+// false only makes client certificates optional (as for tls.createServer above), and Fastify's
+// https factory option holds https.createServer options.
+const createFastify = require('fastify');
+function serverOptions() {
+  // ok: js.tls-verification-disabled
+  const app = createFastify({ https: { key: CA, cert: CA, ca: CA, requestCert: true, rejectUnauthorized: false } });
+  // ok: js.tls-verification-disabled
+  const plain = createFastify({ https: { key: CA, cert: CA, rejectUnauthorized: false } });
+  // ok: js.tls-verification-disabled
+  const hapiOptions = { port: 443, tls: { key: CA, cert: CA, requestCert: true, rejectUnauthorized: false } };
+  // ok: js.tls-verification-disabled
+  const devServer = { https: { key: CA, cert: CA, requestCert: true, rejectUnauthorized: false } };
+  return [app, plain, hapiOptions, devServer];
+}
+
 // Known limits of the other libraries.
 function otherLibrariesLimits() {
   // A TLS object in its own variable, given by shorthand, is not followed.
@@ -380,7 +396,12 @@ function otherLibrariesLimits() {
   // Host name checks off with the certificate chain still verified (CWE-297) are not reported.
   // todoruleid: js.tls-verification-disabled
   const mongo = new MongoClient('mongodb://db.internal:27017', { tlsAllowInvalidHostnames: true });
-  return [pool, db, mongo];
+  // An ssl object assigned to the options after they are made is not followed.
+  const late = { host: 'db.internal' };
+  late.ssl = { rejectUnauthorized: false };
+  // todoruleid: js.tls-verification-disabled
+  const pool2 = new pg.Pool(late);
+  return [pool, db, mongo, pool2];
 }
 
 // The bracket form of NODE_TLS_REJECT_UNAUTHORIZED is matched as text: a constant is not followed
@@ -411,4 +432,4 @@ function selfChecked(host) {
   return socket;
 }
 
-module.exports = { api, getStatus, fetchReport, mergedOptions, inlineRequire, builtOptions, patchedOptions, makeAgent, relaxAgent, pinnedButOff, rawTls, configured, allowSelfSigned, undiciClients, fetchWithDispatcher, safeClients, fromConfig, servers, lookAlikes, knownLimits, selfChecked, otherLibraries, otherLibrariesSafe, otherLibrariesLimits };
+module.exports = { api, getStatus, fetchReport, mergedOptions, inlineRequire, builtOptions, patchedOptions, makeAgent, relaxAgent, pinnedButOff, rawTls, configured, allowSelfSigned, undiciClients, fetchWithDispatcher, safeClients, fromConfig, servers, lookAlikes, knownLimits, selfChecked, otherLibraries, otherLibrariesSafe, otherLibrariesLimits, serverOptions };

@@ -6,6 +6,7 @@ import { Agent, ProxyAgent as Proxy, fetch as undiciFetch } from 'undici';
 import * as undici from 'undici';
 import axios, { AxiosInstance } from 'axios';
 import WebSocket from 'ws';
+import WSClient from 'ws';
 import { Pool, PoolConfig } from 'pg';
 import got from 'got';
 import { MongoClient, MongoClientOptions } from 'mongodb';
@@ -75,5 +76,8 @@ export async function otherTyped(url: string) {
   const mongo = new MongoClient('mongodb://db.internal:27017', options);
   // ok: js.tls-verification-disabled
   const safe = new Pool({ ssl: { ca: process.env.CA_PEM } });
-  return [pool, feed, page, mongo, safe];
+  // ws imported as an ES default under another name than WebSocket is not recognised.
+  // todoruleid: js.tls-verification-disabled
+  const ticker = new WSClient('wss://ticker.internal', { rejectUnauthorized: false });
+  return [pool, feed, page, mongo, safe, ticker];
 }
