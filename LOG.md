@@ -43,6 +43,7 @@ Entry format:
 - js-3 (js.sql-injection#destructured-request, js.tls-verification-disabled#other-libraries, js.insecure-cookie, js.xss#sink-results): APPROVED after 2 fix rounds (ruling JS1: TLS options of other libraries recognised by option keys; J2: a fetched response is request data only when its URL visibly starts with request data); merged f1e993c..6c089ae
 - python-3 (python.sql-injection#django-import-match-limit, python.xss#json-reassign-or, python.xxe#lxml-dtd-hotspot as the new hotspot python.xxe-dtd-options, python.tls-verification-disabled#ssl-wrap-socket): APPROVED in round 1 (match limit: every Python rule lost all findings in large Django modules; 300-view file 0 → 300, large files 5–100x faster); merged cda278b..9aa6e7e
 - python-4 (python.tls-verification-disabled#hostname-only, #aiohttp, #sdk-verify, #httpx-transport): APPROVED after 1 fix round (ruling P1: disabled host-name checks are issues in the same rule; P2: the rule's prefilter is a library-name word regex kept by a no-literal branch — without it OpenGrep built a 31–43 MB prefilter); merged 4eaafa8..7367a14
+- python-5 (python.tar-extraction): APPROVED after 1 fix round (new hotspot; CPython 3.14 Lib + site-packages: 4 genuine unfiltered extractions)
 
 ## 2026-10-06: release 2026.10.1 (`/release-pack`)
 
