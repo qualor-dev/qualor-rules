@@ -984,6 +984,10 @@ class SinkResultsServlet extends HttpServlet {
     private org.springframework.ldap.core.LdapTemplate ldap;
     private org.springframework.web.client.RestClient restClient;
     private UserRepository users;
+    private String notePath = "/order/note";
+    private String configuredPath;
+    private static final String PROFILES = "https://api.example.com/profiles/";
+    private static final String API_HOST = "https://api.example.com";
 
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -1071,19 +1075,32 @@ class SinkResultsServlet extends HttpServlet {
         // ok: java.xss
         out.println("<pre>" + new String(ping.getInputStream().readAllBytes()) + "</pre>");
         Runtime runtime = Runtime.getRuntime();
+        Process uptime = runtime.exec("uptime -p " + host);
+        // ok: java.xss
+        out.println("<pre>" + new String(uptime.getInputStream().readAllBytes()) + "</pre>");
+        // A fixed program given request data as arguments (no command-injection finding): its
+        // output can echo the request data back.
         Process trace = runtime.exec(new String[] {"traceroute", host});
-        // ok: java.xss
+        // ruleid: java.xss
         out.println("<pre>" + new String(trace.getInputStream().readAllBytes()) + "</pre>");
-        Process dig = new ProcessBuilder("dig", host).redirectErrorStream(true).start();
-        // ok: java.xss
-        out.println("<pre>" + new String(dig.getInputStream().readAllBytes()) + "</pre>");
-        var builder = new ProcessBuilder("whois", host);
-        Process whois = builder.start();
-        // ok: java.xss
+        String[] argv = {"whois", host};
+        Process whois = runtime.exec(argv);
+        // ruleid: java.xss
         out.println("<pre>" + new String(whois.getInputStream().readAllBytes()) + "</pre>");
+        Process dig = Runtime.getRuntime().exec(List.of("dig", host).toArray(new String[0]));
+        // ruleid: java.xss
+        out.println("<pre>" + new String(dig.getInputStream().readAllBytes()) + "</pre>");
+        Process echoed = new ProcessBuilder("echo", host).redirectErrorStream(true).start();
+        // ruleid: java.xss
+        out.println("<pre>" + new String(echoed.getInputStream().readAllBytes()) + "</pre>");
         var lookup = new ProcessBuilder("nslookup", host).start();
-        // ok: java.xss
+        // ruleid: java.xss
         out.println("<pre>" + lookup.inputReader().readLine() + "</pre>");
+        // A shell started by ProcessBuilder with request data in its script: command-injection
+        // reports it, and its output is still request data here (a second finding).
+        Process shell = new ProcessBuilder("sh", "-c", "ping -c 1 " + host).start();
+        // todook: java.xss
+        out.println("<pre>" + new String(shell.getInputStream().readAllBytes()) + "</pre>");
         // ok: java.xss
         out.println("<pre>" + java.nio.file.Files.readString(java.nio.file.Path.of("/srv/docs", file)) + "</pre>");
         java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader("/srv/docs/" + file));
@@ -1091,17 +1108,54 @@ class SinkResultsServlet extends HttpServlet {
         out.println("<pre>" + reader.readLine() + "</pre>");
         // ok: java.xss
         out.println(rest.getForObject("https://api.example.com/profiles/" + host, String.class));
-        // ok: java.xss
+        // A body fetched from a URL the request chooses is the requester's own content.
+        // ruleid: java.xss
         out.println(new String(new java.net.URL("https://" + host + "/status").openStream().readAllBytes()));
         java.net.URL statusUrl = new java.net.URL("https://" + host + "/health");
-        // ok: java.xss
+        // ruleid: java.xss
         out.println(new String(statusUrl.openStream().readAllBytes()));
         java.net.URLConnection opened = statusUrl.openConnection();
-        // ok: java.xss
+        // ruleid: java.xss
         out.println(new String(opened.getInputStream().readAllBytes()));
         java.net.HttpURLConnection httpConn = (java.net.HttpURLConnection) statusUrl.openConnection();
-        // ok: java.xss
+        // ruleid: java.xss
         out.println(new String(httpConn.getErrorStream().readAllBytes()));
+        // ruleid: java.xss
+        out.println(rest.getForObject(request.getParameter("url"), String.class));
+        // ruleid: java.xss
+        out.println(rest.getForObject("https://" + host + "/profile", String.class));
+        // From a fixed origin: the request data only reaches the path.
+        // ok: java.xss
+        out.println(new String(new java.net.URL("https://status.example.com/hosts/" + host).openStream().readAllBytes()));
+        // ok: java.xss
+        out.println(new String(new java.net.URL("https://status.example.com/hosts?name=" + host).openConnection().getInputStream().readAllBytes()));
+        java.net.URL fixedUrl = new java.net.URL("https://status.example.com/hosts/" + host);
+        // ok: java.xss
+        out.println(new String(fixedUrl.openStream().readAllBytes()));
+        // ok: java.xss
+        out.println(new String(fixedUrl.openConnection().getInputStream().readAllBytes()));
+        // ok: java.xss
+        out.println(rest.getForObject("https://api.example.com/profiles/{id}", String.class, host));
+        // A scheme and a host from the request, or "//" after the origin, are not a fixed origin.
+        // ruleid: java.xss
+        out.println(rest.getForObject("https://api.example.com" + host, String.class));
+        // ruleid: java.xss
+        out.println(rest.getForObject("https://api.example.com//" + host, String.class));
+        // A base held in a static final String that ends with the separator.
+        // ok: java.xss
+        out.println(rest.getForObject(PROFILES + host, String.class));
+        // ok: java.xss
+        out.println(restOps.getForObject(PROFILES + host + "/card", String.class));
+        // ok: java.xss
+        out.println(rest.getForObject(PROFILES + host + "/card", String.class));
+        // ok: java.xss
+        out.println(restOps.getForObject(PROFILES + host, String.class));
+        // A constant without the separator does not fix the host.
+        // ruleid: java.xss
+        out.println(rest.getForObject(API_HOST + host, String.class));
+        // A java.net.URL from a base held in a constant is not recognised.
+        // todook: java.xss
+        out.println(new String(new java.net.URL(PROFILES + host).openStream().readAllBytes()));
         // ok: java.xss
         out.println(restOps.getForObject("https://api.example.com/profiles/" + host, String.class));
         // ok: java.xss
@@ -1112,8 +1166,14 @@ class SinkResultsServlet extends HttpServlet {
             java.net.http.HttpResponse<String> fetched = http.send(
                     java.net.http.HttpRequest.newBuilder(java.net.URI.create("https://" + host + "/status")).build(),
                     java.net.http.HttpResponse.BodyHandlers.ofString());
-            // ok: java.xss
+            // ruleid: java.xss
             out.println(fetched.body());
+            java.net.http.HttpResponse<String> fixedFetch = http.send(
+                    java.net.http.HttpRequest.newBuilder(java.net.URI.create("https://status.example.com/hosts/" + host)).build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+            // An HttpClient fetch from a fixed origin is still taken for request data.
+            // todook: java.xss
+            out.println(fixedFetch.body());
             javax.naming.NamingEnumeration<javax.naming.directory.SearchResult> found =
                     directory.search("ou=people,dc=example,dc=com", "(uid=" + host + ")", new javax.naming.directory.SearchControls());
             // ok: java.xss
@@ -1122,8 +1182,20 @@ class SinkResultsServlet extends HttpServlet {
             // ok: java.xss
             out.println("<p>" + initial.search("ou=people,dc=example,dc=com", "(uid=" + host + ")", new javax.naming.directory.SearchControls()).next() + "</p>");
             javax.xml.xpath.XPathExpression price = xpath.compile("/catalog/book[title='" + file + "']/price");
-            // ok: java.xss
+            // A compiled expression: xpath-injection reports the compile, and its result is still
+            // taken for request data here.
+            // todook: java.xss
             out.println("<p>" + price.evaluate(catalog) + "</p>");
+            org.xml.sax.InputSource uploaded = new org.xml.sax.InputSource(new java.io.StringReader(request.getParameter("xml")));
+            // A constant expression over a document the request supplies selects request data.
+            // ruleid: java.xss
+            out.println("<p>" + xpath.evaluate("/order/note", uploaded) + "</p>");
+            // ... also with an expression from a field that holds a literal.
+            // ruleid: java.xss
+            out.println("<p>" + xpath.evaluate(notePath, uploaded) + "</p>");
+            // An expression from a field set elsewhere is not seen as constant.
+            // todoruleid: java.xss
+            out.println("<p>" + xpath.evaluate(configuredPath, uploaded) + "</p>");
             // ok: java.xss
             out.println("<p>" + xpath.evaluate("/catalog/book[title='" + file + "']/price", catalog) + "</p>");
         } catch (InterruptedException | javax.naming.NamingException | javax.xml.xpath.XPathExpressionException e) {

@@ -60,13 +60,18 @@ rules:
     #   block count as safe: an enum, a `List<Long>` or an `Optional<Long>` parameter is still a
     #   source, as in java.sql-injection.
     # - Results of calls that other rules check as sinks are not request data (see the sanitizers
-    #   below): only the JDBC, Spring JDBC, JPA and Hibernate, Runtime.exec/ProcessBuilder,
-    #   java.nio.file.Files and java.io file stream, java.net.URL/URLConnection, HttpClient,
-    #   RestTemplate, JNDI DirContext and Spring LdapTemplate, and JAXP XPath forms listed there.
-    #   The result of other data access (a Spring Data repository or a MyBatis mapper method, a
-    #   RestClient or WebClient call) is still taken for request data when a request value is its
-    #   argument. Stored XSS (data an earlier request saved, written out unencoded) is not found:
-    #   such data is not request data.
+    #   below): only the JDBC, Spring JDBC, JPA and Hibernate, Runtime.exec with a command string,
+    #   java.nio.file.Files and java.io file stream, java.net.URL and RestTemplate fetches from a
+    #   literal fixed origin (RestTemplate also from a static final base), JNDI DirContext and
+    #   Spring LdapTemplate, and JAXP XPath (built expression) forms listed there. The result of
+    #   other data access (a Spring Data repository or a MyBatis mapper method, a RestClient or
+    #   WebClient call, an HttpClient fetch, a java.net.URL fetch from a base held in a constant) is
+    #   still taken for request data when a request value is its argument, and so is the output of a
+    #   shell started by ProcessBuilder or an array and the evaluation of a compiled
+    #   XPathExpression, which java.command-injection or java.xpath-injection may report as well. An
+    #   XPath expression held in a field or a variable that is not a constant, evaluated over a
+    #   document from the request, is missed. Stored XSS (data an earlier request saved, written out
+    #   unencoded) is not found: such data is not request data.
     # - Conditions are not evaluated: a switch over a value computed from constants still counts
     #   its request-data branch.
     # - Only one method is analysed at a time: a helper method or inner class of the same file
@@ -280,15 +285,17 @@ rules:
           - metavariable-regex:
               metavariable: $R
               regex: ^(getResultList|getSingleResult|getSingleResultOrNull|getResultStream|list|uniqueResult)$
-      # A process started by Runtime.exec or ProcessBuilder.start (its output streams).
-      - pattern: (Runtime $RT).exec(...)
-      - pattern: Runtime.getRuntime().exec(...)
-      - pattern: new ProcessBuilder(...). ... .start()
+      # A process started by Runtime.exec with a command string, the form java.command-injection
+      # reports when request data is in it (its output streams). A fixed program given request
+      # data as arguments (an array, a list, ProcessBuilder) is not reported by that rule, and
+      # its output can echo the request data back, so it stays request data here.
       - patterns:
-          - pattern-inside: |
-              $PB = new ProcessBuilder(...);
-              ...
-          - pattern: $PB.start()
+          - pattern-either:
+              - pattern: (Runtime $RT).exec($CMD, ...)
+              - pattern: Runtime.getRuntime().exec($CMD, ...)
+          # (An array, also a list turned into one, is the argument-vector form.)
+          - pattern-not: $RT.exec((String[] $A), ...)
+          - pattern-not: $RT.exec($L.toArray(...), ...)
       # The content of a file read through java.nio.file.Files or a java.io file stream.
       - patterns:
           - pattern: java.nio.file.Files.$M(...)
@@ -300,25 +307,52 @@ rules:
           - metavariable-regex:
               metavariable: $STREAM
               regex: ^(java\.io\.)?(FileInputStream|FileReader|RandomAccessFile)$
-      # The body of a response the server fetched: java.net.URL, java.net.http.HttpClient,
-      # Spring RestTemplate.
+      # The body of a response the server fetched from a fixed origin: a URL written as a literal
+      # that holds the scheme, the host and a separator after the host ("https://api.example.com/",
+      # then anything; a "/" not followed by "/" or "\", or "?" or "#"), for java.net.URL
+      # (openStream, getContent, openConnection().getInputStream...) and Spring RestTemplate. A
+      # body fetched from a URL the request chooses is the requester's own content and stays
+      # request data.
       - patterns:
           - pattern-either:
-              - pattern: (java.net.URL $U).$M(...)
-              - pattern: (java.net.URLConnection $U).$M(...)
-              - pattern: (java.net.HttpURLConnection $U).$M(...)
+              - pattern: new java.net.URL($URL).$M(...)
+              - pattern: new java.net.URL($URL).openConnection().$M(...)
+              - patterns:
+                  - pattern-inside: |
+                      $U = new java.net.URL($URL);
+                      ...
+                  - pattern-either:
+                      - pattern: $U.$M(...)
+                      - pattern: $U.openConnection().$M(...)
           - metavariable-regex:
               metavariable: $M
               regex: ^(openStream|getContent|getInputStream|getErrorStream)$
-      - patterns:
-          - pattern: (java.net.http.HttpClient $H).$M(...)
           - metavariable-regex:
-              metavariable: $M
-              regex: ^(send|sendAsync)$
+              metavariable: $URL
+              regex: ^"[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"\\@]+(/(?![/\\])|[?#])
       - patterns:
           - pattern-either:
-              - pattern: (org.springframework.web.client.RestTemplate $T).$M(...)
-              - pattern: (org.springframework.web.client.RestOperations $T).$M(...)
+              - pattern: (org.springframework.web.client.RestTemplate $T).$M($URL, ...)
+              - pattern: (org.springframework.web.client.RestOperations $T).$M($URL, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(getForObject|getForEntity|postForObject|postForEntity|patchForObject|exchange|execute)$
+          - metavariable-regex:
+              metavariable: $URL
+              regex: ^"[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"\\@]+(/(?![/\\])|[?#])
+      # ... and from a base held in a static final String of the class that is such an origin
+      # (ending with the separator), followed by one or two more terms.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final String $BASE = "$ORIGIN"; ... }
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"\\@]+(/(?![/\\])|[?#])
+          - pattern-either:
+              - pattern: (org.springframework.web.client.RestTemplate $T).$M($BASE + $X, ...)
+              - pattern: (org.springframework.web.client.RestTemplate $T).$M($BASE + $X + $Y, ...)
+              - pattern: (org.springframework.web.client.RestOperations $T).$M($BASE + $X, ...)
+              - pattern: (org.springframework.web.client.RestOperations $T).$M($BASE + $X + $Y, ...)
           - metavariable-regex:
               metavariable: $M
               regex: ^(getForObject|getForEntity|postForObject|postForEntity|patchForObject|exchange|execute)$
@@ -329,11 +363,12 @@ rules:
               - pattern: (javax.naming.directory.InitialDirContext $C).search(...)
               - pattern: (org.springframework.ldap.core.LdapTemplate $C).search(...)
               - pattern: (org.springframework.ldap.core.LdapTemplate $C).searchForObject(...)
-      # What a JAXP XPath expression selects from a document.
+      # What a JAXP XPath expression selects from a document, when the expression is built in
+      # the call (java.xpath-injection checks it). A constant expression evaluated over a
+      # document the request supplies selects request data, so it stays request data.
       - patterns:
-          - pattern-either:
-              - pattern: (javax.xml.xpath.XPath $XP).$M(...)
-              - pattern: (javax.xml.xpath.XPathExpression $XP).$M(...)
+          - pattern: (javax.xml.xpath.XPath $XP).$M($EXPR, ...)
+          - pattern-not: (javax.xml.xpath.XPath $XP).$M("$S", ...)
           - metavariable-regex:
               metavariable: $M
               regex: ^(evaluate|evaluateExpression)$
