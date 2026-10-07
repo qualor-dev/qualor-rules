@@ -960,3 +960,198 @@ class PartNote {
         return text;
     }
 }
+
+// Results of calls that other rules check as sinks (a database query, a command, a file read, a
+// URL fetched by the server, a directory search, an XPath selection) are data from that store,
+// not request data: when request data built the call, that rule reports it.
+class SinkResultsServlet extends HttpServlet {
+    private java.sql.Connection connection;
+    private javax.sql.DataSource dataSource;
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
+    private jakarta.persistence.EntityManager em;
+    private org.springframework.web.client.RestTemplate rest;
+    private java.net.http.HttpClient http;
+    private javax.naming.directory.DirContext directory;
+    private javax.xml.xpath.XPath xpath;
+    private org.w3c.dom.Document catalog;
+    private EchoService echo;
+    private org.springframework.jdbc.core.JdbcOperations jdbcOps;
+    private org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate named;
+    private org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations namedOps;
+    private javax.persistence.EntityManager legacyEm;
+    private org.hibernate.Session session;
+    private org.springframework.web.client.RestOperations restOps;
+    private org.springframework.ldap.core.LdapTemplate ldap;
+    private org.springframework.web.client.RestClient restClient;
+    private UserRepository users;
+
+    @Override
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        PrintWriter out = response.getWriter();
+        String name = request.getParameter("name");
+        try {
+            java.sql.Statement stmt = connection.createStatement();
+            java.sql.ResultSet rs = stmt.executeQuery("SELECT bio FROM users WHERE name = '" + name + "'");
+            while (rs.next()) {
+                // ok: java.xss
+                out.println("<p>" + rs.getString(1) + "</p>");
+            }
+            java.sql.PreparedStatement ps = connection.prepareStatement("SELECT bio FROM users WHERE name = '" + name + "'");
+            java.sql.ResultSet prepared = ps.executeQuery();
+            prepared.next();
+            // ok: java.xss
+            out.println("<p>" + prepared.getString("bio") + "</p>");
+            var conn = dataSource.getConnection();
+            var st = conn.createStatement();
+            var rows = st.executeQuery("SELECT bio FROM users WHERE name = '" + name + "'");
+            rows.next();
+            // ok: java.xss
+            out.println("<p>" + rows.getString(1) + "</p>");
+            // The request value printed next to the row is still request data.
+            // ruleid: java.xss
+            out.println("<p>" + name + ": " + rs.getString(1) + "</p>");
+            // ok: java.xss
+            out.println("<p>" + connection.createStatement().executeQuery("SELECT bio FROM users WHERE name = '" + name + "'").getString(1) + "</p>");
+            // ok: java.xss
+            out.println("<p>" + connection.prepareStatement("SELECT bio FROM users WHERE name = '" + name + "'").executeQuery().getString(1) + "</p>");
+            java.sql.CallableStatement call = connection.prepareCall("{call find_bio('" + name + "')}");
+            // ok: java.xss
+            out.println("<p>" + call.executeQuery().getString(1) + "</p>");
+        } catch (java.sql.SQLException e) {
+            throw new IOException(e);
+        }
+        // ok: java.xss
+        out.println("<p>" + jdbcOps.queryForList("SELECT bio FROM users WHERE name = '" + name + "'") + "</p>");
+        // ok: java.xss
+        out.println("<p>" + named.queryForList("SELECT bio FROM users WHERE name = '" + name + "'", Map.of()) + "</p>");
+        // ok: java.xss
+        out.println("<p>" + namedOps.queryForList("SELECT bio FROM users WHERE name = '" + name + "'", Map.of()) + "</p>");
+        // ok: java.xss
+        out.println("<p>" + legacyEm.createQuery("SELECT u.bio FROM User u WHERE u.name = '" + name + "'").getResultList() + "</p>");
+        // ok: java.xss
+        out.println("<p>" + session.createQuery("SELECT u.bio FROM User u WHERE u.name = '" + name + "'").list() + "</p>");
+        jakarta.persistence.Query nativeBios = em.createNativeQuery("SELECT bio FROM users WHERE name = '" + name + "'");
+        // ok: java.xss
+        out.println("<p>" + nativeBios.getResultList() + "</p>");
+        javax.persistence.Query legacyBios = legacyEm.createNativeQuery("SELECT bio FROM users WHERE name = '" + name + "'");
+        // ok: java.xss
+        out.println("<p>" + legacyBios.getSingleResult() + "</p>");
+        javax.persistence.TypedQuery<String> legacyTyped = legacyEm.createQuery("SELECT u.bio FROM User u WHERE u.name = '" + name + "'", String.class);
+        // ok: java.xss
+        out.println("<p>" + legacyTyped.getResultList() + "</p>");
+        // A repository method or a client of another library: its result is still taken for
+        // request data when the request value is its argument.
+        // todook: java.xss
+        out.println("<p>" + users.findBioByName(name) + "</p>");
+        // todook: java.xss
+        out.println(restClient.get().uri("https://api.example.com/profiles/" + name).retrieve().body(String.class));
+        // ok: java.xss
+        out.println("<p>" + jdbc.queryForObject("SELECT bio FROM users WHERE name = ?", String.class, name) + "</p>");
+        // ok: java.xss
+        out.println("<p>" + jdbc.queryForList("SELECT bio FROM users WHERE name = '" + name + "'") + "</p>");
+        // ok: java.xss
+        out.println("<p>" + em.createQuery("SELECT u.bio FROM User u WHERE u.name = '" + name + "'").getResultList() + "</p>");
+        // ok: java.xss
+        out.println("<p>" + em.createQuery("SELECT u.bio FROM User u WHERE u.name = :n", String.class).setParameter("n", name).getSingleResult() + "</p>");
+        jakarta.persistence.TypedQuery<String> bios = em.createQuery("SELECT u.bio FROM User u WHERE u.name = '" + name + "'", String.class);
+        // ok: java.xss
+        out.println("<p>" + bios.getResultList() + "</p>");
+        // A method of another class with a sink's name returns what it is given.
+        // ruleid: java.xss
+        out.println("<p>" + echo.executeQuery(name) + "</p>");
+    }
+
+    // Command output, file content, fetched responses, directory entries, XPath selections.
+    @Override
+    protected void doPost(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        PrintWriter out = response.getWriter();
+        String host = request.getParameter("host");
+        String file = request.getParameter("file");
+        Process ping = Runtime.getRuntime().exec("ping -c 1 " + host);
+        // ok: java.xss
+        out.println("<pre>" + new String(ping.getInputStream().readAllBytes()) + "</pre>");
+        Runtime runtime = Runtime.getRuntime();
+        Process trace = runtime.exec(new String[] {"traceroute", host});
+        // ok: java.xss
+        out.println("<pre>" + new String(trace.getInputStream().readAllBytes()) + "</pre>");
+        Process dig = new ProcessBuilder("dig", host).redirectErrorStream(true).start();
+        // ok: java.xss
+        out.println("<pre>" + new String(dig.getInputStream().readAllBytes()) + "</pre>");
+        var builder = new ProcessBuilder("whois", host);
+        Process whois = builder.start();
+        // ok: java.xss
+        out.println("<pre>" + new String(whois.getInputStream().readAllBytes()) + "</pre>");
+        var lookup = new ProcessBuilder("nslookup", host).start();
+        // ok: java.xss
+        out.println("<pre>" + lookup.inputReader().readLine() + "</pre>");
+        // ok: java.xss
+        out.println("<pre>" + java.nio.file.Files.readString(java.nio.file.Path.of("/srv/docs", file)) + "</pre>");
+        java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader("/srv/docs/" + file));
+        // ok: java.xss
+        out.println("<pre>" + reader.readLine() + "</pre>");
+        // ok: java.xss
+        out.println(rest.getForObject("https://api.example.com/profiles/" + host, String.class));
+        // ok: java.xss
+        out.println(new String(new java.net.URL("https://" + host + "/status").openStream().readAllBytes()));
+        java.net.URL statusUrl = new java.net.URL("https://" + host + "/health");
+        // ok: java.xss
+        out.println(new String(statusUrl.openStream().readAllBytes()));
+        java.net.URLConnection opened = statusUrl.openConnection();
+        // ok: java.xss
+        out.println(new String(opened.getInputStream().readAllBytes()));
+        java.net.HttpURLConnection httpConn = (java.net.HttpURLConnection) statusUrl.openConnection();
+        // ok: java.xss
+        out.println(new String(httpConn.getErrorStream().readAllBytes()));
+        // ok: java.xss
+        out.println(restOps.getForObject("https://api.example.com/profiles/" + host, String.class));
+        // ok: java.xss
+        out.println(ldap.search("ou=people", "(uid=" + host + ")", (org.springframework.ldap.core.AttributesMapper<String>) a -> "x"));
+        // ok: java.xss
+        out.println(ldap.searchForObject("ou=people", "(uid=" + host + ")", ctx -> ctx));
+        try {
+            java.net.http.HttpResponse<String> fetched = http.send(
+                    java.net.http.HttpRequest.newBuilder(java.net.URI.create("https://" + host + "/status")).build(),
+                    java.net.http.HttpResponse.BodyHandlers.ofString());
+            // ok: java.xss
+            out.println(fetched.body());
+            javax.naming.NamingEnumeration<javax.naming.directory.SearchResult> found =
+                    directory.search("ou=people,dc=example,dc=com", "(uid=" + host + ")", new javax.naming.directory.SearchControls());
+            // ok: java.xss
+            out.println("<p>" + found.next().getAttributes().get("cn") + "</p>");
+            javax.naming.directory.InitialDirContext initial = new javax.naming.directory.InitialDirContext();
+            // ok: java.xss
+            out.println("<p>" + initial.search("ou=people,dc=example,dc=com", "(uid=" + host + ")", new javax.naming.directory.SearchControls()).next() + "</p>");
+            javax.xml.xpath.XPathExpression price = xpath.compile("/catalog/book[title='" + file + "']/price");
+            // ok: java.xss
+            out.println("<p>" + price.evaluate(catalog) + "</p>");
+            // ok: java.xss
+            out.println("<p>" + xpath.evaluate("/catalog/book[title='" + file + "']/price", catalog) + "</p>");
+        } catch (InterruptedException | javax.naming.NamingException | javax.xml.xpath.XPathExpressionException e) {
+            throw new IOException(e);
+        }
+        // The file name itself is still request data.
+        // ruleid: java.xss
+        out.println("<p>Showing " + file + "</p>");
+    }
+}
+
+// A Statement handed in by the caller: only its declared type tells what it is.
+class StatementHelper {
+    static void print(java.sql.Statement stmt, HttpServletRequest request, HttpServletResponse response) throws java.sql.SQLException, IOException {
+        PrintWriter out = response.getWriter();
+        java.sql.ResultSet rs = stmt.executeQuery("SELECT bio FROM users WHERE name = '" + request.getParameter("name") + "'");
+        rs.next();
+        // ok: java.xss
+        out.println("<p>" + rs.getString(1) + "</p>");
+    }
+}
+
+interface UserRepository {
+    String findBioByName(String name);
+}
+
+class EchoService {
+    String executeQuery(String text) {
+        return text;
+    }
+}

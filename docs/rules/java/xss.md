@@ -14,6 +14,15 @@ HTTP request data written into an HTML response without encoding:
 - Spring MVC: the `String` a `@RestController` or `@ResponseBody` handler returns, and the body of
   a `ResponseEntity<String>`, unless the handler produces JSON or plain text;
 - Jakarta REST: a `String` (or a `Response` built from one) under an HTML, XML or SVG media type.
+
+Values the code reads back from another system are not request data, even when request data
+chose what to read: the rows of a database query (JDBC, Spring `JdbcTemplate`, JPA, Hibernate),
+the output of a command, the content of a file, the body of a response the server fetched
+(`URL`, `HttpClient`, `RestTemplate`), directory entries (JNDI, Spring LDAP) and what an XPath
+expression selects. When request data built that query, command, path, URL, filter or expression,
+the rule for that call reports it (`java.sql-injection`, `java.command-injection`,
+`java.path-traversal`, `java.ssrf`, `java.ldap-injection`, `java.xpath-injection`), and this rule
+does not report the same problem a second time.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -96,6 +105,12 @@ public class HelloServlet extends HttpServlet {
   or an entity that is a concatenation or `String.format` (in place or in a variable). Request text
   sent as it is, or markup from a call such as a `StringBuilder`, is missed; a serialiser's output
   returned as a `String`, or concatenated with constant text, is still reported.
+- Stored XSS is not found: data that an earlier request saved and the page now writes out
+  unencoded is not request data. The OWASP XSS cheat sheet treats data from a database or an
+  internal service as untrusted too, so encode all output, whatever its origin.
+- Only the data-access calls listed above count as reading from another system: the result of a
+  Spring Data repository or MyBatis mapper method, or of a `RestClient` or `WebClient` call, is
+  still taken for request data when a request value is its argument.
 - One method is analysed at a time: a helper or inner class that encodes the value still passes the
   request data on. Conditions are not evaluated.
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
@@ -135,6 +150,10 @@ public class HelloServlet extends HttpServlet {
 - <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html>
 - <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/multipart-forms.html>
 - <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/bind/annotation/RequestPart.html>
+- <https://community.owasp.org/attacks/xss>
+- <https://docs.oracle.com/en/java/javase/25/docs/api/java.sql/java/sql/ResultSet.html>
+- <https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Process.html>
+- <https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Files.html>
 
 ## Tests
 

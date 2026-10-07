@@ -48,6 +48,10 @@ rules:
         - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html
         - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/multipart-forms.html
         - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/bind/annotation/RequestPart.html
+        - https://community.owasp.org/attacks/xss
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.sql/java/sql/ResultSet.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Process.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Files.html
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A handler parameter without an annotation is not a source (the Jakarta REST entity
@@ -55,6 +59,14 @@ rules:
     #   RequestEntity (the request body and headers); and only the scalar types of the source
     #   block count as safe: an enum, a `List<Long>` or an `Optional<Long>` parameter is still a
     #   source, as in java.sql-injection.
+    # - Results of calls that other rules check as sinks are not request data (see the sanitizers
+    #   below): only the JDBC, Spring JDBC, JPA and Hibernate, Runtime.exec/ProcessBuilder,
+    #   java.nio.file.Files and java.io file stream, java.net.URL/URLConnection, HttpClient,
+    #   RestTemplate, JNDI DirContext and Spring LdapTemplate, and JAXP XPath forms listed there.
+    #   The result of other data access (a Spring Data repository or a MyBatis mapper method, a
+    #   RestClient or WebClient call) is still taken for request data when a request value is its
+    #   argument. Stored XSS (data an earlier request saved, written out unencoded) is not found:
+    #   such data is not request data.
     # - Conditions are not evaluated: a switch over a value computed from constants still counts
     #   its request-data branch.
     # - Only one method is analysed at a time: a helper method or inner class of the same file
@@ -210,6 +222,121 @@ rules:
           - metavariable-regex:
               metavariable: $ENC
               regex: ^encodeFor(HTML|HTMLAttribute|XML|XMLAttribute|URL)$
+      # Results of calls that other rules check as sinks are data from that store, not request
+      # data: rows of a database query, the output of a command, the content of a file, the body
+      # of a response the server fetched, directory entries, nodes an XPath expression selects.
+      # When request data built the call, java.sql-injection, java.command-injection,
+      # java.path-traversal, java.ssrf, java.ldap-injection or java.xpath-injection reports it.
+      # (Each form is its own entry: a metavariable-regex inside a pattern-either branch stops a
+      # sanitizer from working.)
+      # JDBC: the ResultSet of a Statement, PreparedStatement or CallableStatement (a prepared
+      # statement has request data only when the method prepares it, the second form).
+      - patterns:
+          - pattern-either:
+              - pattern: (java.sql.Statement $S).$M(...)
+              - pattern: (java.sql.Connection $C).createStatement(...).$M(...)
+              - pattern: (java.sql.Connection $C).prepareStatement(...).$M(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(executeQuery|getResultSet|getGeneratedKeys)$
+      # ... a Statement declared with `var`, from a connection in the same method.
+      - patterns:
+          - pattern-inside: |
+              $S = $C.$CREATE(...);
+              ...
+          - metavariable-regex:
+              metavariable: $CREATE
+              regex: ^(createStatement|prepareStatement|prepareCall)$
+          - pattern: $S.$M(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(executeQuery|getResultSet|getGeneratedKeys)$
+      # Spring JDBC: the rows JdbcTemplate and NamedParameterJdbcTemplate return.
+      - patterns:
+          - pattern-either:
+              - pattern: (org.springframework.jdbc.core.JdbcTemplate $T).$M(...)
+              - pattern: (org.springframework.jdbc.core.JdbcOperations $T).$M(...)
+              - pattern: (org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate $T).$M(...)
+              - pattern: (org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations $T).$M(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(query|queryForObject|queryForList|queryForMap|queryForRowSet|queryForStream)$
+      # JPA and Hibernate: the results of a query made by an EntityManager or Session, in a chain
+      # or from a Query or TypedQuery variable.
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.persistence.EntityManager $EM).$CQ(...). ... .$R(...)
+              - pattern: (jakarta.persistence.EntityManager $EM).$CQ(...). ... .$R(...)
+              - pattern: (org.hibernate.Session $EM).$CQ(...). ... .$R(...)
+          - metavariable-regex:
+              metavariable: $R
+              regex: ^(getResultList|getSingleResult|getSingleResultOrNull|getResultStream|list|uniqueResult|getResultCount)$
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.persistence.Query $Q).$R(...)
+              - pattern: (javax.persistence.TypedQuery<$T> $Q).$R(...)
+              - pattern: (jakarta.persistence.Query $Q).$R(...)
+              - pattern: (jakarta.persistence.TypedQuery<$T> $Q).$R(...)
+          - metavariable-regex:
+              metavariable: $R
+              regex: ^(getResultList|getSingleResult|getSingleResultOrNull|getResultStream|list|uniqueResult)$
+      # A process started by Runtime.exec or ProcessBuilder.start (its output streams).
+      - pattern: (Runtime $RT).exec(...)
+      - pattern: Runtime.getRuntime().exec(...)
+      - pattern: new ProcessBuilder(...). ... .start()
+      - patterns:
+          - pattern-inside: |
+              $PB = new ProcessBuilder(...);
+              ...
+          - pattern: $PB.start()
+      # The content of a file read through java.nio.file.Files or a java.io file stream.
+      - patterns:
+          - pattern: java.nio.file.Files.$M(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(readString|readAllBytes|readAllLines|lines|newBufferedReader|newInputStream)$
+      - patterns:
+          - pattern: new $STREAM(...)
+          - metavariable-regex:
+              metavariable: $STREAM
+              regex: ^(java\.io\.)?(FileInputStream|FileReader|RandomAccessFile)$
+      # The body of a response the server fetched: java.net.URL, java.net.http.HttpClient,
+      # Spring RestTemplate.
+      - patterns:
+          - pattern-either:
+              - pattern: (java.net.URL $U).$M(...)
+              - pattern: (java.net.URLConnection $U).$M(...)
+              - pattern: (java.net.HttpURLConnection $U).$M(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(openStream|getContent|getInputStream|getErrorStream)$
+      - patterns:
+          - pattern: (java.net.http.HttpClient $H).$M(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(send|sendAsync)$
+      - patterns:
+          - pattern-either:
+              - pattern: (org.springframework.web.client.RestTemplate $T).$M(...)
+              - pattern: (org.springframework.web.client.RestOperations $T).$M(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(getForObject|getForEntity|postForObject|postForEntity|patchForObject|exchange|execute)$
+      # Directory entries found by JNDI or Spring LDAP.
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.naming.directory.DirContext $C).search(...)
+              - pattern: (javax.naming.directory.InitialDirContext $C).search(...)
+              - pattern: (org.springframework.ldap.core.LdapTemplate $C).search(...)
+              - pattern: (org.springframework.ldap.core.LdapTemplate $C).searchForObject(...)
+      # What a JAXP XPath expression selects from a document.
+      - patterns:
+          - pattern-either:
+              - pattern: (javax.xml.xpath.XPath $XP).$M(...)
+              - pattern: (javax.xml.xpath.XPathExpression $XP).$M(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(evaluate|evaluateExpression)$
     pattern-sinks:
       # Servlet: the response writer and output stream, unless a non-HTML content type was set
       # first. Only the arguments are sinks (the writer itself is not request data).
