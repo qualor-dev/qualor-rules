@@ -213,6 +213,12 @@ class SearchController {
         // ok: java.regex-injection
         return catalog.replaceAll("pear", "plum");
     }
+
+    // Not a handler (no mapping annotation): the entity is not request data here.
+    Pattern fromEntity(HttpEntity<String> entity) {
+        // ok: java.regex-injection
+        return Pattern.compile(entity.getBody());
+    }
 }
 
 class SearchFilter {
