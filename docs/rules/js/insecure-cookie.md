@@ -16,7 +16,8 @@ documented defaults of each library:
 
 - Express `res.cookie(name, value, options)` and Fastify's `reply.setCookie()` (or
   `reply.cookie()`) from `@fastify/cookie`, where both flags are off unless the options turn them
-  on; the options may be written in the call or built in a variable first;
+  on; the options may be written in the call or built in a variable first (with `@fastify/cookie`'s
+  `parseOptions` setting both flags for every cookie, the calls are not reported);
 - `express-session`, whose session cookie has `HttpOnly` but no `Secure` unless
   `cookie.secure` is set;
 - `cookie-session` with an explicit `secure: false` or `httpOnly: false`;
@@ -110,6 +111,8 @@ function createSessionToken() {
 - An option set to `false` later in the code (`opts.secure = false`) counts as a decided value
   and is not reported.
 - A response object is recognised by its name (`res`, `response`, `reply`, ...).
+- `@fastify/cookie`'s `parseOptions` count only when they set both flags; then a flag set to `false`
+  in a single call is missed.
 - A cookie deleted with an expiry in the past other than the epoch is reported.
 <!-- end: known-limits -->
 
@@ -129,7 +132,7 @@ function createSessionToken() {
 
 ## Tests
 
-The test files [`rules/js/cookie/insecure-cookie.js`](../../../rules/js/cookie/insecure-cookie.js) and [`rules/js/cookie/insecure-cookie.ts`](../../../rules/js/cookie/insecure-cookie.ts) hold every case the rule reports or accepts:
+The test files [`rules/js/cookie/insecure-cookie.js`](../../../rules/js/cookie/insecure-cookie.js) and [`rules/js/cookie/insecure-cookie.ts`](../../../rules/js/cookie/insecure-cookie.ts) and [`rules/js/cookie/insecure-cookie.jsx`](../../../rules/js/cookie/insecure-cookie.jsx) hold every case the rule reports or accepts:
 lines marked `ruleid:` must be reported and lines marked `ok:` must not. The known limits are
 marked `todoruleid:` (missed) and `todook:` (wrongly reported). `npm test` runs them with OpenGrep,
 and checks the example above as well.

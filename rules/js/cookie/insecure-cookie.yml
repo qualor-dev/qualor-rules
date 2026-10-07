@@ -35,6 +35,8 @@ rules:
     #   alias reply.cookie()): both flags are off unless the options set them. The receiver is a
     #   response object by its name (res, resp, response, reply, rep, _res, _response), also
     #   chained (`res.status(201).cookie(...)`); jQuery's `$.cookie()` and other objects are not.
+    #   @fastify/cookie's `parseOptions` (registration option) set the serialization of every
+    #   cookie: a file that registers a plugin with both flags set there is not reported.
     # - express-session: HttpOnly is on by default, Secure is off; reported when cookie.secure is
     #   missing or false, or cookie.httpOnly is false.
     # - cookie-session: Secure follows the connection by default and HttpOnly is on; reported
@@ -62,6 +64,9 @@ rules:
     #   not (`todoruleid:`).
     # - An assignment of false after the literal (`opts.secure = false`) counts as deciding the
     #   flag (`todoruleid:`).
+    # - @fastify/cookie's parseOptions count only when they set both flags: with one flag there, a
+    #   call that sets the other is still reported (`todook:`), and in a file whose parseOptions
+    #   set both, a flag given false in the call is missed (`todoruleid:`).
     # - A cookie deleted with another past expiry than the epoch is reported (`todook:`).
     paths:
       exclude: ['*.test.*', '*.spec.*', '*-test.*', '*_test.*', '__tests__/', 'test/', 'tests/']
@@ -103,6 +108,23 @@ rules:
                 - metavariable-regex:
                     metavariable: $RES
                     regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
+          # @fastify/cookie's parseOptions set the serialization of every set cookie: a file that
+          # registers the plugin with both flags set there (any value but false) is not reported.
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                        ...
+                    - pattern-inside: |
+                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                        ...
+                - metavariable-pattern:
+                    metavariable: $PARSE
+                    patterns:
+                      - pattern: '{..., secure: $PARSESECURE, ..., httpOnly: $PARSEHTTPONLY, ...}'
+                      - pattern-not: '{..., secure: false, ...}'
+                      - pattern-not: '{..., httpOnly: false, ...}'
       # The same with the options built in a variable first (one branch per flag): the object
       # literal holds cookie options and leaves the flag out (or false), and no assignment before
       # the call sets it (also inside an if). Each statement sequence starts at such an object or
@@ -122,6 +144,23 @@ rules:
                 - metavariable-regex:
                     metavariable: $RES
                     regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
+          # @fastify/cookie's parseOptions set the serialization of every set cookie: a file that
+          # registers the plugin with both flags set there (any value but false) is not reported.
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                        ...
+                    - pattern-inside: |
+                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                        ...
+                - metavariable-pattern:
+                    metavariable: $PARSE
+                    patterns:
+                      - pattern: '{..., secure: $PARSESECURE, ..., httpOnly: $PARSEHTTPONLY, ...}'
+                      - pattern-not: '{..., secure: false, ...}'
+                      - pattern-not: '{..., httpOnly: false, ...}'
           - pattern-either:
               - pattern-inside: |
                   $OPTS = {..., maxAge: $KEYV, ...};
@@ -209,6 +248,23 @@ rules:
                 - metavariable-regex:
                     metavariable: $RES
                     regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
+          # @fastify/cookie's parseOptions set the serialization of every set cookie: a file that
+          # registers the plugin with both flags set there (any value but false) is not reported.
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                        ...
+                    - pattern-inside: |
+                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                        ...
+                - metavariable-pattern:
+                    metavariable: $PARSE
+                    patterns:
+                      - pattern: '{..., secure: $PARSESECURE, ..., httpOnly: $PARSEHTTPONLY, ...}'
+                      - pattern-not: '{..., secure: false, ...}'
+                      - pattern-not: '{..., httpOnly: false, ...}'
           - pattern-either:
               - pattern-inside: |
                   $OPTS = {..., maxAge: $KEYV, ...};
