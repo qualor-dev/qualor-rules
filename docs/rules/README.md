@@ -2,7 +2,7 @@
 
 # Qualor security rules
 
-The security rules of Qualor's `qualor` engine, 55 in all. Each page says what the rule finds, why
+The security rules of Qualor's `qualor` engine, 56 in all. Each page says what the rule finds, why
 it matters, how to fix it, what the rule misses or may wrongly report, and shows a short example.
 Qualor links every finding to its page.
 
