@@ -929,3 +929,17 @@ def known_limits(url, payload, make_session, host, self_made):
 def fetch_with_default(url, verify=False):
     # todoruleid: python.tls-verification-disabled
     return requests.get(url, verify=verify)
+
+
+class SettingsCache:
+    def get(self, key, verify=True):
+        return key if verify else None
+
+
+# A name rebound in the same function after a session is made is still taken for that session,
+# for the sinks of every session library: here a cache's get() is read as a requests call.
+def cached_setting(key):
+    store = boto3.Session()
+    store = SettingsCache()
+    # todook: python.tls-verification-disabled
+    return store.get(key, verify=False)

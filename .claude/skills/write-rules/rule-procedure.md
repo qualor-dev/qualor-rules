@@ -202,8 +202,11 @@ says. Layout as the SQL rule: `message` (what is wrong and how to fix it), `meta
     `pattern-either` of plain patterns counts once). To cut it: write the names of a
     `metavariable-regex` out as `pattern-either` alternatives (`$S.get(..., verify=False, ...)`,
     `$S.post(...)` …: one condition instead of two), and join branches of the same shape (one
-    `pattern-either` of the contexts, one of the sinks) when no context meets another's sink in
-    code that can run. python.tls-verification-disabled: 3^5 x 2^5 → 3 x 2^6, 0.63 → 0.1 s.
+    `pattern-either` of the contexts, one of the sinks). Joined branches also match each
+    context with the other branches' sinks: check those pairs occur in practice only in code that
+    cannot run, and record what remains, such as a name rebound from the context to another
+    object, as a Known limit with a `todook:` line. python.tls-verification-disabled: 3^5 x 2^5 →
+    3 x 2^6, 0.63 → 0.1 s.
   - **Time** on a large real or minified file that **contains** the rule's words (three.js or a
     900 kB bundle for JS, gitea's largest files for Go, a 100–200 kB Django module for Python),
     with `--timeout 0` (OpenGrep's 5 s default times out on a loaded host and drops findings), and

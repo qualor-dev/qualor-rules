@@ -145,6 +145,9 @@ rules:
     #   `loop.create_server(ssl=ctx)`) is still reported (no test line: recorded from review).
     # - A name reused for two contexts: an insecure client context rebound later in the function
     #   to a context wrapped with server_side=True is no longer reported (no test line).
+    # - A name rebound in the same function after a session is made is still taken for that
+    #   session (`s = boto3.Session()`, then `s = cache`, then `s.get(key, verify=False)` is
+    #   reported), for the sinks of every session library (`todook:`).
     paths:
       exclude: ['test_*.py', '*_test.py', 'conftest.py', 'tests.py', 'tests/', 'test/']
     # Performance. OpenGrep skips a file that cannot match through the rule's prefilter, which it
@@ -192,9 +195,11 @@ rules:
           # block, or a typed parameter: a requests Session (requests.Session, the lowercase
           # requests.session factory, or requests.sessions.Session), an aiohttp ClientSession, and
           # a boto3 or botocore session. One branch for the three libraries, with the method names
-          # written out (see Performance above). A session of one library meets another's sink
-          # only in code that cannot run (the other sessions have no such method, or reject its
-          # keyword with a TypeError) or sets a `verify` attribute nothing reads.
+          # written out (see Performance above). So a session of one library is also matched
+          # against the other libraries' sinks: in practice that pairing occurs only in code that
+          # cannot run (the other sessions have no such method, or reject its keyword with a
+          # TypeError) or sets a `verify` attribute nothing reads, and when the name is rebound
+          # to another object after the session is made (a Known limit).
           - patterns:
               - pattern-either:
                   - pattern-inside: |

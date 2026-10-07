@@ -141,6 +141,9 @@ def fetch_status():
   (`ssl.wrap_socket(sock, **opts)`) are reported as if `cert_reqs` were missing.
 - An insecure context handed to a server API (`asyncio.start_server(..., ssl=ctx)`) is still
   reported.
+- A variable that held a session and then gets another object in the same function is still
+  taken for the session: `s = boto3.Session()`, then `s = cache`, then
+  `s.get(key, verify=False)` is reported.
 <!-- end: known-limits -->
 
 ## References
