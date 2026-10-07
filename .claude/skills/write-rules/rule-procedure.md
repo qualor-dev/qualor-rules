@@ -194,7 +194,13 @@ says. Layout as the SQL rule: `message` (what is wrong and how to fix it), `meta
     `metavariable-regex`, `metavariable-pattern`) multiplies it; `pattern-not` and
     `pattern-not-inside` cost nothing. A branch without a literal drops the source words; string
     literals give no words, and words match as substrings ("set" in "offset"): the sink clause
-    needs a rare word.
+    needs a rare word. The product is over clauses: an Or of single-pattern alternatives is one
+    clause, a branch of `pattern-inside` + `pattern` (an import binding) or `pattern` +
+    `metavariable-regex` is two. So bind a condition that every branch repeats (the imports)
+    once in a conjunct above the `pattern-either` (go.insecure-cookie: 6.5 MB → 4 kB), and
+    write out a handful of names rather than give several sources a `metavariable-regex` each
+    (go.ssrf: 67 kB, 0.58 s → 13 kB, 0.17 s). A no-word branch (ruling P2) shrinks the result
+    but not the build: the product is still multiplied (and placed first in Go it gives None).
   - **Build time** (`time opengrep-core -prefilter_of_rules`, best of three, ~0.1 s for a plain
     rule): OpenGrep builds the prefilter again for every file, and before it drops anything, so
     a rule whose prefilter is tiny or dropped (a no-word branch) can still cost 0.5 s per file.
