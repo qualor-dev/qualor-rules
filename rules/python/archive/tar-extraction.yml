@@ -51,9 +51,11 @@ rules:
     # (data, tar, their functions, a function of the application's own, a variable) is not
     # reported. The docs' two fallbacks for Pythons without filters are reported alike: a call
     # without filter in the else branch of `if hasattr(tarfile, "data_filter")`, and
-    # `getattr(tarfile, "data_filter", lambda member, path: member)` as extraction_filter or as
-    # the filter: both extract with the fully_trusted behaviour where Python has no filters
-    # (the docs call it "Python 3.11 behavior" and "may be unsafe"). Python 3.14 extracts with
+    # `extraction_filter = getattr(tarfile, "data_filter", lambda member, path: member)`: both
+    # extract with the fully_trusted behaviour where Python has no filters (the docs call it
+    # "Python 3.11 behavior" and "may be unsafe"). The same getattr given as `filter=` is not
+    # reported: where Python has no filters, extractall() has no filter keyword and raises
+    # TypeError, so the lambda never extracts. Python 3.14 extracts with
     # "data" by default; the rule cannot know a project's minimum version, and the explicit
     # filter keeps older versions safe too.
     # The TarFile must come from tarfile: tarfile.open(), TarFile(), a TarFile class method
@@ -69,6 +71,9 @@ rules:
     # sibling directory passes (lesson 18): startswith() of a prefix that is not a literal and
     # does not end in a separator (`root + os.sep`, `+ os.path.sep`, `+ "/"`,
     # `os.path.join(root, "")` count), and os.path.commonprefix(); os.path.commonpath() counts.
+    # Such an if makes the call reported only when it has the form of a guard (it exits as
+    # above), so a name selection by prefix (`if m.name.startswith(SKIP): continue`) next to a
+    # real guard before extractall() is not a finding.
     # Test code is out of scope (as for python.tls-verification-disabled, ruling F10): files
     # pytest collects (test_*.py, *_test.py), conftest.py, Django's tests.py, and everything under
     # tests/ or test/.
@@ -80,8 +85,12 @@ rules:
     # - Any exiting check of the member counts, also one that does not look at its path
     #   (`if member.isdev(): sys.exit()`, `if not member.isfile(): continue`, while "../x" is a
     #   regular file), one in a helper called in the condition, and one nested in another
-    #   condition, which leaves only on some paths (`todoruleid:`). A literal prefix
-    #   (`startswith("/srv/data")`) is not judged.
+    #   condition, which leaves only on some paths (`todoruleid:`). Literal and f-string
+    #   prefixes are not judged: `startswith("/srv/data")` and `startswith(f"{root}")` count as
+    #   guards although a sibling directory passes them (`todoruleid:`).
+    # - A name selection by a non-literal prefix that skips members (`if
+    #   m.name.startswith(SKIP): continue`) before extract() in the loop looks like a character
+    #   prefix guard, so the call is reported even when a real guard is there too (`todook:`).
     # - Checks of the names before extraction, which the rule accepts, do not stop links: a
     #   symlink or hard link member can point outside, and a later member be written through it
     #   (only the data filter refuses such links). No test line: the rule cannot tell.
@@ -203,7 +212,6 @@ rules:
               - pattern: $X.$EXTRACT(..., filter="fully_trusted", ...)
               - pattern: $X.$EXTRACT(..., filter=tarfile.fully_trusted_filter, ...)
               - pattern: '$X.$EXTRACT(..., filter=lambda $MEMBER, $PATH: $MEMBER, ...)'
-              - pattern: '$X.$EXTRACT(..., filter=getattr(tarfile, $NAME, lambda $MEMBER, $PATH: $MEMBER), ...)'
           # A check of the members first: an `if` in a loop over this archive, on the member or on a
           # value assigned from it in the loop, whose last statement leaves the function (raise,
           # return, sys.exit) before extractall(), or, for extract() in the loop, skips the member
@@ -348,30 +356,139 @@ rules:
                               continue
                           ...
                           $X.extract(...)
-              # ... except a check on a character prefix, which a sibling directory passes
-              # (`/srv/data-evil` starts with `/srv/data`; lesson 18): startswith() of a prefix
-              # that is not a literal and does not end in a separator (`root + os.sep`, `root +
-              # "/"`, `os.path.join(root, "")`), and os.path.commonprefix(). os.path.commonpath()
-              # compares whole path components and counts.
+              # ... except a guard of the same forms whose check is on a character prefix, which a
+              # sibling directory passes (`/srv/data-evil` starts with `/srv/data`; lesson 18):
+              # startswith() of a prefix that is not a literal and does not end in a separator
+              # (`root + os.sep`, `root + "/"`, `os.path.join(root, "")` count), and
+              # os.path.commonprefix(). os.path.commonpath() compares whole path components and
+              # counts. Literal and f-string prefixes are not judged (Known limits).
               - patterns:
-                  - pattern-inside: |
-                      for $M in <... $X ...>:
-                          ...
-                          if <... $S.startswith($B) ...>:
+                  - pattern-either:
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... $S.startswith($B) ...>:
+                                  raise ...
                               ...
                           ...
-                      ...
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... $S.startswith($B) ...>:
+                                  $S1
+                                  raise ...
+                              ...
+                          ...
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... $S.startswith($B) ...>:
+                                  return ...
+                              ...
+                          ...
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... $S.startswith($B) ...>:
+                                  $S1
+                                  return ...
+                              ...
+                          ...
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... $S.startswith($B) ...>:
+                                  sys.exit(...)
+                              ...
+                          ...
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... $S.startswith($B) ...>:
+                                  $S1
+                                  sys.exit(...)
+                              ...
+                          ...
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... $S.startswith($B) ...>:
+                                  continue
+                              ...
+                              $X.extract(...)
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... $S.startswith($B) ...>:
+                                  $S1
+                                  continue
+                              ...
+                              $X.extract(...)
                   - metavariable-regex:
                       metavariable: $B
                       regex: ^(?!\s*(?:[rRbBuUfF]{0,2}["']|\())(?!.*(?:\+\s*(?:os\.sep|os\.path\.sep|"/"|'/')|os\.path\.join\(.*,\s*(?:""|'')\))\s*$)
               - patterns:
-                  - pattern-inside: |
-                      for $M in <... $X ...>:
-                          ...
-                          if <... os.path.commonprefix(...) ...>:
+                  - pattern-either:
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... os.path.commonprefix(...) ...>:
+                                  raise ...
                               ...
                           ...
-                      ...
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... os.path.commonprefix(...) ...>:
+                                  $S1
+                                  raise ...
+                              ...
+                          ...
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... os.path.commonprefix(...) ...>:
+                                  return ...
+                              ...
+                          ...
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... os.path.commonprefix(...) ...>:
+                                  $S1
+                                  return ...
+                              ...
+                          ...
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... os.path.commonprefix(...) ...>:
+                                  sys.exit(...)
+                              ...
+                          ...
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... os.path.commonprefix(...) ...>:
+                                  $S1
+                                  sys.exit(...)
+                              ...
+                          ...
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... os.path.commonprefix(...) ...>:
+                                  continue
+                              ...
+                              $X.extract(...)
+                      - pattern-inside: |
+                          for $M in <... $X ...>:
+                              ...
+                              if <... os.path.commonprefix(...) ...>:
+                                  $S1
+                                  continue
+                              ...
+                              $X.extract(...)
       # shutil.unpack_archive: the filter goes to the tar unpacker; zip takes none.
       - patterns:
           - pattern-either:

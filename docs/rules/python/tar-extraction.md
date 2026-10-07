@@ -21,7 +21,7 @@ archive comes from:
   `extraction_filter`);
 - the Python documentation's fallbacks for versions without filters, which extract unfiltered
   there: a call without a filter in the `else` branch of `if hasattr(tarfile, "data_filter")`,
-  and `getattr(tarfile, "data_filter", lambda member, path: member)`;
+  and `extraction_filter = getattr(tarfile, "data_filter", lambda member, path: member)`;
 - `shutil.unpack_archive()` with no filter or the same unsafe ones, unless the archive is a zip
   (`format="zip"` or a literal `.zip` file name).
 
@@ -105,8 +105,12 @@ def install_release(archive_path, dest):
 - Options passed as a dict (`extractall(dest, **opts)`) are not read and not reported.
 - Any check of the member that raises, returns or exits counts, even one that does not look at
   its path (`if not member.isfile(): continue` lets a regular file named `../x` through), one
-  made by a helper function in the condition, and one nested in another condition. A literal
-  prefix (`startswith("/srv/data")`) is not judged.
+  made by a helper function in the condition, and one nested in another condition. A check
+  on a literal or f-string prefix without a separator (`startswith("/srv/data")`,
+  `startswith(f"{root}")`) also counts, although a sibling directory passes it.
+- Skipping members by a name prefix held in a variable (`if member.name.startswith(SKIP):
+  continue`) before `extract()` in the loop looks like a character-prefix check, so the call is
+  reported even next to a real check.
 - Checks of the member names before extraction do not stop links: a symbolic or hard link
   member can point outside the directory and a later member be written through it. Only the
   `data` filter refuses such links.

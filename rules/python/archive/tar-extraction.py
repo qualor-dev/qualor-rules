@@ -252,9 +252,11 @@ def unpack_default_getattr(archive_path, dest):
     tar.extractall(dest)
 
 
-def unpack_getattr_argument(archive_path, dest):
+# The same getattr as the filter argument is safe: without filters, extractall() has no filter
+# keyword and raises TypeError.
+def safe_getattr_argument(archive_path, dest):
     with tarfile.open(archive_path) as tar:
-        # ruleid: python.tar-extraction
+        # ok: python.tar-extraction
         tar.extractall(dest, filter=getattr(tarfile, "tar_filter", lambda member, path: member))
 
 
@@ -322,7 +324,7 @@ def unpack_nested_exit(archive_path, dest, strict):
 
 
 # A check on a character prefix: "/srv/data-evil/x" starts with "/srv/data".
-def unpack_prefix_check(archive_path, dest):
+def unpack_prefix_raise(archive_path, dest):
     root = os.path.realpath(dest)
     with tarfile.open(archive_path) as tar:
         for member in tar.getmembers():
@@ -333,17 +335,88 @@ def unpack_prefix_check(archive_path, dest):
         tar.extractall(root)
 
 
+def unpack_prefix_raise_logged(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar.getmembers():
+            target = os.path.realpath(os.path.join(root, member.name))
+            if not target.startswith(root):
+                print("outside the destination", target)
+                raise ValueError("outside the destination")
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+
+
+def unpack_prefix_return(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar.getmembers():
+            target = os.path.realpath(os.path.join(root, member.name))
+            if not target.startswith(root):
+                return False
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+
+
+def unpack_prefix_return_logged(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar.getmembers():
+            target = os.path.realpath(os.path.join(root, member.name))
+            if not target.startswith(root):
+                print("outside the destination", target)
+                return False
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+
+
+def unpack_prefix_exit(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar.getmembers():
+            target = os.path.realpath(os.path.join(root, member.name))
+            if not target.startswith(root):
+                sys.exit("outside the destination")
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+
+
+def unpack_prefix_exit_logged(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar.getmembers():
+            target = os.path.realpath(os.path.join(root, member.name))
+            if not target.startswith(root):
+                print("outside the destination", target)
+                sys.exit("outside the destination")
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+
+
 def unpack_prefix_skip(archive_path, dest):
     root = os.path.realpath(dest)
     with tarfile.open(archive_path) as tar:
         for member in tar:
-            if not os.path.realpath(os.path.join(root, member.name)).startswith(root):
+            target = os.path.realpath(os.path.join(root, member.name))
+            if not target.startswith(root):
                 continue
             # ruleid: python.tar-extraction
             tar.extract(member, root)
 
 
-def unpack_commonprefix_check(archive_path, dest):
+def unpack_prefix_skip_logged(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar:
+            target = os.path.realpath(os.path.join(root, member.name))
+            if not target.startswith(root):
+                print("outside the destination", target)
+                continue
+            # ruleid: python.tar-extraction
+            tar.extract(member, root)
+
+
+def unpack_commonprefix_raise(archive_path, dest):
     root = os.path.realpath(dest)
     with tarfile.open(archive_path) as tar:
         for member in tar.getmembers():
@@ -351,6 +424,104 @@ def unpack_commonprefix_check(archive_path, dest):
             if os.path.commonprefix([root, target]) != root:
                 raise ValueError("outside the destination")
         # ruleid: python.tar-extraction
+        tar.extractall(root)
+
+
+def unpack_commonprefix_raise_logged(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar.getmembers():
+            target = os.path.realpath(os.path.join(root, member.name))
+            if os.path.commonprefix([root, target]) != root:
+                print("outside the destination", target)
+                raise ValueError("outside the destination")
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+
+
+def unpack_commonprefix_return(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar.getmembers():
+            target = os.path.realpath(os.path.join(root, member.name))
+            if os.path.commonprefix([root, target]) != root:
+                return False
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+
+
+def unpack_commonprefix_return_logged(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar.getmembers():
+            target = os.path.realpath(os.path.join(root, member.name))
+            if os.path.commonprefix([root, target]) != root:
+                print("outside the destination", target)
+                return False
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+
+
+def unpack_commonprefix_exit(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar.getmembers():
+            target = os.path.realpath(os.path.join(root, member.name))
+            if os.path.commonprefix([root, target]) != root:
+                sys.exit("outside the destination")
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+
+
+def unpack_commonprefix_exit_logged(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar.getmembers():
+            target = os.path.realpath(os.path.join(root, member.name))
+            if os.path.commonprefix([root, target]) != root:
+                print("outside the destination", target)
+                sys.exit("outside the destination")
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+
+
+def unpack_commonprefix_skip(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar:
+            target = os.path.realpath(os.path.join(root, member.name))
+            if os.path.commonprefix([root, target]) != root:
+                continue
+            # ruleid: python.tar-extraction
+            tar.extract(member, root)
+
+
+def unpack_commonprefix_skip_logged(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar:
+            target = os.path.realpath(os.path.join(root, member.name))
+            if os.path.commonprefix([root, target]) != root:
+                print("outside the destination", target)
+                continue
+            # ruleid: python.tar-extraction
+            tar.extract(member, root)
+
+
+# A path guard next to a selection of members by a name prefix.
+SKIPPED_PREFIX = "docs/"
+
+
+def safe_selected(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar.getmembers():
+            if member.name.startswith(SKIPPED_PREFIX):
+                continue
+            target = os.path.realpath(os.path.join(root, member.name))
+            if os.path.commonpath([root, target]) != root:
+                raise ValueError("outside the destination")
+        # ok: python.tar-extraction
         tar.extractall(root)
 
 
@@ -732,6 +903,42 @@ def unpack_type_skip(archive_path, dest):
                 continue
             # todoruleid: python.tar-extraction
             tar.extract(member, dest)
+
+
+# Literal and f-string prefixes without a separator count as guards.
+def unpack_literal_prefix(archive_path):
+    with tarfile.open(archive_path) as tar:
+        for member in tar.getmembers():
+            target = os.path.realpath(os.path.join("/srv/data", member.name))
+            if not target.startswith("/srv/data"):
+                raise ValueError("outside the destination")
+        # todoruleid: python.tar-extraction
+        tar.extractall("/srv/data")
+
+
+def unpack_fstring_prefix(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar.getmembers():
+            target = os.path.realpath(os.path.join(root, member.name))
+            if not target.startswith(f"{root}"):
+                raise ValueError("outside the destination")
+        # todoruleid: python.tar-extraction
+        tar.extractall(root)
+
+
+# A selection by a name prefix that skips members, before extract() in the loop, is taken for a
+# character-prefix guard.
+def unpack_selected_members(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in tar:
+            if member.name.startswith(SKIPPED_PREFIX):
+                continue
+            if os.path.commonpath([root, os.path.realpath(os.path.join(root, member.name))]) != root:
+                continue
+            # todook: python.tar-extraction
+            tar.extract(member, root)
 
 
 # A named filter that returns each member unchanged (fully_trusted under another name).
