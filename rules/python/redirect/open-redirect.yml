@@ -212,7 +212,9 @@ rules:
                 ...
           - focus-metavariable: $PARAM
       # Django, in a module that imports it: the HttpRequest a view receives, the URL arguments
-      # passed to the view after it, and what View.setup() keeps on a class-based view.
+      # passed to the view after it, and what View.setup() keeps on a class-based view. Only an
+      # import at the module's top level counts; one nested in `if TYPE_CHECKING:` or `try:` does
+      # not (no test line: a fixture is one module, and it imports Django at the top level).
       - patterns:
           # A module that imports Django. `import django` also matches `from django.x import y`
           # and `import django.x as z`, and binds no metavariable: a finding counts

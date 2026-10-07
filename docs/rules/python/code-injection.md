@@ -85,7 +85,9 @@ def report():
 - Request sources are recognised by their shape. A Flask route parameter with a converter
   (`<int:n>`) and a Django URL argument made numeric by its converter still count as request data;
   a function whose first parameter is named `request`, in a module that imports Django, is taken
-  for a view; a Flask view parameter annotated `int` is not a source.
+  for a view; a Flask view parameter annotated `int` is not a source. Only a top-level Django
+  import counts: a module that imports Django only inside `if TYPE_CHECKING:` or `try:` is not
+  checked for Django views.
 <!-- end: known-limits -->
 
 ## References

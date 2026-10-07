@@ -89,7 +89,9 @@ rules:
     #   parameter with a default value are still sources; a helper whose first parameter is named
     #   `request` has its other parameters taken for URL arguments, and the request attributes
     #   (`headers`, `body`, ...) of such a parameter count even when it is another library's
-    #   request object.
+    #   request object. A module whose Django imports are all nested (`if TYPE_CHECKING:`,
+    #   `try:`) is not taken for a Django module (no test line: the fixture imports Django at its
+    #   top level).
     pattern-sources:
       - pattern-either:
           - pattern: flask.request.args
@@ -167,7 +169,9 @@ rules:
                 ...
           - focus-metavariable: $PARAM
       # Django, in a module that imports it: the HttpRequest a view receives, the URL arguments
-      # passed to the view after it, and what View.setup() keeps on a class-based view.
+      # passed to the view after it, and what View.setup() keeps on a class-based view. Only an
+      # import at the module's top level counts; one nested in `if TYPE_CHECKING:` or `try:` does
+      # not (no test line: a fixture is one module, and it imports Django at the top level).
       - patterns:
           # A module that imports Django. `import django` also matches `from django.x import y`
           # and `import django.x as z`, and binds no metavariable: a finding counts

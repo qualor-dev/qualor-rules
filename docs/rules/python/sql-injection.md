@@ -96,7 +96,9 @@ def orders():
   numeric by its converter (in `urls.py`) still count as request data. FastAPI parameters annotated
   `int`, `float` or `bool`, and dependencies (`Depends()`, `Security()`), are not sources.
 - Django views are recognised by their signature in a module that imports Django, so a helper
-  whose first parameter is named `request` is taken for a view.
+  whose first parameter is named `request` is taken for a view. Only a top-level Django import
+  counts: a module that imports Django only inside `if TYPE_CHECKING:` or `try:` is not checked
+  for Django views.
 - An allow-list is recognised only as a lookup in a module-level dict of literals assigned to an
   upper-case name that is never changed, or as a ternary of constants; a membership check is not.
 - A slice is followed when it slices request data in place (`request.args["q"][:50]`),
