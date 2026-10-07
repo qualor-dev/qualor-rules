@@ -587,8 +587,8 @@ router.get('/archive/latest', (result) => {
   return Response.redirect(result.query.next);
 });
 
-// Look-alikes: redirect() and location() of other objects, Location on an outgoing request, and
-// functions that are not handlers.
+// Look-alikes: redirect() and location() of other objects, Location on an outgoing request, a
+// cookie or a JSON field named location, and functions that are not handlers.
 const nav = { redirect: (to) => to, location: (to) => to };
 app.get('/look-alikes', async (req, res) => {
   // ok: js.open-redirect
@@ -597,6 +597,10 @@ app.get('/look-alikes', async (req, res) => {
   nav.location(req.query.next);
   // ok: js.open-redirect
   const outgoing = new Headers({ Location: req.query.next });
+  // ok: js.open-redirect
+  res.cookie('location', req.query.next);
+  // ok: js.open-redirect
+  res.json({ location: req.query.next });
   res.json({ outgoing: [...outgoing.keys()] });
 });
 

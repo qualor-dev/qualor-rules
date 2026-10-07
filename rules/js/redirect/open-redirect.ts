@@ -119,6 +119,14 @@ export async function POST(request: NextRequest) {
     // ruleid: js.open-redirect
     return new Response(null, { status: 302, headers: { Location: body.next } });
   }
+  if (body.kind === 'forward') {
+    // ok: js.open-redirect
+    return fetch(new Request('https://api.example.com/hooks', { method: 'POST', headers: { Location: body.next } }));
+  }
+  if (body.kind === 'content') {
+    // ok: js.open-redirect
+    return new Response(null, { status: 201, headers: { 'Content-Location': body.next } });
+  }
   if (body.kind === 'fixed') {
     // ok: js.open-redirect
     return new Response(null, { status: 303, headers: { Location: '/thanks/' + body.id } });

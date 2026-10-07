@@ -792,6 +792,13 @@ rules:
     # the strings of the argument shapes are string-regex patterns ("=~/.../", backslashes
     # doubled; a negative condition is a pattern-not), the four sinks on the response object share
     # their conditions, and the Location header forms also ask that the file mention "location".
+    # OpenGrep also builds that prefilter again for every file it scans, and each positive term
+    # (pattern-inside, metavariable-regex) of a branch multiplies its size and cost: a condition
+    # that does not give the prefilter a word is written as an exclusion (a pattern-not of the
+    # same shape with the condition reversed). Such an exclusion's pattern must match few places
+    # (a template, a header name, a redirect() call), not every call: removing the matches of a
+    # broad one costs time on large files. With the conditions as positive terms the prefilter
+    # took 0.6 s per scan and file; now about 0.15 s.
     # After a change, `opengrep-core -prefilter_of_rules <this file>` must not print "None", and a
     # large minified file with the rule's words in it (prepend `var o={redirect:!0,location:1};`)
     # must scan in seconds with `--timeout 0`.
@@ -913,14 +920,18 @@ rules:
                       - patterns:
                           - pattern: '$OBJ.$M(`${$PART}...`, ...)'
                       - patterns:
-                          - metavariable-regex:
-                              metavariable: $H
-                              regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                           - pattern-either:
-                              - patterns:
-                                  - pattern: '$OBJ.$M(`$H${$PART}...`, ...)'
-                              - patterns:
-                                  - pattern: '$OBJ.$M(`$H${$A}${$PART}...`, ...)'
+                              - pattern: '$OBJ.$M(`$H${$PART}...`, ...)'
+                              - pattern: '$OBJ.$M(`$H${$A}${$PART}...`, ...)'
+                          # (the condition on the text before the interpolation, as an exclusion: see Performance)
+                          - pattern-not:
+                              patterns:
+                                - pattern-either:
+                                    - pattern: '$OBJ.$M(`$H${$PART}...`, ...)'
+                                    - pattern: '$OBJ.$M(`$H${$A}${$PART}...`, ...)'
+                                - metavariable-regex:
+                                    metavariable: $H
+                                    regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                       - patterns:
                           - pattern: '$OBJ.$M(`${$P}${$PART}...`, ...)'
                       - patterns:
@@ -1027,28 +1038,39 @@ rules:
                       - patterns:
                           - pattern: '$OBJ.redirect($X, `${$PART}...`, ...)'
                       - patterns:
-                          - metavariable-regex:
-                              metavariable: $H
-                              regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                           - pattern-either:
-                              - patterns:
-                                  - pattern: '$OBJ.redirect($X, `$H${$PART}...`, ...)'
-                              - patterns:
-                                  - pattern: '$OBJ.redirect($X, `$H${$A}${$PART}...`, ...)'
+                              - pattern: '$OBJ.redirect($X, `$H${$PART}...`, ...)'
+                              - pattern: '$OBJ.redirect($X, `$H${$A}${$PART}...`, ...)'
+                          # (the condition on the text before the interpolation, as an exclusion: see Performance)
+                          - pattern-not:
+                              patterns:
+                                - pattern-either:
+                                    - pattern: '$OBJ.redirect($X, `$H${$PART}...`, ...)'
+                                    - pattern: '$OBJ.redirect($X, `$H${$A}${$PART}...`, ...)'
+                                - metavariable-regex:
+                                    metavariable: $H
+                                    regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                       - patterns:
                           - pattern: '$OBJ.redirect($X, `${$P}${$PART}...`, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, `${$P}://${$PART}...`, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, `${$P}//${$PART}...`, ...)'
-              # Express, Node http and Fastify: a Location header set by name.
+              # Express, Node http and Fastify: a Location header set by name. (The method name is
+              # checked as an exclusion of the calls that name the header: see Performance.)
               - patterns:
-                  - metavariable-regex:
-                      metavariable: $M
-                      regex: ^(set|header|setHeader|append)$
                   - metavariable-regex:
                       metavariable: $H
                       regex: (?i)^["'`]location["'`]$
+                  - pattern-not:
+                      patterns:
+                        - pattern: $OBJ.$M($H, $HV)
+                        - metavariable-regex:
+                            metavariable: $H
+                            regex: (?i)^["'`]location["'`]$
+                        - metavariable-regex:
+                            metavariable: $M
+                            regex: ^(?!(set|header|setHeader|append)$)
                   # The file mentions "location", as it does whenever the header name matches: a
                   # literal OpenGrep's prefilter can use to skip files.
                   - pattern-regex: (?is)\A.*location.*\z
@@ -1150,14 +1172,18 @@ rules:
                       - patterns:
                           - pattern: '$OBJ.$M($H, `${$PART}...`)'
                       - patterns:
-                          - metavariable-regex:
-                              metavariable: $TXT
-                              regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                           - pattern-either:
-                              - patterns:
-                                  - pattern: '$OBJ.$M($H, `$TXT${$PART}...`)'
-                              - patterns:
-                                  - pattern: '$OBJ.$M($H, `$TXT${$A}${$PART}...`)'
+                              - pattern: '$OBJ.$M($H, `$TXT${$PART}...`)'
+                              - pattern: '$OBJ.$M($H, `$TXT${$A}${$PART}...`)'
+                          # (the condition on the text before the interpolation, as an exclusion: see Performance)
+                          - pattern-not:
+                              patterns:
+                                - pattern-either:
+                                    - pattern: '$OBJ.$M($H, `$TXT${$PART}...`)'
+                                    - pattern: '$OBJ.$M($H, `$TXT${$A}${$PART}...`)'
+                                - metavariable-regex:
+                                    metavariable: $TXT
+                                    regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                       - patterns:
                           - pattern: '$OBJ.$M($H, `${$P}${$PART}...`)'
                       - patterns:
@@ -1168,11 +1194,17 @@ rules:
               # (res.set({...}), res.writeHead(code, {...}), reply.headers({...})).
               - patterns:
                   - metavariable-regex:
-                      metavariable: $M
-                      regex: ^(set|header|headers|writeHead)$
-                  - metavariable-regex:
                       metavariable: $H
                       regex: (?i)^["'`]?location["'`]?$
+                  - pattern-not:
+                      patterns:
+                        - pattern: '$OBJ.$M(..., {..., $H: $HV, ...}, ...)'
+                        - metavariable-regex:
+                            metavariable: $H
+                            regex: (?i)^["'`]?location["'`]?$
+                        - metavariable-regex:
+                            metavariable: $M
+                            regex: ^(?!(set|header|headers|writeHead)$)
                   # The file mentions "location", as it does whenever the header name matches: a
                   # literal OpenGrep's prefilter can use to skip files.
                   - pattern-regex: (?is)\A.*location.*\z
@@ -1274,14 +1306,18 @@ rules:
                       - patterns:
                           - pattern: '$OBJ.$M(..., {..., $H: `${$PART}...`, ...}, ...)'
                       - patterns:
-                          - metavariable-regex:
-                              metavariable: $TXT
-                              regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                           - pattern-either:
-                              - patterns:
-                                  - pattern: '$OBJ.$M(..., {..., $H: `$TXT${$PART}...`, ...}, ...)'
-                              - patterns:
-                                  - pattern: '$OBJ.$M(..., {..., $H: `$TXT${$A}${$PART}...`, ...}, ...)'
+                              - pattern: '$OBJ.$M(..., {..., $H: `$TXT${$PART}...`, ...}, ...)'
+                              - pattern: '$OBJ.$M(..., {..., $H: `$TXT${$A}${$PART}...`, ...}, ...)'
+                          # (the condition on the text before the interpolation, as an exclusion: see Performance)
+                          - pattern-not:
+                              patterns:
+                                - pattern-either:
+                                    - pattern: '$OBJ.$M(..., {..., $H: `$TXT${$PART}...`, ...}, ...)'
+                                    - pattern: '$OBJ.$M(..., {..., $H: `$TXT${$A}${$PART}...`, ...}, ...)'
+                                - metavariable-regex:
+                                    metavariable: $TXT
+                                    regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                       - patterns:
                           - pattern: '$OBJ.$M(..., {..., $H: `${$P}${$PART}...`, ...}, ...)'
                       - patterns:
@@ -1291,9 +1327,13 @@ rules:
           - focus-metavariable: $PART
       # Next.js App Router and Web responses: NextResponse.redirect(url) and Response.redirect(url).
       - patterns:
-          - metavariable-regex:
-              metavariable: $NR
-              regex: ^(NextResponse|Response)$
+          # (The receiver is checked as an exclusion: see Performance.)
+          - pattern-not:
+              patterns:
+                - pattern: $NR.redirect(...)
+                - metavariable-regex:
+                    metavariable: $NR
+                    regex: ^(?!(NextResponse|Response)$)
           - pattern-either:
               # the first argument: the whole value, when it is neither a concatenation nor a template
               - patterns:
@@ -1392,14 +1432,18 @@ rules:
               - patterns:
                   - pattern: '$NR.redirect(`${$PART}...`, ...)'
               - patterns:
-                  - metavariable-regex:
-                      metavariable: $H
-                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                   - pattern-either:
-                      - patterns:
-                          - pattern: '$NR.redirect(`$H${$PART}...`, ...)'
-                      - patterns:
-                          - pattern: '$NR.redirect(`$H${$A}${$PART}...`, ...)'
+                      - pattern: '$NR.redirect(`$H${$PART}...`, ...)'
+                      - pattern: '$NR.redirect(`$H${$A}${$PART}...`, ...)'
+                  # (the condition on the text before the interpolation, as an exclusion: see Performance)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either:
+                            - pattern: '$NR.redirect(`$H${$PART}...`, ...)'
+                            - pattern: '$NR.redirect(`$H${$A}${$PART}...`, ...)'
+                        - metavariable-regex:
+                            metavariable: $H
+                            regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
               - patterns:
                   - pattern: '$NR.redirect(`${$P}${$PART}...`, ...)'
               - patterns:
@@ -1533,14 +1577,18 @@ rules:
               - patterns:
                   - pattern: '$FN(`${$PART}...`, ...)'
               - patterns:
-                  - metavariable-regex:
-                      metavariable: $H
-                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                   - pattern-either:
-                      - patterns:
-                          - pattern: '$FN(`$H${$PART}...`, ...)'
-                      - patterns:
-                          - pattern: '$FN(`$H${$A}${$PART}...`, ...)'
+                      - pattern: '$FN(`$H${$PART}...`, ...)'
+                      - pattern: '$FN(`$H${$A}${$PART}...`, ...)'
+                  # (the condition on the text before the interpolation, as an exclusion: see Performance)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either:
+                            - pattern: '$FN(`$H${$PART}...`, ...)'
+                            - pattern: '$FN(`$H${$A}${$PART}...`, ...)'
+                        - metavariable-regex:
+                            metavariable: $H
+                            regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
               - patterns:
                   - pattern: '$FN(`${$P}${$PART}...`, ...)'
               - patterns:
@@ -1551,12 +1599,19 @@ rules:
       # Next.js App Router and Web responses: a Location header given to new Response() or
       # new NextResponse().
       - patterns:
-          - metavariable-regex:
-              metavariable: $NR
-              regex: ^(NextResponse|Response)$
-          - metavariable-regex:
-              metavariable: $H
-              regex: (?i)^["'`]?location["'`]?$
+          # (The class and the header name are checked as exclusions: see Performance.)
+          - pattern-not:
+              patterns:
+                - pattern: 'new $NR(..., {..., headers: {..., $H: $HV, ...}, ...})'
+                - metavariable-regex:
+                    metavariable: $NR
+                    regex: ^(?!(NextResponse|Response)$)
+          - pattern-not:
+              patterns:
+                - pattern: 'new $NR(..., {..., headers: {..., $H: $HV, ...}, ...})'
+                - metavariable-regex:
+                    metavariable: $H
+                    regex: (?i)^(?!["'`]?location["'`]?$)
           # The file mentions "location", as it does whenever the header name matches: a
           # literal OpenGrep's prefilter can use to skip files.
           - pattern-regex: (?is)\A.*location.*\z
@@ -1658,14 +1713,18 @@ rules:
               - patterns:
                   - pattern: 'new $NR(..., {..., headers: {..., $H: `${$PART}...`, ...}, ...})'
               - patterns:
-                  - metavariable-regex:
-                      metavariable: $TXT
-                      regex: ^(?!(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                   - pattern-either:
-                      - patterns:
-                          - pattern: 'new $NR(..., {..., headers: {..., $H: `$TXT${$PART}...`, ...}, ...})'
-                      - patterns:
-                          - pattern: 'new $NR(..., {..., headers: {..., $H: `$TXT${$A}${$PART}...`, ...}, ...})'
+                      - pattern: 'new $NR(..., {..., headers: {..., $H: `$TXT${$PART}...`, ...}, ...})'
+                      - pattern: 'new $NR(..., {..., headers: {..., $H: `$TXT${$A}${$PART}...`, ...}, ...})'
+                  # (the condition on the text before the interpolation, as an exclusion: see Performance)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either:
+                            - pattern: 'new $NR(..., {..., headers: {..., $H: `$TXT${$PART}...`, ...}, ...})'
+                            - pattern: 'new $NR(..., {..., headers: {..., $H: `$TXT${$A}${$PART}...`, ...}, ...})'
+                        - metavariable-regex:
+                            metavariable: $TXT
+                            regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
               - patterns:
                   - pattern: 'new $NR(..., {..., headers: {..., $H: `${$P}${$PART}...`, ...}, ...})'
               - patterns:
