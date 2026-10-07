@@ -1,3 +1,4 @@
+import hashlib
 import http.client
 import os
 import socket
@@ -22,6 +23,7 @@ from urllib3.util import create_urllib3_context
 app = Flask(__name__)
 
 VERIFY_TLS = False
+CHECK_HOSTNAME = False
 CA_BUNDLE = "/etc/ssl/certs/internal-ca.pem"
 
 
@@ -462,6 +464,130 @@ def safe_urllib3(url):
     return a, b, c, d
 
 
+# Host name checking off while the chain is still verified (CWE-297): the client takes any
+# certificate its trust store accepts, issued for any host, so whoever holds one can pose as the
+# server. Reported on the line that turns the check off.
+def hostname_unchecked(host):
+    ctx = ssl.create_default_context()
+    # ruleid: python.tls-verification-disabled
+    ctx.check_hostname = False
+    private_ca = ssl.create_default_context(cafile=CA_BUNDLE)
+    # ruleid: python.tls-verification-disabled
+    private_ca.check_hostname = False
+    client = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    client.load_verify_locations(CA_BUNDLE)
+    # ruleid: python.tls-verification-disabled
+    client.check_hostname = False
+    keyword = ssl.SSLContext(protocol=ssl.PROTOCOL_TLS_CLIENT)
+    # ruleid: python.tls-verification-disabled
+    keyword.check_hostname = CHECK_HOSTNAME
+    # The chain is still required: the host name is not.
+    required = ssl.create_default_context()
+    # ruleid: python.tls-verification-disabled
+    required.check_hostname = False
+    # ok: python.tls-verification-disabled
+    required.verify_mode = ssl.CERT_REQUIRED
+    sock = socket.create_connection((host, 443))
+    return ctx.wrap_socket(sock), private_ca, client, keyword, required
+
+
+class HostConnector:
+    def __init__(self):
+        self.context = ssl.create_default_context()
+        # ruleid: python.tls-verification-disabled
+        self.context.check_hostname = False
+
+
+# urllib3: assert_hostname=False ("no verification is done" of the host name).
+def urllib3_hostname(url, host, proxy):
+    # ruleid: python.tls-verification-disabled
+    a = urllib3.PoolManager(assert_hostname=False)
+    # ruleid: python.tls-verification-disabled
+    b = urllib3.PoolManager(cert_reqs="CERT_REQUIRED", ca_certs=CA_BUNDLE, assert_hostname=False)
+    # ruleid: python.tls-verification-disabled
+    c = urllib3.HTTPSConnectionPool(host, port=443, assert_hostname=False)
+    # ruleid: python.tls-verification-disabled
+    d = urllib3.ProxyManager(proxy, assert_hostname=False)
+    # ruleid: python.tls-verification-disabled
+    e = urllib3.connection_from_url(url, assert_hostname=False)
+    # ruleid: python.tls-verification-disabled
+    f = PoolManager(num_pools=2, assert_hostname=False)
+    return a, b, c, d, e, f
+
+
+# ssl.wrap_socket() checks the chain with CERT_REQUIRED or CERT_OPTIONAL, but never the host name.
+def legacy_wrap_socket_hostname(host):
+    sock = socket.create_connection((host, 443))
+    # ruleid: python.tls-verification-disabled
+    legacy = ssl.wrap_socket(sock, cert_reqs=ssl.CERT_REQUIRED, ca_certs=CA_BUNDLE)
+    # ruleid: python.tls-verification-disabled
+    optional = ssl.wrap_socket(sock, None, None, False, ssl.CERT_OPTIONAL, ca_certs=CA_BUNDLE)
+    # ruleid: python.tls-verification-disabled
+    enum_required = ssl.wrap_socket(sock, cert_reqs=ssl.VerifyMode.CERT_REQUIRED, ca_certs=CA_BUNDLE)
+    # ruleid: python.tls-verification-disabled
+    imported = wrap_socket(sock, ca_certs=CA_BUNDLE, cert_reqs=ssl.CERT_OPTIONAL)
+    return legacy, optional, enum_required, imported
+
+
+def hostname_checked(host, fingerprint):
+    ctx = ssl.create_default_context()
+    # ok: python.tls-verification-disabled
+    ctx.check_hostname = True
+    # Server contexts: there is no host name to check.
+    accepting = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    # ok: python.tls-verification-disabled
+    accepting.check_hostname = False
+    listening = ssl.create_default_context(purpose=ssl.Purpose.CLIENT_AUTH)
+    # ok: python.tls-verification-disabled
+    listening.check_hostname = False
+    server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    # ok: python.tls-verification-disabled
+    server.check_hostname = False
+    # The check from configuration: the deployment decides.
+    configured = ssl.create_default_context()
+    # ok: python.tls-verification-disabled
+    configured.check_hostname = settings.TLS_CHECK_HOSTNAME
+    # urllib3: the expected host name given, or the certificate pinned by its fingerprint (which
+    # urllib3 checks before assert_hostname).
+    # ok: python.tls-verification-disabled
+    a = urllib3.PoolManager(assert_hostname="internal.example.com")
+    # ok: python.tls-verification-disabled
+    b = urllib3.HTTPSConnectionPool(host, assert_hostname=False, assert_fingerprint=fingerprint)
+    # ok: python.tls-verification-disabled
+    c = urllib3.PoolManager(server_hostname="internal.example.com")
+    # ok: python.tls-verification-disabled
+    d = urllib3.PoolManager(assert_hostname=None)
+    return ctx, accepting, listening, server, configured, a, b, c, d
+
+
+# The code matches the host name itself: ssl.match_hostname() (Python 3.11 and older) on the
+# certificate of the connection.
+def hostname_matched_by_code(host):
+    sock = socket.create_connection((host, 443))
+    # ok: python.tls-verification-disabled
+    tls = ssl.wrap_socket(sock, cert_reqs=ssl.CERT_REQUIRED, ca_certs=CA_BUNDLE)
+    ssl.match_hostname(tls.getpeercert(), host)
+    ctx = ssl.create_default_context()
+    # ok: python.tls-verification-disabled
+    ctx.check_hostname = False
+    with ctx.wrap_socket(sock) as conn:
+        ssl.match_hostname(conn.getpeercert(), host)
+        return conn.recv(1024)
+
+
+# The code compares the server's certificate (DER bytes) with a pinned one.
+def certificate_pinned(host, expected_sha256):
+    ctx = ssl.create_default_context(cafile=CA_BUNDLE)
+    # ok: python.tls-verification-disabled
+    ctx.check_hostname = False
+    sock = socket.create_connection((host, 443))
+    with ctx.wrap_socket(sock) as conn:
+        der = conn.getpeercert(binary_form=True)
+        if hashlib.sha256(der).hexdigest() != expected_sha256:
+            raise ssl.SSLError("certificate does not match the pinned one")
+        return conn.recv(1024)
+
+
 # Look-alikes: a `verify` keyword or attribute, `check_hostname` and `verify_mode` on objects
 # that are not HTTP clients or SSL contexts.
 class Form:
@@ -486,7 +612,7 @@ def look_alikes(token, key, url, api, form: Form, settings_obj):
 
 
 # Known limits.
-def known_limits(url, payload, make_session, host):
+def known_limits(url, payload, make_session, host, self_made):
     # A session that comes from a factory function or another module has no type to bind to.
     session = make_session()
     # todoruleid: python.tls-verification-disabled
@@ -497,19 +623,33 @@ def known_limits(url, payload, make_session, host):
     # httpx's transports take `verify` too, but the httpx documentation does not describe it.
     # todoruleid: python.tls-verification-disabled
     transport = httpx.HTTPTransport(verify=False)
-    # Hostname checking turned off while the certificate chain is still verified is a narrower
-    # weakness (CWE-297) than this rule's; it is not reported.
-    ctx = ssl.create_default_context()
+    # Host name checking off on a context made by SSLContext() without PROTOCOL_TLS_CLIENT, or
+    # by urllib3's create_urllib3_context(), is not reported: whether it serves a client that
+    # relies on it is not known where it is made.
+    generic_required = ssl.SSLContext(ssl.PROTOCOL_TLS)
+    generic_required.verify_mode = ssl.CERT_REQUIRED
     # todoruleid: python.tls-verification-disabled
-    ctx.check_hostname = False
+    generic_required.check_hostname = False
+    pooled = create_urllib3_context()
     # todoruleid: python.tls-verification-disabled
-    pool = urllib3.PoolManager(assert_hostname=False)
-    # ssl.wrap_socket() checks the chain with CERT_REQUIRED, but never the host name.
+    pooled.check_hostname = False
+    # A context made in another method (or another function) is not followed.
+    # todoruleid: python.tls-verification-disabled
+    self_made.context.check_hostname = False
+    # A function that reads the server's certificate as DER bytes counts as pinning it, whatever
+    # it does with the bytes.
+    pinned_ctx = ssl.create_default_context()
+    # todoruleid: python.tls-verification-disabled
+    pinned_ctx.check_hostname = False
+    logged = pinned_ctx.wrap_socket(socket.create_connection((host, 443)))
+    print(logged.getpeercert(binary_form=True))
+    # The check turned off only when the caller gives no host name to check (a library helper
+    # whose callers decide) is still reported.
+    nameless = ssl.create_default_context()
+    if not host:
+        # todook: python.tls-verification-disabled
+        nameless.check_hostname = False
     sock = socket.create_connection((host, 443))
-    # todoruleid: python.tls-verification-disabled
-    legacy = ssl.wrap_socket(sock, cert_reqs=ssl.CERT_REQUIRED, ca_certs=CA_BUNDLE)
-    # todoruleid: python.tls-verification-disabled
-    optional = ssl.wrap_socket(sock, None, None, False, ssl.CERT_OPTIONAL, ca_certs=CA_BUNDLE)
     # ssl.wrap_socket()'s cert_reqs is read only as written in the call: a variable holding
     # CERT_NONE, and the number 0 (CERT_NONE's value), are not seen.
     reqs = ssl.CERT_NONE
@@ -532,7 +672,7 @@ def known_limits(url, payload, make_session, host):
     # Other libraries' TLS switches are not in this rule (boto3, aiohttp, ...).
     # todoruleid: python.tls-verification-disabled
     s3 = boto3.client("s3", verify=False)
-    return transport, pool, legacy, optional, held, zero, unpacked, s3
+    return transport, generic_required, pooled, held, zero, unpacked, s3
 
 
 # A parameter whose default is False is configurable by the caller; it is not reported.

@@ -45,7 +45,7 @@ The key `qualor:<lang>/<name>` is how Qualor names a rule; the rule itself is
 | [`qualor:python/sql-injection`](python/sql-injection.md) | SQL query built from HTTP request data (Python DB-API, Django) | Issue | High | [CWE-89](https://cwe.mitre.org/data/definitions/89.html) |
 | [`qualor:python/ssrf`](python/ssrf.md) | Server-side request to a URL from HTTP request data (Python) | Issue | High | [CWE-918](https://cwe.mitre.org/data/definitions/918.html) |
 | [`qualor:python/template-injection`](python/template-injection.md) | Template source built from HTTP request data (Python) | Issue | High | [CWE-1336](https://cwe.mitre.org/data/definitions/1336.html), [CWE-94](https://cwe.mitre.org/data/definitions/94.html) |
-| [`qualor:python/tls-verification-disabled`](python/tls-verification-disabled.md) | TLS certificate verification disabled (Python) | Issue | High | [CWE-295](https://cwe.mitre.org/data/definitions/295.html) |
+| [`qualor:python/tls-verification-disabled`](python/tls-verification-disabled.md) | TLS certificate or host name verification disabled (Python) | Issue | High | [CWE-295](https://cwe.mitre.org/data/definitions/295.html) |
 | [`qualor:python/unsafe-deserialization`](python/unsafe-deserialization.md) | Unsafe deserialization of HTTP request data (Python) | Issue | High | [CWE-502](https://cwe.mitre.org/data/definitions/502.html) |
 | [`qualor:python/xpath-injection`](python/xpath-injection.md) | XPath expression built from HTTP request data (Python) | Issue | High | [CWE-643](https://cwe.mitre.org/data/definitions/643.html) |
 | [`qualor:python/xss`](python/xss.md) | HTML response built from HTTP request data (Python) | Issue | High | [CWE-79](https://cwe.mitre.org/data/definitions/79.html) |
