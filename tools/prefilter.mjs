@@ -56,6 +56,21 @@ export const ALLOWED = Object.freeze({
   'java.command-injection': { limit: 'none', row: 'java.command-injection#prefilter' },
   'java.open-redirect': { limit: 'none', row: 'java.open-redirect#prefilter' },
   'go.xss': { limit: 'none', row: 'go.xss#prefilter' },
+  // Found by this check on 2026-10-07: the 2026-10-06 survey missed the files with anchors.
+  'java.xxe': { limit: 'none', row: 'java.xxe#prefilter' },
+  'python.code-injection': { limit: 'none', row: 'python.code-injection#prefilter' },
+  'python.command-injection': { limit: 'none', row: 'python.command-injection#prefilter' },
+  'python.unsafe-deserialization': { limit: 'none', row: 'python.unsafe-deserialization#prefilter' },
+  'python.path-traversal': { limit: 'none', row: 'python.path-traversal#prefilter' },
+  'python.open-redirect': { limit: 'none', row: 'python.open-redirect#prefilter' },
+  'python.regex-injection': { limit: 'none', row: 'python.regex-injection#prefilter' },
+  'python.sql-injection': { limit: 'none', row: 'python.sql-injection#prefilter' },
+  'python.ssrf': { limit: 'none', row: 'python.ssrf#prefilter' },
+  'python.template-injection': { limit: 'none', row: 'python.template-injection#prefilter' },
+  'python.xpath-injection': { limit: 'none', row: 'python.xpath-injection#prefilter' },
+  'go.tls-verification-disabled': { limit: 'size', row: 'go.tls-verification-disabled#prefilter-size' },
+  'java.zip-slip': { limit: 'size', row: 'java.zip-slip#prefilter-size' },
+  'js.xss': { limit: 'size', row: 'js.xss#prefilter-size' },
 });
 
 /** A rule file's text with its YAML anchors and aliases expanded (opengrep-core ignores them). */
