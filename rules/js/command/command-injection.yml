@@ -345,6 +345,9 @@ rules:
                       - pattern: '$CALL("=~/(?i)^([a-z]:)?(.*[/\\])?(pwsh|powershell)(\.exe)?$/", [..., "=~/(?i)^-(cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", $SCRIPT, ...], ...)'
                   - pattern-not: '$CALL($PS, [..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...], ...)'
                   - pattern-not: '$CALL("=~/(?i)^([a-z]:)?(.*[/\\])?pwsh(\.exe)?$/", [..., "=~/(?i)\.ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...], ...)'
+                  # pwsh: a first element that is no parameter name is the script (File is the
+                  # default parameter), so what follows are its parameters.
+                  - pattern-not: '$CALL("=~/(?i)^([a-z]:)?(.*[/\\])?pwsh(\.exe)?$/", ["=~/^[^-]/", ..., $SCRIPT, ...], ...)'
               # The first positional element, before any command parameter: for pwsh the script
               # to run (File is the default parameter); for powershell.exe either a script or a
               # command. Positional means first, or after a switch (about_pwsh's parameters

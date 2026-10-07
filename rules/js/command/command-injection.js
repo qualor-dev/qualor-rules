@@ -347,6 +347,10 @@ app.get('/pwsh', (req, res) => {
   spawn('pwsh', ['./scripts/deploy', '-o', 'out.txt', req.query.name]);
   // ok: js.command-injection
   spawn('pwsh', ['-Version', req.query.name]);
+  // ok: js.command-injection
+  spawn('pwsh', ['./scripts/deploy', '-c', req.query.name]);
+  // ok: js.command-injection
+  spawn('pwsh', ['./scripts/deploy', '-File', req.query.name]);
   // A script without .ps1 after pwsh's own switches is not recognised as the script; for
   // powershell.exe, a first positional element after switches is not followed.
   // todook: js.command-injection
