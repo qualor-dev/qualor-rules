@@ -111,8 +111,9 @@ function createSessionToken() {
 - An option set to `false` later in the code (`opts.secure = false`) counts as a decided value
   and is not reported.
 - A response object is recognised by its name (`res`, `response`, `reply`, ...).
-- `@fastify/cookie`'s `parseOptions` count only when they set both flags; then a flag set to `false`
-  in a single call is missed.
+- `@fastify/cookie`'s `parseOptions` count only in the file that registers the plugin (a route
+  module of the same app is still reported) and only when they set both flags; then a flag set to
+  `false` in a single call is missed.
 - A cookie deleted with an expiry in the past other than the epoch is reported.
 <!-- end: known-limits -->
 
@@ -132,7 +133,7 @@ function createSessionToken() {
 
 ## Tests
 
-The test files [`rules/js/cookie/insecure-cookie.js`](../../../rules/js/cookie/insecure-cookie.js) and [`rules/js/cookie/insecure-cookie.ts`](../../../rules/js/cookie/insecure-cookie.ts) and [`rules/js/cookie/insecure-cookie.jsx`](../../../rules/js/cookie/insecure-cookie.jsx) hold every case the rule reports or accepts:
+The test files [`rules/js/cookie/insecure-cookie.js`](../../../rules/js/cookie/insecure-cookie.js) and [`rules/js/cookie/insecure-cookie.ts`](../../../rules/js/cookie/insecure-cookie.ts) and [`rules/js/cookie/insecure-cookie.jsx`](../../../rules/js/cookie/insecure-cookie.jsx) and [`rules/js/cookie/insecure-cookie.tsx`](../../../rules/js/cookie/insecure-cookie.tsx) hold every case the rule reports or accepts:
 lines marked `ruleid:` must be reported and lines marked `ok:` must not. The known limits are
 marked `todoruleid:` (missed) and `todook:` (wrongly reported). `npm test` runs them with OpenGrep,
 and checks the example above as well.

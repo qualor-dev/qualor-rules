@@ -64,6 +64,8 @@ rules:
     #   not (`todoruleid:`).
     # - An assignment of false after the literal (`opts.secure = false`) counts as deciding the
     #   flag (`todoruleid:`).
+    # - @fastify/cookie's parseOptions count only in the file that registers the plugin: a route
+    #   module of the same app is still reported (`todook:`).
     # - @fastify/cookie's parseOptions count only when they set both flags: with one flag there, a
     #   call that sets the other is still reported (`todook:`), and in a file whose parseOptions
     #   set both, a flag given false in the call is missed (`todoruleid:`).
@@ -109,16 +111,39 @@ rules:
                     metavariable: $RES
                     regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
           # @fastify/cookie's parseOptions set the serialization of every set cookie: a file that
-          # registers the plugin with both flags set there (any value but false) is not reported.
+          # registers @fastify/cookie with both flags set there (any value but false) is not reported.
           - pattern-not-inside:
               patterns:
                 - pattern-either:
                     - pattern-inside: |
+                        $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
+                        ...
+                    - pattern-inside: |
+                        await $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
+                        ...
+                    - pattern-inside: |
+                        $PLUGIN = require($PLUGINMOD);
+                        ...
                         $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
                         ...
                     - pattern-inside: |
+                        $PLUGIN = require($PLUGINMOD);
+                        ...
                         await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
                         ...
+                    - pattern-inside: |
+                        import $PLUGIN from $PLUGINMOD;
+                        ...
+                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                        ...
+                    - pattern-inside: |
+                        import $PLUGIN from $PLUGINMOD;
+                        ...
+                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                        ...
+                - metavariable-regex:
+                    metavariable: $PLUGINMOD
+                    regex: ^["'`]?(?:@fastify/cookie|fastify-cookie)["'`]?$
                 - metavariable-pattern:
                     metavariable: $PARSE
                     patterns:
@@ -145,16 +170,39 @@ rules:
                     metavariable: $RES
                     regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
           # @fastify/cookie's parseOptions set the serialization of every set cookie: a file that
-          # registers the plugin with both flags set there (any value but false) is not reported.
+          # registers @fastify/cookie with both flags set there (any value but false) is not reported.
           - pattern-not-inside:
               patterns:
                 - pattern-either:
                     - pattern-inside: |
+                        $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
+                        ...
+                    - pattern-inside: |
+                        await $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
+                        ...
+                    - pattern-inside: |
+                        $PLUGIN = require($PLUGINMOD);
+                        ...
                         $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
                         ...
                     - pattern-inside: |
+                        $PLUGIN = require($PLUGINMOD);
+                        ...
                         await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
                         ...
+                    - pattern-inside: |
+                        import $PLUGIN from $PLUGINMOD;
+                        ...
+                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                        ...
+                    - pattern-inside: |
+                        import $PLUGIN from $PLUGINMOD;
+                        ...
+                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                        ...
+                - metavariable-regex:
+                    metavariable: $PLUGINMOD
+                    regex: ^["'`]?(?:@fastify/cookie|fastify-cookie)["'`]?$
                 - metavariable-pattern:
                     metavariable: $PARSE
                     patterns:
@@ -249,16 +297,39 @@ rules:
                     metavariable: $RES
                     regex: ^(?!(res|resp|response|reply|rep|_res|_response)$)
           # @fastify/cookie's parseOptions set the serialization of every set cookie: a file that
-          # registers the plugin with both flags set there (any value but false) is not reported.
+          # registers @fastify/cookie with both flags set there (any value but false) is not reported.
           - pattern-not-inside:
               patterns:
                 - pattern-either:
                     - pattern-inside: |
+                        $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
+                        ...
+                    - pattern-inside: |
+                        await $APP.register(require($PLUGINMOD), {..., parseOptions: $PARSE, ...});
+                        ...
+                    - pattern-inside: |
+                        $PLUGIN = require($PLUGINMOD);
+                        ...
                         $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
                         ...
                     - pattern-inside: |
+                        $PLUGIN = require($PLUGINMOD);
+                        ...
                         await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
                         ...
+                    - pattern-inside: |
+                        import $PLUGIN from $PLUGINMOD;
+                        ...
+                        $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                        ...
+                    - pattern-inside: |
+                        import $PLUGIN from $PLUGINMOD;
+                        ...
+                        await $APP.register($PLUGIN, {..., parseOptions: $PARSE, ...});
+                        ...
+                - metavariable-regex:
+                    metavariable: $PLUGINMOD
+                    regex: ^["'`]?(?:@fastify/cookie|fastify-cookie)["'`]?$
                 - metavariable-pattern:
                     metavariable: $PARSE
                     patterns:
