@@ -317,6 +317,16 @@ func GinRoutes(r *gin.Engine) {
 	})
 }
 
+// A safe cookie call nested in the argument of a reported one is not reported itself.
+func GinNested(c *gin.Context) {
+	// ruleid: go.insecure-cookie
+	c.SetCookie("session", func() string {
+		// ok: go.insecure-cookie
+		http.SetCookie(c.Writer, &http.Cookie{Name: "inner", Secure: true, HttpOnly: true})
+		return newToken()
+	}(), 3600, "/", "", false, true)
+}
+
 // Echo: Context.SetCookie(*http.Cookie), as in the Echo cookie guide.
 func EchoWriteCookie(c echo.Context) error {
 	cookie := new(http.Cookie)

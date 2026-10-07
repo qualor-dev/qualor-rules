@@ -74,31 +74,33 @@ rules:
       # forms below name the same calls again without the import. Performance: OpenGrep
       # multiplies the conditions of the branches of a pattern-either into the rule's prefilter,
       # which it builds again for every file it scans; with the import check repeated in each
-      # form that came to 6.5 MB and 0.4 s per file. Keep the imports here only.
+      # form that came to 6.5 MB and 0.4 s per file. Keep the imports here only, and the calls
+      # as pattern-inside: a positive pattern here adds ranges of its own, and a safe call nested
+      # in the argument of a reported one would be reported too.
       - pattern-either:
           - patterns:
               - pattern-inside: |
                   import "net/http"
                   ...
-              - pattern: http.SetCookie(...)
+              - pattern-inside: http.SetCookie(...)
           - patterns:
               - pattern-inside: |
                   import "github.com/gin-gonic/gin"
                   ...
               - pattern-either:
-                  - pattern: '($G : *gin.Context).SetCookieData(...)'
-                  - pattern: '($G : *gin.Context).SetCookie(...)'
+                  - pattern-inside: '($G : *gin.Context).SetCookieData(...)'
+                  - pattern-inside: '($G : *gin.Context).SetCookie(...)'
           # Echo v4 (Context is an interface) and v5 (a struct).
           - patterns:
               - pattern-inside: |
                   import "github.com/labstack/echo/v4"
                   ...
-              - pattern: '($E : echo.Context).SetCookie(...)'
+              - pattern-inside: '($E : echo.Context).SetCookie(...)'
           - patterns:
               - pattern-inside: |
                   import "github.com/labstack/echo/v5"
                   ...
-              - pattern: '($E : *echo.Context).SetCookie(...)'
+              - pattern-inside: '($E : *echo.Context).SetCookie(...)'
       - pattern-either:
           # The cookie literal in the call.
           - patterns:
