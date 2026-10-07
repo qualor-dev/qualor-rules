@@ -203,14 +203,12 @@ rule is next changed).
   25 and the OWASP Top 10 needs the maintainer's word.
 - Commit map changes with the backlog rows they produce.
 - **Tooling** is not a map or backlog item (`BACKLOG.md` ids are rule ids). Open follow-ups from
-  the 2026-10-06 run, for a setup change: a prefilter check in `npm test` (every rule:
-  `opengrep-core -prefilter_of_rules` is not None and below a size budget; it would have caught
-  the 31 MB python.tls-verification-disabled prefilter and the rules that have none); a
-  per-alternative mutation sweep in tools/ (remove one pattern item or alternative at a time,
-  the rule's test must fail; implementers wrote it three times in `.tmp/`); `--timeout 0` in
-  `npm run probe` and `npm run measure` (OpenGrep's 5 s default times out on a loaded host and
-  drops findings); generators for the shared source blocks of JS, Java and Python, as
-  tools/xxe-exclusions.mjs does for java.xxe, so the copies stay byte-identical.
+  the 2026-10-06 run, for a setup change (the prefilter check is `npm run test:prefilter` since
+  2026-10-07): a per-alternative mutation sweep in tools/ (remove one pattern item or
+  alternative at a time, the rule's test must fail; implementers wrote it three times in
+  `.tmp/`); `--timeout 0` in `npm run probe` and `npm run measure` (OpenGrep's 5 s default times
+  out on a loaded host and drops findings); generators for the shared source blocks of JS, Java
+  and Python, as tools/xxe-exclusions.mjs does for java.xxe, so the copies stay byte-identical.
 
 ## Kind and severity (ruling M1 of 6A)
 

@@ -4,7 +4,12 @@
 
 - `npm ci --ignore-scripts`: install the two dev dependencies (ajv, yaml)
 - `npm test`: `npm run check` (rules, `BACKLOG.md`, `REFERENCE.md`, the rule pages), the tools' own
-  tests, `opengrep scan --test` and the pages' examples (both need the pinned OpenGrep)
+  tests, `opengrep scan --test`, the pages' examples and the prefilter check (these three need the
+  pinned OpenGrep)
+- `npm run test:prefilter [-- <rule.yml|dir>...] [--table]`: every rule's OpenGrep prefilter
+  (`tools/prefilter.mjs`, anchors expanded) must be Some, at most 20 kB and build within 400 ms
+  (best of 3, scaled on a busy host); its `ALLOWED` list exempts a rule from one limit while its
+  `BACKLOG.md` row is open and fails once the rule no longer needs it. `--table` prints the numbers
 - `npm run docs`: the rule pages `docs/rules/<lang>/<name>.md` and their index, from the rules
   (hand-written sections are kept)
 - `npm run test:docker`: the same inside the `qualor/scanner` image (`QUALOR_SCANNER_IMAGE`), for
@@ -29,7 +34,7 @@
   release and pins it in qualor-cc, only when the maintainer asks.
 - Tooling follow-ups (a check, a mutation sweep, a generator) are not `BACKLOG.md` rows, whose ids
   are rule ids: they are listed in COVERAGE.md "Growing the map" and in the LOG entries' Notes.
-  Open ones: a prefilter-size check in `npm test`, a per-alternative mutation sweep tool,
+  Open ones: a per-alternative mutation sweep tool,
   `--timeout 0` in the probe and measure tools, generators for the JS, Java and Python source
   blocks.
 

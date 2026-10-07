@@ -216,6 +216,8 @@ says. Layout as the SQL rule: `message` (what is wrong and how to fix it), `meta
     cannot run, and record what remains, such as a name rebound from the context to another
     object, as a Known limit with a `todook:` line. python.tls-verification-disabled: 3^5 x 2^5 →
     3 x 2^6, 0.63 → 0.1 s.
+    `npm test` checks every rule (`npm run test:prefilter -- <rule> --table`: Some, at most
+    20 kB, built within 400 ms, best of 3), looser than the budget below.
     The budget is ≤ 0.2 s and ≤ 20 kB. Exclusions cost nothing, so a branch (a source or sink of a
     taint rule too) can keep one or two positive terms exactly: write a context it must sit in as
     "not outside it" (a `pattern-not` of the same pattern with the context as a
