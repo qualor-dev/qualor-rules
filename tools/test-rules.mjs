@@ -1,11 +1,11 @@
 // `npm run test:rules`: `opengrep scan --test` over rules/ with the OpenGrep version package.json
-// pins ("opengrep"). OpenGrep exits 0 even when a rule file is invalid or has no test, so the
-// verdict comes from its JSON, never from its exit code alone. OPENGREP names the binary
-// (default: `opengrep` on PATH).
+// pins ("opengrep"), in the taint mode it names ("taintIntrafile", tools/engine.mjs). OpenGrep
+// exits 0 even when a rule file is invalid or has no test, so the verdict comes from its JSON,
+// never from its exit code alone. OPENGREP names the binary (default: `opengrep` on PATH).
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { engine, modeName } from './engine.mjs';
 
 /** The problems of one `opengrep scan --test --json` result (its parsed JSON). */
 export function testProblems(result) {
@@ -30,7 +30,7 @@ export function testProblems(result) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-  const pinned = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).opengrep;
+  const { version: pinned, taintIntrafile, args: mode } = engine(root);
   const bin = process.env.OPENGREP || 'opengrep';
   const version = spawnSync(bin, ['--version'], { encoding: 'utf8' });
   if (version.status !== 0 || version.stdout.trim() !== pinned) {
@@ -39,7 +39,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   }
   const run = spawnSync(
     bin,
-    ['scan', '--test', '--json', '--disable-version-check', '--no-rewrite-rule-ids', 'rules/'],
+    ['scan', '--test', '--json', '--disable-version-check', '--no-rewrite-rule-ids', ...mode, 'rules/'],
     { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
   );
   let result;
@@ -51,6 +51,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   }
   const problems = testProblems(result);
   for (const p of problems) console.error(p);
-  console.log(problems.length === 0 ? `test-rules: ok (OpenGrep ${pinned})` : `test-rules: ${problems.length} problem(s)`);
+  console.log(problems.length === 0 ? `test-rules: ok (OpenGrep ${pinned}, ${modeName(taintIntrafile)})` : `test-rules: ${problems.length} problem(s)`);
   process.exit(problems.length === 0 && run.status === 0 ? 0 : 1);
 }

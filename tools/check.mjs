@@ -17,6 +17,9 @@ export function checkRepository(root) {
   const problems = [];
   if (!VERSION.test(pkg.version)) problems.push(`package.json: version ${pkg.version} is not YYYY.M.patch`);
   if (!/^\d+\.\d+\.\d+$/.test(pkg.opengrep ?? '')) problems.push('package.json: no "opengrep" version');
+  if (typeof pkg.taintIntrafile !== 'boolean') {
+    problems.push('package.json: "taintIntrafile" must be true or false (the taint mode the rules are tested in)');
+  }
   const seen = new Map();
   let files;
   try {

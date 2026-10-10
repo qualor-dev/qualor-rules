@@ -52,12 +52,18 @@ npm test          # check (layout, schema, ids, annotations, sources, pages), th
 `package.json` names (`"opengrep"`) on `PATH`, or its path in `OPENGREP`;
 `tools/install-opengrep.sh` installs it (Linux x86-64).
 
+`package.json`'s `"taintIntrafile"` is the taint mode the rules are tested in: when true, every
+tool that runs OpenGrep (the tests, the pages' examples, the probe, `measure`, `scan`) passes
+`--taint-intrafile` (taint followed through the functions of one file), and the release's
+manifest says so, so Qualor runs the pack the same way. `QUALOR_TAINT_INTRAFILE=1` or `0` runs
+the tools in the other mode for a comparison (`tools/engine.mjs`).
+
 ## Releases
 
 Versions are `YYYY.M.patch` (the first is `2026.10.0`). `npm run release` writes
 `dist/qualor-rules-<version>.tar.gz`, its `.sha256` and `dist/manifest.json`, and prints the
 SHA-256. The tarball holds `manifest.json`
-(`{ version, opengrep, rules: [{ id, path, sha256, languages, kind, severity, cwe, title }] }`),
+(`{ version, opengrep, taintIntrafile, rules: [{ id, path, sha256, languages, kind, severity, cwe, title }] }`),
 `LICENSE`, `NOTICE` and the rule YAML (no tests), and is byte for byte the same from the same
 commit on any machine with the same Node.js major version (the gzip stream comes from Node's
 zlib). Qualor's scanner pins that SHA-256.

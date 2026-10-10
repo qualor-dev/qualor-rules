@@ -5,14 +5,16 @@
 // MEASUREMENTS.md, headed with the last commit that changed rules/.
 //
 // `npm run measure -- --check`: exit 1 unless the newest entry measured all four languages at the
-// last commit that changed rules/ (what /release-pack requires before it pins a pack).
+// last commit that changed rules/, in package.json's taint mode (what /release-pack requires before
+// it pins a pack).
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { referenceProjects } from './backlog.mjs';
 import { LANGS, readRule, ruleFiles } from './rules.mjs';
-import { checkImage, configs, git, mainTree, outDir, readResult, referenceClone, root, scanTargets } from './scanner.mjs';
-import { benchmarkTable, latestMeasurement, parseExpected, scoreBenchmark, targetVerdicts, TARGET } from './score.mjs';
+import { engine } from './engine.mjs';
+import { checkImage, configs, ENGINE, git, mainTree, outDir, readResult, referenceClone, root, scanTargets } from './scanner.mjs';
+import { benchmarkTable, engineLine, latestMeasurement, parseExpected, scoreBenchmark, targetVerdicts, TARGET } from './score.mjs';
 
 const FILE = path.join(root, 'MEASUREMENTS.md');
 const ALL = Object.keys(LANGS);
@@ -28,12 +30,18 @@ export function insertEntry(text, entry) {
   return [...lines.slice(0, at), ...entry.trimEnd().split('\n'), '', ...lines.slice(at)].join('\n');
 }
 
-/** Problems that make the newest entry of `text` unusable for a release at `commit`. */
-export function checkProblems(text, commit) {
+/**
+ * Problems that make the newest entry of `text` unusable for a release at `commit` whose rules
+ * run with `--taint-intrafile` when `taintIntrafile` (package.json).
+ */
+export function checkProblems(text, commit, taintIntrafile = false) {
   const last = latestMeasurement(text);
   if (last === undefined) return ['MEASUREMENTS.md has no entry: run npm run measure'];
   const problems = [];
   if (last.rules !== commit) problems.push(`the newest entry measured rules at ${last.rules.slice(0, 12)}, but rules/ last changed in ${commit.slice(0, 12)}: run npm run measure`);
+  if (last.taintIntrafile !== taintIntrafile) {
+    problems.push(`the newest entry ran ${last.taintIntrafile ? 'with' : 'without'} --taint-intrafile, but package.json's "taintIntrafile" is ${taintIntrafile}: run npm run measure`);
+  }
   const missing = ALL.filter((l) => !last.langs.includes(l));
   if (missing.length > 0) problems.push(`the newest entry lacks ${missing.join(', ')}: run npm run measure (all languages)`);
   return problems;
@@ -56,9 +64,8 @@ function measure(langs) {
     const { rule } = readRule(root, f);
     if (rule?.id) cweByRule.set(rule.id, rule.metadata?.cwe ?? []);
   }
-  const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   const date = new Date().toISOString().slice(0, 10);
-  const lines = [`## ${date} rules ${commit} (${langs.join(', ')})`, '', `OpenGrep ${pkg.opengrep}; ${dirs.length} rule directories; results in \`${path.relative(root, out).split(path.sep).join('/')}\`.`, ''];
+  const lines = [`## ${date} rules ${commit} (${langs.join(', ')})`, '', `${engineLine(ENGINE.version, ENGINE.taintIntrafile)}; ${dirs.length} rule directories; results in \`${path.relative(root, out).split(path.sep).join('/')}\`.`, ''];
   for (const t of targets) {
     const res = readResult(path.join(out, `${t.name}.json`));
     if (res === undefined) {
@@ -95,7 +102,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const argv = process.argv.slice(2);
   try {
     if (argv.includes('--check')) {
-      const problems = checkProblems(existsSync(FILE) ? readFileSync(FILE, 'utf8') : '', rulesCommit());
+      // package.json's mode, never QUALOR_TAINT_INTRAFILE: the mode a release runs the rules in.
+      const problems = checkProblems(existsSync(FILE) ? readFileSync(FILE, 'utf8') : '', rulesCommit(), engine(root, {}).taintIntrafile);
       for (const p of problems) console.error(`measure: ${p}`);
       if (problems.length === 0) console.log('measure: the newest entry covers the current rules');
       process.exit(problems.length === 0 ? 0 : 1);

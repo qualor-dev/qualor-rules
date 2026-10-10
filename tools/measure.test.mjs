@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { checkProblems, insertEntry } from './measure.mjs';
-import { latestMeasurement, parseExpected, scoreBenchmark, targetVerdicts } from './score.mjs';
+import { engineLine, latestMeasurement, parseExpected, scoreBenchmark, targetVerdicts } from './score.mjs';
 
 const CSV = [
   '# test name, category, real vulnerability, cwe, Benchmark version: 1.2, 2016-06-1',
@@ -58,7 +58,17 @@ test('inserts a new entry above the newest one and reads it back', () => {
   const second = insertEntry(first, `## 2026-10-05 rules ${SHA} (go)\n\nnew\n`);
   assert.ok(second.indexOf('2026-10-05') < second.indexOf('2026-10-04'));
   assert.ok(second.startsWith('# Measurements\n\nIntro.\n'));
-  assert.deepEqual(latestMeasurement(second), { date: '2026-10-05', rules: SHA, langs: ['go'] });
+  assert.deepEqual(latestMeasurement(second), { date: '2026-10-05', rules: SHA, langs: ['go'], taintIntrafile: false });
+});
+
+test('reads the taint mode from the engine line under the newest heading', () => {
+  const entry = (sha, line) => `## 2026-10-05 rules ${sha} (go)\n\n${line}; 1 rule directories\n\n`;
+  assert.equal(engineLine('1.30.0', false), 'OpenGrep 1.30.0');
+  assert.equal(engineLine('1.30.0', true), 'OpenGrep 1.30.0 with --taint-intrafile');
+  const on = `# M\n\n${entry(SHA, engineLine('1.30.0', true))}${entry(OLD, 'OpenGrep 1.30.0')}`;
+  assert.equal(latestMeasurement(on).taintIntrafile, true);
+  const off = `# M\n\n${entry(SHA, 'OpenGrep 1.30.0')}${entry(OLD, engineLine('1.30.0', true))}`;
+  assert.equal(latestMeasurement(off).taintIntrafile, false);
 });
 
 test('a release needs the newest entry at the last rules commit, for all four languages', () => {
@@ -67,4 +77,11 @@ test('a release needs the newest entry at the last rules commit, for all four la
   assert.match(checkProblems(all, OLD).join('\n'), /rules\/ last changed in bbbbbbbbbbbb/);
   assert.match(checkProblems(`# M\n\n## 2026-10-05 rules ${SHA} (go)\n`, SHA).join('\n'), /lacks js, python, java/);
   assert.match(checkProblems('# M\n', SHA).join('\n'), /no entry/);
+});
+
+test("a release needs the newest entry in package.json's taint mode", () => {
+  const all = (line) => `# M\n\n## 2026-10-05 rules ${SHA} (js, python, java, go)\n\n${line}; x\n`;
+  assert.deepEqual(checkProblems(all('OpenGrep 1.30.0 with --taint-intrafile'), SHA, true), []);
+  assert.match(checkProblems(all('OpenGrep 1.30.0'), SHA, true).join('\n'), /ran without --taint-intrafile, but package.json's "taintIntrafile" is true/);
+  assert.match(checkProblems(all('OpenGrep 1.30.0 with --taint-intrafile'), SHA, false).join('\n'), /ran with --taint-intrafile/);
 });

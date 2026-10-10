@@ -1,14 +1,16 @@
 // `npm run test:examples`: the example on every rule page (docs/rules/<lang>/<name>.md) does what
 // the page says. The noncompliant block, written to a file of its language, must get at least one
 // finding of the page's rule, and the compliant block no finding of any rule, when OpenGrep runs
-// every rule of rules/ on them. Needs the OpenGrep version package.json pins (OPENGREP names the binary, default
-// `opengrep` on PATH), like tools/test-rules.mjs.
+// every rule of rules/ on them, in the taint mode package.json names (tools/engine.mjs). Needs the
+// OpenGrep version package.json pins (OPENGREP names the binary, default `opengrep` on PATH), like
+// tools/test-rules.mjs.
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { docRules, examples, FENCES } from './docs.mjs';
+import { engine, modeName } from './engine.mjs';
 
 /**
  * The example files of every page: `{ id, page, kind: 'noncompliant'|'compliant', file, code }`,
@@ -59,7 +61,7 @@ export function exampleProblems(result, cases, dir) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-  const pinned = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).opengrep;
+  const { version: pinned, taintIntrafile, args: mode } = engine(root);
   const bin = process.env.OPENGREP || 'opengrep';
   const version = spawnSync(bin, ['--version'], { encoding: 'utf8' });
   if (version.status !== 0 || version.stdout.trim() !== pinned) {
@@ -78,7 +80,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       bin,
       // Each example is a few lines: a per-file timeout only measures host load (parallel runs time
       // out at OpenGrep's default 5 s), so it is generous here.
-      ['scan', '--json', '--disable-version-check', '--no-rewrite-rule-ids', '--quiet', '--x-ignore-semgrepignore-files', '--no-git-ignore', '--timeout', '120', '--config', 'rules/', dir],
+      ['scan', '--json', '--disable-version-check', '--no-rewrite-rule-ids', '--quiet', '--x-ignore-semgrepignore-files', '--no-git-ignore', '--timeout', '120', ...mode, '--config', 'rules/', dir],
       { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
     );
     let result;
@@ -94,6 +96,6 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   }
   for (const p of problems) console.error(p);
   const pages = new Set(cases.map((c) => c.page)).size;
-  console.log(problems.length === 0 ? `test-examples: ok (${pages} pages, OpenGrep ${pinned})` : `test-examples: ${problems.length} problem(s)`);
+  console.log(problems.length === 0 ? `test-examples: ok (${pages} pages, OpenGrep ${pinned}, ${modeName(taintIntrafile)})` : `test-examples: ${problems.length} problem(s)`);
   process.exit(problems.length === 0 ? 0 : 1);
 }

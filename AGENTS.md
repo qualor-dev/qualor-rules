@@ -19,6 +19,9 @@
 - `npm run measure -- [lang]...`: the rules on the recall sets (OWASP Benchmark scored per
   category) into `MEASUREMENTS.md`; `npm run measure -- --check` tells whether it is current
 - `npm run release`: the release tarball in `dist/`, and its SHA-256
+- `package.json` `"taintIntrafile"`: the taint mode every tool runs OpenGrep in (`--taint-intrafile`)
+  and the release manifest names; `QUALOR_TAINT_INTRAFILE=1|0 npm run …` runs the other mode for a
+  comparison (`tools/engine.mjs`)
 
 ## How work is organised
 

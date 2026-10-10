@@ -48,18 +48,34 @@ test('lists manifest.json, LICENSE, NOTICE and the rule YAML only, sorted, owner
   assert.equal(readFileSync(path.join(dir, 'manifest.json'), 'utf8'), manifestText.toString());
 });
 
-test('the manifest names every rule with its own SHA-256 and the pinned OpenGrep', () => {
+test('the manifest names every rule with its own SHA-256, the pinned OpenGrep and its taint mode', () => {
   const { manifestText } = buildRelease(root);
   const manifest = JSON.parse(manifestText);
   const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(manifest.version, pkg.version);
   assert.equal(manifest.opengrep, pkg.opengrep);
+  assert.equal(manifest.taintIntrafile, pkg.taintIntrafile);
+  assert.deepEqual(Object.keys(manifest), ['version', 'opengrep', 'taintIntrafile', 'rules']);
   assert.ok(manifest.rules.length > 0);
   for (const r of manifest.rules) {
     assert.match(r.id, /^(js|python|java|go)\/[a-z0-9-]+$/);
     assert.match(r.path, /^rules\/(js|python|java|go)\/[a-z0-9-]+\/[a-z0-9-]+\.yml$/);
     assert.match(r.sha256, /^[0-9a-f]{64}$/);
     assert.ok(r.title.length > 0 && ['issue', 'hotspot'].includes(r.kind));
+  }
+});
+
+test('the manifest takes the taint mode from package.json, not from QUALOR_TAINT_INTRAFILE', () => {
+  const dir = copyRepo();
+  const pkg = JSON.parse(readFileSync(path.join(dir, 'package.json'), 'utf8'));
+  writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ ...pkg, taintIntrafile: true }));
+  const saved = process.env.QUALOR_TAINT_INTRAFILE;
+  process.env.QUALOR_TAINT_INTRAFILE = '0';
+  try {
+    assert.equal(JSON.parse(buildRelease(dir).manifestText).taintIntrafile, true);
+  } finally {
+    if (saved === undefined) delete process.env.QUALOR_TAINT_INTRAFILE;
+    else process.env.QUALOR_TAINT_INTRAFILE = saved;
   }
 });
 

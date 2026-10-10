@@ -107,11 +107,21 @@ export function benchmarkTable(rows) {
 /** `## <date> rules <sha> (<langs>)`: the heading of one MEASUREMENTS.md entry. */
 export const ENTRY = /^## (\d{4}-\d{2}-\d{2}) rules ([0-9a-f]{40}) \(([a-z, ]+)\)$/;
 
-/** The newest entry of MEASUREMENTS.md: { date, rules, langs } or undefined. Entries are newest first. */
+/** The line under an entry's heading that names the engine; `with --taint-intrafile` names the mode. */
+export const engineLine = (version, taintIntrafile) => `OpenGrep ${version}${taintIntrafile ? ' with --taint-intrafile' : ''}`;
+
+/**
+ * The newest entry of MEASUREMENTS.md: { date, rules, langs, taintIntrafile } or undefined. Entries
+ * are newest first; an entry whose engine line names no mode ran without --taint-intrafile.
+ */
 export function latestMeasurement(text) {
-  for (const line of text.split(/\r?\n/)) {
-    const m = ENTRY.exec(line);
-    if (m) return { date: m[1], rules: m[2], langs: m[3].split(', ') };
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = ENTRY.exec(lines[i]);
+    if (!m) continue;
+    const engine = lines.slice(i + 1).find((l) => l.startsWith('OpenGrep ') || l.startsWith('## '));
+    const taintIntrafile = /^OpenGrep \S+ with --taint-intrafile[;,]/.test(engine ?? '');
+    return { date: m[1], rules: m[2], langs: m[3].split(', '), taintIntrafile };
   }
   return undefined;
 }

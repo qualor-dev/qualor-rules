@@ -2,7 +2,8 @@
 // from the same commit on any platform with the same Node.js major version (the gzip stream comes
 // from Node's zlib): entries sorted, mtime 0, owner 0:0, modes 0644, a plain ustar archive written
 // here and gzip with mtime 0 and the OS byte fixed to Unix. It holds
-// manifest.json, LICENSE, NOTICE and rules/ (the rule YAML only, never the tests). Prints the
+// manifest.json (with the pinned OpenGrep and the taint mode the rules are tested in), LICENSE,
+// NOTICE and rules/ (the rule YAML only, never the tests). Prints the
 // tarball's SHA-256, which the scanner pins (QUALOR_RULES_SHA256 in qualor's install.sh).
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -75,7 +76,8 @@ export function buildRelease(root) {
       title: rule.metadata.title,
     });
   }
-  const manifest = { version: pkg.version, opengrep: pkg.opengrep, rules };
+  // package.json's mode, never QUALOR_TAINT_INTRAFILE (tools/engine.mjs): Qualor runs the pack so.
+  const manifest = { version: pkg.version, opengrep: pkg.opengrep, taintIntrafile: pkg.taintIntrafile === true, rules };
   const manifestText = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
   entries.push(['manifest.json', manifestText]);
   entries.push(['LICENSE', readFileSync(path.join(root, 'LICENSE'))]);

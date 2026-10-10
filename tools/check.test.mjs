@@ -124,6 +124,11 @@ test("reads failures from OpenGrep's JSON, whatever its exit code", () => {
   );
 });
 
+test('package.json names the taint mode as a boolean', () => {
+  const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(typeof pkg.taintIntrafile, 'boolean');
+});
+
 test('pins the same OpenGrep in package.json and tools/install-opengrep.sh', () => {
   const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   const script = readFileSync(path.join(root, 'tools/install-opengrep.sh'), 'utf8');

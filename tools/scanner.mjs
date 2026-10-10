@@ -11,6 +11,9 @@
 //     Runs the named rules on files of this tree (a reviewer's probe files under .tmp/, say) and
 //     prints every finding.
 //
+// Every scan runs in the taint mode package.json names ("taintIntrafile", tools/engine.mjs;
+// QUALOR_TAINT_INTRAFILE=1|0 overrides it, also for `test`).
+//
 // JSON results go to .tmp/probe/<run>/ of this tree. QUALOR_SCANNER_IMAGE names the image (default
 // qualor/scanner:6b1); QUALOR_CC names the qualor-cc repository (default ../qualor-cc next to the
 // main tree). Containers are named qr-<mode>-<pid> and run with --rm. tools/measure.mjs reuses the
@@ -21,14 +24,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parse } from 'yaml';
 import { referenceProjects } from './backlog.mjs';
+import { engine, modeName } from './engine.mjs';
 import { LANGS } from './rules.mjs';
 
 export const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const pinned = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).opengrep;
+/** The pinned OpenGrep and the taint mode the rules are tested in (package.json, tools/engine.mjs). */
+export const ENGINE = engine(root);
+const pinned = ENGINE.version;
 const image = process.env.QUALOR_SCANNER_IMAGE || 'qualor/scanner:6b1';
 // The engine scans every file Qualor scans (tests too) and files up to 1 MiB (qualor-cc's
-// MAX_ANALYZED_BYTES); git in the container must accept the mounted repositories.
-const SCAN = ['--json', '--disable-version-check', '--no-rewrite-rule-ids', '--quiet', '--x-ignore-semgrepignore-files', '--max-target-bytes', '1048576'];
+// MAX_ANALYZED_BYTES), in the rules' taint mode; git in the container must accept the mounted
+// repositories.
+const SCAN = [...ENGINE.args, '--json', '--disable-version-check', '--no-rewrite-rule-ids', '--quiet', '--x-ignore-semgrepignore-files', '--max-target-bytes', '1048576'];
 const GIT_SAFE = ['-e', 'GIT_CONFIG_COUNT=1', '-e', 'GIT_CONFIG_KEY_0=safe.directory', '-e', 'GIT_CONFIG_VALUE_0=*'];
 /** How many qualor-cc clones (one per main SHA) the probe keeps. */
 const KEEP_QUALOR_CC = 2;
@@ -210,7 +217,9 @@ function test() {
     'npm ci --ignore-scripts --no-audit --no-fund >/dev/null 2>&1',
     'npm test',
   ].join('\n');
-  return docker(['run', '--rm', '--name', `qr-test-${process.pid}`, '-e', 'HOME=/tmp', '-v', `${root}:/src:ro`, '--entrypoint', 'sh', image, '-c', script]) ?? 1;
+  // A QUALOR_TAINT_INTRAFILE override reaches `npm test` in the container too.
+  const mode = process.env.QUALOR_TAINT_INTRAFILE ? ['-e', 'QUALOR_TAINT_INTRAFILE'] : [];
+  return docker(['run', '--rm', '--name', `qr-test-${process.pid}`, '-e', 'HOME=/tmp', ...mode, '-v', `${root}:/src:ro`, '--entrypoint', 'sh', image, '-c', script]) ?? 1;
 }
 
 function probe(argv) {
@@ -241,7 +250,7 @@ function probe(argv) {
       failed = true;
     }
   }
-  console.log(`results: ${out}`);
+  console.log(`results: ${out} (OpenGrep ${pinned}, ${modeName(ENGINE.taintIntrafile)})`);
   return failed ? 1 : 0;
 }
 
