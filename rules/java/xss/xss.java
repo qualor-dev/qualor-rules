@@ -94,9 +94,12 @@ public class SearchServlet extends HttpServlet {
         org.owasp.esapi.Encoder encoder = org.owasp.esapi.ESAPI.encoder();
         // ok: java.xss
         out.println("<a title=\"" + encoder.encodeForHTMLAttribute(term) + "\">");
-        // The encoding happens in a helper method, which the rule does not look into.
-        // todook: java.xss
+        // A helper of this file that returns a constant (or encodes the value) is followed.
+        // ok: java.xss
         out.println("<p>" + escaped(term) + "</p>");
+        // A helper of another file is not looked into: it passes the request data on.
+        // todook: java.xss
+        out.println("<p>" + com.acme.shop.web.Html.escaped(term) + "</p>");
         // ok: java.xss
         out.println("<p>Page " + Integer.parseInt(request.getParameter("page")) + "</p>");
         // ok: java.xss
@@ -754,8 +757,8 @@ class SharedLimitsController {
         // valueOf of a class that is not an enum hands the text back.
         // ruleid: java.xss
         out.println(javax.xml.namespace.QName.valueOf(key).getLocalPart());
-        // A literal Map.ofEntries table is an allow-list, but only Map.of is recognised.
-        // todook: java.xss
+        // A literal Map.ofEntries table: a lookup yields its values, which hold no request data.
+        // ok: java.xss
         out.println(ENTRIES.get(key));
         // valueOf of an enum declared in another file (java.time.DayOfWeek) is not recognised.
         // todook: java.xss
@@ -984,6 +987,7 @@ class SinkResultsServlet extends HttpServlet {
     private org.springframework.ldap.core.LdapTemplate ldap;
     private org.springframework.web.client.RestClient restClient;
     private UserRepository users;
+    private com.acme.shop.data.BioRepository bios;
     private String notePath = "/order/note";
     private String configuredPath;
     private static final String PROFILES = "https://api.example.com/profiles/";
@@ -1043,10 +1047,13 @@ class SinkResultsServlet extends HttpServlet {
         javax.persistence.TypedQuery<String> legacyTyped = legacyEm.createQuery("SELECT u.bio FROM User u WHERE u.name = '" + name + "'", String.class);
         // ok: java.xss
         out.println("<p>" + legacyTyped.getResultList() + "</p>");
-        // A repository method or a client of another library: its result is still taken for
-        // request data when the request value is its argument.
-        // todook: java.xss
+        // A repository interface of this file: its method passes nothing on.
+        // ok: java.xss
         out.println("<p>" + users.findBioByName(name) + "</p>");
+        // A repository of another file or a client of another library: its result is still taken
+        // for request data when the request value is its argument.
+        // todook: java.xss
+        out.println("<p>" + bios.findBioByName(name) + "</p>");
         // todook: java.xss
         out.println(restClient.get().uri("https://api.example.com/profiles/" + name).retrieve().body(String.class));
         // ok: java.xss

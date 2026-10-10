@@ -114,15 +114,17 @@ public class OrderController {
   parameter (the request body).
 - Only scalar types count as safe: an enum, a `List<Long>` or an `Optional<Long>` parameter is
   still reported, although it cannot carry SQL.
-- A value added to a list (`List.add`) does not make the list request data.
-- One method is analysed at a time: a helper of the same class that returns a constant still
-  passes request data on, and a wrapper class in another file that reads the request is not a
-  source. Conditions are not evaluated either.
+- A value added to a list (`List.add`) makes the whole list request data, so a constant element
+  read back from the same list is reported too.
+- Taint is followed through the methods of one file, not into other files: a helper in another
+  file that returns a constant still passes request data on, and a wrapper class in another file
+  that reads the request is not a source. Conditions are not evaluated either.
 - A `JdbcTemplate` whose type is not visible (a static field of another class) is checked only when
   its argument visibly starts as SQL; a query assembled otherwise (a `StringBuilder`) is missed
   there.
-- Allow-list lookups are recognised only as `Map.of(...)` of constants read with `get` or
-  `getOrDefault`, and as `valueOf` of an enum declared in the same file.
+- Allow-list lookups are recognised as `Map.of(...)` of constants read with `get` or `getOrDefault`,
+  and as `valueOf` of an enum declared in the same file; a lookup in any other map yields that map's
+  values.
 <!-- end: known-limits -->
 
 ## References

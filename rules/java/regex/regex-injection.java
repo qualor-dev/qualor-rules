@@ -122,13 +122,16 @@ public class SearchServlet extends HttpServlet {
         response.getWriter().println(parts.length + limited.length + words.length + kept.length + (whole ? 1 : 0) + masked + first + digits + squashed + renamed + literal + quoted.length);
     }
 
-    // Limits of a taint analysis that sees one method at a time and does not evaluate
+    // Limits of a taint analysis that does not look into other files and does not evaluate
     // conditions.
     @Override
     protected void doDelete(HttpServletRequest request, HttpServletResponse response) throws IOException {
-        // A helper of the same class that returns a constant whatever it is given.
-        // todook: java.regex-injection
+        // A helper of this file that returns a constant (or encodes the value) is followed.
+        // ok: java.regex-injection
         Pattern.compile(defaultPattern(request.getParameter("q")));
+        // A helper of another file is not looked into: it passes the request data on.
+        // todook: java.regex-injection
+        Pattern.compile(com.acme.shop.web.Patterns.defaultPattern(request.getParameter("q")));
         char mode = "abc".charAt(0);
         String expr;
         switch (mode) {
@@ -141,10 +144,13 @@ public class SearchServlet extends HttpServlet {
         // A switch over a value computed from constants always takes the same branch.
         // todook: java.regex-injection
         Pattern.compile(expr);
-        // A wrapper class that reads the request is not followed into.
+        // A wrapper class of this file that reads the request is followed into.
         RequestWrapper wrapper = new RequestWrapper(request);
-        // todoruleid: java.regex-injection
+        // ruleid: java.regex-injection
         Pattern.compile(wrapper.value("expr"));
+        // A wrapper class of another file that reads the request is not a source.
+        // todoruleid: java.regex-injection
+        Pattern.compile(new com.acme.shop.web.RequestValues(request).value("expr"));
         // A pattern first checked against a constant pattern of word characters cannot hold
         // metacharacters, but the check is not followed.
         String checked = request.getParameter("checked");
@@ -310,8 +316,8 @@ class SharedLimitsController {
         Pattern.compile(filled.get("k"));
         // ok: java.regex-injection
         Pattern.compile(SharedKind.valueOf(key).regex());
-        // A literal Map.ofEntries table is an allow-list, but only Map.of is recognised.
-        // todook: java.regex-injection
+        // A literal Map.ofEntries table: a lookup yields its values, which hold no request data.
+        // ok: java.regex-injection
         Pattern.compile(ENTRIES.get(key));
         // valueOf of an enum declared in another file (java.time.DayOfWeek) is not recognised.
         // todook: java.regex-injection

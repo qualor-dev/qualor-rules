@@ -258,8 +258,8 @@ class SharedLimitsController {
         // valueOf of a class that is not an enum hands the text back.
         // ruleid: java.ssrf
         new URL(javax.xml.namespace.QName.valueOf(key).getLocalPart()).openStream();
-        // A literal Map.ofEntries table is an allow-list, but only Map.of is recognised.
-        // todook: java.ssrf
+        // A literal Map.ofEntries table: a lookup yields its values, which hold no request data.
+        // ok: java.ssrf
         new URL(ENTRIES.get(key)).openStream();
         // valueOf of an enum declared in another file (java.time.DayOfWeek) is not recognised.
         // todook: java.ssrf
@@ -627,11 +627,16 @@ class BuilderController {
         declared.append(id);
         // ok: java.ssrf
         new URL(declared.toString()).openStream();
-        // Request data inserted into a builder is not followed (insert carries no taint).
+        // Request data inserted into a builder is followed (insert carries it into the builder).
         StringBuilder spliced = new StringBuilder("https://api.example.com/items/");
         spliced.insert(8, host);
-        // todoruleid: java.ssrf
+        // ruleid: java.ssrf
         new URL(spliced.toString()).openStream();
+        // Request data put in with replace is not followed (replace carries no taint).
+        StringBuilder swapped = new StringBuilder("https://api.example.com/items/");
+        swapped.replace(8, 9, host);
+        // todoruleid: java.ssrf
+        new URL(swapped.toString()).openStream();
         // Two builders with fixed starts: an assignment to one does not count for the other.
         StringBuilder first = new StringBuilder("https://api.example.com/items/");
         StringBuilder second = new StringBuilder("https://api.example.com/items/");

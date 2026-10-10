@@ -104,14 +104,14 @@ public class EmailController {
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
   Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
   request body and headers); enum, `List` or `Optional` parameters still count as request data.
-- One method is analysed at a time and conditions are not evaluated: a helper that returns a
-  constant, or a switch over a constant, still passes the request data on, and a wrapper class that
-  reads the request is not a source. Allow-list lookups are recognised only as `Map.of(...)` of
-  constants and as `valueOf` of an enum declared in the same file, but not of an enum nested in
-  the file's only class.
-- Because of the one-method analysis, on the OWASP Benchmark (xpathi) the rule reports 10 of the 20
-  safe cases (false positive rate 50 %, against 95 % for FindSecBugs): in each of them a helper in
-  the same file decides the value. It finds 14 of the 15 real cases.
+- Taint is followed through the methods of one file, not into other files, and conditions are not
+  evaluated: a helper in another file that returns a constant, or a switch over a constant, still
+  passes the request data on, and a wrapper class in another file that reads the request is not a
+  source. Allow-list lookups are recognised as `Map.of(...)` of constants and as `valueOf` of an
+  enum declared in the same file, but not of an enum nested in the file's only class; a lookup in
+  any other map yields that map's values.
+- On the OWASP Benchmark (xpathi) the rule reports 3 of the 20 safe cases (false positive rate
+  15 %, against 95 % for FindSecBugs) and finds 14 of the 15 real cases.
 <!-- end: known-limits -->
 
 ## References

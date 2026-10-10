@@ -139,14 +139,17 @@ public class CatalogServlet extends HttpServlet {
         }
     }
 
-    // Limits of a taint analysis that sees one method at a time and does not evaluate
+    // Limits of a taint analysis that does not look into other files and does not evaluate
     // conditions.
     @Override
     protected void doDelete(HttpServletRequest request, HttpServletResponse response) throws IOException {
         try {
-            // A helper of the same class that returns a constant whatever it is given.
-            // todook: java.xpath-injection
+            // A helper of this file that returns a constant (or encodes the value) is followed.
+            // ok: java.xpath-injection
             xpath.evaluate(defaultQuery(request.getParameter("q")), catalog);
+            // A helper of another file is not looked into: it passes the request data on.
+            // todook: java.xpath-injection
+            xpath.evaluate(com.acme.shop.web.Queries.defaultQuery(request.getParameter("q")), catalog);
             char mode = "abc".charAt(0);
             String field;
             switch (mode) {
@@ -159,10 +162,13 @@ public class CatalogServlet extends HttpServlet {
             // A switch over a value computed from constants always takes the same branch.
             // todook: java.xpath-injection
             xpath.evaluate("//book/" + field, catalog);
-            // A wrapper class that reads the request is not followed into.
+            // A wrapper class of this file that reads the request is followed into.
             RequestWrapper wrapper = new RequestWrapper(request);
-            // todoruleid: java.xpath-injection
+            // ruleid: java.xpath-injection
             xpath.evaluate("//book[title='" + wrapper.value("title") + "']", catalog);
+            // A wrapper class of another file that reads the request is not a source.
+            // todoruleid: java.xpath-injection
+            xpath.evaluate("//book[title='" + new com.acme.shop.web.RequestValues(request).value("title") + "']", catalog);
         } catch (XPathExpressionException e) {
             throw new IOException(e);
         }
@@ -339,8 +345,8 @@ class SharedLimitsController {
         xpath.evaluate("//book/" + QName.valueOf(key).getLocalPart(), catalog);
         // ok: java.xpath-injection
         xpath.evaluate("//book/" + SharedKind.valueOf(key).name().toLowerCase(), catalog);
-        // A literal Map.ofEntries table is an allow-list, but only Map.of is recognised.
-        // todook: java.xpath-injection
+        // A literal Map.ofEntries table: a lookup yields its values, which hold no request data.
+        // ok: java.xpath-injection
         xpath.evaluate("//book/" + ENTRIES.get(key), catalog);
         // valueOf of an enum declared in another file (java.time.DayOfWeek) is not recognised.
         // todook: java.xpath-injection

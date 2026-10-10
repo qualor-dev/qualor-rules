@@ -328,6 +328,7 @@ class ArchiveServlet extends HttpServlet {
         String header = headers.nextElement();
         java.util.List<String> filters = new java.util.ArrayList<>();
         filters.add(request.getParameter("filter"));
+        filters.add("archived");
         java.util.Map<String, String> fields = new java.util.HashMap<>();
         fields.put("owner", request.getParameter("owner"));
         try (Statement statement = connection.createStatement()) {
@@ -335,10 +336,12 @@ class ArchiveServlet extends HttpServlet {
             statement.executeQuery("SELECT * FROM archive WHERE field = '" + first + "'");
             // ruleid: java.sql-injection
             statement.executeQuery("SELECT * FROM archive WHERE header = '" + header + "'");
-            // List.add does not carry taint into the list (a propagator for it reported constant
-            // elements of the same list as often as request data).
-            // todoruleid: java.sql-injection
+            // List.add carries the value into the list.
+            // ruleid: java.sql-injection
             statement.executeQuery("SELECT * FROM archive WHERE kind = '" + filters.get(0) + "'");
+            // The list counts as a whole: a constant element read back from it is reported too.
+            // todook: java.sql-injection
+            statement.executeQuery("SELECT * FROM archive WHERE kind = '" + filters.get(1) + "'");
             // ruleid: java.sql-injection
             statement.executeUpdate("DELETE FROM archive WHERE owner = '" + fields.get("owner") + "'");
             java.util.List<String> columns = new java.util.ArrayList<>();
@@ -391,7 +394,7 @@ class ArchiveServlet extends HttpServlet {
     }
 }
 
-// Map keys; and the limits of a taint analysis that sees one method at a time.
+// Map keys; and the limits of a taint analysis that does not look into other files.
 class ArchiveLimitsServlet extends HttpServlet {
     private Connection connection;
 
@@ -407,9 +410,12 @@ class ArchiveLimitsServlet extends HttpServlet {
             // Map entries are told apart by a constant key: "current" holds a constant.
             // ok: java.sql-injection
             statement.executeQuery("SELECT * FROM archive WHERE part = '" + parts.get("current") + "'");
-            // A helper method that returns a constant for any argument.
-            // todook: java.sql-injection
+            // A helper of this file that returns a constant (or encodes the value) is followed.
+            // ok: java.sql-injection
             statement.executeQuery("SELECT * FROM archive WHERE label = '" + label + "'");
+            // A helper of another file is not looked into: it passes the request data on.
+            // todook: java.sql-injection
+            statement.executeQuery("SELECT * FROM archive WHERE label = '" + com.acme.shop.web.Labels.constantLabel(request.getParameter("label")) + "'");
             // todoruleid: java.sql-injection
             statement.executeQuery("SELECT * FROM archive WHERE region = '" + region + "'");
         } catch (SQLException e) {
@@ -472,8 +478,8 @@ class SharedLimitsController {
         // valueOf of a class that is not an enum hands the text back.
         // ruleid: java.sql-injection
         connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + javax.xml.namespace.QName.valueOf(key).getLocalPart() + "'");
-        // A literal Map.ofEntries table is an allow-list, but only Map.of is recognised.
-        // todook: java.sql-injection
+        // A literal Map.ofEntries table: a lookup yields its values, which hold no request data.
+        // ok: java.sql-injection
         connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + ENTRIES.get(key) + "'");
         // valueOf of an enum declared in another file (java.time.DayOfWeek) is not recognised.
         // todook: java.sql-injection

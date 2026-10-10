@@ -56,7 +56,8 @@ rules:
     #   lookup, +, %, an f-string), or str() or a string method (`PAGE.format(body=x)`). A
     #   helper's return value is not followed, even when the helper builds HTML from request data
     #   (todoruleid); a call's result kept in a variable and returned whole is still taken for
-    #   text (todook).
+    #   text when the function is not in this file and is given request data (todook; a
+    #   function of this file is followed).
     # - An attribute of an object that a call returned (a row looked up by a request id) is
     #   taken for stored data, unless the call is a request accessor, a urllib.parse URL parser,
     #   json.loads(), pydantic validation, or receives request data whole (`Form(request.POST)`,

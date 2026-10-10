@@ -82,8 +82,9 @@ def hello(request):
 - A Flask view is recognised by its `route()`/`get()`/`post()` decorator in a module that imports
   Flask; class-based Flask views (`MethodView`) are not followed.
 - A response body must be visibly text (a name, `+`, `%`, an f-string, `str()` or a string
-  method). A helper that builds HTML from request data and returns it is not followed, while a
-  call's result kept in a variable and returned is still taken for text.
+  method). A helper that builds HTML from request data and returns it is not followed, while the
+  result of a function of another module that is given request data, kept in a variable and
+  returned, is still taken for text.
 - Values read from an object a call returned (a database row looked up by a request id) are taken
   for stored data, unless the call receives request data whole; a request value reaching such a
   call through a variable is missed.

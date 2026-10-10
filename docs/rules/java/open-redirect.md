@@ -104,12 +104,13 @@ public class AfterLoginServlet extends HttpServlet {
   (or a `static final` field holding one) or gets one in its first append. A builder given its
   start later, edited afterwards (`setLength`, `delete`, `replace`, `insert`, `setCharAt`) or
   assigned again after it is created is reported when request data is appended to it. Request data
-  put into a builder with `insert` or `replace` is not followed.
+  put into a builder with `replace` is not followed.
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
   Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
   request body and headers); enum, `List` or `Optional` parameters still count as request data.
-- Allow-list lookups are recognised only as `Map.of(...)` of constants read with `get` or
-  `getOrDefault`, and as `valueOf` of an enum declared in the same file.
+- Allow-list lookups are recognised as `Map.of(...)` of constants read with `get` or `getOrDefault`,
+  and as `valueOf` of an enum declared in the same file; a lookup in any other map yields that map's
+  values.
 <!-- end: known-limits -->
 
 ## References

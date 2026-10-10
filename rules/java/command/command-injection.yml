@@ -70,12 +70,14 @@ rules:
     #   the method assigns; an entry kept in a variable assigned elsewhere is reported whole.
     # - Request data as a separate argument of a fixed program is accepted, although a value that
     #   starts with a dash may be read as an option (argument injection, CWE-88).
-    # - One method is analysed at a time: a helper method of the same class that returns a
-    #   constant whatever it is given still passes the request data on.
+    # - Taint is followed through the methods of one file (OpenGrep's --taint-intrafile), not into
+    #   other files: a helper method of another file that returns a constant whatever it is given
+    #   still passes the request data on.
     # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
     #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
-    #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
-    #   and valueOf of an enum from another file still pass the request data on.
+    #   valueOf of an enum declared in this file (or Enum.valueOf): valueOf of an enum
+    #   from another file still passes the request data on (a lookup in any other map, a literal
+    #   Map.ofEntries table too, yields the map's values).
     pattern-sources:
       - patterns:
           - pattern-either:

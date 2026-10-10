@@ -103,14 +103,15 @@ public class CalcController {
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
   Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
   request body and headers); enum, `List` or `Optional` parameters still count as request data.
-- One method is analysed at a time and conditions are not evaluated: a helper of the same class
-  that returns a constant still passes request data on, and a wrapper class that reads the request
-  is not a source.
-- SpEL and OGNL are reported where the expression is evaluated: one parsed in one method and
-  evaluated in another is missed. A `SimpleEvaluationContext` is recognised by its type or when
-  built in the same method; one returned by a helper is not, so the evaluation is reported.
-- Allow-list lookups are recognised only as `Map.of(...)` of constants and as `valueOf` of an enum
-  declared in the same file.
+- Taint is followed through the methods of one file, not into other files, and conditions are not
+  evaluated: a helper in another file that returns a constant still passes request data on, and a
+  wrapper class in another file that reads the request is not a source.
+- SpEL and OGNL are reported where the expression is evaluated, also in another method of the same
+  file; one evaluated in another file is missed. A `SimpleEvaluationContext` is recognised by its
+  type or when built in the same method; one returned by a helper is not, so the evaluation is
+  reported.
+- Allow-list lookups are recognised as `Map.of(...)` of constants and as `valueOf` of an enum
+  declared in the same file; a lookup in any other map yields that map's values.
 <!-- end: known-limits -->
 
 ## References

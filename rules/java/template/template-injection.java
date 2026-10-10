@@ -160,15 +160,18 @@ public class GreetingServlet extends HttpServlet {
         Velocity.evaluate(context, out, request.getParameter("tag"), "Hello $user");
     }
 
-    // Limits of a taint analysis that sees one method at a time and does not evaluate
+    // Limits of a taint analysis that does not look into other files and does not evaluate
     // conditions.
     @Override
     protected void doPut(HttpServletRequest request, HttpServletResponse response) throws IOException {
         VelocityContext context = new VelocityContext();
         Writer out = response.getWriter();
-        // A helper of the same class that returns a constant whatever it is given.
-        // todook: java.template-injection
+        // A helper of this file that returns a constant (or encodes the value) is followed.
+        // ok: java.template-injection
         Velocity.evaluate(context, out, "t", defaultTemplate(request.getParameter("t")));
+        // A helper of another file is not looked into: it passes the request data on.
+        // todook: java.template-injection
+        Velocity.evaluate(context, out, "t", com.acme.shop.web.Templates.defaultTemplate(request.getParameter("t")));
         char mode = "abc".charAt(0);
         String vtl;
         switch (mode) {
@@ -181,10 +184,13 @@ public class GreetingServlet extends HttpServlet {
         // A switch over a value computed from constants always takes the same branch.
         // todook: java.template-injection
         Velocity.evaluate(context, out, "t", vtl);
-        // A wrapper class that reads the request is not followed into.
+        // A wrapper class of this file that reads the request is followed into.
         RequestWrapper wrapper = new RequestWrapper(request);
-        // todoruleid: java.template-injection
+        // ruleid: java.template-injection
         Velocity.evaluate(context, out, "t", wrapper.value("vtl"));
+        // A wrapper class of another file that reads the request is not a source.
+        // todoruleid: java.template-injection
+        Velocity.evaluate(context, out, "t", new com.acme.shop.web.RequestValues(request).value("vtl"));
     }
 
     private static java.io.Reader openLayout() {
@@ -381,8 +387,8 @@ class SharedLimitsController {
         templateEngine.process(javax.xml.namespace.QName.valueOf(key).getLocalPart(), ctx);
         // ok: java.template-injection
         templateEngine.process("<p>" + SharedKind.valueOf(key).name() + "</p>", ctx);
-        // A literal Map.ofEntries table is an allow-list, but only Map.of is recognised.
-        // todook: java.template-injection
+        // A literal Map.ofEntries table: a lookup yields its values, which hold no request data.
+        // ok: java.template-injection
         templateEngine.process(ENTRIES.get(key), ctx);
         // valueOf of an enum declared in another file (java.time.DayOfWeek) is not recognised.
         // todook: java.template-injection

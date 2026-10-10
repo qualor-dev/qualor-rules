@@ -64,22 +64,24 @@ rules:
     #   java.nio.file.Files and java.io file stream, java.net.URL and RestTemplate fetches from a
     #   literal fixed origin (RestTemplate also from a static final base), JNDI DirContext and
     #   Spring LdapTemplate, and JAXP XPath (built expression) forms listed there. The result of
-    #   other data access (a Spring Data repository or a MyBatis mapper method, a RestClient or
-    #   WebClient call, an HttpClient fetch, a java.net.URL fetch from a base held in a constant) is
-    #   still taken for request data when a request value is its argument, and so is the output of a
-    #   shell started by ProcessBuilder or an array and the evaluation of a compiled
+    #   other data access (a Spring Data repository or a MyBatis mapper method of another file, a
+    #   RestClient or WebClient call, an HttpClient fetch, a java.net.URL fetch from a base held in
+    #   a constant) is still taken for request data when a request value is its argument, and so is
+    #   the output of a shell started by ProcessBuilder or an array and the evaluation of a compiled
     #   XPathExpression, which java.command-injection or java.xpath-injection may report as well. An
     #   XPath expression held in a field or a variable that is not a constant, evaluated over a
     #   document from the request, is missed. Stored XSS (data an earlier request saved, written out
     #   unencoded) is not found: such data is not request data.
     # - Conditions are not evaluated: a switch over a value computed from constants still counts
     #   its request-data branch.
-    # - Only one method is analysed at a time: a helper method or inner class of the same file
-    #   that encodes the value (or returns a constant) still passes the request data on.
+    # - Taint is followed through the methods of one file (OpenGrep's --taint-intrafile), not into
+    #   other files: a helper method of another file that encodes the value (or returns a
+    #   constant) still passes the request data on.
     # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
     #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
-    #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
-    #   and valueOf of an enum from another file still pass the request data on.
+    #   valueOf of an enum declared in this file (or Enum.valueOf): valueOf of an enum
+    #   from another file still passes the request data on (a lookup in any other map, a literal
+    #   Map.ofEntries table too, yields the map's values).
     # - Under a Jakarta REST XML or SVG type, only markup the code builds is a sink (a String
     #   return, or a Response entity that is a concatenation or String.format in place, or a
     #   variable the method assigns one of them or a String.concat, or appends to with +=); a DTO

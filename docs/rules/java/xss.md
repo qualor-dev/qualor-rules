@@ -113,14 +113,14 @@ public class HelloServlet extends HttpServlet {
   unencoded is not request data. The OWASP XSS cheat sheet treats data from a database or an
   internal service as untrusted too, so encode all output, whatever its origin.
 - Only the data-access calls listed above count as reading from another system: the result of a
-  Spring Data repository or MyBatis mapper method, of a `RestClient`, `WebClient` or
-  `HttpClient` call, or of a `URL` fetch from a base held in a constant, is still taken for request
-  data when a request value is its argument; so is the output of a shell started with
-  `ProcessBuilder` and the result of a compiled `XPathExpression`, which the command or XPath
+  Spring Data repository or MyBatis mapper method declared in another file, of a `RestClient`,
+  `WebClient` or `HttpClient` call, or of a `URL` fetch from a base held in a constant, is still
+  taken for request data when a request value is its argument; so is the output of a shell started
+  with `ProcessBuilder` and the result of a compiled `XPathExpression`, which the command or XPath
   rule may report as well. An XPath expression held in a field that the class sets elsewhere,
   evaluated over a document from the request, is missed.
-- One method is analysed at a time: a helper or inner class that encodes the value still passes the
-  request data on. Conditions are not evaluated.
+- Taint is followed through the methods of one file, not into other files: a helper in another file
+  that encodes the value still passes the request data on. Conditions are not evaluated.
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
   Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
   request body and headers); enum, `List` or `Optional` parameters still count as request data.

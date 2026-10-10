@@ -66,11 +66,12 @@ rules:
     #   literal, or gets one in the append right after it is created (a builder given its start
     #   later, edited with setLength, delete, replace, insert or setCharAt, or assigned again after
     #   it is created, is reported when request data is appended to it). Request data put in with
-    #   insert or replace is not followed: these methods carry no taint.
+    #   replace is not followed (replace carries no taint); insert is followed.
     # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
     #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
-    #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
-    #   and valueOf of an enum from another file still pass the request data on.
+    #   valueOf of an enum declared in this file (or Enum.valueOf): valueOf of an enum
+    #   from another file still passes the request data on (a lookup in any other map, a literal
+    #   Map.ofEntries table too, yields the map's values).
     pattern-sources:
       - patterns:
           - pattern-either:

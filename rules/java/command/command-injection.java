@@ -462,9 +462,12 @@ class LimitsServlet extends HttpServlet {
         // (argument injection, CWE-88); the rule accepts separate arguments.
         // todoruleid: java.command-injection
         new ProcessBuilder("git", "fetch", request.getParameter("remote")).start();
-        // A helper of the same class that returns a constant whatever it is given.
-        // todook: java.command-injection
+        // A helper of this file that returns a constant (or encodes the value) is followed.
+        // ok: java.command-injection
         Runtime.getRuntime().exec(defaultCheck(request.getParameter("check")));
+        // A helper of another file is not looked into: it passes the request data on.
+        // todook: java.command-injection
+        Runtime.getRuntime().exec(com.acme.shop.web.Checks.defaultCheck(request.getParameter("check")));
     }
 
     private static String defaultCheck(String requested) {
@@ -540,8 +543,8 @@ class SharedLimitsController {
         // valueOf of a class that is not an enum hands the text back.
         // ruleid: java.command-injection
         Runtime.getRuntime().exec("ping -c 1 " + javax.xml.namespace.QName.valueOf(key).getLocalPart());
-        // A literal Map.ofEntries table is an allow-list, but only Map.of is recognised.
-        // todook: java.command-injection
+        // A literal Map.ofEntries table: a lookup yields its values, which hold no request data.
+        // ok: java.command-injection
         Runtime.getRuntime().exec("ping -c 1 " + ENTRIES.get(key));
         // valueOf of an enum declared in another file (java.time.DayOfWeek) is not recognised.
         // todook: java.command-injection

@@ -259,14 +259,17 @@ public class ScriptServlet extends HttpServlet {
         }
     }
 
-    // Limits of a taint analysis that sees one method at a time and does not evaluate
+    // Limits of a taint analysis that does not look into other files and does not evaluate
     // conditions.
     @Override
     protected void doPut(HttpServletRequest request, HttpServletResponse response) throws IOException {
         ELProcessor elp = new ELProcessor();
-        // A helper of the same class that returns a constant whatever it is given.
-        // todook: java.expression-injection
+        // A helper of this file that returns a constant (or encodes the value) is followed.
+        // ok: java.expression-injection
         elp.eval(defaultFormula(request.getParameter("f")));
+        // A helper of another file is not looked into: it passes the request data on.
+        // todook: java.expression-injection
+        elp.eval(com.acme.shop.web.Formulas.defaultFormula(request.getParameter("f")));
         char mode = "abc".charAt(0);
         String formula;
         switch (mode) {
@@ -279,14 +282,20 @@ public class ScriptServlet extends HttpServlet {
         // A switch over a value computed from constants always takes the same branch.
         // todook: java.expression-injection
         elp.eval(formula);
-        // A wrapper class that reads the request is not followed into.
+        // A wrapper class of this file that reads the request is followed into.
         RequestWrapper wrapper = new RequestWrapper(request);
-        // todoruleid: java.expression-injection
+        // ruleid: java.expression-injection
         elp.eval(wrapper.value("expr"));
-        // An expression parsed here and evaluated in another method is not followed.
+        // A wrapper class of another file that reads the request is not a source.
         // todoruleid: java.expression-injection
+        elp.eval(new com.acme.shop.web.RequestValues(request).value("expr"));
+        // An expression parsed here and evaluated in another method of this file is reported
+        // where it is evaluated (evaluateLater below).
         Expression later = new SpelExpressionParser().parseExpression(request.getParameter("rule"));
         evaluateLater(later);
+        // One evaluated by a method of another file is missed.
+        // todoruleid: java.expression-injection
+        com.acme.shop.web.Rules.evaluate(new SpelExpressionParser().parseExpression(request.getParameter("rule")));
     }
 
     private static String defaultFormula(String requested) {
@@ -294,6 +303,7 @@ public class ScriptServlet extends HttpServlet {
     }
 
     private static Object evaluateLater(Expression expression) {
+        // ruleid: java.expression-injection
         return expression.getValue();
     }
 
@@ -376,8 +386,8 @@ class SharedLimitsController {
         elp.eval(javax.xml.namespace.QName.valueOf(key).getLocalPart());
         // ok: java.expression-injection
         elp.eval("price * " + SharedKind.valueOf(key).ordinal());
-        // A literal Map.ofEntries table is an allow-list, but only Map.of is recognised.
-        // todook: java.expression-injection
+        // A literal Map.ofEntries table: a lookup yields its values, which hold no request data.
+        // ok: java.expression-injection
         elp.eval(ENTRIES.get(key));
         // valueOf of an enum declared in another file (java.time.DayOfWeek) is not recognised.
         // todook: java.expression-injection

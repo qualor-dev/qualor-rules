@@ -115,8 +115,9 @@ enough either: browsers read `/\evil.example` as `//evil.example`.
 - After a host check, the string that was parsed counts as checked even if it is assigned again
   later, so a redirect to the new value is missed. A host compared with a variable counts as
   your own host, even when the variable holds request data.
-- Request data passed through any function is assumed to reach its result, so a URL produced from
-  it by your own code (a signed URL of your storage layer, say) is reported. Only the URL
+- Request data passed through a function of another file or package is assumed to reach its
+  result, so a URL produced from it by your own code there (a signed URL of your storage layer,
+  say) is reported. Only the URL
   producers named above are recognised, and the libraries only when the file imports them; a
   `url.URL` declared empty and given its host field by field, a copy of the request's URL given
   a fixed host (`u := *r.URL; u.Host = siteHost`), a base parsed in a `var base, _ =

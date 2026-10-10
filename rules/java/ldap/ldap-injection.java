@@ -157,13 +157,16 @@ public class PeopleServlet extends HttpServlet {
         }
     }
 
-    // Limits of a taint analysis that sees one method at a time and does not evaluate
+    // Limits of a taint analysis that does not look into other files and does not evaluate
     // conditions.
     protected void doPut(HttpServletRequest request, HttpServletResponse response) throws IOException {
         try {
-            // A helper of the same class that returns a constant whatever it is given.
-            // todook: java.ldap-injection
+            // A helper of this file that returns a constant (or encodes the value) is followed.
+            // ok: java.ldap-injection
             ctx.search(BASE, defaultFilter(request.getParameter("f")), new SearchControls());
+            // A helper of another file is not looked into: it passes the request data on.
+            // todook: java.ldap-injection
+            ctx.search(BASE, com.acme.shop.web.Filters.defaultFilter(request.getParameter("f")), new SearchControls());
             char mode = "abc".charAt(0);
             String attribute;
             switch (mode) {
@@ -176,10 +179,13 @@ public class PeopleServlet extends HttpServlet {
             // A switch over a value computed from constants always takes the same branch.
             // todook: java.ldap-injection
             ctx.search(BASE, "(" + attribute + "=*)", new SearchControls());
-            // A wrapper class that reads the request is not followed into.
+            // A wrapper class of this file that reads the request is followed into.
             RequestWrapper wrapper = new RequestWrapper(request);
-            // todoruleid: java.ldap-injection
+            // ruleid: java.ldap-injection
             ctx.search(BASE, "(uid=" + wrapper.value("uid") + ")", new SearchControls());
+            // A wrapper class of another file that reads the request is not a source.
+            // todoruleid: java.ldap-injection
+            ctx.search(BASE, "(uid=" + new com.acme.shop.web.RequestValues(request).value("uid") + ")", new SearchControls());
             // The search base (a distinguished name) is not a sink: only the filter is.
             // todoruleid: java.ldap-injection
             ctx.search("uid=" + request.getParameter("uid") + "," + BASE, "(objectClass=*)", new SearchControls());
@@ -399,8 +405,8 @@ class SharedLimitsController {
         ldapTemplate.search("ou=x", "(cn=" + javax.xml.namespace.QName.valueOf(key).getLocalPart() + ")", CN);
         // ok: java.ldap-injection
         ldapTemplate.search("ou=x", "(objectClass=" + SharedKind.valueOf(key).name() + ")", CN);
-        // A literal Map.ofEntries table is an allow-list, but only Map.of is recognised.
-        // todook: java.ldap-injection
+        // A literal Map.ofEntries table: a lookup yields its values, which hold no request data.
+        // ok: java.ldap-injection
         ldapTemplate.search("ou=x", "(objectClass=" + ENTRIES.get(key) + ")", CN);
         // valueOf of an enum declared in another file (java.time.DayOfWeek) is not recognised.
         // todook: java.ldap-injection

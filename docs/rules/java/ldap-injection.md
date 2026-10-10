@@ -122,9 +122,10 @@ public class UserController {
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
   Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
   request body and headers); enum, `List` or `Optional` parameters still count as request data.
-- One method is analysed at a time and conditions are not evaluated. Allow-list lookups are
-  recognised only as `Map.of(...)` of constants and as `valueOf` of an enum declared in the same
-  file.
+- Taint is followed through the methods of one file, not into other files: a helper in another
+  file that returns a constant still passes request data on. Conditions are not evaluated.
+- Allow-list lookups are recognised as `Map.of(...)` of constants and as `valueOf` of an enum
+  declared in the same file; a lookup in any other map yields that map's values.
 <!-- end: known-limits -->
 
 ## References

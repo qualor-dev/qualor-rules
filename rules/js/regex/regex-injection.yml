@@ -49,7 +49,7 @@ rules:
     #   still reported. Hand-written escaping is recognised only in its common form (a global, not
     #   sticky replace() or replaceAll() with one character class that names every syntax
     #   character, and the "\\$&" replacement), inline or in a local helper whose body only returns
-    #   it, declared before the call; a helper declared after the call, a replacement function, a
+    #   it (declared before or after the call); a replacement function, a
     #   pattern held in a constant, helpers of other modules and a class that holds the syntax
     #   characters only inside a range (`[!-~]`) are still reported (MDN advises RegExp.escape()
     #   over hand-written escaping). A call chained after an escape written in place

@@ -106,9 +106,10 @@ public class PingController {
   first, it is missed.
 - Request data as a separate argument of a fixed program is accepted, although a value starting
   with `-` may be read as an option (argument injection, CWE-88).
-- One method is analysed at a time and conditions are not evaluated. Allow-list lookups are
-  recognised only as `Map.of(...)` of constants and as `valueOf` of an enum declared in the same
-  file.
+- Taint is followed through the methods of one file, not into other files: a helper in another
+  file that returns a constant still passes request data on. Conditions are not evaluated.
+- Allow-list lookups are recognised as `Map.of(...)` of constants and as `valueOf` of an enum
+  declared in the same file; a lookup in any other map yields that map's values.
 <!-- end: known-limits -->
 
 ## References

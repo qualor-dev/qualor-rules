@@ -84,9 +84,9 @@ app.get('/search', (req, res) => {
 - Hand-written escaping is recognised in its common form only:
   `value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')` (also `replaceAll`), whose character class holds
   every syntax character `^ $ \ . * + ? ( ) [ ] { } |`, written in place or in a helper of the
-  same file that only returns it and is declared before the call. An escape that misses a
-  character or the `g` flag, or has the sticky `y` flag, is reported, as it should be; a helper
-  declared after the call, a replacement function, a pattern kept in a constant, helpers of other
+  same file that only returns it. An escape that misses a
+  character or the `g` flag, or has the sticky `y` flag, is reported, as it should be; a
+  replacement function, a pattern kept in a constant, helpers of other
   modules and a class that covers the characters only with a range (`[!-~]`) are reported too.
   A call chained after an escape written in place is not checked, so one that removes the
   escapes again (`.replace(/\\/g, '')`) is missed. MDN advises `RegExp.escape()` over

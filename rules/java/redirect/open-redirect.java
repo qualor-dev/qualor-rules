@@ -444,8 +444,8 @@ class SharedLimitsController {
         String d = "redirect:" + javax.xml.namespace.QName.valueOf(key).getLocalPart();
         // ok: java.open-redirect
         String e = "redirect:" + Section.valueOf(key).path;
-        // A literal Map.ofEntries table is an allow-list, but only Map.of is recognised.
-        // todook: java.open-redirect
+        // A literal Map.ofEntries table: a lookup yields its values, which hold no request data.
+        // ok: java.open-redirect
         String f = "redirect:" + ENTRIES.get(key);
         // valueOf of an enum declared in another file (java.time.DayOfWeek) is not recognised.
         // todook: java.open-redirect
@@ -758,11 +758,16 @@ class BuilderLoginController {
         declared.append(id);
         // ok: java.open-redirect
         response.sendRedirect(declared.toString());
-        // Request data inserted into a builder is not followed (insert carries no taint).
+        // Request data inserted into a builder is followed (insert carries it into the builder).
         StringBuilder spliced = new StringBuilder("/items/");
         spliced.insert(1, next);
-        // todoruleid: java.open-redirect
+        // ruleid: java.open-redirect
         response.sendRedirect(spliced.toString());
+        // Request data put in with replace is not followed (replace carries no taint).
+        StringBuilder swapped = new StringBuilder("/items/");
+        swapped.replace(1, 2, next);
+        // todoruleid: java.open-redirect
+        response.sendRedirect(swapped.toString());
         // Two builders with fixed starts: an assignment to one does not count for the other.
         StringBuilder first = new StringBuilder("/items/");
         StringBuilder second = new StringBuilder("/items/");

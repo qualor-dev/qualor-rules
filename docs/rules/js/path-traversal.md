@@ -77,8 +77,8 @@ app.get('/reports', (req, res) => {
 - A check after resolving the path (`if (!full.startsWith(base)) return`) is not recognised, nor
   is a ternary that returns the request value after an `includes()` check; `path.basename()`,
   number conversions and allow-list lookups are.
-- A record looked up in a server-side store with a request value as its key
-  (`sessions.get(req.cookies.session).id`) counts as request data.
+- A record looked up in a server-side store with a request value as its key by a method other
+  than `get()` (`sessionStore.read(req.cookies.session).id`) counts as request data.
 - `stat`, `lstat`, `access`, `exists` and `realpath` are not checked: they only tell whether a file
   exists, and `realpath()` is how a path is checked.
 - `fs` functions are recognised through `require()` and `import` of `fs` and `fs/promises`;

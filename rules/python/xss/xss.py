@@ -563,10 +563,18 @@ def card():
     return render_card(request.args["text"])
 
 
-# A helper's result kept in a variable and returned whole is still taken for text.
+# A call's result kept in a variable and returned whole: a function of this file is followed
+# (find_post returns no request data); one of another module is still taken for text.
 @app.route("/api/summary/<slug>")
 def api_summary(slug):
     summary = find_post(slug).to_dict()
+    # ok: python.xss
+    return summary
+
+
+@app.route("/api/summary2/<slug>")
+def api_summary2(slug):
+    summary = blog_store.find_post(slug).to_dict()
     # todook: python.xss
     return summary
 

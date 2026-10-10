@@ -183,13 +183,17 @@ app.get('/checked', (req, res) => {
   res.send(fs.readFileSync(full));
 });
 
-// A record looked up in a server-side store with a request value as the key carries the key's
-// taint, and a ternary that returns the request value after an includes() check is no allow-list.
+// A record looked up with get() in a server-side Map by a request key is the store's data; one
+// looked up by another method still carries the key's taint, and a ternary that returns the
+// request value after an includes() check is no allow-list.
 const sessions = new Map();
 app.post('/avatar', (req, res) => {
   const user = sessions.get(req.cookies.session);
-  // todook: js.path-traversal
+  // ok: js.path-traversal
   fs.writeFileSync(path.join(UPLOADS, user.id + '.png'), req.body.image);
+  const member = sessionStore.read(req.cookies.session);
+  // todook: js.path-traversal
+  fs.writeFileSync(path.join(UPLOADS, member.id + '.png'), req.body.image);
   const ext = ['png', 'jpg'].includes(req.query.ext) ? req.query.ext : 'png';
   // todook: js.path-traversal
   fs.writeFileSync(path.join(UPLOADS, 'avatar.' + ext), req.body.image);

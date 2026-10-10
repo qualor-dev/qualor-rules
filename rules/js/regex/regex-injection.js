@@ -323,8 +323,8 @@ app.get('/escaped', (req, res) => {
   const b = new RegExp(literalPattern(req.query.q) + '$');
   // ok: js.regex-injection
   const c = new RegExp(`\\b${wordPattern(req.query.q)}\\b`);
-  // A helper declared after its use is not followed.
-  // todook: js.regex-injection
+  // A helper declared after its use is followed too.
+  // ok: js.regex-injection
   const d = new RegExp(escapeDeclaredLater(req.query.q));
   // The characters in another order, escaped inside the class, with more characters, and with
   // other flags and quotes.

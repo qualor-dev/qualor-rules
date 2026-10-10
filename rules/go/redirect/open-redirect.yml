@@ -76,8 +76,9 @@ rules:
     #   (`os.Getenv(...)`) (`todook:`); a string parsed for a host check and assigned again
     #   afterwards still counts as checked, and a host held in a variable counts as fixed
     #   wherever the variable comes from (`todoruleid:`).
-    # - Request data passed to a function counts as reaching its result, whatever the function
-    #   does (a signed URL of a storage service, say) (`todook:`). Documented URL producers with a
+    # - Request data passed to a function of another file or package counts as reaching its
+    #   result, whatever the function does (a signed URL of a storage service, say) (`todook:`);
+    #   a function of this file is followed. Documented URL producers with a
     #   fixed host are followed: a url.URL literal with a non-empty Host (its Path, RawPath,
     #   RawQuery, Fragment, RawFragment and User), the same fields assigned to a url.URL built
     #   with such a host or parsed from a fixed origin (scheme and a host, no "@" first) or a

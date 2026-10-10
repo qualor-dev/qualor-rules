@@ -125,8 +125,9 @@ public class GreetingServlet extends HttpServlet {
   returned by a call, the source name is reported.
 - Sandbox settings do not stop the finding: the FreeMarker FAQ lists other risks as well.
 - A handler parameter without an annotation is not a source (except a Spring `HttpEntity` or
-  `RequestEntity`), and one method is analysed at a time. Allow-list lookups are recognised only as `Map.of(...)` of constants and as `valueOf` of an enum
-  declared in the same file.
+  `RequestEntity`), and taint is followed through the methods of one file, not into other files.
+  Allow-list lookups are recognised as `Map.of(...)` of constants and as `valueOf` of an enum
+  declared in the same file; a lookup in any other map yields that map's values.
 <!-- end: known-limits -->
 
 ## References

@@ -461,8 +461,9 @@ func EchoValidated(c echo.Context) error {
 	return c.Redirect(http.StatusFound, to.String())
 }
 
-// The result of a function given request data counts as request data, whatever the function
-// does: here a signed URL of a storage service, whose host comes from its configuration.
+// The result of a function given request data: a function of this file is followed (SignedURL
+// returns no request data); one of another package counts as request data, whatever it does
+// (here a signed URL of a storage service, whose host comes from its configuration).
 type Storage struct{}
 
 func (Storage) SignedURL(name string) (string, error) { return "", nil }
@@ -470,6 +471,15 @@ func (Storage) SignedURL(name string) (string, error) { return "", nil }
 func Download(w http.ResponseWriter, r *http.Request) {
 	var store Storage
 	link, err := store.SignedURL(r.FormValue("file"))
+	if err != nil {
+		return
+	}
+	// ok: go.open-redirect
+	http.Redirect(w, r, link, http.StatusTemporaryRedirect)
+}
+
+func DownloadSigned(w http.ResponseWriter, r *http.Request) {
+	link, err := blobstore.SignedURL(r.FormValue("file"))
 	if err != nil {
 		return
 	}

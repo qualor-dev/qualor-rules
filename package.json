@@ -9,7 +9,7 @@
     "node": ">=22"
   },
   "opengrep": "1.30.0",
-  "taintIntrafile": false,
+  "taintIntrafile": true,
   "scripts": {
     "check": "node tools/check.mjs && node tools/backlog.mjs && node tools/docs.mjs --check",
     "docs": "node tools/docs.mjs",

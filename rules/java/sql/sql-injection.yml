@@ -46,20 +46,22 @@ rules:
     #   a request parameter, and the Jakarta REST entity parameter (the request body).
     # - Only the scalar types listed below count as safe: an enum, a `List<Long>` or an
     #   `Optional<Long>` parameter is still a source, although it cannot carry SQL.
-    # - A value added to a list (`List.add`) does not make the list tainted: on the OWASP
-    #   Benchmark a propagator for it reported constant elements of the same list as often as
-    #   request data. Map entries are told apart by constant keys.
-    # - Only one method is analysed at a time: a helper method of the same class that returns a
-    #   constant whatever it is given still passes the request data on, and a wrapper class from
-    #   another file that reads the request is not a source.
+    # - A value added to a list (`List.add`) makes the whole list request data: a constant
+    #   element read back from the same list is reported too (OpenGrep's --taint-intrafile does
+    #   not tell the elements apart). Map entries are told apart by constant keys.
+    # - Taint is followed through the methods of one file (OpenGrep's --taint-intrafile), not into
+    #   other files: a helper method of another file that returns a constant whatever it is given
+    #   still passes the request data on, and a wrapper class from another file that reads the
+    #   request is not a source.
     # - JdbcTemplate whose type is not visible (a static field of a class in another file) is a
     #   sink only when its argument is SQL text: a literal that starts with an SQL statement shape
     #   (select ... from, insert into, update ... set, delete from, ...), in place or in the
     #   variable it was assigned to; a query assembled otherwise (a StringBuilder) is missed there.
     # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
     #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
-    #   valueOf of an enum declared in this file (or Enum.valueOf): a literal Map.ofEntries table
-    #   and valueOf of an enum from another file still pass the request data on.
+    #   valueOf of an enum declared in this file (or Enum.valueOf): valueOf of an enum
+    #   from another file still passes the request data on (a lookup in any other map, a literal
+    #   Map.ofEntries table too, yields the map's values).
     # - Conditions are not evaluated: a switch over a value computed from constants still counts
     #   its request-data branch.
     pattern-sources:

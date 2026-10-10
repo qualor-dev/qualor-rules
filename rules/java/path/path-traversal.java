@@ -123,12 +123,15 @@ public class DownloadServlet extends HttpServlet {
         upload.write(Paths.get(upload.getSubmittedFileName()).getFileName().toString());
     }
 
-    // Limits of a taint analysis that sees one method at a time and does not evaluate
+    // Limits of a taint analysis that does not look into other files and does not evaluate
     // conditions.
     protected void doPut(HttpServletRequest request, HttpServletResponse response) throws IOException {
-        // A helper of the same class that returns a constant whatever it is given.
-        // todook: java.path-traversal
+        // A helper of this file that returns a constant (or encodes the value) is followed.
+        // ok: java.path-traversal
         File help = new File(BASE, defaultPage(request.getParameter("page")));
+        // A helper of another file is not looked into: it passes the request data on.
+        // todook: java.path-traversal
+        File shared = new File(BASE, com.acme.shop.web.Pages.defaultPage(request.getParameter("page")));
         char mode = "abc".charAt(0);
         String folder;
         switch (mode) {
@@ -298,8 +301,8 @@ class SharedLimitsController {
         // valueOf of a class that is not an enum hands the text back.
         // ruleid: java.path-traversal
         new File("/srv/files", javax.xml.namespace.QName.valueOf(key).getLocalPart()).delete();
-        // A literal Map.ofEntries table is an allow-list, but only Map.of is recognised.
-        // todook: java.path-traversal
+        // A literal Map.ofEntries table: a lookup yields its values, which hold no request data.
+        // ok: java.path-traversal
         new File("/srv/files", ENTRIES.get(key)).delete();
         // valueOf of an enum declared in another file (java.time.DayOfWeek) is not recognised.
         // todook: java.path-traversal
