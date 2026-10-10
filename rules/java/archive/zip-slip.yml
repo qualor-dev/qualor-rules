@@ -128,6 +128,16 @@ rules:
               - pattern-inside: (java.util.zip.ZipFile $Z).stream(). ... .forEach(($E) -> $BODY)
               - pattern-inside: (java.util.jar.JarFile $Z).stream(). ... .forEach(($E) -> $BODY)
           - pattern: $E.getName()
+    # Paths.get(name): the path carries the entry name. OpenGrep's --taint-intrafile mode reads a
+    # one-argument get() as a read of its receiver and would drop it.
+    pattern-propagators:
+      - patterns:
+          - pattern: $TO
+          - metavariable-pattern:
+              metavariable: $TO
+              pattern: java.nio.file.Paths.get($FROM)
+        from: $FROM
+        to: $TO
     pattern-sanitizers:
       # Only the last name element remains (Path.getFileName on a java.nio.file.Path, File.getName,
       # FilenameUtils.getName).

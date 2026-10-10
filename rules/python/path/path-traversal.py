@@ -237,6 +237,17 @@ def report():
     data = send_file(REPORTS.get(request.args.get("period"), REPORTS["daily"]))
     # ruleid: python.path-traversal
     data = send_file(REPORTS.get(request.args["period"], request.args["period"]))
+    # A constant key with request data as the default.
+    fallbacks = {"unused": ""}
+    default_choice = fallbacks.get("daily", request.args["period"])
+    # ruleid: python.path-traversal
+    data = send_file(default_choice)
+    paths = {"daily": "reports/daily.csv"}
+    paths.get("weekly", request.args["period"])
+    # A get() with request data as its key or default makes the dict request data for the rest
+    # of the function, so a later lookup of a constant entry is reported.
+    # todook: python.path-traversal
+    data = send_file(paths.get("daily"))
     # ok: python.path-traversal
     data = send_file(DOWNLOADS[request.args["download"]])
     # ruleid: python.path-traversal

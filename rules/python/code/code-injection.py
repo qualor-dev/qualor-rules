@@ -101,6 +101,21 @@ def formula(kind):
     b = eval(FORMULAS[kind] if kind in FORMULAS else "0")
     # ruleid: python.code-injection
     c = eval(FORMULAS.get(kind, request.args["formula"]))
+    # A constant key with request data as the default.
+    fallbacks = {"unused": ""}
+    default_choice = fallbacks.get("net", request.args["formula"])
+    # ruleid: python.code-injection
+    c3 = eval(default_choice)
+    options = {"expr": "1 + 1"}
+    options.get("label", request.args["label"])
+    # A get() with request data as its key or default makes the dict request data for the rest
+    # of the function, so a later lookup of a constant entry is reported.
+    # todook: python.code-injection
+    h = eval(options.get("expr"))
+    # get() by request data on a table that request data changes elsewhere in the file.
+    stored_choice = MACROS.get(kind)
+    # ruleid: python.code-injection
+    d2 = eval(stored_choice, {"x": 2})
     # ruleid: python.code-injection
     d = eval(MACROS[kind], {"x": 2})
     # ok: python.code-injection

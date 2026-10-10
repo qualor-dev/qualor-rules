@@ -260,6 +260,17 @@ def partner(name):
     requests.post(HOOKS["custom"])
     # ruleid: python.ssrf
     requests.post(MIRRORS.get(name, request.args["fallback"]))
+    # A constant key with request data as the default.
+    fallbacks = {"unused": ""}
+    default_choice = fallbacks.get("eu", request.args["fallback"])
+    # ruleid: python.ssrf
+    requests.post(default_choice)
+    endpoints = {"status": "https://status.example.com/"}
+    endpoints.get(name, request.args["fallback"])
+    # A get() with request data as its key or default makes the dict request data for the rest
+    # of the function, so a later lookup of a constant entry is reported.
+    # todook: python.ssrf
+    requests.get(endpoints.get("status"), timeout=5)
     return "ok"
 
 

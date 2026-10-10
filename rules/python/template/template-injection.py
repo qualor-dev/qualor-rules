@@ -137,6 +137,21 @@ def greeting(lang):
     c = render_template_string(GREETINGS[lang] if lang in GREETINGS else PAGE, name="x")
     # ruleid: python.template-injection
     d = render_template_string(GREETINGS.get(lang, request.args["fallback"]))
+    # A constant key with request data as the default.
+    fallbacks = {"unused": ""}
+    default_choice = fallbacks.get("de", request.args["fallback"])
+    # ruleid: python.template-injection
+    d3 = render_template_string(default_choice)
+    texts = {"hello": "Hello"}
+    texts.get(lang, request.args["fallback"])
+    # A get() with request data as its key or default makes the dict request data for the rest
+    # of the function, so a later lookup of a constant entry is reported.
+    # todook: python.template-injection
+    d2 = render_template_string(texts.get("hello"))
+    # get() by request data on a table that request data changes elsewhere in the file.
+    stored_choice = SNIPPETS.get(lang)
+    # ruleid: python.template-injection
+    e2 = render_template_string(stored_choice, year=2026)
     # ruleid: python.template-injection
     e = render_template_string(SNIPPETS[lang], year=2026)
     # todook: python.template-injection

@@ -151,6 +151,17 @@ def sample(kind):
 def sample2(kind):
     # ruleid: python.unsafe-deserialization
     doc = yaml.load(SAMPLES.get(kind, request.args["doc"]), Loader=yaml.Loader)
+    # A constant key with request data as the default.
+    fallbacks = {"unused": ""}
+    default_choice = fallbacks.get("basic", request.args["doc"])
+    # ruleid: python.unsafe-deserialization
+    doc2 = yaml.load(default_choice, Loader=yaml.Loader)
+    documents = {"default": "a: 1"}
+    documents.get(kind, request.args["doc"])
+    # A get() with request data as its key or default makes the dict request data for the rest
+    # of the function, so a later lookup of a constant entry is reported.
+    # todook: python.unsafe-deserialization
+    fallback = yaml.load(documents.get("default"), Loader=yaml.Loader)
     # ruleid: python.unsafe-deserialization
     preset = yaml.load(PRESETS[kind], Loader=yaml.Loader)
     return str((doc, preset))

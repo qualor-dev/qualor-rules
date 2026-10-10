@@ -121,6 +121,10 @@ public class PeopleServlet extends HttpServlet {
             matching.put("uid", uid);
             // ok: java.ldap-injection
             ctx.search(BASE, matching, new String[] { "cn" });
+            BasicAttributes byMail = new BasicAttributes(true);
+            byMail.put("mail", request.getParameter("mail"));
+            // ok: java.ldap-injection
+            ctx.search(BASE, byMail, new String[] { "cn" });
         } catch (NamingException e) {
             throw new IOException(e);
         }

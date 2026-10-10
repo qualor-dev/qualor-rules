@@ -297,6 +297,21 @@ def out(name):
     b = redirect(DESTINATIONS[name] if name in DESTINATIONS else "/")
     # ruleid: python.open-redirect
     c = redirect(DESTINATIONS.get(name, request.args["fallback"]))
+    # A constant key with request data as the default.
+    fallbacks = {"unused": ""}
+    default_choice = fallbacks.get("docs", request.args["fallback"])
+    # ruleid: python.open-redirect
+    c2 = redirect(default_choice)
+    targets = {"home": "/"}
+    targets.get(name, request.args["fallback"])
+    # A get() with request data as its key or default makes the dict request data for the rest
+    # of the function, so a later lookup of a constant entry is reported.
+    # todook: python.open-redirect
+    d = redirect(targets.get("home"))
+    # get() by request data on a table that request data changes elsewhere in the file.
+    stored_choice = CAMPAIGNS.get(name)
+    # ruleid: python.open-redirect
+    d = redirect(stored_choice)
     # ruleid: python.open-redirect
     return redirect(CAMPAIGNS[name])
 

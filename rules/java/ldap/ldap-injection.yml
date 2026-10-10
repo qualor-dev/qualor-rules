@@ -186,6 +186,10 @@ rules:
                       $C = (org.springframework.ldap.core.ContextSource $CS).$GETCTX(...);
                       ...
                   - pattern: $C.search($N, $F, $X, ...)
+          # search(name, matchingAttributes, attributesToReturn) matches attribute values: the
+          # Attributes argument is no filter.
+          - pattern-not: $C.search($N, (javax.naming.directory.Attributes $A), $X)
+          - pattern-not: $C.search($N, (javax.naming.directory.BasicAttributes $A), $X)
           - focus-metavariable: $F
       # Spring LDAP: the String filter of LdapTemplate (base, filter, ...). The LdapQuery forms
       # take a query built by LdapQueryBuilder (below), and the password of authenticate is a

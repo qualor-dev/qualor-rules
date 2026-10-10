@@ -133,6 +133,21 @@ def field(name):
     c = catalog.xpath(FIELDS[name] if name in FIELDS else COUNT_ALL)
     # ruleid: python.xpath-injection
     d = catalog.xpath(FIELDS.get(name, request.args["expr"]))
+    # A constant key with request data as the default.
+    fallbacks = {"unused": ""}
+    default_choice = fallbacks.get("author", request.args["expr"])
+    # ruleid: python.xpath-injection
+    d3 = catalog.xpath(default_choice)
+    queries = {"titles": "//book/title"}
+    queries.get(name, request.args["expr"])
+    # A get() with request data as its key or default makes the dict request data for the rest
+    # of the function, so a later lookup of a constant entry is reported.
+    # todook: python.xpath-injection
+    d2 = catalog.xpath(queries.get("titles"))
+    # get() by request data on a table that request data changes elsewhere in the file.
+    stored_choice = SAVED_QUERIES.get(name)
+    # ruleid: python.xpath-injection
+    e2 = catalog.xpath(stored_choice)
     # ruleid: python.xpath-injection
     e = catalog.xpath(SAVED_QUERIES[name])
     # todook: python.xpath-injection

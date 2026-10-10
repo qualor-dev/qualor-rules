@@ -66,6 +66,8 @@ rules:
     #   changes or assigns again, with no default or a literal/constant default for get() (an
     #   upper-case name assigned in the function is not a constant); or as a ternary of constants. A
     #   membership check (`if x not in ALLOWED: return`) is not.
+    # - After a get() whose key or default is request data, the dict counts as request data for
+    #   the rest of the function: a later lookup of a constant entry in it is reported (todook).
     # Inherited from the request source block (python.sql-injection), each with a `todook` line:
     # - A Flask route parameter with a typed converter (`<int:n>`) is still a source.
     # - A Django URL argument is still a source when its converter (`<int:pk>`, in urls.py) or a
@@ -513,6 +515,16 @@ rules:
                       - pattern: $PARAM[$LOWER:]
                       - pattern: $PARAM[:$UPPER]
                       - pattern: $PARAM[$LOWER:$UPPER]
+    # dict.get(): the lookup carries the request data of its key and of its default. OpenGrep's
+    # --taint-intrafile mode reads get() as a read of the dict and would drop both, so the dict
+    # takes them on (a constant allow-list is still cleaned by the sanitizer below).
+    pattern-propagators:
+      - pattern: $DICT.get($FROM, ...)
+        from: $FROM
+        to: $DICT
+      - pattern: $DICT.get($KEY, $FROM)
+        from: $FROM
+        to: $DICT
     pattern-sanitizers:
       - pattern: int(...)
       - pattern: float(...)

@@ -355,6 +355,17 @@ def items():
     con.execute("SELECT " + ", ".join(COLUMN_SETS[request.args["cols"]]) + " FROM items")
     # ruleid: python.sql-injection
     con.execute("SELECT * FROM items ORDER BY " + ORDER_CLAUSES.get(request.args["o"], request.args["o"]))
+    # A constant key with request data as the default.
+    fallbacks = {"unused": ""}
+    default_choice = fallbacks.get("newest", request.args["o"])
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + default_choice)
+    orders = {"default": "name"}
+    orders.get("custom", request.args["o"])
+    # A get() with request data as its key or default makes the dict request data for the rest
+    # of the function, so a later lookup of a constant entry is reported.
+    # todook: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + orders.get("default"))
     SORT_COLUMNS = {"name": request.args["fallback"]}
     # ruleid: python.sql-injection
     con.execute("SELECT * FROM items ORDER BY " + SORT_COLUMNS["name"])

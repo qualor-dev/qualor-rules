@@ -363,6 +363,16 @@ rules:
       - pattern: $MAP.set($K, $X)
         from: $X
         to: $MAP
+      # An HTTP client's get(url): the page carries the request data of its URL (ruling J2, read
+      # with the awaited-call sanitizer below). OpenGrep's --taint-intrafile mode reads get() as a
+      # read of its receiver and would drop it, so the client takes it on.
+      - patterns:
+          - pattern: $CLIENT.get($FROM, ...)
+          - metavariable-regex:
+              metavariable: $CLIENT
+              regex: ^(?:axios|got|superagent|undici)$
+        from: $FROM
+        to: $CLIENT
     pattern-sanitizers:
       - pattern: Number.parseInt(...)
       - pattern: Number.parseFloat(...)

@@ -218,6 +218,23 @@ def greeting3(lang):
     return GREETINGS.get(lang, request.args["fallback"])
 
 
+# A constant key with request data as the default.
+@app.route("/greeting5")
+def greeting5():
+    # ruleid: python.xss
+    return GREETINGS.get("de", request.args["fallback"])
+
+
+# A get() with request data as its key or default makes the dict request data for the rest of
+# the function, so a later lookup of a constant entry is reported.
+@app.route("/greeting4/<lang>")
+def greeting4(lang):
+    labels = {"title": "Welcome"}
+    labels.get(lang, request.args["fallback"])
+    # todook: python.xss
+    return labels.get("title")
+
+
 @app.post("/banner")
 def set_banner():
     BANNERS[request.form["kind"]] = request.form["html"]

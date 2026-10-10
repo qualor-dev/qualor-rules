@@ -91,6 +91,8 @@ def report():
 - A function named like a class-based view's handler (`get`, `post`, ..., `dispatch`) that takes
   `(self, request, ...)` in a Django module is taken for one also outside a class: its parameters
   after `request` count as URL arguments.
+- After a `get()` whose key or default is request data, the dict counts as request data for the
+  rest of the function, so a later lookup of a constant entry in it is reported.
 <!-- end: known-limits -->
 
 ## References

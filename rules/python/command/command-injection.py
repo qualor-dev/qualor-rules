@@ -308,6 +308,21 @@ def report(name):
     os.system(" ".join(REPORTS[name]))
     # ruleid: python.command-injection
     os.system(TOOLS.get(name, request.args["fallback"]))
+    # A constant key with request data as the default.
+    fallbacks = {"unused": ""}
+    default_choice = fallbacks.get("uptime", request.args["fallback"])
+    # ruleid: python.command-injection
+    os.system(default_choice)
+    commands = {"default": "uptime"}
+    commands.get(name, request.args["fallback"])
+    # A get() with request data as its key or default makes the dict request data for the rest
+    # of the function, so a later lookup of a constant entry is reported.
+    # todook: python.command-injection
+    os.system(commands.get("default"))
+    # get() by request data on a table that request data changes elsewhere in the file.
+    stored_choice = HOOKS.get(name)
+    # ruleid: python.command-injection
+    os.system(stored_choice)
     # ruleid: python.command-injection
     os.system(HOOKS[name])
     LOCAL_TOOLS = {"x": request.args["tool"]}
