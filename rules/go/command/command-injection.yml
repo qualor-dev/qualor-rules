@@ -53,8 +53,14 @@ rules:
     # - os.StartProcess and syscall.Exec are not followed yet (`todoruleid:`).
     # - Arguments given as a slice (`exec.Command("sh", args...)`) and the arguments of a batch
     #   file (which cmd.exe parses again) are not followed (`todoruleid:`).
-    # - PowerShell's encoded command is followed under its documented names (`-EncodedCommand`,
-    #   `-e`, `-ec`); other prefixes such as `-enc` are not (`todoruleid:`).
+    # - PowerShell parameters are recognised by the names about_pwsh lists (-Command/-c,
+    #   -CommandWithArgs/-cwa, -EncodedCommand/-e/-ec, -File/-f; any case), for pwsh and
+    #   powershell.exe alike; other prefixes such as `-enc` are not (`todoruleid:`). For pwsh, a
+    #   first argument that is no parameter name is taken for the script, with or without .ps1;
+    #   a script without .ps1 after pwsh's own switches (`-NoProfile ./deploy -i <request>`) is
+    #   not, so the switch name after it reads as pwsh's own (`todook:`). For powershell.exe, a
+    #   positional argument after its switches (`-NoProfile Get-Item <request>`) is not followed
+    #   (`todoruleid:`).
     # - Base64 is not a sanitizer: request data encoded and decoded by the shell into a file, not
     #   run, is still reported (`todook:`).
     options:
@@ -244,24 +250,54 @@ rules:
               - pattern: exec.Command("=~/^(.*[^a-zA-Z0-9])?[cC][mM][dD]([.][eE][xX][eE])?$/", ..., "=~/^/[cCkK]$/", ..., $SCRIPT, ...)
               - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?[cC][mM][dD]([.][eE][xX][eE])?$/", ..., "=~/^/[cCkK]$/", ..., $SCRIPT, ...)
           - focus-metavariable: $SCRIPT
-      # PowerShell given a command: every argument after `-Command` (`-c`, any case) is part of it.
+      # PowerShell (pwsh, powershell.exe, any path; parameter names in any case, about_pwsh):
+      # every argument after -Command (-c) is part of the command; the first argument after
+      # -CommandWithArgs (-cwa) and the argument after -EncodedCommand (-e, -ec, Base64 of the
+      # command's UTF-16LE text) are the command; the argument after -File (-f) is the script to
+      # run. Not after -File (the later arguments are the script's parameters, passed as literal
+      # strings), after the command of -cwa (the later arguments fill $args) or, for pwsh, after
+      # a .ps1 script or a first argument that is no parameter name (File is pwsh's default
+      # parameter, so that argument is the script). about_PowerShell_exe names no default
+      # parameter, so for powershell.exe `x.ps1 -c <request>` is taken as -Command.
       - patterns:
           - pattern-either:
-              - pattern: exec.Command("=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([cC]|[cC][oO][mM][mM][aA][nN][dD])$/", ..., $SCRIPT, ...)
-              - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([cC]|[cC][oO][mM][mM][aA][nN][dD])$/", ..., $SCRIPT, ...)
+              - pattern: exec.Command("=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(c|command)$/", ..., $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(c|command)$/", ..., $SCRIPT, ...)
+              - pattern: exec.Command("=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", $SCRIPT, ...)
+          - pattern-not: exec.Command($PS, ..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.Command("=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", ..., "=~/(?i)\.ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", ..., "=~/(?i)\.ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.Command("=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
           - focus-metavariable: $SCRIPT
-      # PowerShell given an encoded command: the argument after `-EncodedCommand` (`-e`, `-ec`,
-      # any case) is the command, as Base64 of its UTF-16LE text. After `-File`, or after a
-      # `.ps1` script given without it (File is the default parameter), `-e` is a parameter of
-      # the script instead.
+      # The first positional argument, before any command parameter: for pwsh the script to run
+      # (File is the default parameter), for powershell.exe a script or a command. Positional
+      # means first, after a switch (a parameter without a value), or after a parameter and its
+      # value (-Version takes a value in powershell.exe only). Not after a command parameter or
+      # -File; for pwsh also not after a .ps1 argument or a first argument that is no parameter
+      # name (the script): what follows are its parameters. For powershell.exe, whose docs name
+      # no default parameter, a first argument that is no parameter name starts a command that
+      # every later argument continues.
       - patterns:
           - pattern-either:
-              - pattern: exec.Command("=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([eE]|[eE][cC]|[eE][nN][cC][oO][dD][eE][dD][cC][oO][mM][mM][aA][nN][dD])$/", $SCRIPT, ...)
-              - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([eE]|[eE][cC]|[eE][nN][cC][oO][dD][eE][dD][cC][oO][mM][mM][aA][nN][dD])$/", $SCRIPT, ...)
-          - pattern-not: exec.Command($PS, ..., "=~/^-([fF]|[fF][iI][lL][eE])$/", ..., $SCRIPT, ...)
-          - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/^-([fF]|[fF][iI][lL][eE])$/", ..., $SCRIPT, ...)
-          - pattern-not: exec.Command($PS, ..., "=~/[.][pP][sS]1$/", ..., $SCRIPT, ...)
-          - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/[.][pP][sS]1$/", ..., $SCRIPT, ...)
+              - pattern: exec.Command("=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", $SCRIPT, ...)
+              - pattern: exec.Command("=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(login|l|interactive|i|mta|sta|noexit|noe|nologo|nol|noninteractive|noni|noprofile|nop|noprofileloadtime|sshservermode|sshs)$/", $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(login|l|interactive|i|mta|sta|noexit|noe|nologo|nol|noninteractive|noni|noprofile|nop|noprofileloadtime|sshservermode|sshs)$/", $SCRIPT, ...)
+              - pattern: exec.Command("=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(configurationfile|configurationname|config|custompipename|executionpolicy|ex|ep|inputformat|inp|if|outputformat|o|of|settingsfile|settings|windowstyle|w|workingdirectory|wd|wo|psconsolefile)$/", $VALUE, $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(configurationfile|configurationname|config|custompipename|executionpolicy|ex|ep|inputformat|inp|if|outputformat|o|of|settingsfile|settings|windowstyle|w|workingdirectory|wd|wo|psconsolefile)$/", $VALUE, $SCRIPT, ...)
+              - pattern: exec.Command("=~/(?i)^(.*[^a-z0-9])?powershell(\.exe)?$/", ..., "=~/(?i)^-version$/", $VALUE, $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?powershell(\.exe)?$/", ..., "=~/(?i)^-version$/", $VALUE, $SCRIPT, ...)
+              - pattern: exec.Command("=~/(?i)^(.*[^a-z0-9])?powershell(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?powershell(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
+          - pattern-not: exec.Command($PS, ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.Command("=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", ..., "=~/(?i)\.ps1$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", ..., "=~/(?i)\.ps1$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.Command("=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
           - focus-metavariable: $SCRIPT
       # The program itself: the name or path given to Command or CommandContext, or Cmd.Path.
       - patterns:

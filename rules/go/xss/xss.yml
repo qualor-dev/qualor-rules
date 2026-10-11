@@ -470,9 +470,9 @@ rules:
       - pattern: ioutil.ReadFile(...)
       # The command arguments that go.command-injection reports (the same shapes as its sinks):
       # the program, the script after a POSIX shell's -c, everything after cmd.exe's /C or /K,
-      # and PowerShell's -Command or -EncodedCommand. Request data there is that rule's finding;
-      # what the command then prints (os/exec Cmd.Output: its standard output) is not reported a
-      # second time. Other arguments of a fixed program, a shell's positional parameters among
+      # and PowerShell's command, script or first positional argument. Request data there is that
+      # rule's finding; what the command then prints (os/exec Cmd.Output: its standard output) is
+      # not reported a second time. Other arguments of a fixed program, a shell's positional parameters among
       # them, still reach the output: the program may print them back.
       - patterns:
           - pattern-either:
@@ -492,19 +492,39 @@ rules:
               - pattern: exec.Command("=~/^(.*[^a-zA-Z0-9])?[cC][mM][dD]([.][eE][xX][eE])?$/", ..., "=~/^/[cCkK]$/", ..., $SCRIPT, ...)
               - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?[cC][mM][dD]([.][eE][xX][eE])?$/", ..., "=~/^/[cCkK]$/", ..., $SCRIPT, ...)
           - focus-metavariable: $SCRIPT
+      # PowerShell: the arguments of its command parameters and its first positional argument, as
+      # in go.command-injection's two PowerShell sinks (see there).
       - patterns:
           - pattern-either:
-              - pattern: exec.Command("=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([cC]|[cC][oO][mM][mM][aA][nN][dD])$/", ..., $SCRIPT, ...)
-              - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([cC]|[cC][oO][mM][mM][aA][nN][dD])$/", ..., $SCRIPT, ...)
+              - pattern: exec.Command("=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(c|command)$/", ..., $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(c|command)$/", ..., $SCRIPT, ...)
+              - pattern: exec.Command("=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", $SCRIPT, ...)
+          - pattern-not: exec.Command($PS, ..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.Command("=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", ..., "=~/(?i)\.ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", ..., "=~/(?i)\.ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.Command("=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
           - focus-metavariable: $SCRIPT
       - patterns:
           - pattern-either:
-              - pattern: exec.Command("=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([eE]|[eE][cC]|[eE][nN][cC][oO][dD][eE][dD][cC][oO][mM][mM][aA][nN][dD])$/", $SCRIPT, ...)
-              - pattern: exec.CommandContext($CTX, "=~/^(.*[^a-zA-Z0-9])?([pP][wW][sS][hH]|[pP][oO][wW][eE][rR][sS][hH][eE][lL][lL])([.][eE][xX][eE])?$/", ..., "=~/^-([eE]|[eE][cC]|[eE][nN][cC][oO][dD][eE][dD][cC][oO][mM][mM][aA][nN][dD])$/", $SCRIPT, ...)
-          - pattern-not: exec.Command($PS, ..., "=~/^-([fF]|[fF][iI][lL][eE])$/", ..., $SCRIPT, ...)
-          - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/^-([fF]|[fF][iI][lL][eE])$/", ..., $SCRIPT, ...)
-          - pattern-not: exec.Command($PS, ..., "=~/[.][pP][sS]1$/", ..., $SCRIPT, ...)
-          - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/[.][pP][sS]1$/", ..., $SCRIPT, ...)
+              - pattern: exec.Command("=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", $SCRIPT, ...)
+              - pattern: exec.Command("=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(login|l|interactive|i|mta|sta|noexit|noe|nologo|nol|noninteractive|noni|noprofile|nop|noprofileloadtime|sshservermode|sshs)$/", $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(login|l|interactive|i|mta|sta|noexit|noe|nologo|nol|noninteractive|noni|noprofile|nop|noprofileloadtime|sshservermode|sshs)$/", $SCRIPT, ...)
+              - pattern: exec.Command("=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(configurationfile|configurationname|config|custompipename|executionpolicy|ex|ep|inputformat|inp|if|outputformat|o|of|settingsfile|settings|windowstyle|w|workingdirectory|wd|wo|psconsolefile)$/", $VALUE, $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?(pwsh|powershell)(\.exe)?$/", ..., "=~/(?i)^-(configurationfile|configurationname|config|custompipename|executionpolicy|ex|ep|inputformat|inp|if|outputformat|o|of|settingsfile|settings|windowstyle|w|workingdirectory|wd|wo|psconsolefile)$/", $VALUE, $SCRIPT, ...)
+              - pattern: exec.Command("=~/(?i)^(.*[^a-z0-9])?powershell(\.exe)?$/", ..., "=~/(?i)^-version$/", $VALUE, $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?powershell(\.exe)?$/", ..., "=~/(?i)^-version$/", $VALUE, $SCRIPT, ...)
+              - pattern: exec.Command("=~/(?i)^(.*[^a-z0-9])?powershell(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
+              - pattern: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?powershell(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
+          - pattern-not: exec.Command($PS, ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.Command("=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", ..., "=~/(?i)\.ps1$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", ..., "=~/(?i)\.ps1$/", ..., $SCRIPT, ...)
+          - pattern-not: exec.Command("=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
+          - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
           - focus-metavariable: $SCRIPT
       # URL escaping: the output holds only letters, digits, "-_.~", "%" and "+".
       - pattern: url.QueryEscape(...)

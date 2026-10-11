@@ -462,6 +462,19 @@ func CommandOutput(ctx context.Context, w http.ResponseWriter, r *http.Request) 
 	job, _ := exec.Command("powershell.exe", "-NoProfile", "-EncodedCommand", r.FormValue("job")).Output()
 	// ok: go.xss
 	w.Write(job)
+	chosen, _ := exec.Command("pwsh", "-File", r.FormValue("script")).Output()
+	// ok: go.xss
+	w.Write(chosen)
+	withArgs, _ := exec.Command("pwsh", "-cwa", r.FormValue("cmd")).Output()
+	// ok: go.xss
+	w.Write(withArgs)
+	positional, _ := exec.Command("pwsh", "-NoProfile", r.FormValue("script")).Output()
+	// ok: go.xss
+	w.Write(positional)
+	// After -File and its script, -c is a parameter of the script, which may print it back.
+	param, _ := exec.Command("pwsh", "-File", "report.ps1", "-c", r.FormValue("name")).Output()
+	// ruleid: go.xss
+	w.Write(param)
 	// An argument of a fixed program.
 	echoed, _ := exec.Command("echo", r.URL.Query().Get("msg")).Output()
 	// ruleid: go.xss
@@ -981,4 +994,122 @@ func EchoV5Safe(c *echo.Context) error {
 	safeGreeting.Execute(c.Response(), c.QueryParam("name"))
 	// ok: go.xss
 	return safeGreeting.ExecuteTemplate(c.Response(), "greeting", c.QueryParam("name"))
+}
+
+// The PowerShell shapes of go.command-injection: what it reports is not reported again here; a
+// fixed script or command given request data as a parameter may print it back.
+func PowerShellOutput(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	q := r.FormValue("q")
+	ps1, _ := exec.Command("pwsh", "-CommandWithArgs", "Get-Item "+q, "first").Output()
+	// ok: go.xss
+	w.Write(ps1)
+	ps2, _ := exec.CommandContext(ctx, "pwsh.exe", "-cwa", q).Output()
+	// ok: go.xss
+	w.Write(ps2)
+	ps3, _ := exec.CommandContext(ctx, "pwsh", "-NoProfile", "-c", "Get-Item", q).Output()
+	// ok: go.xss
+	w.Write(ps3)
+	ps4, _ := exec.Command("pwsh", "-File", q).Output()
+	// ok: go.xss
+	w.Write(ps4)
+	ps5, _ := exec.CommandContext(ctx, "powershell.exe", "-f", q, "-Mode", "fast").Output()
+	// ok: go.xss
+	w.Write(ps5)
+	ps6, _ := exec.Command("pwsh", q).Output()
+	// ok: go.xss
+	w.Write(ps6)
+	ps7, _ := exec.CommandContext(ctx, "powershell", r.URL.Query().Get("script")).Output()
+	// ok: go.xss
+	w.Write(ps7)
+	ps8, _ := exec.Command("pwsh", "-NoProfile", "-NonInteractive", q).Output()
+	// ok: go.xss
+	w.Write(ps8)
+	ps9, _ := exec.CommandContext(ctx, "pwsh", "-nologo", q).Output()
+	// ok: go.xss
+	w.Write(ps9)
+	ps10, _ := exec.Command("pwsh", "-ExecutionPolicy", "Bypass", q).Output()
+	// ok: go.xss
+	w.Write(ps10)
+	ps11, _ := exec.CommandContext(ctx, "pwsh", "-WorkingDirectory", "/srv", q).Output()
+	// ok: go.xss
+	w.Write(ps11)
+	ps12, _ := exec.Command("powershell", "-Version", "2.0", q).Output()
+	// ok: go.xss
+	w.Write(ps12)
+	ps13, _ := exec.CommandContext(ctx, "powershell.exe", "-version", "5.1", q).Output()
+	// ok: go.xss
+	w.Write(ps13)
+	ps14, _ := exec.Command("powershell.exe", "Get-ChildItem", q).Output()
+	// ok: go.xss
+	w.Write(ps14)
+	ps15, _ := exec.CommandContext(ctx, "powershell.exe", "report.ps1", q).Output()
+	// ok: go.xss
+	w.Write(ps15)
+	ps16, _ := exec.Command("powershell.exe", "report.ps1", "-c", q).Output()
+	// ok: go.xss
+	w.Write(ps16)
+	ps17, _ := exec.Command("pwsh", "-File", "resize.ps1", "-c", q).Output()
+	// ruleid: go.xss
+	w.Write(ps17)
+	ps18, _ := exec.CommandContext(ctx, "pwsh", "-f", "resize.ps1", "-Command", q).Output()
+	// ruleid: go.xss
+	w.Write(ps18)
+	ps19, _ := exec.Command("pwsh", "-cwa", "Write-Output $args", "-c", q).Output()
+	// ruleid: go.xss
+	w.Write(ps19)
+	ps20, _ := exec.CommandContext(ctx, "pwsh", "-CommandWithArgs", "Write-Output $args", q).Output()
+	// ruleid: go.xss
+	w.Write(ps20)
+	ps21, _ := exec.Command("pwsh", "resize.ps1", "-c", q).Output()
+	// ruleid: go.xss
+	w.Write(ps21)
+	ps22, _ := exec.CommandContext(ctx, "pwsh", "-NoProfile", "resize.ps1", "-File", q).Output()
+	// ruleid: go.xss
+	w.Write(ps22)
+	ps23, _ := exec.Command("pwsh", "-NoProfile", "resize.ps1", q).Output()
+	// ruleid: go.xss
+	w.Write(ps23)
+	ps24, _ := exec.CommandContext(ctx, "pwsh", "-NoProfile", "resize.ps1", q).Output()
+	// ruleid: go.xss
+	w.Write(ps24)
+	ps25, _ := exec.Command("pwsh", "./deploy", "-i", q).Output()
+	// ruleid: go.xss
+	w.Write(ps25)
+	ps26, _ := exec.CommandContext(ctx, "pwsh", "./deploy", "-c", q).Output()
+	// ruleid: go.xss
+	w.Write(ps26)
+	ps27, _ := exec.Command("pwsh", "./deploy", "-File", q).Output()
+	// ruleid: go.xss
+	w.Write(ps27)
+	ps28, _ := exec.CommandContext(ctx, "pwsh", "./deploy", q).Output()
+	// ruleid: go.xss
+	w.Write(ps28)
+	ps29, _ := exec.CommandContext(ctx, "pwsh", "./deploy", "-i", q).Output()
+	// ruleid: go.xss
+	w.Write(ps29)
+	ps30, _ := exec.CommandContext(ctx, "powershell.exe", "-File", "resize.ps1", "-c", q).Output()
+	// ruleid: go.xss
+	w.Write(ps30)
+	ps31, _ := exec.Command("pwsh", "-NoProfile", "resize.ps1", "-c", q).Output()
+	// ruleid: go.xss
+	w.Write(ps31)
+	ps32, _ := exec.Command("powershell", "-File", "resize.ps1", "-NoLogo", q).Output()
+	// ruleid: go.xss
+	w.Write(ps32)
+	ps33, _ := exec.CommandContext(ctx, "powershell.exe", "-File", "resize.ps1", "-NoLogo", q).Output()
+	// ruleid: go.xss
+	w.Write(ps33)
+	ps34, _ := exec.Command("pwsh", "-cwa", "Write-Output $args", "-NoProfile", q).Output()
+	// ruleid: go.xss
+	w.Write(ps34)
+	ps35, _ := exec.Command("pwsh", "-NoProfile", "resize.ps1", "-NoLogo", q).Output()
+	// ruleid: go.xss
+	w.Write(ps35)
+	ps36, _ := exec.CommandContext(ctx, "pwsh", "-NoProfile", "resize.ps1", "-NoLogo", q).Output()
+	// ruleid: go.xss
+	w.Write(ps36)
+	ps37, _ := exec.Command("pwsh", "-Version", q).Output()
+	// ruleid: go.xss
+	w.Write(ps37)
 }

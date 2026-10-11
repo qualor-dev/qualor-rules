@@ -11,9 +11,16 @@
 Data from the HTTP request that reaches an operating-system command started with `os/exec`:
 
 - as part of a script that a shell runs (`exec.Command("sh", "-c", script)`, `cmd /C`,
-  `pwsh -Command`), including PowerShell's encoded command (`pwsh -EncodedCommand`, `-e`,
-  `-ec`) and a script built from request data and then Base64-encoded, or
+  `pwsh -Command`), including PowerShell's `-CommandWithArgs` (`-cwa`), its encoded command
+  (`pwsh -EncodedCommand`, `-e`, `-ec`) and a script built from request data and then
+  Base64-encoded,
+- as the PowerShell script to run (`pwsh -File <request>`, or the first argument that is no
+  parameter, which pwsh takes for its script), or
 - as the program to run (`exec.Command(r.FormValue("tool"))`).
+
+After `-File` and a script, or after the command of `-CommandWithArgs`, PowerShell passes the
+remaining arguments to the script as plain values, so request data there is not reported
+(`pwsh -File resize.ps1 -c <request>`).
 
 Request data means query and form values, path parameters, headers, cookies and JSON bodies, read
 through `net/http` or through Gin, Echo, chi or gorilla/mux.
@@ -71,7 +78,9 @@ func Archive(w http.ResponseWriter, r *http.Request) {
 - Run a fixed program and pass request data as separate arguments:
   `exec.Command("convert", name, "out.png")`. `exec.Command` starts the program directly, so no
   shell parses the arguments.
-- Do not hand request data to `sh -c`, `cmd /C`, `pwsh -Command` or `pwsh -EncodedCommand`.
+- Do not hand request data to `sh -c`, `cmd /C`, `pwsh -Command`, `-CommandWithArgs` or
+  `-EncodedCommand`, and do not let it choose the script after `pwsh -File`. Pass it as a parameter
+  of a fixed script instead: `exec.Command("pwsh", "-File", "resize.ps1", "-Name", name)`.
   Encoding a script in Base64 does not make it safe: PowerShell or the shell decodes it and runs
   it.
 - If the program must vary, map the request value to a constant with a `switch` or a map lookup
@@ -98,8 +107,13 @@ func Archive(w http.ResponseWriter, r *http.Request) {
 - `os.StartProcess` and `syscall.Exec` are not checked yet.
 - Arguments passed as a slice (`exec.Command("sh", args...)`) and the arguments of a Windows batch
   file are not followed.
-- PowerShell's encoded command is recognised under its documented names (`-EncodedCommand`,
-  `-e`, `-ec`), not under other abbreviations such as `-enc`.
+- PowerShell's parameters are recognised under the names its documentation lists
+  (`-Command`/`-c`, `-CommandWithArgs`/`-cwa`, `-EncodedCommand`/`-e`/`-ec`, `-File`/`-f`), not
+  under other abbreviations such as `-enc` or `-Comm`.
+- For pwsh, a script name without `.ps1` given after pwsh's own switches
+  (`pwsh -NoProfile ./deploy -i <request>`) is not recognised, so the script's switch is taken for
+  pwsh's and the value after it is reported. For powershell.exe, a value after its switches
+  (`powershell.exe -NoProfile Get-Item <request>`) is not followed.
 - Base64 does not count as a sanitizer: request data that is encoded and only decoded into a file
   by the shell is still reported.
 <!-- end: known-limits -->

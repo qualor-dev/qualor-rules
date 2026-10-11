@@ -142,6 +142,104 @@ func Encoded(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "ok")
 }
 
+// PowerShell's parameters (about_pwsh, any case): the command of -CommandWithArgs (-cwa), the
+// script after -File (-f), and the first positional argument (pwsh's default parameter is File)
+// run what the request sends. After -File or the command of -cwa every argument belongs to the
+// script or fills $args, so a later -c is no PowerShell parameter.
+func PowerShellParams(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	q := r.FormValue("q")
+	// ruleid: go.command-injection
+	exec.Command("pwsh", "-CommandWithArgs", "Get-Item "+q, "first").Run()
+	// ruleid: go.command-injection
+	exec.CommandContext(ctx, "pwsh.exe", "-cwa", q).Run()
+	// ruleid: go.command-injection
+	exec.CommandContext(ctx, "pwsh", "-NoProfile", "-c", "Get-Item", q).Run()
+	// ruleid: go.command-injection
+	exec.Command("pwsh", "-File", q).Run()
+	// ruleid: go.command-injection
+	exec.CommandContext(ctx, "powershell.exe", "-f", q, "-Mode", "fast").Run()
+	// A request value as the first positional argument: pwsh's script, or a command for
+	// powershell.exe.
+	// ruleid: go.command-injection
+	exec.Command("pwsh", q).Run()
+	// ruleid: go.command-injection
+	exec.CommandContext(ctx, "powershell", r.URL.Query().Get("script")).Run()
+	// ruleid: go.command-injection
+	exec.Command("pwsh", "-NoProfile", "-NonInteractive", q).Run()
+	// ruleid: go.command-injection
+	exec.CommandContext(ctx, "pwsh", "-nologo", q).Run()
+	// ruleid: go.command-injection
+	exec.Command("pwsh", "-ExecutionPolicy", "Bypass", q).Run()
+	// ruleid: go.command-injection
+	exec.CommandContext(ctx, "pwsh", "-WorkingDirectory", "/srv", q).Run()
+	// powershell.exe: -Version takes a value, and no default parameter is documented, so a first
+	// argument that is no parameter name starts a command that the later arguments continue.
+	// ruleid: go.command-injection
+	exec.Command("powershell", "-Version", "2.0", q).Run()
+	// ruleid: go.command-injection
+	exec.CommandContext(ctx, "powershell.exe", "-version", "5.1", q).Run()
+	// ruleid: go.command-injection
+	exec.Command("powershell.exe", "Get-ChildItem", q).Run()
+	// ruleid: go.command-injection
+	exec.CommandContext(ctx, "powershell.exe", "report.ps1", q).Run()
+	// ruleid: go.command-injection
+	exec.Command("powershell.exe", "report.ps1", "-c", q).Run()
+	// Parameters of the script, not of PowerShell.
+	// ok: go.command-injection
+	exec.Command("pwsh", "-File", "resize.ps1", "-c", q).Run()
+	// ok: go.command-injection
+	exec.CommandContext(ctx, "pwsh", "-f", "resize.ps1", "-Command", q).Run()
+	// ok: go.command-injection
+	exec.Command("pwsh", "-cwa", "Write-Output $args", "-c", q).Run()
+	// ok: go.command-injection
+	exec.CommandContext(ctx, "pwsh", "-CommandWithArgs", "Write-Output $args", q).Run()
+	// ok: go.command-injection
+	exec.Command("pwsh", "resize.ps1", "-c", q).Run()
+	// ok: go.command-injection
+	exec.CommandContext(ctx, "pwsh", "-NoProfile", "resize.ps1", "-File", q).Run()
+	// ok: go.command-injection
+	exec.Command("pwsh", "-NoProfile", "resize.ps1", q).Run()
+	// ok: go.command-injection
+	exec.CommandContext(ctx, "pwsh", "-NoProfile", "resize.ps1", q).Run()
+	// pwsh's first argument that is no parameter name is the script, with or without .ps1.
+	// ok: go.command-injection
+	exec.Command("pwsh", "./deploy", "-i", q).Run()
+	// ok: go.command-injection
+	exec.CommandContext(ctx, "pwsh", "./deploy", "-c", q).Run()
+	// ok: go.command-injection
+	exec.Command("pwsh", "./deploy", "-File", q).Run()
+	// ok: go.command-injection
+	exec.CommandContext(ctx, "pwsh", "./deploy", q).Run()
+	// ok: go.command-injection
+	exec.CommandContext(ctx, "pwsh", "./deploy", "-i", q).Run()
+	// ok: go.command-injection
+	exec.CommandContext(ctx, "powershell.exe", "-File", "resize.ps1", "-c", q).Run()
+	// ok: go.command-injection
+	exec.Command("pwsh", "-NoProfile", "resize.ps1", "-c", q).Run()
+	// ok: go.command-injection
+	exec.Command("powershell", "-File", "resize.ps1", "-NoLogo", q).Run()
+	// ok: go.command-injection
+	exec.CommandContext(ctx, "powershell.exe", "-File", "resize.ps1", "-NoLogo", q).Run()
+	// ok: go.command-injection
+	exec.Command("pwsh", "-cwa", "Write-Output $args", "-NoProfile", q).Run()
+	// ok: go.command-injection
+	exec.Command("pwsh", "-NoProfile", "resize.ps1", "-NoLogo", q).Run()
+	// ok: go.command-injection
+	exec.CommandContext(ctx, "pwsh", "-NoProfile", "resize.ps1", "-NoLogo", q).Run()
+	// pwsh's -Version only prints the version.
+	// ok: go.command-injection
+	exec.Command("pwsh", "-Version", q).Run()
+	// A script without .ps1 after pwsh's own switches is not recognised: the script's switch
+	// reads as pwsh's.
+	// todook: go.command-injection
+	exec.Command("pwsh", "-NoProfile", "./deploy", "-i", q).Run()
+	// powershell.exe: a positional argument after its switches is not followed.
+	// todoruleid: go.command-injection
+	exec.Command("powershell.exe", "-NoProfile", "Get-ChildItem", q).Run()
+	fmt.Fprintln(w, "ok")
+}
+
 // toPowerShellBase64 encodes a script for -EncodedCommand: Base64 of its UTF-16LE text.
 func toPowerShellBase64(script string) string {
 	units := utf16.Encode([]rune(script))

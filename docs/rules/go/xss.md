@@ -22,7 +22,8 @@ HTTP request data written into an HTML response without escaping:
 The output of a command (`exec.Command(...).Output()`) counts as request data when the command
 was given request data as an argument: a program such as `echo` or `ping` may print its
 arguments back. When the request data is the program itself, or part of the script of a shell
-(`sh -c`), `cmd.exe /c` or PowerShell `-Command`, the command is a command injection, which
+(`sh -c`), `cmd.exe /c` or PowerShell (`-Command`, the script after `-File`), the command is a
+command injection, which
 [go/command-injection](command-injection.md) reports; what that command prints is not reported a
 second time here, since fixing the injection fixes both.
 <!-- end: what-it-finds -->
