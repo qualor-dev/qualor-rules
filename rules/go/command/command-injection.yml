@@ -55,7 +55,9 @@ rules:
     #   and the arguments of a batch file (which cmd.exe parses again) are not followed
     #   (`todoruleid:`); neither is a slice after PowerShell's -File or -CommandWithArgs, which holds
     #   the script or command with its arguments (`ok:`). A slice spread right after -Command or
-    #   -EncodedCommand is taken for the command.
+    #   -EncodedCommand is taken for the command. A call that ends in a spread is left out of the
+    #   positional-script sink as a whole, so a request value as the script followed by a slice
+    #   (`exec.Command("pwsh", q, extra...)`) is not reported (`todoruleid:`).
     # - PowerShell parameters are recognised by the names about_pwsh lists (-Command/-c,
     #   -CommandWithArgs/-cwa, -EncodedCommand/-e/-ec, -File/-f; any case), for pwsh and
     #   powershell.exe alike; other prefixes such as `-enc` are not (`todoruleid:`). For pwsh, a

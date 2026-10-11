@@ -108,7 +108,8 @@ func Archive(w http.ResponseWriter, r *http.Request) {
 - Arguments passed as a slice (`exec.Command("sh", args...)`, `exec.Command("pwsh", args...)`)
   and the arguments of a Windows batch file are not followed. A slice after PowerShell's `-File`
   or `-CommandWithArgs` is not followed either; a slice right after `-Command` or
-  `-EncodedCommand` counts as the command.
+  `-EncodedCommand` counts as the command. A request value given as the PowerShell script and
+  followed by a slice (`exec.Command("pwsh", q, extra...)`) is not reported.
 - PowerShell's parameters are recognised under the names its documentation lists
   (`-Command`/`-c`, `-CommandWithArgs`/`-cwa`, `-EncodedCommand`/`-e`/`-ec`, `-File`/`-f`), not
   under other abbreviations such as `-enc` or `-Comm`.

@@ -258,6 +258,13 @@ func PowerShellParams(w http.ResponseWriter, r *http.Request) {
 	tail := []string{"-NoProfile", "-Command", "Get-Item " + q}
 	// todoruleid: go.command-injection
 	exec.Command("pwsh", tail...).Run()
+	// A request value as the script, followed by a spread slice: calls that end in a spread are
+	// left out as a whole.
+	extra := []string{"-Verbose"}
+	// todoruleid: go.command-injection
+	exec.Command("pwsh", q, extra...).Run()
+	// todoruleid: go.command-injection
+	exec.Command("powershell.exe", q, extra...).Run()
 	// powershell.exe: a positional argument after its switches is not followed.
 	// todoruleid: go.command-injection
 	exec.Command("powershell.exe", "-NoProfile", "Get-ChildItem", q).Run()
