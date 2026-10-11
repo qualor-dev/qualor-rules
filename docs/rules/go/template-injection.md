@@ -100,6 +100,8 @@ func Hello(w http.ResponseWriter, r *http.Request) {
   not treated as making the text safe.
 - The success flag of a bind or decode call (`ok := c.ShouldBindJSON(&x) == nil`) still counts
   as request data, so formatting it into template text is reported.
+- A parse called inside a comparison, such as
+  `if template.Must(template.New("x").Parse(text)) == nil`, is not reported.
 - The binder of the Echo instance is not a source, and numeric struct fields count as safe only
   when the struct is declared in the same file.
 - Tests are recognised by a testing parameter of the enclosing function only: a handler declared

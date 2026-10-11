@@ -343,6 +343,22 @@ func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
 	template.New("layout").Parse(fmt.Sprintf(`<main data-wide="%t">{{.}}</main>`, wide))
 }
 
+// A sink called inside a comparison (`if template.Must(template.New(...).Parse(...)) == nil`)
+// is a boolean expression as a whole: the number/boolean sanitizer clears it, the sink's
+// arguments included. Parse alone returns two values and cannot sit in a comparison.
+func GinSinkInComparison(c *gin.Context) {
+	// todoruleid: go.template-injection
+	if template.Must(template.New("note").Parse(c.Query("tpl"))) == nil {
+		c.Status(http.StatusBadRequest)
+		return
+	}
+	// todoruleid: go.template-injection
+	compiled := template.Must(template.New("card").Parse("<div>"+c.PostForm("card")+"</div>")) != nil
+	if !compiled {
+		c.Status(http.StatusBadRequest)
+	}
+}
+
 // Limits of the shared request source block (go.sql-injection).
 type Status int
 
