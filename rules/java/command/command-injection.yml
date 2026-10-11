@@ -324,9 +324,8 @@ rules:
                 - pattern-either: *bound-parameter-commands
                 - pattern-not-inside:
                     patterns:
-                      - pattern-either:
-                          - pattern-inside: $RET $M(..., @$ANN $T $P, ...) { ... }
-                          - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+                      # @$ANN(...) also matches an annotation written without parentheses.
+                      - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
                       - metavariable-regex:
                           metavariable: $ANN
                           regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|RequestPart|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
