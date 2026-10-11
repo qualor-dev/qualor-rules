@@ -916,6 +916,32 @@ func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("https://german-%t.example.com/", german), http.StatusFound)
 }
 
+// A sink called inside a comparison (`if c.Redirect(...) != nil`) is a boolean expression as a
+// whole: the number/boolean sanitizer clears it, the sink's arguments included. net/http's and
+// Gin's redirects return nothing and cannot sit in a comparison.
+func EchoSinkInComparison(c echo.Context) error {
+	// todoruleid: go.open-redirect
+	if c.Redirect(http.StatusFound, c.QueryParam("next")) != nil {
+		return echo.ErrBadRequest
+	}
+	// todoruleid: go.open-redirect
+	moved := c.Redirect(http.StatusSeeOther, "https://"+c.Param("host")+"/") == nil
+	if !moved {
+		return echo.ErrBadRequest
+	}
+	return nil
+}
+
+func retryUntil(done func() bool) {}
+
+func RetryRedirect(c echo.Context) error {
+	retryUntil(func() bool {
+		// todoruleid: go.open-redirect
+		return c.Redirect(http.StatusFound, c.FormValue("back")) == nil
+	})
+	return nil
+}
+
 // Limits of the shared request source block (go.sql-injection).
 type Status int
 

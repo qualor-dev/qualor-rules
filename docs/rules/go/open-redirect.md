@@ -132,6 +132,8 @@ enough either: browsers read `/\evil.example` as `//evil.example`.
   of your own named `oauth2`, `minio` or `s3` imported under an alias next to the real one.
 - The success flag of a bind or decode call (`ok := c.ShouldBindJSON(&x) == nil`) still counts
   as request data, so formatting it into the target's host is reported.
+- A redirect called inside a comparison, such as Echo's `if c.Redirect(...) != nil`, is not
+  reported.
 - The binder of the Echo instance (`c.Echo().Binder.Bind(&x, c)`) is not a source.
 - Numeric struct fields count as safe only when the struct is declared in the same file; a named
   numeric type (`type Status int`) still counts as request data.

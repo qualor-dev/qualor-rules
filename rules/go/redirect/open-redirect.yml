@@ -110,6 +110,9 @@ rules:
     # - A boolean that holds a Gin or Echo bind call or a JSON decode (the success flag
     #   `ok := c.ShouldBindJSON(&x) == nil`) does not count as clean, so that the struct the call
     #   fills stays request data; the flag formatted into the target's host is reported (`todook:`).
+    # - A sink called inside a comparison (Echo's `if c.Redirect(...) != nil`, `ok := c.Redirect(...)
+    #   == nil`, a callback that returns the comparison) is a boolean as a whole, and the
+    #   number/boolean sanitizer clears it with the request data in its arguments (`todoruleid:`).
     # Inherited from the request source block (go.sql-injection):
     # - The Echo instance's binder (`c.Echo().Binder.Bind(&x, c)`) is not a source (`todoruleid:`).
     # - Numeric fields count as clean only when their type is known in the file: a struct declared
