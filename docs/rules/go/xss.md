@@ -17,6 +17,8 @@ HTTP request data written into an HTML response without escaping:
 - executed by a `text/template`, which does not escape, into the response or into a buffer that
   is then written to it (its `Bytes()` or `String()`, `WriteTo`, or `io.Copy`; files and other
   readers sent this way are not reported);
+- written into a `bytes.Buffer` or `strings.Builder` (`buf.WriteString(...)`,
+  `fmt.Fprintf(&buf, ...)`, `io.WriteString`, `io.Copy`) that is then written to the response;
 - marked as safe content with an `html/template` conversion such as `template.HTML(x)`.
 
 The output of a command (`exec.Command(...).Output()`) counts as request data when the command
@@ -114,8 +116,6 @@ func Hello(w http.ResponseWriter, r *http.Request) {
   another file, reached through another variable, or imported with a dot are missed. A buffer
   counts only when it is a `bytes.Buffer` or `strings.Builder` declared in the handler (or made
   with `bytes.NewBuffer`, or taken from a `sync.Pool` with a type assertion).
-- Request data written into a buffer directly (`buf.WriteString(...)`, `fmt.Fprintf(&buf, ...)`)
-  is not followed when the buffer is written to the response later.
 - The content of a file is not request data, even when the request names the file
   (`os.ReadFile`, or a file opened with `os.Open` or `os.OpenFile`), but a file opened in a `var`
   declaration (`var f, err = os.Open(...)`) is not recognised and what it holds is reported. The

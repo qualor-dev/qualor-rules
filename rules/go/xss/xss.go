@@ -331,11 +331,123 @@ func Buffered(w http.ResponseWriter, r *http.Request) {
 	w.Write(fixed.Bytes())
 }
 
-// Request data written into a buffer directly (not by a template) is not followed.
+// Request data written into a bytes.Buffer or strings.Builder directly (its own Write methods,
+// fmt.Fprint*, io.WriteString, io.Copy), then the buffer written to the response.
 func BufferedDirect(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	buf.WriteString("<p>" + r.FormValue("name") + "</p>")
-	// todoruleid: go.xss
+	// ruleid: go.xss
+	w.Write(buf.Bytes())
+	var sb strings.Builder
+	sb.WriteString("<ul>")
+	sb.Write([]byte("<li>" + r.FormValue("item") + "</li>"))
+	// ruleid: go.xss
+	io.WriteString(w, sb.String())
+	out := new(bytes.Buffer)
+	fmt.Fprintf(out, "<h1>%s</h1>", r.FormValue("title"))
+	// ruleid: go.xss
+	out.WriteTo(w)
+	var list strings.Builder
+	fmt.Fprintln(&list, r.FormValue("entry"))
+	// ruleid: go.xss
+	fmt.Fprint(w, list.String())
+	var quote bytes.Buffer
+	fmt.Fprint(&quote, r.FormValue("quote"))
+	// ruleid: go.xss
+	io.Copy(w, &quote)
+	var author strings.Builder
+	io.WriteString(&author, r.FormValue("author"))
+	// ruleid: go.xss
+	io.WriteString(w, author.String())
+	copied := new(bytes.Buffer)
+	io.Copy(copied, r.Body)
+	// ruleid: go.xss
+	w.Write(copied.Bytes())
+	var body bytes.Buffer
+	io.Copy(&body, r.Body)
+	// ruleid: go.xss
+	w.Write(body.Bytes())
+	note := new(strings.Builder)
+	io.WriteString(note, r.FormValue("note"))
+	// ruleid: go.xss
+	fmt.Fprintf(w, "<aside>%s</aside>", note.String())
+	made := bytes.NewBufferString("<p>")
+	made.WriteString(r.FormValue("greeting"))
+	// ruleid: go.xss
+	w.Write(made.Bytes())
+	var framed *bytes.Buffer
+	framed = bytes.NewBuffer(nil)
+	fmt.Fprintf(framed, "<section>%s</section>", r.FormValue("section"))
+	// ruleid: go.xss
+	framed.WriteTo(w)
+	pooled := buffers.Get().(*bytes.Buffer)
+	defer buffers.Put(pooled)
+	pooled.WriteString(r.FormValue("pooled"))
+	// ruleid: go.xss
+	w.Write(pooled.Bytes())
+	builders := sync.Pool{New: func() any { return new(strings.Builder) }}
+	shared := builders.Get().(*strings.Builder)
+	io.WriteString(shared, r.FormValue("shared"))
+	// ruleid: go.xss
+	io.WriteString(w, shared.String())
+	started := bytes.NewBuffer(nil)
+	started.WriteString(r.FormValue("started"))
+	// ruleid: go.xss
+	w.Write(started.Bytes())
+	headed := bytes.NewBufferString("<h2>")
+	fmt.Fprint(headed, r.FormValue("heading"))
+	// ruleid: go.xss
+	w.Write(headed.Bytes())
+	formatted := bytes.NewBuffer(nil)
+	fmt.Fprintf(formatted, "<em>%s</em>", r.FormValue("em"))
+	// ruleid: go.xss
+	formatted.WriteTo(w)
+	recycled := buffers.Get().(*bytes.Buffer)
+	fmt.Fprintln(recycled, r.FormValue("recycled"))
+	// ruleid: go.xss
+	w.Write(recycled.Bytes())
+	reused := builders.Get().(*strings.Builder)
+	reused.WriteString(r.FormValue("reused"))
+	// ruleid: go.xss
+	io.WriteString(w, reused.String())
+	tail := new(strings.Builder)
+	tail.WriteString(r.FormValue("tail"))
+	// ruleid: go.xss
+	io.WriteString(w, tail.String())
+	extra := new(bytes.Buffer)
+	extra.WriteString(r.FormValue("extra"))
+	// ruleid: go.xss
+	w.Write(extra.Bytes())
+	// Escaped or constant data, and a buffer that does not reach the response.
+	var escaped bytes.Buffer
+	escaped.WriteString(html.EscapeString(r.FormValue("name")))
+	// ok: go.xss
+	w.Write(escaped.Bytes())
+	var plain strings.Builder
+	plain.WriteString("<p>saved</p>")
+	// ok: go.xss
+	io.WriteString(w, plain.String())
+	var logged bytes.Buffer
+	fmt.Fprintf(&logged, "draft %s", r.FormValue("draft"))
+	// ok: go.xss
+	os.Stderr.Write(logged.Bytes())
+	var encoded bytes.Buffer
+	json.NewEncoder(&encoded).Encode(map[string]string{"name": r.FormValue("name")})
+	// ok: go.xss
+	w.Write(encoded.Bytes())
+	// html/template's HTMLEscape writes escaped text.
+	esc := bytes.NewBuffer(nil)
+	htmltemplate.HTMLEscape(esc, []byte(r.FormValue("bio")))
+	// ok: go.xss
+	w.Write(esc.Bytes())
+}
+
+// The same buffer sent as plain text.
+func BufferedDirectPlain(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	var buf bytes.Buffer
+	buf.WriteString(r.FormValue("name"))
+	// ok: go.xss
 	w.Write(buf.Bytes())
 }
 
@@ -470,11 +582,19 @@ func GinBuffered(c *gin.Context) {
 	greeting.Execute(&csv, c.Query("name"))
 	// ok: go.xss
 	c.Data(http.StatusOK, "text/csv", csv.Bytes())
+	var direct strings.Builder
+	direct.WriteString("<p>" + c.Query("name") + "</p>")
+	// ruleid: go.xss
+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(direct.String()))
 }
 
 func EchoBuffered(c echo.Context) error {
 	var buf bytes.Buffer
 	receipt.Execute(&buf, c.QueryParam("name"))
+	var direct bytes.Buffer
+	fmt.Fprintf(&direct, "<p>%s</p>", c.FormValue("name"))
+	// ruleid: go.xss
+	c.HTMLBlob(http.StatusOK, direct.Bytes())
 	// ruleid: go.xss
 	return c.HTML(http.StatusOK, buf.String())
 }

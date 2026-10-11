@@ -89,12 +89,11 @@ rules:
     #   the package, and a local variable named "template".
     # - Such a template executed into a bytes.Buffer or strings.Builder (typed in the file, made
     #   with bytes.NewBuffer(String), or asserted from an interface such as a sync.Pool's Get, in
-    #   the function) taints it: the buffer is reported
+    #   the function) taints it, and so does request data written into one directly (its own
+    #   Write methods, fmt.Fprint*, io.WriteString, io.Copy): the buffer is reported
     #   where it reaches the response (Write of its Bytes or String, WriteTo, io.Copy of the
     #   buffer, Gin's c.Data, Echo's c.HTML). WriteTo and io.Copy count only for such a
-    #   bytes.Buffer: a file, a bufio.Reader or an io.LimitedReader is not a sink. Request data
-    #   written into a buffer directly (WriteString, fmt.Fprintf) is not followed into the
-    #   response (`todoruleid:`).
+    #   bytes.Buffer: a file, a bufio.Reader or an io.LimitedReader is not a sink.
     # - What a command prints (os/exec Cmd.Output, CombinedOutput) is request data only through
     #   the arguments go.command-injection does not report: the output of a command whose program,
     #   or whose shell, cmd.exe or PowerShell script, carries request data is that rule's finding
@@ -264,8 +263,10 @@ rules:
       - pattern: json.Unmarshal($R, &$X)
         from: $R
         to: $X
-      # A text/template (recognised as in the sinks below) executed into a buffer: the data
-      # reaches what it writes, so the buffer written to the response later is reported there. html/template escapes, so its output stays clean.
+      # A text/template (recognised as in the sinks below) executed into a buffer, or request data
+      # written into one directly: the buffer holds the data, so it is reported where it reaches
+      # the response. html/template escapes, so its output stays clean. (One propagator: separate
+      # ones for the direct writes cost more time on large files.)
       - patterns:
           - pattern-either:
               - patterns:
@@ -433,20 +434,33 @@ rules:
                               - pattern: $RECV.$FLD.Execute($OUT, $DATA)
                               - pattern: $RECV.$FLD.ExecuteTemplate(&$OUT, $NAME, $DATA)
                               - pattern: $RECV.$FLD.ExecuteTemplate($OUT, $NAME, $DATA)
-          # The writer is a bytes.Buffer or strings.Builder: typed, made with
-          # bytes.NewBuffer(String), or asserted from an interface (a sync.Pool's Get) in the
-          # same function.
+              # Request data written into the buffer directly: its own Write methods, fmt.Fprint*,
+              # io.WriteString or io.Copy.
+              - pattern-either:
+                  - pattern: $OUT.$W($DATA)
+                  - pattern: fmt.Fprint(&$OUT, ..., $DATA, ...)
+                  - pattern: fmt.Fprint($OUT, ..., $DATA, ...)
+                  - pattern: fmt.Fprintf(&$OUT, ..., $DATA, ...)
+                  - pattern: fmt.Fprintf($OUT, ..., $DATA, ...)
+                  - pattern: fmt.Fprintln(&$OUT, ..., $DATA, ...)
+                  - pattern: fmt.Fprintln($OUT, ..., $DATA, ...)
+                  - pattern: io.WriteString(&$OUT, $DATA)
+                  - pattern: io.WriteString($OUT, $DATA)
+                  - pattern: io.Copy(&$OUT, $DATA)
+                  - pattern: io.Copy($OUT, $DATA)
+          # The writer is a bytes.Buffer or strings.Builder: typed (also as the receiver of its own
+          # method), made with bytes.NewBuffer(String), or asserted from an interface (a
+          # sync.Pool's Get) in the same function.
           - pattern-either:
+              - pattern-inside: '($OUT : bytes.Buffer).$BM(...)'
+              - pattern-inside: '($OUT : strings.Builder).$BM(...)'
+              - pattern-inside: '($OUT : *bytes.Buffer).$BM(...)'
+              - pattern-inside: '($OUT : *strings.Builder).$BM(...)'
               - pattern-inside: '$X.$M(..., &($OUT : bytes.Buffer), ...)'
               - pattern-inside: '$X.$M(..., &($OUT : strings.Builder), ...)'
               - pattern-inside: '$X.$M(..., ($OUT : *bytes.Buffer), ...)'
               - pattern-inside: '$X.$M(..., ($OUT : *strings.Builder), ...)'
-              - pattern-inside: |
-                  $OUT := bytes.NewBuffer(...)
-                  ...
-              - pattern-inside: |
-                  $OUT := bytes.NewBufferString(...)
-                  ...
+              # (`$OUT = ...` also matches `:=`.)
               - pattern-inside: |
                   $OUT = bytes.NewBuffer(...)
                   ...
@@ -454,13 +468,10 @@ rules:
                   $OUT = bytes.NewBufferString(...)
                   ...
               - pattern-inside: |
-                  $OUT := $POOLED.(*bytes.Buffer)
-                  ...
-              - pattern-inside: |
                   $OUT = $POOLED.(*bytes.Buffer)
                   ...
               - pattern-inside: |
-                  $OUT := $POOLED.(*strings.Builder)
+                  $OUT = $POOLED.(*strings.Builder)
                   ...
         from: $DATA
         to: $OUT
