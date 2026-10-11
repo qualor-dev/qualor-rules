@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/mux"
 	"github.com/labstack/echo/v4"
@@ -435,6 +437,125 @@ func EchoTools(c echo.Context) error {
 	// ok: go.command-injection
 	exec.Command("dig", c.Param("host")).Output()
 	return c.String(http.StatusOK, "ok")
+}
+
+// A bind or decode call inside a condition (`if c.ShouldBindJSON(&in) == nil`) fills the struct
+// with request data like the `err :=` form. A bound value used only in a comparison does not
+// taint what the branch chooses.
+type ScriptInput struct {
+	Script string   `json:"script" query:"script"`
+	Dir    string   `json:"dir" query:"dir"`
+	Mode   string   `json:"mode" query:"mode"`
+	Tags   []string `json:"tags" query:"tags"`
+}
+
+func GinBindInCondition(c *gin.Context) {
+	var in ScriptInput
+	if c.ShouldBindJSON(&in) == nil {
+		// ruleid: go.command-injection
+		exec.Command("sh", "-c", in.Script).Run()
+	}
+	var query ScriptInput
+	if c.ShouldBindQuery(&query) != nil {
+		return
+	}
+	// ruleid: go.command-injection
+	exec.Command("sh", "-c", "du -sh "+query.Dir).Output()
+	target := new(ScriptInput)
+	if c.ShouldBind(target) == nil && target.Dir != "" {
+		// ruleid: go.command-injection
+		exec.Command("bash", "-c", "ls "+target.Dir).Output()
+	}
+	var strict ScriptInput
+	if errors.Is(c.ShouldBindJSON(&strict), io.EOF) {
+		return
+	}
+	// ruleid: go.command-injection
+	exec.Command("sh", "-c", strict.Script).Run()
+	var empty ScriptInput
+	if c.ShouldBindJSON(&empty) == io.EOF {
+		return
+	}
+	// ruleid: go.command-injection
+	exec.Command("sh", "-c", empty.Script).Run()
+	var forced ScriptInput
+	if c.MustBindWith(&forced, binding.JSON) != nil {
+		return
+	}
+	// ruleid: go.command-injection
+	exec.Command("sh", "-c", forced.Script).Run()
+	// The bound values only compared: the branches choose constants.
+	tool := "gzip"
+	if query.Mode == "xz" {
+		tool = "xz"
+	}
+	// ok: go.command-injection
+	exec.Command("sh", "-c", tool+" backup.tar").Run()
+	verbose := in.Mode == "verbose" && in.Script != ""
+	// ok: go.command-injection
+	exec.Command("sh", "-c", map[bool]string{true: "make V=1", false: "make"}[verbose]).Run()
+	tagged := in.Tags != nil
+	// ok: go.command-injection
+	exec.Command("sh", "-c", "echo tagged="+strconv.FormatBool(tagged)).Run()
+	switch query.Mode {
+	case "xz":
+		// ok: go.command-injection
+		exec.Command("sh", "-c", "xz backup.tar").Run()
+	}
+	// Other comparisons with nil, and calls that fill a variable, stay booleans.
+	multi := c.QueryArray("file") != nil
+	// ok: go.command-injection
+	exec.Command("sh", "-c", "echo multi="+strconv.FormatBool(multi)).Run()
+	raw, _ := c.GetRawData()
+	var level uint32
+	known := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &level) == nil
+	// ok: go.command-injection
+	exec.Command("sh", "-c", fmt.Sprintf("echo known=%t", known)).Run()
+	// The success flag of a bind call is reported: the comparison holds the bind call, and
+	// the call's result counts as request data.
+	var draft ScriptInput
+	parsed := c.ShouldBindJSON(&draft) == nil
+	// todook: go.command-injection
+	exec.Command("sh", "-c", fmt.Sprintf("echo valid=%t", parsed)).Run()
+}
+
+func EchoBindInCondition(c echo.Context) error {
+	var in ScriptInput
+	if c.Bind(&in) != nil {
+		return nil
+	}
+	// ruleid: go.command-injection
+	exec.Command("sh", "-c", in.Script).Run()
+	var filter ScriptInput
+	if echo.BindQueryParams(c, &filter) == nil {
+		// ruleid: go.command-injection
+		exec.Command("bash", "-c", "ls "+filter.Dir).Output()
+	}
+	order := "-t"
+	if filter.Mode == "name" {
+		order = "-1"
+	}
+	// ok: go.command-injection
+	exec.Command("sh", "-c", "ls "+order).Output()
+	return nil
+}
+
+func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
+	var in ScriptInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		return
+	}
+	// ruleid: go.command-injection
+	exec.Command("sh", "-c", in.Script).Run()
+	body, _ := io.ReadAll(r.Body)
+	var sub ScriptInput
+	if json.Unmarshal(body, &sub) == nil {
+		// ruleid: go.command-injection
+		exec.Command("sh", "-c", sub.Script).Run()
+	}
+	dry := in.Mode == "dry-run"
+	// ok: go.command-injection
+	exec.Command("sh", "-c", fmt.Sprintf("deploy --dry-run=%t", dry)).Run()
 }
 
 // Look-alikes: a Command method of another type, and a function that is not a handler.

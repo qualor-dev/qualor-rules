@@ -70,6 +70,9 @@ rules:
     #   (`todoruleid:`).
     # - Base64 is not a sanitizer: request data encoded and decoded by the shell into a file, not
     #   run, is still reported (`todook:`).
+    # - A boolean that holds a Gin or Echo bind call or a JSON decode (the success flag
+    #   `ok := c.ShouldBindJSON(&x) == nil`) does not count as clean, so that the struct the call
+    #   fills stays request data; the flag formatted into a shell script is reported (`todook:`).
     # - Test support is skipped only inside a function that takes a testing parameter: a handler
     #   declared at the top level of a test file and only served by a test is reported (`todook:`).
     options:
@@ -239,6 +242,12 @@ rules:
           - metavariable-type:
               metavariable: $E
               types: [int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool]
+          # A comparison that holds a Gin or Echo bind call or a JSON decode
+          # (`c.ShouldBindJSON(&x) == nil`, `errors.Is(c.Bind(&x), ...)`) is a boolean too, but
+          # sanitizing it would also clear the struct the call fills.
+          - metavariable-regex:
+              metavariable: $E
+              regex: ^(?![\s\S]*(\b(Must|Should)?Bind[A-Za-z]*|\.Decode|\bjson\.Unmarshal)\s*\()
       # Test support (shared by the Go request taint rules): request data inside a function or
       # method that takes a *testing.T, *testing.B, *testing.F, *testing.M or testing.TB (a test,
       # a subtest, TestMain, a test helper in any file) comes from the test's own requests, such
