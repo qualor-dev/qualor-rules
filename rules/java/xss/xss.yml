@@ -632,7 +632,8 @@ rules:
       # markup the code builds itself: a String return, or an entity that is a concatenation or
       # String.format in place, or a variable the method assigns one (or String.concat, or
       # appends to with +=). A DTO entity is written escaped by JAXB or JSON-B. (One item under
-      # the word "Produces", with the contexts as exclusions: rule-procedure.md "Performance".)
+      # the word "Produces"; the annotation's name and media type are exclusions of the other
+      # values: rule-procedure.md "Performance".)
       - patterns:
           # The file names @Produces, as it does whenever one of the forms below matches: a word
           # OpenGrep's prefilter can use to skip files.
@@ -640,64 +641,61 @@ rules:
           - pattern-either:
               # HTML, from the method's own @Produces.
               - patterns:
+                  - pattern-inside: &annotated-method |
+                      @$PRODUCES($...P)
+                      $RT $M(...) { ... }
                   - pattern-either: &jaxrs-html-entities
-                      # A String returned (not outside a method that returns String; the
-                      # exclusion only looks inside @Produces methods and classes).
-                      - patterns: &jaxrs-string-return
-                          - pattern: return $X;
-                          - pattern-not:
-                              patterns:
-                                - pattern-either:
-                                    - patterns:
-                                        - pattern-inside: |
-                                            @$PRODUCES($...P)
-                                            $RT $M(...) { ... }
-                                        - metavariable-regex:
-                                            metavariable: $PRODUCES
-                                            regex: ^((javax|jakarta)\.ws\.rs\.)?Produces$
-                                    - patterns:
-                                        - pattern-inside: |
-                                            @$PRODUCES($...P)
-                                            class $C { ... }
-                                        - metavariable-regex:
-                                            metavariable: $PRODUCES
-                                            regex: ^((javax|jakarta)\.ws\.rs\.)?Produces$
-                                - pattern: return $X;
-                                - pattern-not-inside: |
-                                    String $M2(...) { ... }
+                      # A String returned (not outside a method that returns String: an
+                      # exclusion below).
+                      - pattern: &jaxrs-string-return return $X;
                       - pattern: Response.ok($X, ...)
                       - pattern: Response.$F(...). ... .entity($X, ...)
                   - pattern-not:
                       patterns:
+                        - pattern-inside: *annotated-method
                         - pattern-either: *jaxrs-html-entities
-                        - pattern-not-inside:
-                            patterns:
-                              - pattern-inside: |
-                                  @$PRODUCES($...P)
-                                  $RT $M(...) { ... }
-                              - metavariable-regex:
-                                  metavariable: $PRODUCES
-                                  regex: ^((javax|jakarta)\.ws\.rs\.)?Produces$
-                              - metavariable-regex:
-                                  metavariable: $...P
-                                  regex: (?i)[\s\S]*html
+                        - metavariable-regex:
+                            metavariable: $PRODUCES
+                            regex: ^(?!((javax|jakarta)\.ws\.rs\.)?Produces$)
+                  - pattern-not:
+                      patterns:
+                        - pattern-inside: *annotated-method
+                        - pattern-either: *jaxrs-html-entities
+                        - metavariable-regex:
+                            metavariable: $...P
+                            regex: ^(?![\s\S]*(?i:html))
+                  - pattern-not:
+                      patterns:
+                        - pattern-inside: *annotated-method
+                        - pattern: *jaxrs-string-return
+                        - pattern-not-inside: |
+                            String $M2(...) { ... }
               # HTML, from the class's @Produces, for a method without its own.
               - patterns:
+                  - pattern-inside: &annotated-class |
+                      @$PRODUCES($...P)
+                      class $C { ... }
                   - pattern-either: *jaxrs-html-entities
                   - pattern-not:
                       patterns:
+                        - pattern-inside: *annotated-class
                         - pattern-either: *jaxrs-html-entities
-                        - pattern-not-inside:
-                            patterns:
-                              - pattern-inside: |
-                                  @$PRODUCES($...P)
-                                  class $C { ... }
-                              - metavariable-regex:
-                                  metavariable: $PRODUCES
-                                  regex: ^((javax|jakarta)\.ws\.rs\.)?Produces$
-                              - metavariable-regex:
-                                  metavariable: $...P
-                                  regex: (?i)[\s\S]*html
+                        - metavariable-regex:
+                            metavariable: $PRODUCES
+                            regex: ^(?!((javax|jakarta)\.ws\.rs\.)?Produces$)
+                  - pattern-not:
+                      patterns:
+                        - pattern-inside: *annotated-class
+                        - pattern-either: *jaxrs-html-entities
+                        - metavariable-regex:
+                            metavariable: $...P
+                            regex: ^(?![\s\S]*(?i:html))
+                  - pattern-not:
+                      patterns:
+                        - pattern-inside: *annotated-class
+                        - pattern: *jaxrs-string-return
+                        - pattern-not-inside: |
+                            String $M2(...) { ... }
                   - pattern-not-inside: |
                       @jakarta.ws.rs.Produces(...)
                       $RT $M(...) { ... }
@@ -706,8 +704,9 @@ rules:
                       $RT $M(...) { ... }
               # XML or SVG, from the method's own @Produces.
               - patterns:
+                  - pattern-inside: *annotated-method
                   - pattern-either: &jaxrs-markup-entities
-                      - patterns: *jaxrs-string-return
+                      - pattern: *jaxrs-string-return
                       - patterns:
                           - pattern-either: &jaxrs-response-entities
                               - pattern: Response.ok($X, ...)
@@ -719,18 +718,16 @@ rules:
                                 - pattern-either: *jaxrs-response-entities
                                 # A variable the method assigns built markup (a concatenation,
                                 # String.format or String.concat), or appends to with +=.
-                                - pattern-not-inside:
-                                    patterns:
-                                      - pattern-inside: |
-                                          $X = $INIT;
-                                          ...
-                                      - metavariable-pattern:
-                                          metavariable: $INIT
-                                          pattern-either:
-                                            - pattern: $A + $B
-                                            - pattern: String.format(...)
-                                            - pattern: $S.concat(...)
-                                - pattern-not-inside: |
+                                - pattern-not-inside: &markup-assigned |
+                                    $X = <... $A + $B ...>;
+                                    ...
+                                - pattern-not-inside: &format-assigned |
+                                    $X = <... String.format(...) ...>;
+                                    ...
+                                - pattern-not-inside: &concat-assigned |
+                                    $X = <... $S.concat(...) ...>;
+                                    ...
+                                - pattern-not-inside: &markup-appended |
                                     $X += $INIT;
                                     ...
                                 # A concatenation or String.format in place.
@@ -752,35 +749,48 @@ rules:
                                             - pattern: String.format(...)
                   - pattern-not:
                       patterns:
+                        - pattern-inside: *annotated-method
                         - pattern-either: *jaxrs-markup-entities
-                        - pattern-not-inside:
-                            patterns:
-                              - pattern-inside: |
-                                  @$PRODUCES($...P)
-                                  $RT $M(...) { ... }
-                              - metavariable-regex:
-                                  metavariable: $PRODUCES
-                                  regex: ^((javax|jakarta)\.ws\.rs\.)?Produces$
-                              - metavariable-regex:
-                                  metavariable: $...P
-                                  regex: (?i)[\s\S]*(xml|svg)
+                        - metavariable-regex:
+                            metavariable: $PRODUCES
+                            regex: ^(?!((javax|jakarta)\.ws\.rs\.)?Produces$)
+                  - pattern-not:
+                      patterns:
+                        - pattern-inside: *annotated-method
+                        - pattern-either: *jaxrs-markup-entities
+                        - metavariable-regex:
+                            metavariable: $...P
+                            regex: ^(?![\s\S]*(?i:xml|svg))
+                  - pattern-not:
+                      patterns:
+                        - pattern-inside: *annotated-method
+                        - pattern: *jaxrs-string-return
+                        - pattern-not-inside: |
+                            String $M2(...) { ... }
               # XML or SVG, from the class's @Produces, for a method without its own.
               - patterns:
+                  - pattern-inside: *annotated-class
                   - pattern-either: *jaxrs-markup-entities
                   - pattern-not:
                       patterns:
+                        - pattern-inside: *annotated-class
                         - pattern-either: *jaxrs-markup-entities
-                        - pattern-not-inside:
-                            patterns:
-                              - pattern-inside: |
-                                  @$PRODUCES($...P)
-                                  class $C { ... }
-                              - metavariable-regex:
-                                  metavariable: $PRODUCES
-                                  regex: ^((javax|jakarta)\.ws\.rs\.)?Produces$
-                              - metavariable-regex:
-                                  metavariable: $...P
-                                  regex: (?i)[\s\S]*(xml|svg)
+                        - metavariable-regex:
+                            metavariable: $PRODUCES
+                            regex: ^(?!((javax|jakarta)\.ws\.rs\.)?Produces$)
+                  - pattern-not:
+                      patterns:
+                        - pattern-inside: *annotated-class
+                        - pattern-either: *jaxrs-markup-entities
+                        - metavariable-regex:
+                            metavariable: $...P
+                            regex: ^(?![\s\S]*(?i:xml|svg))
+                  - pattern-not:
+                      patterns:
+                        - pattern-inside: *annotated-class
+                        - pattern: *jaxrs-string-return
+                        - pattern-not-inside: |
+                            String $M2(...) { ... }
                   - pattern-not-inside: |
                       @jakarta.ws.rs.Produces(...)
                       $RT $M(...) { ... }
@@ -814,20 +824,10 @@ rules:
           - pattern-not:
               patterns:
                 - pattern-either: *jaxrs-typed-entities
-                - pattern-not-inside:
-                    patterns:
-                      - pattern-inside: |
-                          $X = $INIT;
-                          ...
-                      - metavariable-pattern:
-                          metavariable: $INIT
-                          pattern-either:
-                            - pattern: $A + $B
-                            - pattern: String.format(...)
-                            - pattern: $S.concat(...)
-                - pattern-not-inside: |
-                    $X += $INIT;
-                    ...
+                - pattern-not-inside: *markup-assigned
+                - pattern-not-inside: *format-assigned
+                - pattern-not-inside: *concat-assigned
+                - pattern-not-inside: *markup-appended
                 - pattern-not:
                     patterns:
                       - pattern: Response.$G(..., $X, ...)

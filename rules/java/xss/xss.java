@@ -1370,11 +1370,19 @@ class ResponseFormsController {
 class ResponseFormsResource {
     private final com.fasterxml.jackson.dataformat.xml.XmlMapper xmlMapper = new com.fasterxml.jackson.dataformat.xml.XmlMapper();
 
-    // A number written as HTML carries no markup.
+    // A number written as HTML or XML carries no markup.
     @GET
     @Path("/length")
     @Produces(MediaType.TEXT_HTML)
     public int length(@QueryParam("q") String q) {
+        // ok: java.xss
+        return q.length();
+    }
+
+    @GET
+    @Path("/length-xml")
+    @Produces(MediaType.APPLICATION_XML)
+    public int lengthXml(@QueryParam("q") String q) {
         // ok: java.xss
         return q.length();
     }
@@ -1574,6 +1582,13 @@ class ResponseFormsResource {
 @Produces(MediaType.TEXT_HTML)
 class ResponseFormsHtmlResource {
     @GET
+    @Path("/length")
+    public int length(@QueryParam("q") String q) {
+        // ok: java.xss
+        return q.length();
+    }
+
+    @GET
     @Path("/json")
     @javax.ws.rs.Produces("application/json")
     public String json(@QueryParam("q") String q) {
@@ -1585,6 +1600,20 @@ class ResponseFormsHtmlResource {
 @Path("/forms-xml")
 @Produces(MediaType.APPLICATION_XML)
 class ResponseFormsXmlResource {
+    @GET
+    @Path("/name")
+    public String name(@QueryParam("q") String q) {
+        // ruleid: java.xss
+        return "<name>" + q + "</name>";
+    }
+
+    @GET
+    @Path("/length")
+    public int length(@QueryParam("q") String q) {
+        // ok: java.xss
+        return q.length();
+    }
+
     @GET
     @Path("/json")
     @Produces(MediaType.APPLICATION_JSON)
