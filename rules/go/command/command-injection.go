@@ -558,6 +558,30 @@ func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
 	exec.Command("sh", "-c", fmt.Sprintf("deploy --dry-run=%t", dry)).Run()
 }
 
+// A sink called inside a comparison (`if exec.Command(...).Run() != nil`) is a boolean
+// expression as a whole: the number/boolean sanitizer clears it, the sink's arguments included.
+func GinSinkInComparison(c *gin.Context) {
+	// todoruleid: go.command-injection
+	if exec.Command("sh", "-c", "tar xf "+c.Query("archive")).Run() != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	// todoruleid: go.command-injection
+	reachable := exec.Command("bash", "-c", "ping -c 1 "+c.Param("host")).Run() == nil
+	if !reachable {
+		c.Status(http.StatusBadGateway)
+	}
+}
+
+func retryUntil(done func() bool) {}
+
+func RetryProbe(w http.ResponseWriter, r *http.Request) {
+	retryUntil(func() bool {
+		// todoruleid: go.command-injection
+		return exec.Command("sh", "-c", r.FormValue("probe")).Run() == nil
+	})
+}
+
 // Look-alikes: a Command method of another type, and a function that is not a handler.
 type Runner struct{}
 
