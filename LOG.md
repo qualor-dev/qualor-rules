@@ -31,6 +31,7 @@ Entry format:
 - **Progress:**
 - intrafile (d1b15bb..48b1fbd): reviewed, NEEDS FIXES: two Important rule gaps (Python container writes, java.zip-slip wildcard import) and three Minors queued as the rows above; tooling Minors fixed.
 - go-1 (go.xss#prefilter, go.weak-cipher#test-code, go.tls-verification-disabled#literal-callback-assign, go.command-injection#powershell-file-cwa): APPROVED in round 2 (Critical: a PowerShell argument slice taken for the script); merged 19d37de..7889e6c
+- js-1 (js.ssrf#prefilter, js.template-injection#prefilter, js.open-redirect#status-arg-patterns, js.open-redirect#next-response-await): APPROVED in round 1; merged a945631..c8edccd
 
 ## 2026-10-11: --taint-intrafile (setup)
 
