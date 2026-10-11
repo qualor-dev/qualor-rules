@@ -5,6 +5,8 @@ from urllib.parse import urlparse
 from typing import Annotated
 
 import bleach
+import fastapi
+import fastapi.responses
 import markupsafe
 import nh3
 from django.http import HttpResponse, HttpResponseNotFound, JsonResponse
@@ -22,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 from flask import Flask, Response, abort, jsonify, make_response, redirect, render_template, render_template_string, request, url_for
 from markupsafe import Markup, escape
 from pydantic import BaseModel
+import starlette.responses
 from starlette.responses import Response as StarletteResponse
 
 app = Flask(__name__)
@@ -846,3 +849,384 @@ def report():
     r.Markup(request.args["x"])
     # ok: python.xss
     return render_template("report.html", cell=build_cell(request.args["x"]))
+
+
+# Each response form with each body shape: request data as a name, str() of it and a listed string
+# method are text; a call such as parse.quote() and another method (isdigit()) are not.
+@app.route("/forms/flask")
+def response_forms_flask():
+    q = request.args["q"]
+    # ruleid: python.xss
+    f0_0 = make_response(q)
+    # ruleid: python.xss
+    f0_1 = make_response(str(q))
+    # ruleid: python.xss
+    f0_2 = make_response(q.upper())
+    # ok: python.xss
+    f0_3 = make_response(parse.quote(q))
+    # ok: python.xss
+    f0_4 = make_response(q.isdigit())
+    # ruleid: python.xss
+    f1_0 = Response(q)
+    # ruleid: python.xss
+    f1_1 = Response(str(q))
+    # ruleid: python.xss
+    f1_2 = Response(q.upper())
+    # ok: python.xss
+    f1_3 = Response(parse.quote(q))
+    # ok: python.xss
+    f1_4 = Response(q.isdigit())
+    # ruleid: python.xss
+    f2_0 = Response(response=q)
+    # ruleid: python.xss
+    f2_1 = Response(response=str(q))
+    # ruleid: python.xss
+    f2_2 = Response(response=q.upper())
+    # ok: python.xss
+    f2_3 = Response(response=parse.quote(q))
+    # ok: python.xss
+    f2_4 = Response(response=q.isdigit())
+    # A content type other than HTML.
+    # ok: python.xss
+    f3 = Response(q, content_type="text/plain; charset=utf-8")
+    return "ok"
+
+
+@api.get("/forms/fastapi")
+def response_forms_fastapi(q: str):
+    # ruleid: python.xss
+    a0_0 = HTMLResponse(q)
+    # ruleid: python.xss
+    a0_1 = HTMLResponse(str(q))
+    # ruleid: python.xss
+    a0_2 = HTMLResponse(q.upper())
+    # ok: python.xss
+    a0_3 = HTMLResponse(parse.quote(q))
+    # ok: python.xss
+    a0_4 = HTMLResponse(q.isdigit())
+    # ruleid: python.xss
+    a1_0 = HTMLResponse(content=q)
+    # ruleid: python.xss
+    a1_1 = HTMLResponse(content=str(q))
+    # ruleid: python.xss
+    a1_2 = HTMLResponse(content=q.upper())
+    # ok: python.xss
+    a1_3 = HTMLResponse(content=parse.quote(q))
+    # ok: python.xss
+    a1_4 = HTMLResponse(content=q.isdigit())
+    # ruleid: python.xss
+    a2_0 = starlette.responses.HTMLResponse(q)
+    # ruleid: python.xss
+    a2_1 = starlette.responses.HTMLResponse(str(q))
+    # ruleid: python.xss
+    a2_2 = starlette.responses.HTMLResponse(q.upper())
+    # ok: python.xss
+    a2_3 = starlette.responses.HTMLResponse(parse.quote(q))
+    # ok: python.xss
+    a2_4 = starlette.responses.HTMLResponse(q.isdigit())
+    # ruleid: python.xss
+    a3_0 = starlette.responses.HTMLResponse(content=q)
+    # ruleid: python.xss
+    a3_1 = starlette.responses.HTMLResponse(content=str(q))
+    # ruleid: python.xss
+    a3_2 = starlette.responses.HTMLResponse(content=q.upper())
+    # ok: python.xss
+    a3_3 = starlette.responses.HTMLResponse(content=parse.quote(q))
+    # ok: python.xss
+    a3_4 = starlette.responses.HTMLResponse(content=q.isdigit())
+    # ruleid: python.xss
+    a4_0 = fastapi.Response(q, media_type="text/html")
+    # ruleid: python.xss
+    a4_1 = fastapi.Response(str(q), media_type="text/html")
+    # ruleid: python.xss
+    a4_2 = fastapi.Response(q.upper(), media_type="text/html")
+    # ok: python.xss
+    a4_3 = fastapi.Response(parse.quote(q), media_type="text/html")
+    # ok: python.xss
+    a4_4 = fastapi.Response(q.isdigit(), media_type="text/html")
+    # ruleid: python.xss
+    a5_0 = fastapi.Response(content=q, media_type="text/html")
+    # ruleid: python.xss
+    a5_1 = fastapi.Response(content=str(q), media_type="text/html")
+    # ruleid: python.xss
+    a5_2 = fastapi.Response(content=q.upper(), media_type="text/html")
+    # ok: python.xss
+    a5_3 = fastapi.Response(content=parse.quote(q), media_type="text/html")
+    # ok: python.xss
+    a5_4 = fastapi.Response(content=q.isdigit(), media_type="text/html")
+    # ruleid: python.xss
+    a6_0 = fastapi.responses.Response(q, media_type="text/html")
+    # ruleid: python.xss
+    a6_1 = fastapi.responses.Response(str(q), media_type="text/html")
+    # ruleid: python.xss
+    a6_2 = fastapi.responses.Response(q.upper(), media_type="text/html")
+    # ok: python.xss
+    a6_3 = fastapi.responses.Response(parse.quote(q), media_type="text/html")
+    # ok: python.xss
+    a6_4 = fastapi.responses.Response(q.isdigit(), media_type="text/html")
+    # ruleid: python.xss
+    a7_0 = fastapi.responses.Response(content=q, media_type="text/html")
+    # ruleid: python.xss
+    a7_1 = fastapi.responses.Response(content=str(q), media_type="text/html")
+    # ruleid: python.xss
+    a7_2 = fastapi.responses.Response(content=q.upper(), media_type="text/html")
+    # ok: python.xss
+    a7_3 = fastapi.responses.Response(content=parse.quote(q), media_type="text/html")
+    # ok: python.xss
+    a7_4 = fastapi.responses.Response(content=q.isdigit(), media_type="text/html")
+    # ruleid: python.xss
+    a8_0 = StarletteResponse(q, media_type="text/html")
+    # ruleid: python.xss
+    a8_1 = StarletteResponse(str(q), media_type="text/html")
+    # ruleid: python.xss
+    a8_2 = StarletteResponse(q.upper(), media_type="text/html")
+    # ok: python.xss
+    a8_3 = StarletteResponse(parse.quote(q), media_type="text/html")
+    # ok: python.xss
+    a8_4 = StarletteResponse(q.isdigit(), media_type="text/html")
+    # ruleid: python.xss
+    a9_0 = StarletteResponse(content=q, media_type="text/html")
+    # ruleid: python.xss
+    a9_1 = StarletteResponse(content=str(q), media_type="text/html")
+    # ruleid: python.xss
+    a9_2 = StarletteResponse(content=q.upper(), media_type="text/html")
+    # ok: python.xss
+    a9_3 = StarletteResponse(content=parse.quote(q), media_type="text/html")
+    # ok: python.xss
+    a9_4 = StarletteResponse(content=q.isdigit(), media_type="text/html")
+    return {"ok": True}
+
+
+def response_forms_django(request):
+    q = request.GET["q"]
+    resp = HttpResponse()
+    # ruleid: python.xss
+    d0_0 = HttpResponse(q)
+    # ruleid: python.xss
+    d0_1 = HttpResponse(str(q))
+    # ruleid: python.xss
+    d0_2 = HttpResponse(q.upper())
+    # ok: python.xss
+    d0_3 = HttpResponse(parse.quote(q))
+    # ok: python.xss
+    d0_4 = HttpResponse(q.isdigit())
+    # ruleid: python.xss
+    d1_0 = HttpResponse(content=q)
+    # ruleid: python.xss
+    d1_1 = HttpResponse(content=str(q))
+    # ruleid: python.xss
+    d1_2 = HttpResponse(content=q.upper())
+    # ok: python.xss
+    d1_3 = HttpResponse(content=parse.quote(q))
+    # ok: python.xss
+    d1_4 = HttpResponse(content=q.isdigit())
+    # ruleid: python.xss
+    d2_0 = resp.write(q)
+    # ruleid: python.xss
+    d2_1 = resp.write(str(q))
+    # ruleid: python.xss
+    d2_2 = resp.write(q.upper())
+    # ok: python.xss
+    d2_3 = resp.write(parse.quote(q))
+    # ok: python.xss
+    d2_4 = resp.write(q.isdigit())
+    # A content type other than HTML, and write() on an object that is not a response.
+    # ok: python.xss
+    d3 = HttpResponse(q, content_type="text/csv")
+    text = HttpResponse(content_type="text/plain")
+    # ok: python.xss
+    text.write(q)
+    log = make_log()
+    # ok: python.xss
+    log.write(q)
+    return resp
+
+# Flask view returns: the body alone and the tuple forms, with each body shape; the request's
+# own JSON value returned whole; a response kept in a variable; other decorators.
+
+
+@app.route("/returns/0")
+def flask_return_0():
+    q = request.args["q"]
+    # ruleid: python.xss
+    return q, 200
+
+
+@app.route("/returns/1")
+def flask_return_1():
+    q = request.args["q"]
+    # ruleid: python.xss
+    return q, 200, {"X-Frame-Options": "DENY"}
+
+
+@app.route("/returns/2")
+def flask_return_2():
+    q = request.args["q"]
+    # ruleid: python.xss
+    return str(q), 200
+
+
+@app.route("/returns/3")
+def flask_return_3():
+    q = request.args["q"]
+    # ruleid: python.xss
+    return str(q), 200, {"X-Frame-Options": "DENY"}
+
+
+@app.route("/returns/4")
+def flask_return_4():
+    q = request.args["q"]
+    # ruleid: python.xss
+    return q.upper(), 200
+
+
+@app.route("/returns/5")
+def flask_return_5():
+    q = request.args["q"]
+    # ruleid: python.xss
+    return q.upper(), 200, {"X-Frame-Options": "DENY"}
+
+
+@app.route("/returns/6")
+def flask_return_6():
+    q = request.args["q"]
+    # ok: python.xss
+    return parse.quote(q), 200
+
+
+@app.route("/returns/7")
+def flask_return_7():
+    q = request.args["q"]
+    # ok: python.xss
+    return parse.quote(q), 200, {"X-Frame-Options": "DENY"}
+
+
+@app.route("/returns/8")
+def flask_return_8():
+    q = request.args["q"]
+    # ok: python.xss
+    return q.isdigit(), 200
+
+
+@app.route("/returns/9")
+def flask_return_9():
+    q = request.args["q"]
+    # ok: python.xss
+    return q.isdigit(), 200, {"X-Frame-Options": "DENY"}
+
+
+@app.route("/returns/10")
+def flask_return_10():
+    q = request.args["q"]
+    # ok: python.xss
+    return [q], 201
+
+
+@app.route("/returns/dict")
+def flask_return_dict():
+    q = request.args["q"]
+    # ok: python.xss
+    return {"q": q}, 201
+
+
+@app.route("/returns/11")
+def flask_return_11():
+    request.args["q"]
+    # ok: python.xss
+    return request.get_json()
+
+
+@app.route("/returns/12")
+def flask_return_12():
+    request.args["q"]
+    # ok: python.xss
+    return request.json or {}
+
+
+@app.route("/returns/13")
+def flask_return_13():
+    request.args["q"]
+    # ok: python.xss
+    return request.json or []
+
+
+@app.route("/returns/14")
+def flask_return_14():
+    request.args["q"]
+    # ok: python.xss
+    return request.get_json() or {}
+
+
+@app.route("/returns/15")
+def flask_return_15():
+    request.args["q"]
+    # ok: python.xss
+    return request.get_json() or []
+
+
+@app.route("/returns/16")
+def flask_return_16():
+    request.args["q"]
+    # ok: python.xss
+    return request.json, 201
+
+
+@app.route("/returns/17")
+def flask_return_17():
+    request.args["q"]
+    # ok: python.xss
+    return request.get_json(), 201
+
+
+@app.route("/returns/18")
+def flask_return_18():
+    request.args["q"]
+    # ok: python.xss
+    return request.json or {}, 201
+
+
+@app.route("/returns/19")
+def flask_return_19():
+    request.args["q"]
+    # ok: python.xss
+    return request.json or [], 201
+
+
+@app.route("/returns/20")
+def flask_return_20():
+    request.args["q"]
+    # ok: python.xss
+    return request.get_json() or {}, 201
+
+
+@app.route("/returns/21")
+def flask_return_21():
+    request.args["q"]
+    # ok: python.xss
+    return request.get_json() or [], 201
+
+
+@app.route("/returns/22")
+def flask_return_22():
+    q = request.args["q"]
+    resp = Response(parse.quote(q))
+    resp.headers["X-Frame-Options"] = "DENY"
+    # ok: python.xss
+    return resp
+
+
+# Not a view: a template filter (its value goes through the template's autoescaping) and a
+# FastAPI router's path operation (its return value is sent as JSON).
+@app.template_filter("shout")
+def shout_filter(text):
+    # ok: python.xss
+    return text.upper() + request.args["mark"]
+
+
+router = fastapi.APIRouter()
+
+
+@router.get("/router-echo")
+def router_echo(q: str):
+    # ok: python.xss
+    return "<p>" + q + "</p>"

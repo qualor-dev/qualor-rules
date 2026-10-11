@@ -51,7 +51,6 @@ export const budgetFor = (refMs) => Math.max(BUDGET_MS, Math.round(LOAD_RATIO * 
  * the list shrinks as the rows are done: remove the entry in the commit that does the row.
  */
 export const ALLOWED = Object.freeze({
-  'python.xss': { limit: 'none', row: 'python.xss#prefilter' },
   // Found by this check on 2026-10-07: the 2026-10-06 survey missed the files with anchors.
   'java.xxe': { limit: 'none', row: 'java.xxe#prefilter' },
   'python.command-injection': { limit: 'none', row: 'python.command-injection#prefilter' },
