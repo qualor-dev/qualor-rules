@@ -718,6 +718,19 @@ app.get('/preview', async (req, res) => {
   const longerConcat = await fetch(API_BASE + '/pages/' + req.query.id + '/' + req.query.rev + '?v=' + req.query.v);
   // todook: js.xss
   res.send(await longerConcat.text());
+  // The options of a call to a fixed origin are cleaned as a whole, and a client default set from
+  // the request is not seen: a request-chosen proxy or a response transform that returns request
+  // data is missed.
+  const viaProxy = await fetch(API_BASE + '/pages/' + req.query.id, { dispatcher: makeProxy(req.query.proxy) });
+  // todoruleid: js.xss
+  res.send(await viaProxy.text());
+  const { data: transformed } = await axios(API_BASE + '/pages/' + req.query.id, { transformResponse: [() => req.query.html] });
+  // todoruleid: js.xss
+  res.send(transformed);
+  axios.defaults.proxy = { host: req.query.proxyHost, port: 8080 };
+  const { data: viaDefaults } = await axios(API_BASE + '/pages/' + req.query.id);
+  // todoruleid: js.xss
+  res.send(viaDefaults);
 });
 
 // An origin set from the request outside a handler (a constructor given the request) is not

@@ -120,6 +120,8 @@ app.get('/hello', (req, res) => {
   concatenation or three interpolations of a template after the origin; a longer URL is still
   reported. An origin set from the request outside a handler (a constructor given the request,
   then `this.base`) is taken for a configured origin, so such a page is not reported.
+  Request data in the options of such a call or in a client default (a request-chosen proxy, an
+  axios `transformResponse` that returns request data) is not followed either.
 <!-- end: known-limits -->
 
 ## References

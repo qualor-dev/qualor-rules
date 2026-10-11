@@ -84,7 +84,10 @@ rules:
     #   cleaned: up to four parts of a concatenation and three interpolations of a template
     #   after it, so a longer URL keeps the page request data (`todook:`); and an origin set from
     #   the request outside a handler (a constructor given the request, then `this.base`) is not
-    #   request data, so it is taken for a configured origin (`todoruleid:`).
+    #   request data, so it is taken for a configured origin (`todoruleid:`). The options of such a
+    #   call are cleaned as a whole and client defaults are not seen, so a request-chosen proxy
+    #   (`{ dispatcher: ... }`, `axios.defaults.proxy = ...`) or a `transformResponse` that
+    #   returns request data is missed (`todoruleid:`).
     # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
     #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
     #   source, and a one-parameter callback given to get/post/... after a path literal (also on
