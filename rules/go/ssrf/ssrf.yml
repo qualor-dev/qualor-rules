@@ -46,6 +46,8 @@ rules:
         - https://echo.labstack.com/guide/binding/
         - https://pkg.go.dev/github.com/go-chi/chi/v5
         - https://pkg.go.dev/github.com/gorilla/mux
+        - https://pkg.go.dev/testing
+        - https://pkg.go.dev/net/http/httptest
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A check of the parsed host before the call (`u.Hostname() != "..."`) is not followed: the
@@ -77,6 +79,8 @@ rules:
     #   in another package stays tainted as a whole (`todook:`), and OpenGrep 1.30.0 gives its
     #   fields the type of same-named fields of structs declared in the file (`todoruleid:`).
     # - A named numeric type (`type Status int`) stays tainted (`todook:`).
+    # - Test support is skipped only inside a function that takes a testing parameter: a handler
+    #   declared at the top level of a test file and only served by a test is reported (`todook:`).
     options:
       # A map lookup keyed by request data (an allow-list of servers) yields the map's values.
       taint_assume_safe_indexes: true
@@ -332,6 +336,17 @@ rules:
       # A query or fragment: what follows a literal "?" or "#" cannot change the scheme or host.
       - patterns:
           - pattern-inside: '"=~/^[?#]/" + $X'
+          - pattern: $X
+      # Test support (shared by the Go request taint rules): request data inside a function or
+      # method that takes a *testing.T, *testing.B, *testing.F, *testing.M or testing.TB (a test,
+      # a subtest, TestMain, a test helper in any file) comes from the test's own requests, such
+      # as those of an httptest server it starts.
+      - patterns:
+          - pattern-inside: |
+              func $FN(..., $TP $TY, ...) { ... }
+          - metavariable-regex:
+              metavariable: $TY
+              regex: ^(\*testing\.(T|B|F|M)|testing\.TB)$
           - pattern: $X
     pattern-sinks:
       # Reverse proxies (net/http/httputil): the target of NewSingleHostReverseProxy, the URL given

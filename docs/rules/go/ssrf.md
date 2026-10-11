@@ -18,6 +18,10 @@ Reverse proxies of `net/http/httputil` are checked too: the target of
 `Rewrite` or `Director` function sets on the outbound request, when request data chooses it (in a
 `Rewrite` or `Director` function, the headers, query and path of the proxied request are request
 data too).
+
+Code inside a test (a function or method that takes a `*testing.T`, `*testing.B`, `*testing.F`,
+`*testing.M` or `testing.TB`, such as the handler of an `httptest` server a test helper starts) is
+not reported: it only serves the test's own requests.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -116,6 +120,8 @@ func Fetch(w http.ResponseWriter, r *http.Request) {
   other than `net/http` are not checked yet.
 - The binder of the Echo instance is not a source, and numeric struct fields count as safe only
   when the struct is declared in the same file.
+- Tests are recognised by a testing parameter of the enclosing function only: a handler declared
+  on its own in a test file is still reported.
 <!-- end: known-limits -->
 
 ## References
@@ -149,6 +155,8 @@ func Fetch(w http.ResponseWriter, r *http.Request) {
 - <https://echo.labstack.com/guide/binding/>
 - <https://pkg.go.dev/github.com/go-chi/chi/v5>
 - <https://pkg.go.dev/github.com/gorilla/mux>
+- <https://pkg.go.dev/testing>
+- <https://pkg.go.dev/net/http/httptest>
 
 ## Tests
 

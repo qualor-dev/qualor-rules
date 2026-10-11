@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"testing"
 
 	"example.com/shop/models"
 	"github.com/gin-gonic/gin"
@@ -681,4 +683,116 @@ func fetchStatus(ctx context.Context, endpoint string) (*http.Response, error) {
 		return nil, err
 	}
 	return http.DefaultClient.Do(req)
+}
+
+// Test support: a handler inside a function that takes a *testing.T, *testing.B, *testing.F,
+// *testing.M or testing.TB serves only the requests of its own test (an httptest server, a
+// subtest, TestMain), in a _test.go file or in a helper package.
+func NewFixtureServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.ssrf
+		resp, err := http.Get(r.Header.Get("X-Upstream"))
+		if err == nil {
+			io.Copy(w, resp.Body)
+		}
+	}))
+}
+
+func recordingServer(tb testing.TB) (*httptest.Server, error) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		// ok: go.ssrf
+		http.Post(r.FormValue("callback"), "application/json", strings.NewReader(string(body)))
+	}))
+	return srv, nil
+}
+
+func TestPreview(t *testing.T) {
+	t.Run("served", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// ok: go.ssrf
+			http.Get(r.FormValue("url"))
+		}))
+		defer srv.Close()
+	})
+}
+
+func BenchmarkGinFetch(b *testing.B) {
+	router := gin.New()
+	router.GET("/fetch", func(c *gin.Context) {
+		// ok: go.ssrf
+		http.Get(c.Query("url"))
+	})
+}
+
+func FuzzEchoFetch(f *testing.F) {
+	e := echo.New()
+	e.GET("/fetch", func(c echo.Context) error {
+		// ok: go.ssrf
+		_, err := http.Head(c.QueryParam("url"))
+		return err
+	})
+}
+
+var fixtureCase = func(t *testing.T) {
+	http.HandleFunc("/cases/", func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.ssrf
+		http.Get("https://" + r.FormValue("host") + "/status")
+	})
+}
+
+func TestMain(m *testing.M) {
+	http.HandleFunc("/fixtures/", func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.ssrf
+		req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, r.URL.Query().Get("url"), nil)
+		http.DefaultClient.Do(req)
+	})
+	os.Exit(m.Run())
+}
+
+type fixtureSuite struct{ client *http.Client }
+
+func (s *fixtureSuite) handler(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.ssrf
+		resp, _ := s.client.Get(r.URL.Query().Get("url"))
+		defer resp.Body.Close()
+	}
+}
+
+// The same handlers outside test support are reported: a parameter of another type named T, or
+// a handler whose name starts with Test, is not a test.
+type Theme struct{ T string }
+
+func Preview(t *Theme, w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.ssrf
+	http.Get(r.URL.Query().Get("base") + "/themes/" + t.T)
+}
+
+func TestPage(w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.ssrf
+	http.Get(r.FormValue("url"))
+}
+
+func ServeFixtures() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ruleid: go.ssrf
+		resp, err := http.Get(r.Header.Get("X-Upstream"))
+		if err == nil {
+			io.Copy(w, resp.Body)
+		}
+	}))
+}
+
+// A handler declared at the top level of a test file, outside any function that takes a testing
+// parameter, is still reported.
+func fixtureHandler(w http.ResponseWriter, r *http.Request) {
+	// todook: go.ssrf
+	http.Get(r.FormValue("url"))
+}
+
+func TestFixtureHandler(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(fixtureHandler))
+	defer srv.Close()
 }
