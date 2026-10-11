@@ -100,6 +100,9 @@ rules:
     #   (sanitizers below): a change to that rule's sinks must be made here as well, or the two
     #   rules drift apart (a command the other rule stops reporting stays silent here, a new sink
     #   there is reported twice).
+    # - A boolean that holds a Gin or Echo bind call or a JSON decode (the success flag
+    #   `ok := c.ShouldBindJSON(&x) == nil`) does not count as clean, so that the struct the call
+    #   fills stays request data; the flag written into an HTML response is reported (`todook:`).
     # Inherited from the request source block (go.sql-injection):
     # - The Echo instance's binder (`c.Echo().Binder.Bind(&x, c)`) is not a source (`todoruleid:`).
     # - Numeric fields count as clean only when their type is known in the file: a struct declared
@@ -461,6 +464,12 @@ rules:
           - metavariable-type:
               metavariable: $E
               types: [int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool]
+          # A comparison that holds a Gin or Echo bind call or a JSON decode
+          # (`c.ShouldBindJSON(&x) == nil`, `errors.Is(c.Bind(&x), ...)`) is a boolean too, but
+          # sanitizing it would also clear the struct the call fills.
+          - metavariable-regex:
+              metavariable: $E
+              regex: ^(?![\s\S]*(\b(Must|Should)?Bind[A-Za-z]*|\.Decode|\bjson\.Unmarshal)\s*\()
       # Escaping: html.EscapeString and html/template's escapers turn <, >, &, ' and " into
       # entities or escapes (URLQueryEscaper into %XX).
       - pattern: html.EscapeString(...)

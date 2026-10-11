@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	htmltemplate "html/template"
@@ -582,6 +584,126 @@ func EchoPreview(c echo.Context) error {
 	c.String(http.StatusOK, c.QueryParam("text"))
 	// ok: go.xss
 	return c.JSON(http.StatusOK, comment)
+}
+
+// A bind or decode call inside a condition (`if c.ShouldBindJSON(&in) == nil`) fills the struct
+// with request data like the `err :=` form. A bound value used only in a comparison does not
+// taint what the branch chooses.
+type NoteInput struct {
+	Title string   `json:"title" query:"title"`
+	Body  string   `json:"body" query:"body"`
+	Theme string   `json:"theme" query:"theme"`
+	Tags  []string `json:"tags" query:"tags"`
+}
+
+func GinBindInCondition(c *gin.Context) {
+	var in NoteInput
+	if c.ShouldBindJSON(&in) == nil {
+		// ruleid: go.xss
+		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte("<h1>"+in.Title+"</h1>"))
+	}
+	var query NoteInput
+	if c.ShouldBindQuery(&query) != nil {
+		return
+	}
+	// ruleid: go.xss
+	fmt.Fprintf(c.Writer, "<p>%s</p>", query.Body)
+	target := new(NoteInput)
+	if c.ShouldBind(target) == nil && target.Title != "" {
+		// ruleid: go.xss
+		c.Writer.WriteString("<h2>" + target.Title + "</h2>")
+	}
+	var strict NoteInput
+	if errors.Is(c.ShouldBindJSON(&strict), io.EOF) {
+		return
+	}
+	// ruleid: go.xss
+	io.WriteString(c.Writer, "<p>"+strict.Body+"</p>")
+	var empty NoteInput
+	if c.ShouldBindJSON(&empty) == io.EOF {
+		return
+	}
+	// ruleid: go.xss
+	c.Writer.Write([]byte(empty.Body))
+	var forced NoteInput
+	if c.MustBindWith(&forced, binding.JSON) != nil {
+		return
+	}
+	c.HTML(http.StatusOK, "note.tmpl", gin.H{
+		// ruleid: go.xss
+		"body": htmltemplate.HTML(forced.Body),
+	})
+	// The bound values only compared: the branches choose constants.
+	theme := "light"
+	if query.Theme == "dark" {
+		theme = "dark"
+	}
+	// ok: go.xss
+	fmt.Fprintf(c.Writer, "<body class=%q>", theme)
+	verbose := in.Theme == "debug" && in.Body != ""
+	// ok: go.xss
+	c.Writer.WriteString(map[bool]string{true: "<pre>debug</pre>", false: "<p>ok</p>"}[verbose])
+	tagged := in.Tags != nil
+	// ok: go.xss
+	fmt.Fprintf(c.Writer, "<p>tagged: %t</p>", tagged)
+	switch query.Theme {
+	case "dark":
+		// ok: go.xss
+		c.Writer.WriteString("<body class=dark>")
+	}
+	// Other comparisons with nil, and calls that fill a variable, stay booleans.
+	multi := c.QueryArray("tag") != nil
+	// ok: go.xss
+	fmt.Fprintf(c.Writer, "<p>multi: %t</p>", multi)
+	raw, _ := c.GetRawData()
+	var version uint32
+	known := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &version) == nil
+	// ok: go.xss
+	fmt.Fprintf(c.Writer, "<p>known: %t</p>", known)
+	// The success flag of a bind call is reported: the comparison holds the bind call, and
+	// the call's result counts as request data.
+	var draft NoteInput
+	parsed := c.ShouldBindJSON(&draft) == nil
+	// todook: go.xss
+	fmt.Fprintf(c.Writer, "<p>valid: %t</p>", parsed)
+}
+
+func EchoBindInCondition(c echo.Context) error {
+	var in NoteInput
+	if c.Bind(&in) != nil {
+		return nil
+	}
+	// ruleid: go.xss
+	c.HTML(http.StatusOK, "<h1>"+in.Title+"</h1>")
+	var filter NoteInput
+	if echo.BindQueryParams(c, &filter) == nil {
+		// ruleid: go.xss
+		c.HTMLBlob(http.StatusOK, []byte(filter.Body))
+	}
+	theme := "light"
+	if filter.Theme == "dark" {
+		theme = "dark"
+	}
+	// ok: go.xss
+	return c.HTML(http.StatusOK, "<body class="+theme+">")
+}
+
+func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
+	var in NoteInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		return
+	}
+	// ruleid: go.xss
+	fmt.Fprintf(w, "<h1>%s</h1>", in.Title)
+	body, _ := io.ReadAll(r.Body)
+	var sub NoteInput
+	if json.Unmarshal(body, &sub) == nil {
+		// ruleid: go.xss
+		w.Write([]byte("<p>" + sub.Body + "</p>"))
+	}
+	dark := in.Theme == "dark"
+	// ok: go.xss
+	fmt.Fprintf(w, "<p>dark: %t</p>", dark)
 }
 
 // Limits of the shared request source block (go.sql-injection).

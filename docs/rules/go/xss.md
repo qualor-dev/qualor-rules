@@ -116,6 +116,8 @@ func Hello(w http.ResponseWriter, r *http.Request) {
   with `bytes.NewBuffer`, or taken from a `sync.Pool` with a type assertion).
 - Request data written into a buffer directly (`buf.WriteString(...)`, `fmt.Fprintf(&buf, ...)`)
   is not followed when the buffer is written to the response later.
+- The success flag of a bind or decode call (`ok := c.ShouldBindJSON(&x) == nil`) still counts
+  as request data, so writing it into an HTML response is reported.
 - The binder of the Echo instance is not a source, and numeric struct fields count as safe only
   when the struct is declared in the same file.
 - Tests are recognised by a testing parameter of the enclosing function only: a handler declared
