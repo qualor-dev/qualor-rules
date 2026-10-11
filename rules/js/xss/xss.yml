@@ -41,6 +41,9 @@ rules:
         - https://github.com/sindresorhus/got/blob/main/documentation/1-promise.md
         - https://ladjs.github.io/superagent/
         - https://github.com/nodejs/undici#undicirequesturl-options-promise
+        - https://developer.mozilla.org/en-US/docs/Web/API/URL/URL
+        - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/decodeURIComponent
+        - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/String
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A content type set through an object of headers (`res.set({ 'Content-Type': ... })`) is
@@ -73,7 +76,8 @@ rules:
     #   data (request data in the command or the file name is js.command-injection's or
     #   js.path-traversal's finding, not reported again); a page fetched from a URL that the
     #   request visibly chooses stays request data (ruling J2): its URL starts with a request value,
-    #   also after a lone scheme or `//`. One fetched from a fixed origin, a path of this site, a
+    #   also after a lone scheme or `//`, also inside one `new URL(...)`, `String(...)` or
+    #   `decodeURIComponent(...)` call. One fetched from a fixed origin, a path of this site, a
     #   URL in a variable or a template on a constant base is that service's data. Limits of that:
     #   the output of execFileSync()/spawnSync() with a request-chosen program is reported again
     #   (`todook:`); the output execFile() hands to a callback written in the call is followed,
@@ -81,7 +85,8 @@ rules:
     #   spawn() (`child.stdout.on('data', ...)`) (`todoruleid:`), and an options object held in
     #   a variable in place of the argument list (`execFile('ls', opts, cb)`) is taken for
     #   arguments (`todook:`); a request-chosen URL held in a variable first (`const
-    #   target = req.query.url; await axios.get(target)`) is taken for stored data, and so is a
+    #   target = req.query.url; await axios.get(target)`), awaited in place or not, is taken for
+    #   stored data, and so is a
     #   URL whose request value has another name than req, request or a destructured field name
     #   (`(r, res)`, `({ query: q }, res)`, `({ query: { url } }, res)`) (`todoruleid:`). From an
     #   origin held in a constant or configuration value, only the parts after its separator are
@@ -91,12 +96,18 @@ rules:
     #   request data, so it is taken for a configured origin (`todoruleid:`). The options of such a
     #   call are cleaned as a whole and client defaults are not seen, so a request-chosen proxy
     #   (`{ dispatcher: ... }`, `axios.defaults.proxy = ...`) or a `transformResponse` that
-    #   returns request data is missed (`todoruleid:`). After a get() of a request-chosen URL on
-    #   axios, got or superagent, the client itself is request data for the rest of the file
-    #   (OpenGrep's --taint-intrafile mode reads get() as a read of its receiver, see the
-    #   propagators), so a later get() of a fixed origin on that client that is not awaited in
-    #   place (`const p = axios.get(FIXED_URL); res.send((await p).data)`), also in another
-    #   handler, is reported (`todook:`).
+    #   returns request data is missed (`todoruleid:`). A page handed to a then() callback
+    #   (`axios.get(req.query.url).then((r) => res.send(r.data))`) is not followed
+    #   (`todoruleid:`). After a get() of a request-chosen URL on axios, got or superagent, the
+    #   client itself is request data for the rest of the file (OpenGrep's --taint-intrafile mode
+    #   reads get() as a read of its receiver, see the propagators), so a later call on that
+    #   client, or on an instance created from it (`axios.create(...)`), that is not awaited in
+    #   place (`const p = axios.get(FIXED_URL); res.send((await p).data)`, also `axios.post`),
+    #   also in another handler, is reported (`todook:`). A call to a fixed origin that is not
+    #   awaited in place and carries request data outside its URL (`axios.get(FIXED_URL, { params:
+    #   { q: req.query.q } })`, `axios.post(FIXED_URL, req.body)`, superagent's `.query(...)`,
+    #   request headers in the options) keeps that request data in its value, so the page is
+    #   reported (`todook:`); awaited in place it is cleaned.
     # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
     #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
     #   source, and a one-parameter callback given to get/post/... after a path literal (also on
@@ -386,8 +397,9 @@ rules:
       # An HTTP client's get(url): the page carries the request data of a URL that the request
       # visibly chooses (ruling J2, the URL shape of the awaited-call sanitizer below). OpenGrep's
       # --taint-intrafile mode reads get() as a read of its receiver and would drop it, so the
-      # client takes it on, and then counts as request data for the rest of the function. Other
-      # URLs (a fixed origin with request data in its path) leave the client clean.
+      # client takes it on, and then counts as request data for the rest of the file (code after
+      # the tainting call, in this and other functions, see Known limits). Other URLs (a fixed
+      # origin with request data in its path) leave the client clean.
       - patterns:
           - pattern: $CLIENT.get($FROM, ...)
           - metavariable-regex:
@@ -395,7 +407,7 @@ rules:
               regex: ^(?:axios|got|superagent)$
           - metavariable-regex:
               metavariable: $FROM
-              regex: ^(?:["'`](?:https?:)?(?://)?["'`]\s*\+\s*|`(?:https?:)?(?://)?\$\{\s*)?(?:req|request|query|params|body|headers|cookies|nextUrl)\s*(?:\?\.|\.|\[)
+              regex: ^(?:new\s+URL\(\s*|(?:String|decodeURIComponent)\(\s*)?(?:["'`](?:https?:)?(?://)?["'`]\s*\+\s*|`(?:https?:)?(?://)?\$\{\s*)?(?:req|request|query|params|body|headers|cookies|nextUrl)\s*(?:\?\.|\.|\[)
         from: $FROM
         to: $CLIENT
       # The output execFile() hands to its callback (`execFile('echo', [x], (err, stdout) =>
@@ -597,7 +609,8 @@ rules:
           # chooses is the attacker's content (ruling J2 of java.xss): a URL that starts with a
           # request value (`req.query.url`, a destructured `query.url`, Next.js `nextUrl`; the request
           # recognised by these names), also after a lone scheme or
-          # `//` (`'https://' + req.query.host`, `` `https://${req.params.host}/x` ``). A URL held in
+          # `//` (`'https://' + req.query.host`, `` `https://${req.params.host}/x` ``), and inside
+          # one `new URL(`, `String(` or `decodeURIComponent(` call. A URL held in
           # a variable, a constant or a template on a constant base, and request data elsewhere
           # (the path, the body) leave the response stored data.
           - pattern-not:
@@ -608,7 +621,7 @@ rules:
                     regex: ^(?:axios|got|superagent|undici)$
                 - metavariable-regex:
                     metavariable: $URL
-                    regex: ^(?:["'`](?:https?:)?(?://)?["'`]\s*\+\s*|`(?:https?:)?(?://)?\$\{\s*)?(?:req|request|query|params|body|headers|cookies|nextUrl)\s*(?:\?\.|\.|\[)
+                    regex: ^(?:new\s+URL\(\s*|(?:String|decodeURIComponent)\(\s*)?(?:["'`](?:https?:)?(?://)?["'`]\s*\+\s*|`(?:https?:)?(?://)?\$\{\s*)?(?:req|request|query|params|body|headers|cookies|nextUrl)\s*(?:\?\.|\.|\[)
           # Not when a function is passed to it (`await db.transaction(async (t) => { ... })`):
           # a sink written inside that callback is still a sink, and the sanitizer would clean
           # everything inside the call. The function pattern also matches arrow functions.

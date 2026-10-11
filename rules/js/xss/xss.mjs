@@ -38,4 +38,23 @@ app.get('/clients/items/:id', async (req, res) => {
   res.send((await card).text);
 });
 
+// A fixed origin given request data outside the URL (query parameters, a body, headers), not awaited
+// in place: the client call carries the request data into its value, so the page is reported.
+// Awaited in place it is cleaned.
+const API_BASE = process.env.API_BASE;
+app.get('/clients/search', async (req, res) => {
+  const found = axios.get('https://api.example.com/search', { params: { q: req.query.q } });
+  // todook: js.xss
+  res.send((await found).data);
+  const posted = axios.post('https://api.example.com/hook', { name: req.body.name });
+  // todook: js.xss
+  res.send((await posted).data);
+  const queried = superagent.get('https://api.example.com/cards').query({ id: req.query.id });
+  // todook: js.xss
+  res.send((await queried).text);
+  const withHeaders = axios.get(API_BASE + '/pages/' + req.params.id, { headers: { 'x-user': req.get('x-user') } });
+  // todook: js.xss
+  res.send((await withHeaders).data);
+});
+
 export default app;

@@ -20,8 +20,8 @@ command or the file name is already a command injection or a path traversal find
 The output of a fixed program given request data as an argument (`execFileSync('echo', [x])`)
 can print it back and is reported, also when `execFile()` hands it to a callback
 (`execFile('echo', [x], (err, stdout) => res.send(stdout))`), and so is a page fetched from a
-URL that the request chooses (`fetch(req.query.url)`, `axios.get(req.query.url)`, `` axios.get(`https://${req.query.host}/x`) ``):
-its content belongs to whoever chose the URL. A page fetched from a fixed origin (a literal one, or
+URL that the request chooses (`fetch(req.query.url)`, `axios.get(req.query.url)`, `` axios.get(`https://${req.query.host}/x`) ``,
+`axios.get(new URL(req.query.url))`): its content belongs to whoever chose the URL. A page fetched from a fixed origin (a literal one, or
 a constant or configuration value such as `API_BASE` or `process.env.API_URL` followed by `/`, `?`
 or `#`) or a path of this site (also through got's `.json()` shortcut), or with `axios`/`got` from a
 URL in a variable or on a constant base, with request data only in the path or the body, is taken
@@ -115,11 +115,18 @@ app.get('/hello', (req, res) => {
   reported.
 - A request-chosen URL given to `axios` or `got` is recognised by the names of the request value
   (`req`, `request`, a destructured `query`, `params`, `body`, `headers`, `cookies` or `nextUrl`),
-  so one stored in a variable first or reached through another name is missed.
+  also inside one `new URL(...)`, `String(...)` or `decodeURIComponent(...)` call; one stored in a
+  variable first or reached through another name is missed, whether the call is awaited in place
+  or not. A page handed to a `then()` callback (`axios.get(url).then((r) => res.send(r.data))`) is
+  not followed.
 - After `get()` of a request-chosen URL on `axios`, `got` or `superagent`, the client itself is
-  taken for request data in the rest of the file: a later `get()` of a fixed origin on that client
-  that is not awaited in place (`const p = axios.get('https://api.example.com/status')`, then
-  `await p`), also in another handler, is reported.
+  taken for request data in the rest of the file: a later call on that client, or on an instance
+  created from it (`axios.create(...)`), that is not awaited in place
+  (`const p = axios.get('https://api.example.com/status')`, then `await p`; also `axios.post`),
+  also in another handler, is reported.
+- A call to a fixed origin that is not awaited in place and carries request data outside its URL
+  (query parameters in the options, a posted body, superagent's `.query(...)`, request headers)
+  is reported when its page is sent; awaited in place it is taken for that service's data.
 - A page fetched from a constant or configuration origin is cleaned only up to four parts of a
   concatenation or three interpolations of a template after the origin; a longer URL is still
   reported. An origin set from the request outside a handler (a constructor given the request,
@@ -153,6 +160,9 @@ app.get('/hello', (req, res) => {
 - <https://github.com/sindresorhus/got/blob/main/documentation/1-promise.md>
 - <https://ladjs.github.io/superagent/>
 - <https://github.com/nodejs/undici#undicirequesturl-options-promise>
+- <https://developer.mozilla.org/en-US/docs/Web/API/URL/URL>
+- <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/decodeURIComponent>
+- <https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/String/String>
 
 ## Tests
 

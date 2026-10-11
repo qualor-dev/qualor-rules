@@ -785,11 +785,25 @@ app.get('/clients/preview', async (req, res) => {
   const { body: item } = await undici.request('https://api.example.com/items/' + req.query.id);
   // ok: js.xss
   res.send(await item.text());
+  // The request value may be parsed, converted or decoded first (xss.cjs: not awaited in place).
+  const { data: parsed } = await axios.get(new URL(req.query.url));
+  // ruleid: js.xss
+  res.send(parsed);
+  const { data: converted } = await axios.get(String(req.query.url));
+  // ruleid: js.xss
+  res.send(converted);
+  const { data: decoded } = await axios.get(decodeURIComponent(req.query.url));
+  // ruleid: js.xss
+  res.send(decoded);
+  // A page handed to a then() callback is not followed.
+  // todoruleid: js.xss
+  axios.get(req.query.url).then((r) => res.send(r.data));
 });
 // After a get() of a request-chosen URL anywhere in the file, the client itself counts as request
 // data (OpenGrep's --taint-intrafile mode reads get() as a read of its receiver, and the client is
-// a module-level name): a later call to a fixed origin that is not awaited in place, also in
-// another handler, is reported. Awaited in place it is cleaned as above.
+// a module-level name): a later call on that client (or on an instance created from it) that is
+// not awaited in place, also in another handler, is reported. Awaited in place it is cleaned as
+// above.
 app.get('/clients/status', async (req, res) => {
   const pending = axios.get('https://api.example.com/status');
   const { data: status } = await pending;
