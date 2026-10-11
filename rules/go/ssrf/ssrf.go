@@ -1,8 +1,11 @@
 package fetch
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +19,7 @@ import (
 
 	"example.com/shop/models"
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/mux"
 	"github.com/labstack/echo/v4"
@@ -364,6 +368,125 @@ func (p *Proxy) SourceLimits(c echo.Context) error {
 	// todoruleid: go.ssrf
 	http.Get("https://" + ext.Port + ".example.com/")
 	return nil
+}
+
+// A bind or decode call inside a condition (`if c.ShouldBindJSON(&in) == nil`) fills the struct
+// with request data like the `err :=` form. A bound value used only in a comparison does not
+// taint what the branch chooses.
+type FetchInput struct {
+	URL    string   `json:"url" query:"url"`
+	Host   string   `json:"host" query:"host"`
+	Region string   `json:"region" query:"region"`
+	Tags   []string `json:"tags" query:"tags"`
+}
+
+func GinBindInCondition(c *gin.Context) {
+	var in FetchInput
+	if c.ShouldBindJSON(&in) == nil {
+		// ruleid: go.ssrf
+		http.Get(in.URL)
+	}
+	var query FetchInput
+	if c.ShouldBindQuery(&query) != nil {
+		return
+	}
+	// ruleid: go.ssrf
+	http.Get("https://" + query.Host + "/status")
+	target := new(FetchInput)
+	if c.ShouldBind(target) == nil && target.URL != "" {
+		// ruleid: go.ssrf
+		http.Head(target.URL)
+	}
+	var strict FetchInput
+	if errors.Is(c.ShouldBindJSON(&strict), io.EOF) {
+		return
+	}
+	// ruleid: go.ssrf
+	http.Post(strict.URL, "application/json", nil)
+	var empty FetchInput
+	if c.ShouldBindJSON(&empty) == io.EOF {
+		return
+	}
+	// ruleid: go.ssrf
+	http.NewRequest(http.MethodGet, empty.URL, nil)
+	var forced FetchInput
+	if c.MustBindWith(&forced, binding.JSON) != nil {
+		return
+	}
+	// ruleid: go.ssrf
+	http.DefaultClient.Get(fmt.Sprintf("https://%s/feed.xml", forced.Host))
+	// The bound values only compared: the branches choose constants.
+	mirror := "eu.mirror.example.com"
+	if query.Region == "us" {
+		mirror = "us.mirror.example.com"
+	}
+	// ok: go.ssrf
+	http.Get("https://" + mirror + "/status")
+	verbose := in.Region == "debug" && in.URL != ""
+	// ok: go.ssrf
+	http.Get(map[bool]string{true: "https://debug.example.com/", false: "https://api.example.com/"}[verbose])
+	tagged := in.Tags != nil
+	// ok: go.ssrf
+	http.Get(fmt.Sprintf("https://tagged-%t.example.com/", tagged))
+	switch query.Region {
+	case "us":
+		// ok: go.ssrf
+		http.Get("https://us.mirror.example.com/status")
+	}
+	// Other comparisons with nil, and calls that fill a variable, stay booleans.
+	multi := c.QueryArray("url") != nil
+	// ok: go.ssrf
+	http.Get(fmt.Sprintf("https://multi-%t.example.com/", multi))
+	raw, _ := c.GetRawData()
+	var shard uint32
+	known := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &shard) == nil
+	// ok: go.ssrf
+	http.Get(fmt.Sprintf("https://known-%t.example.com/", known))
+	// The success flag of a bind call is reported: the comparison holds the bind call, and
+	// the call's result counts as request data.
+	var draft FetchInput
+	parsed := c.ShouldBindJSON(&draft) == nil
+	// todook: go.ssrf
+	http.Get(fmt.Sprintf("https://valid-%t.example.com/", parsed))
+}
+
+func EchoBindInCondition(c echo.Context) error {
+	var in FetchInput
+	if c.Bind(&in) != nil {
+		return nil
+	}
+	// ruleid: go.ssrf
+	http.Get(in.URL)
+	var filter FetchInput
+	if echo.BindQueryParams(c, &filter) == nil {
+		// ruleid: go.ssrf
+		http.Get(fmt.Sprintf("https://%s/feed.xml", filter.Host))
+	}
+	mirror := "eu.mirror.example.com"
+	if filter.Region == "us" {
+		mirror = "us.mirror.example.com"
+	}
+	// ok: go.ssrf
+	http.Get(fmt.Sprintf("https://%s.example.com/", mirror))
+	return nil
+}
+
+func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
+	var in FetchInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		return
+	}
+	// ruleid: go.ssrf
+	http.NewRequestWithContext(r.Context(), http.MethodGet, in.URL, nil)
+	body, _ := io.ReadAll(r.Body)
+	var sub FetchInput
+	if json.Unmarshal(body, &sub) == nil {
+		// ruleid: go.ssrf
+		http.Get("https://" + sub.Host + "/status")
+	}
+	europe := in.Region == "eu"
+	// ok: go.ssrf
+	http.Get(fmt.Sprintf("https://europe-%t.example.com/", europe))
 }
 
 // Look-alikes: a Get method of another type, httptest-style request builders and a function that
