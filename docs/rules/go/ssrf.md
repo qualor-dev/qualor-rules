@@ -11,7 +11,9 @@
 Outgoing HTTP requests whose URL is decided by the incoming request: `http.Get`, `http.Post`,
 `http.Head`, `http.PostForm`, `http.NewRequest(WithContext)` and the same methods on an
 `*http.Client`, when request data forms the whole URL or its scheme and host. Request data after a
-fixed origin and a `/` (`baseURL + "/items/" + id`) is not reported.
+fixed origin and a `/` (`baseURL + "/items/" + id`) is not reported, and neither is request data
+in the path, query, fragment or user info of a `url.URL` literal with a host; its scheme, host
+or opaque part (which replaces everything after the scheme) from the request is.
 
 Reverse proxies of `net/http/httputil` are checked too: the target of
 `NewSingleHostReverseProxy`, the URL given to `ProxyRequest.SetURL`, and the URL or host that a

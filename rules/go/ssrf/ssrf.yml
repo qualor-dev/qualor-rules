@@ -290,10 +290,17 @@ rules:
           - metavariable-regex:
               metavariable: $E
               regex: ^(?![\s\S]*(\b(Must|Should)?Bind[A-Za-z]*|\.Decode|\bjson\.Unmarshal)\s*\()
-      # A url.URL with a fixed host (a literal or a constant).
-      - pattern-either:
-          - pattern: 'url.URL{..., Host: "...", ...}'
-          - pattern: '&url.URL{..., Host: "...", ...}'
+      # A url.URL literal with a non-empty Host: net/url writes the path, query, fragment and user
+      # info after the host, escaped (as go.open-redirect). Its scheme, host and opaque part (which
+      # replaces everything after the scheme) stay request data.
+      - patterns:
+          - pattern-inside: 'url.URL{..., Host: $H, ...}'
+          - pattern-not-inside: 'url.URL{..., Host: "", ...}'
+          - pattern-inside: 'url.URL{..., $FIELD: $V, ...}'
+          - metavariable-regex:
+              metavariable: $FIELD
+              regex: ^(Path|RawPath|RawQuery|Fragment|RawFragment|User)$
+          - focus-metavariable: $V
       # Path elements given to JoinPath (net/url: joined to the base's path and cleaned of ./ and
       # ../), but not the base of url.JoinPath.
       - patterns:

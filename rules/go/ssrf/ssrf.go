@@ -259,6 +259,39 @@ func Checked(w http.ResponseWriter, r *http.Request) {
 	http.Get(u.String())
 }
 
+// A url.URL literal with a host: net/url writes its path, query, fragment and user info after
+// the host, escaped. An opaque part replaces everything after the scheme ("https:" + opaque), and
+// a scheme from the request is not fixed either.
+func Literal(w http.ResponseWriter, r *http.Request) {
+	opaque := url.URL{Scheme: "https", Host: "catalog.example.com", Opaque: r.FormValue("target")}
+	// ruleid: go.ssrf
+	http.Get(opaque.String())
+	// ruleid: go.ssrf
+	http.Get((&url.URL{Scheme: "https", Host: catalogName, Opaque: "//" + r.FormValue("host") + "/status"}).String())
+	schemed := url.URL{Scheme: r.FormValue("scheme"), Host: "catalog.example.com", Path: "/status"}
+	// ruleid: go.ssrf
+	http.Get(schemed.String())
+	// An empty Host is no host: the path "evil.example/x" gives "https://evil.example/x".
+	unset := url.URL{Scheme: "https", Host: "", Path: r.FormValue("path")}
+	// ruleid: go.ssrf
+	http.Get(unset.String())
+	// ruleid: go.ssrf
+	http.Get((&url.URL{Scheme: "https", Path: r.FormValue("path")}).String())
+	// ok: go.ssrf
+	http.Get((&url.URL{Scheme: "https", Host: "catalog.example.com", Path: "/items/" + r.FormValue("id"), RawQuery: r.URL.RawQuery}).String())
+	account := url.URL{Scheme: "https", Host: catalogName, User: url.User(r.FormValue("account")), Path: "/profile", Fragment: r.FormValue("tab")}
+	// ok: go.ssrf
+	http.Get(account.String())
+	escaped := url.URL{Scheme: "https", Host: "catalog.example.com", Path: r.FormValue("path"), RawPath: r.FormValue("raw"), RawFragment: r.FormValue("section")}
+	// ok: go.ssrf
+	http.Get(escaped.String())
+	// A host from the server's configuration.
+	configured := &url.URL{Scheme: "https", Host: os.Getenv("CATALOG_HOST"), Path: r.FormValue("path")}
+	// ok: go.ssrf
+	http.Get(configured.String())
+	fmt.Fprintln(w, "ok")
+}
+
 // Routers on net/http: chi and gorilla/mux route variables.
 func Avatar(w http.ResponseWriter, r *http.Request) {
 	// ruleid: go.ssrf
