@@ -17,7 +17,7 @@ export function intrafileOverride(value) {
   if (value === undefined || value === '') return undefined;
   if (ON.has(value)) return true;
   if (OFF.has(value)) return false;
-  throw new Error(`QUALOR_TAINT_INTRAFILE must be 1 or 0, got ${JSON.stringify(value)}`);
+  throw new Error(`QUALOR_TAINT_INTRAFILE must be 1, 0, true or false, got ${JSON.stringify(value)}`);
 }
 
 /**

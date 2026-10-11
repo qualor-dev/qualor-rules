@@ -56,7 +56,8 @@ npm test          # check (layout, schema, ids, annotations, sources, pages), th
 tool that runs OpenGrep (the tests, the pages' examples, the probe, `measure`, `scan`) passes
 `--taint-intrafile` (taint followed through the functions of one file), and the release's
 manifest says so, so Qualor runs the pack the same way. `QUALOR_TAINT_INTRAFILE=1` or `0` runs
-the tools in the other mode for a comparison (`tools/engine.mjs`).
+the tools in the other mode for a comparison (`tools/engine.mjs`); there the fixture lines that
+depend on the mode (same-file helpers and wrappers) are expected to fail.
 
 ## Releases
 

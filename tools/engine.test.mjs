@@ -23,5 +23,5 @@ test('QUALOR_TAINT_INTRAFILE overrides the mode, and only with 1 or 0', () => {
   assert.equal(engine(repo({ taintIntrafile: true }), { QUALOR_TAINT_INTRAFILE: '' }).taintIntrafile, true);
   assert.equal(intrafileOverride('true'), true);
   assert.equal(intrafileOverride(undefined), undefined);
-  assert.throws(() => intrafileOverride('yes'), /must be 1 or 0/);
+  assert.throws(() => intrafileOverride('yes'), /must be 1, 0, true or false/);
 });

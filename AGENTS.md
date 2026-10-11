@@ -21,7 +21,7 @@
 - `npm run release`: the release tarball in `dist/`, and its SHA-256
 - `package.json` `"taintIntrafile"`: the taint mode every tool runs OpenGrep in (`--taint-intrafile`)
   and the release manifest names; `QUALOR_TAINT_INTRAFILE=1|0 npm run …` runs the other mode for a
-  comparison (`tools/engine.mjs`)
+  comparison (`tools/engine.mjs`; the fixture lines that depend on the mode fail there by design)
 
 ## How work is organised
 
