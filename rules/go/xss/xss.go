@@ -706,6 +706,31 @@ func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "<p>dark: %t</p>", dark)
 }
 
+// A sink called inside a comparison (`if c.HTML(...) != nil`) is a boolean expression as a
+// whole: the number/boolean sanitizer clears it, the sink's arguments included.
+func EchoSinkInComparison(c echo.Context) error {
+	// todoruleid: go.xss
+	if c.HTML(http.StatusOK, "<p>"+c.QueryParam("q")+"</p>") != nil {
+		return nil
+	}
+	// todoruleid: go.xss
+	sent := c.HTMLBlob(http.StatusOK, []byte(c.FormValue("html"))) == nil
+	if !sent {
+		return echo.ErrInternalServerError
+	}
+	return nil
+}
+
+func retryUntil(done func() bool) {}
+
+func RetryRender(c echo.Context) error {
+	retryUntil(func() bool {
+		// todoruleid: go.xss
+		return c.HTML(http.StatusOK, c.QueryParam("banner")) == nil
+	})
+	return nil
+}
+
 // Limits of the shared request source block (go.sql-injection).
 type Status int
 
