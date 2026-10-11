@@ -636,8 +636,14 @@ class SaxImports {
 
     void readerFactory(InputStream in) throws Exception {
         XMLReader reader = XMLReaderFactory.createXMLReader();
+        reader.setErrorHandler(null);
         // ruleid: java.xxe
         reader.parse(new InputSource(in));
+    }
+
+    void readerFactoryInPlace(InputStream in) throws Exception {
+        // ruleid: java.xxe
+        XMLReaderFactory.createXMLReader().parse(new InputSource(in));
     }
 
     void disallowed(InputStream in, DefaultHandler handler) throws Exception {
@@ -1545,6 +1551,7 @@ class PlainValidatorField {
 class Dom4jImports {
     org.dom4j.Document plain(InputStream in) throws Exception {
         SAXReader reader = new SAXReader();
+        reader.setEncoding("UTF-8");
         // ruleid: java.xxe
         return reader.read(in);
     }
@@ -1584,6 +1591,7 @@ class Dom4jImports {
 class JdomImports {
     org.jdom2.Document plain(InputStream in) throws Exception {
         SAXBuilder builder = new SAXBuilder();
+        builder.setExpandEntities(false);
         // ruleid: java.xxe
         return builder.build(in);
     }
