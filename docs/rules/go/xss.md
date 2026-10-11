@@ -19,6 +19,9 @@ HTTP request data written into an HTML response without escaping:
   readers sent this way are not reported);
 - written into a `bytes.Buffer` or `strings.Builder` (`buf.WriteString(...)`,
   `fmt.Fprintf(&buf, ...)`, `io.WriteString`, `io.Copy`) that is then written to the response;
+- the request body copied to the response as it is (`io.Copy(w, r.Body)`, also with
+  `io.CopyBuffer`, `io.CopyN`, `io.LimitReader` or `http.MaxBytesReader`); a file copied to the
+  response is not reported, even when the request names it;
 - marked as safe content with an `html/template` conversion such as `template.HTML(x)`.
 
 The output of a command (`exec.Command(...).Output()`) counts as request data when the command
@@ -122,6 +125,9 @@ func Hello(w http.ResponseWriter, r *http.Request) {
   error of `os.Open` are still request data. Other readers of the file (a JSON decoder, say) and a
   file opened in a `var` declaration are not recognised, so what they read is reported; the error
   of `os.ReadFile`, which names the file, is not reported when written into the page.
+- The request body copied to the response is recognised when it is written in place
+  (`io.Copy(w, r.Body)`, also wrapped in `io.LimitReader` or `http.MaxBytesReader`); a variable
+  that holds the body itself (`body := r.Body`) is not followed.
 - The success flag of a bind or decode call (`ok := c.ShouldBindJSON(&x) == nil`) still counts
   as request data, so writing it into an HTML response is reported.
 - A sink called inside a comparison, such as `if c.HTML(...) != nil`, is not reported.
@@ -149,6 +155,10 @@ func Hello(w http.ResponseWriter, r *http.Request) {
 - <https://pkg.go.dev/strings#Builder>
 - <https://pkg.go.dev/io#Copy>
 - <https://pkg.go.dev/io#ReadAll>
+- <https://pkg.go.dev/io#CopyBuffer>
+- <https://pkg.go.dev/io#CopyN>
+- <https://pkg.go.dev/io#LimitReader>
+- <https://pkg.go.dev/net/http#MaxBytesReader>
 - <https://pkg.go.dev/os#Open>
 - <https://pkg.go.dev/os#OpenFile>
 - <https://pkg.go.dev/os#ReadFile>

@@ -34,6 +34,10 @@ rules:
         - https://pkg.go.dev/strings#Builder
         - https://pkg.go.dev/io#Copy
         - https://pkg.go.dev/io#ReadAll
+        - https://pkg.go.dev/io#CopyBuffer
+        - https://pkg.go.dev/io#CopyN
+        - https://pkg.go.dev/io#LimitReader
+        - https://pkg.go.dev/net/http#MaxBytesReader
         - https://pkg.go.dev/os#Open
         - https://pkg.go.dev/os#OpenFile
         - https://pkg.go.dev/os#ReadFile
@@ -101,6 +105,12 @@ rules:
     #   where it reaches the response (Write of its Bytes or String, WriteTo, io.Copy of the
     #   buffer, Gin's c.Data, Echo's c.HTML). WriteTo and io.Copy count only for such a
     #   bytes.Buffer: a file, a bufio.Reader or an io.LimitedReader is not a sink.
+    # - The request body copied to the response (io.Copy, CopyBuffer, CopyN) is reported when the
+    #   body is written in place (`r.Body`, Gin's `c.Request.Body`, Echo's `c.Request().Body`),
+    #   wrapped in io.LimitReader or http.MaxBytesReader in place, or a MaxBytesReader is held in
+    #   a variable. A variable that holds the body itself (`body := r.Body`) is not followed
+    #   (`todoruleid:`). A file copied to the response is not a sink, even when the request
+    #   names it.
     # - What a command prints (os/exec Cmd.Output, CombinedOutput) is request data only through
     #   the arguments go.command-injection does not report: the output of a command whose program,
     #   or whose shell, cmd.exe or PowerShell script, carries request data is that rule's finding
@@ -689,8 +699,10 @@ rules:
               - pattern-inside: '($C : *echo.Context).Response().Writer.$WRITE($DATA)'
               # A bytes.Buffer that writes itself to the response, or is copied to it: typed in the
               # file, or made with new, a literal or bytes.NewBuffer(String), or asserted from an
-              # interface (a sync.Pool's Get), in the same function.
-              # Other readers (a file, a bufio.Reader, an io.LimitedReader) are not sinks.
+              # interface (a sync.Pool's Get), in the same function. The request body copied to the
+              # response (io.Copy, CopyBuffer, CopyN), also through http.MaxBytesReader or
+              # io.LimitReader. Other readers (a file, even one the request names, a bufio.Reader,
+              # an io.LimitedReader) are not sinks.
               - patterns:
                   - pattern-either:
                       - pattern-inside: '$DATA.WriteTo(($W : http.ResponseWriter))'
@@ -705,7 +717,28 @@ rules:
                       - pattern-inside: 'io.Copy(($C : *gin.Context).Writer, $DATA)'
                       - pattern-inside: 'io.Copy(($C : echo.Context).Response(), $DATA)'
                       - pattern-inside: 'io.Copy(($C : *echo.Context).Response(), $DATA)'
+                      - pattern-inside: 'io.CopyBuffer(($W : http.ResponseWriter), $DATA, $BUF)'
+                      - pattern-inside: 'io.CopyBuffer(($C : *gin.Context).Writer, $DATA, $BUF)'
+                      - pattern-inside: 'io.CopyBuffer(($C : echo.Context).Response(), $DATA, $BUF)'
+                      - pattern-inside: 'io.CopyBuffer(($C : *echo.Context).Response(), $DATA, $BUF)'
+                      - pattern-inside: 'io.CopyN(($W : http.ResponseWriter), $DATA, $N)'
+                      - pattern-inside: 'io.CopyN(($C : *gin.Context).Writer, $DATA, $N)'
+                      - pattern-inside: 'io.CopyN(($C : echo.Context).Response(), $DATA, $N)'
+                      - pattern-inside: 'io.CopyN(($C : *echo.Context).Response(), $DATA, $N)'
                   - pattern-either:
+                      - pattern-inside: '($RQ : *http.Request).Body'
+                      - pattern-inside: '($RC : *gin.Context).Request.Body'
+                      - pattern-inside: '($RC : echo.Context).Request().Body'
+                      - pattern-inside: '($RC : *echo.Context).Request().Body'
+                      - pattern-inside: 'io.LimitReader(($RQ : *http.Request).Body, $LIMIT)'
+                      - pattern-inside: 'io.LimitReader(($RC : *gin.Context).Request.Body, $LIMIT)'
+                      - pattern-inside: 'io.LimitReader(($RC : echo.Context).Request().Body, $LIMIT)'
+                      - pattern-inside: 'io.LimitReader(($RC : *echo.Context).Request().Body, $LIMIT)'
+                      # MaxBytesReader is meant for request bodies (net/http docs).
+                      - pattern-inside: 'http.MaxBytesReader($MW, $BODY, $LIMIT)'
+                      - pattern-inside: |
+                          $DATA = http.MaxBytesReader($MW, $BODY, $LIMIT)
+                          ...
                       - pattern-inside: '($DATA : bytes.Buffer)'
                       - pattern-inside: '($DATA : *bytes.Buffer)'
                       - pattern-inside: |

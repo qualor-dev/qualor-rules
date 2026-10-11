@@ -498,6 +498,11 @@ func Download(w http.ResponseWriter, r *http.Request) {
 	limited := io.LimitedReader{R: doc, N: 1 << 20}
 	// ok: go.xss
 	io.Copy(w, &limited)
+	// The file the request names, copied to the response: its content is not request data.
+	// ok: go.xss
+	io.Copy(w, doc)
+	// ok: go.xss
+	io.CopyN(w, io.LimitReader(doc, 1<<20), 512)
 	// A text/template executed into a file: the file is not the response.
 	log, err := os.Create("/var/log/shop/greeting.html")
 	if err != nil {
@@ -506,6 +511,68 @@ func Download(w http.ResponseWriter, r *http.Request) {
 	greeting.Execute(log, r.FormValue("name"))
 	// ok: go.xss
 	fmt.Fprintf(w, "<p>saved %s</p>", log.Name())
+}
+
+// The request body copied to the response as it is (io.Copy, io.CopyBuffer, io.CopyN), also
+// through http.MaxBytesReader or io.LimitReader: it echoes the body like `w.Write(body)`.
+func EchoBody(w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.xss
+	io.Copy(w, r.Body)
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	// ruleid: go.xss
+	io.Copy(w, r.Body)
+	capped := http.MaxBytesReader(w, r.Body, 1<<20)
+	// ruleid: go.xss
+	io.CopyBuffer(w, capped, make([]byte, 4096))
+	// ruleid: go.xss
+	io.CopyN(w, io.LimitReader(r.Body, 1<<20), 512)
+	// ruleid: go.xss
+	io.Copy(w, http.MaxBytesReader(w, r.Body, 1<<16))
+	// The body discarded, or copied somewhere other than the response.
+	// ok: go.xss
+	io.Copy(io.Discard, r.Body)
+	// ok: go.xss
+	io.Copy(os.Stdout, r.Body)
+	// A variable that holds the body itself is not followed.
+	body := r.Body
+	// todoruleid: go.xss
+	io.Copy(w, body)
+}
+
+// The body sent back with a Content-Type that browsers do not render as HTML.
+func EchoBodyBinary(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/octet-stream")
+	// ok: go.xss
+	io.Copy(w, r.Body)
+}
+
+func GinEchoBody(c *gin.Context) {
+	// ruleid: go.xss
+	io.Copy(c.Writer, c.Request.Body)
+	// ruleid: go.xss
+	io.CopyN(c.Writer, c.Request.Body, 1024)
+	// ruleid: go.xss
+	io.CopyBuffer(c.Writer, io.LimitReader(c.Request.Body, 1<<20), nil)
+}
+
+func EchoEchoBody(c echo.Context) error {
+	// ruleid: go.xss
+	io.CopyN(c.Response(), io.LimitReader(c.Request().Body, 1<<20), 512)
+	// ruleid: go.xss
+	io.CopyBuffer(c.Response(), c.Request().Body, nil)
+	// ruleid: go.xss
+	_, err := io.Copy(c.Response(), c.Request().Body)
+	return err
+}
+
+func EchoV5EchoBody(c *echo.Context) error {
+	// ruleid: go.xss
+	io.CopyN(c.Response(), c.Request().Body, 512)
+	// ruleid: go.xss
+	io.Copy(c.Response(), c.Request().Body)
+	// ruleid: go.xss
+	_, err := io.CopyBuffer(c.Response(), io.LimitReader(c.Request().Body, 1<<20), nil)
+	return err
 }
 
 // A file opened by name (os.Open, os.OpenFile): what it holds is not request data, as with
