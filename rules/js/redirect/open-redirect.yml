@@ -706,8 +706,9 @@ rules:
       # Results of awaited methods of other objects (services, models, clients: data loaded or
       # made with a request value as its key) are not request data. Promise helpers, parsers and
       # formatters return what they are given; the body readers of a Web Request stay sources.
-      # Not sanitizers: methods of the response (an awaited sink stays a sink) and functions
-      # imported by name (OpenGrep matches their calls as methods).
+      # Not sanitizers: methods of the response, NextResponse and Response (an awaited sink stays
+      # a sink, as in `return await NextResponse.redirect(url)`) and functions imported by name
+      # (OpenGrep matches their calls as methods).
       - patterns:
           - pattern: await $OBJ.$M(...)
           - pattern-not: await $R.json()
@@ -723,7 +724,7 @@ rules:
               regex: ^(?!(?:resolve|all|any|race|allSettled|parse|format\w*)$)
           - metavariable-regex:
               metavariable: $OBJ
-              regex: ^(?!(?:res|resp|response|reply|rep|_res|_response)\b)
+              regex: ^(?!(?:res|resp|response|reply|rep|_res|_response)\b|(?:NextResponse|Response)$)
           - pattern-not-inside: |
               import {..., $M, ...} from $FROM;
               ...
@@ -749,7 +750,7 @@ rules:
               regex: ^(?!(?:resolve|all|any|race|allSettled|parse|format\w*)$)
           - metavariable-regex:
               metavariable: $OBJ
-              regex: ^(?!(?:res|resp|response|reply|rep|_res|_response)\b)
+              regex: ^(?!(?:res|resp|response|reply|rep|_res|_response)\b|(?:NextResponse|Response)$)
           - pattern-not-inside: |
               import {..., $M, ...} from $FROM;
               ...
