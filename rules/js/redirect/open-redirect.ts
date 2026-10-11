@@ -109,6 +109,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     // ruleid: js.open-redirect
     return new Response(null, { status: 302, headers: { Location: `https://${next}/` } });
   }
+  if (mode === 'v') {
+    // ruleid: js.open-redirect
+    return NextResponse.redirect(`https://${next}/home`);
+  }
+  if (mode === 'u') {
+    // ok: js.open-redirect
+    return NextResponse.redirect(`https://www.example.com/posts/${next}`);
+  }
   // ok: js.open-redirect
   return NextResponse.redirect(new URL(`/posts/${encodeURIComponent(slug)}`, request.url));
 }
@@ -130,6 +138,10 @@ export async function POST(request: NextRequest) {
   if (body.kind === 'fixed') {
     // ok: js.open-redirect
     return new Response(null, { status: 303, headers: { Location: '/thanks/' + body.id } });
+  }
+  if (body.kind === 'fixed-template') {
+    // ok: js.open-redirect
+    return new Response(null, { status: 303, headers: { Location: `/thanks/${body.id}?from=${body.next}` } });
   }
   const form = await request.formData();
   // ruleid: js.open-redirect

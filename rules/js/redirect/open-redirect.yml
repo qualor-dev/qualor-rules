@@ -797,7 +797,7 @@ rules:
     # (pattern-inside, metavariable-regex) of a branch multiplies its size and cost: a condition
     # that does not give the prefilter a word is written as an exclusion (a pattern-not of the
     # same shape with the condition reversed). Such an exclusion's pattern must match few places
-    # (a template, a header name, a redirect() call), not every call: removing the matches of a
+    # (a header name, a redirect() call), not every call: removing the matches of a
     # broad one costs time on large files. With the conditions as positive terms the prefilter
     # took 0.6 s per scan and file; now about 0.15 s.
     # After a change, `opengrep-core -prefilter_of_rules <this file>` must not print "None", and a
@@ -917,22 +917,13 @@ rules:
                           - pattern: '$OBJ.$M($FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...)'
                           - pattern-not: '$OBJ.$M($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
                           - pattern-not: '$OBJ.$M("$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
-                      # the first argument: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
+                      # the first argument: templates. The first interpolation, at the start or after text; the second when two start the template or follow a scheme. A template whose text before the first interpolation ends the host or starts a path (`/a/${x}`, `?q=${x}`, `https://host/${x}`) is clean as a whole: the sanitizer of fixed starts, so the sink needs no condition on that text.
                       - patterns:
                           - pattern: '$OBJ.$M(`${$PART}...`, ...)'
                       - patterns:
                           - pattern-either:
                               - pattern: '$OBJ.$M(`$H${$PART}...`, ...)'
                               - pattern: '$OBJ.$M(`$H${$A}${$PART}...`, ...)'
-                          # (the condition on the text before the interpolation, as an exclusion: see Performance)
-                          - pattern-not:
-                              patterns:
-                                - pattern-either:
-                                    - pattern: '$OBJ.$M(`$H${$PART}...`, ...)'
-                                    - pattern: '$OBJ.$M(`$H${$A}${$PART}...`, ...)'
-                                - metavariable-regex:
-                                    metavariable: $H
-                                    regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                       - patterns:
                           - pattern: '$OBJ.$M(`${$P}${$PART}...`, ...)'
                       - patterns:
@@ -1035,22 +1026,13 @@ rules:
                           - pattern: '$OBJ.redirect($X, $FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...)'
                           - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
                           - pattern-not: '$OBJ.redirect($X, "$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
-                      # the second argument: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
+                      # the second argument: templates. The first interpolation, at the start or after text; the second when two start the template or follow a scheme. A template whose text before the first interpolation ends the host or starts a path (`/a/${x}`, `?q=${x}`, `https://host/${x}`) is clean as a whole: the sanitizer of fixed starts, so the sink needs no condition on that text.
                       - patterns:
                           - pattern: '$OBJ.redirect($X, `${$PART}...`, ...)'
                       - patterns:
                           - pattern-either:
                               - pattern: '$OBJ.redirect($X, `$H${$PART}...`, ...)'
                               - pattern: '$OBJ.redirect($X, `$H${$A}${$PART}...`, ...)'
-                          # (the condition on the text before the interpolation, as an exclusion: see Performance)
-                          - pattern-not:
-                              patterns:
-                                - pattern-either:
-                                    - pattern: '$OBJ.redirect($X, `$H${$PART}...`, ...)'
-                                    - pattern: '$OBJ.redirect($X, `$H${$A}${$PART}...`, ...)'
-                                - metavariable-regex:
-                                    metavariable: $H
-                                    regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                       - patterns:
                           - pattern: '$OBJ.redirect($X, `${$P}${$PART}...`, ...)'
                       - patterns:
@@ -1169,22 +1151,13 @@ rules:
                           - pattern: '$OBJ.$M($H, $FIRST + $PART + $S2 + $S3 + $S4 + $S5)'
                           - pattern-not: '$OBJ.$M($H, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6)'
                           - pattern-not: '$OBJ.$M($H, "$U" + $S1 + $S2 + $S3 + $S4 + $S5)'
-                      # the header value: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
+                      # the header value: templates. The first interpolation, at the start or after text; the second when two start the template or follow a scheme. A template whose text before the first interpolation ends the host or starts a path (`/a/${x}`, `?q=${x}`, `https://host/${x}`) is clean as a whole: the sanitizer of fixed starts, so the sink needs no condition on that text.
                       - patterns:
                           - pattern: '$OBJ.$M($H, `${$PART}...`)'
                       - patterns:
                           - pattern-either:
                               - pattern: '$OBJ.$M($H, `$TXT${$PART}...`)'
                               - pattern: '$OBJ.$M($H, `$TXT${$A}${$PART}...`)'
-                          # (the condition on the text before the interpolation, as an exclusion: see Performance)
-                          - pattern-not:
-                              patterns:
-                                - pattern-either:
-                                    - pattern: '$OBJ.$M($H, `$TXT${$PART}...`)'
-                                    - pattern: '$OBJ.$M($H, `$TXT${$A}${$PART}...`)'
-                                - metavariable-regex:
-                                    metavariable: $TXT
-                                    regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                       - patterns:
                           - pattern: '$OBJ.$M($H, `${$P}${$PART}...`)'
                       - patterns:
@@ -1303,22 +1276,13 @@ rules:
                           - pattern: '$OBJ.$M(..., {..., $H: $FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...}, ...)'
                           - pattern-not: '$OBJ.$M(..., {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...)'
                           - pattern-not: '$OBJ.$M(..., {..., $H: "$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...}, ...)'
-                      # the Location value: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
+                      # the Location value: templates. The first interpolation, at the start or after text; the second when two start the template or follow a scheme. A template whose text before the first interpolation ends the host or starts a path (`/a/${x}`, `?q=${x}`, `https://host/${x}`) is clean as a whole: the sanitizer of fixed starts, so the sink needs no condition on that text.
                       - patterns:
                           - pattern: '$OBJ.$M(..., {..., $H: `${$PART}...`, ...}, ...)'
                       - patterns:
                           - pattern-either:
                               - pattern: '$OBJ.$M(..., {..., $H: `$TXT${$PART}...`, ...}, ...)'
                               - pattern: '$OBJ.$M(..., {..., $H: `$TXT${$A}${$PART}...`, ...}, ...)'
-                          # (the condition on the text before the interpolation, as an exclusion: see Performance)
-                          - pattern-not:
-                              patterns:
-                                - pattern-either:
-                                    - pattern: '$OBJ.$M(..., {..., $H: `$TXT${$PART}...`, ...}, ...)'
-                                    - pattern: '$OBJ.$M(..., {..., $H: `$TXT${$A}${$PART}...`, ...}, ...)'
-                                - metavariable-regex:
-                                    metavariable: $TXT
-                                    regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
                       - patterns:
                           - pattern: '$OBJ.$M(..., {..., $H: `${$P}${$PART}...`, ...}, ...)'
                       - patterns:
@@ -1429,22 +1393,13 @@ rules:
                   - pattern: '$NR.redirect($FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...)'
                   - pattern-not: '$NR.redirect($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
                   - pattern-not: '$NR.redirect("$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
-              # the first argument: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
+              # the first argument: templates. The first interpolation, at the start or after text; the second when two start the template or follow a scheme. A template whose text before the first interpolation ends the host or starts a path (`/a/${x}`, `?q=${x}`, `https://host/${x}`) is clean as a whole: the sanitizer of fixed starts, so the sink needs no condition on that text.
               - patterns:
                   - pattern: '$NR.redirect(`${$PART}...`, ...)'
               - patterns:
                   - pattern-either:
                       - pattern: '$NR.redirect(`$H${$PART}...`, ...)'
                       - pattern: '$NR.redirect(`$H${$A}${$PART}...`, ...)'
-                  # (the condition on the text before the interpolation, as an exclusion: see Performance)
-                  - pattern-not:
-                      patterns:
-                        - pattern-either:
-                            - pattern: '$NR.redirect(`$H${$PART}...`, ...)'
-                            - pattern: '$NR.redirect(`$H${$A}${$PART}...`, ...)'
-                        - metavariable-regex:
-                            metavariable: $H
-                            regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
               - patterns:
                   - pattern: '$NR.redirect(`${$P}${$PART}...`, ...)'
               - patterns:
@@ -1574,22 +1529,13 @@ rules:
                   - pattern: '$FN($FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...)'
                   - pattern-not: '$FN($X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
                   - pattern-not: '$FN("$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
-              # the first argument: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
+              # the first argument: templates. The first interpolation, at the start or after text; the second when two start the template or follow a scheme. A template whose text before the first interpolation ends the host or starts a path (`/a/${x}`, `?q=${x}`, `https://host/${x}`) is clean as a whole: the sanitizer of fixed starts, so the sink needs no condition on that text.
               - patterns:
                   - pattern: '$FN(`${$PART}...`, ...)'
               - patterns:
                   - pattern-either:
                       - pattern: '$FN(`$H${$PART}...`, ...)'
                       - pattern: '$FN(`$H${$A}${$PART}...`, ...)'
-                  # (the condition on the text before the interpolation, as an exclusion: see Performance)
-                  - pattern-not:
-                      patterns:
-                        - pattern-either:
-                            - pattern: '$FN(`$H${$PART}...`, ...)'
-                            - pattern: '$FN(`$H${$A}${$PART}...`, ...)'
-                        - metavariable-regex:
-                            metavariable: $H
-                            regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
               - patterns:
                   - pattern: '$FN(`${$P}${$PART}...`, ...)'
               - patterns:
@@ -1710,22 +1656,13 @@ rules:
                   - pattern: 'new $NR(..., {..., headers: {..., $H: $FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...}, ...})'
                   - pattern-not: 'new $NR(..., {..., headers: {..., $H: $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...}, ...})'
                   - pattern-not: 'new $NR(..., {..., headers: {..., $H: "$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...}, ...})'
-              # the Location value: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
+              # the Location value: templates. The first interpolation, at the start or after text; the second when two start the template or follow a scheme. A template whose text before the first interpolation ends the host or starts a path (`/a/${x}`, `?q=${x}`, `https://host/${x}`) is clean as a whole: the sanitizer of fixed starts, so the sink needs no condition on that text.
               - patterns:
                   - pattern: 'new $NR(..., {..., headers: {..., $H: `${$PART}...`, ...}, ...})'
               - patterns:
                   - pattern-either:
                       - pattern: 'new $NR(..., {..., headers: {..., $H: `$TXT${$PART}...`, ...}, ...})'
                       - pattern: 'new $NR(..., {..., headers: {..., $H: `$TXT${$A}${$PART}...`, ...}, ...})'
-                  # (the condition on the text before the interpolation, as an exclusion: see Performance)
-                  - pattern-not:
-                      patterns:
-                        - pattern-either:
-                            - pattern: 'new $NR(..., {..., headers: {..., $H: `$TXT${$PART}...`, ...}, ...})'
-                            - pattern: 'new $NR(..., {..., headers: {..., $H: `$TXT${$A}${$PART}...`, ...}, ...})'
-                        - metavariable-regex:
-                            metavariable: $TXT
-                            regex: ^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\]+[/?#\\]|/[^/\\]|[?#]|[\w.~-]+/)
               - patterns:
                   - pattern: 'new $NR(..., {..., headers: {..., $H: `${$P}${$PART}...`, ...}, ...})'
               - patterns:

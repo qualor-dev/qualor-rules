@@ -632,6 +632,11 @@ app.get('/header-templates/:host', (req, res) => {
     // ruleid: js.open-redirect
     return res.writeHead(302, { Location: `https://${req.query.host}/` }).end();
   }
+  if (req.query.d) {
+    // A template that starts with a path is clean as a whole, in every sink form.
+    // ok: js.open-redirect
+    return res.writeHead(302, { Location: `/hosts/${req.params.host}` }).end();
+  }
   // ok: js.open-redirect
   res.setHeader('Location', `/users/${req.query.id}`);
   return res.end();
