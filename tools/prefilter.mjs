@@ -54,7 +54,6 @@ export const ALLOWED = Object.freeze({
   // Found by this check on 2026-10-07: the 2026-10-06 survey missed the files with anchors.
   'java.xxe': { limit: 'none', row: 'java.xxe#prefilter' },
   'python.command-injection': { limit: 'none', row: 'python.command-injection#prefilter' },
-  'go.tls-verification-disabled': { limit: 'size', row: 'go.tls-verification-disabled#prefilter-size' },
   'java.zip-slip': { limit: 'size', row: 'java.zip-slip#prefilter-size' },
   'js.xss': { limit: 'size', row: 'js.xss#prefilter-size' },
 });

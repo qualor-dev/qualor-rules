@@ -50,269 +50,286 @@ rules:
     paths:
       exclude: ['*_test.go']
     patterns:
+      # For the prefilter, the setting itself is the only positive term (its word is rare): the
+      # literal key or the assignment, whatever the config. The forms that report it are an
+      # exclusion: a setting that is none of them is left out (every form reports the range of
+      # the literal or the assignment, so the result is the same). As positive branches they
+      # multiplied the prefilter to 76 kB. The exclusion sits in a branch of its own so that it
+      # compares that range, before the value below narrows the match to `$V`.
       - pattern-either:
-          # A tls.Config literal (also behind & and inside a Transport, Dial, Client or Dialer).
-          - patterns:
-              - pattern: 'tls.Config{..., InsecureSkipVerify: $V, ...}'
-              - pattern-not: 'tls.Config{..., VerifyConnection: $VC, ...}'
-              - pattern-not: 'tls.Config{..., VerifyPeerCertificate: $VC, ...}'
-              # The config stored in a variable whose verification callback is set afterwards.
-              - pattern-not-inside: |
-                  $CFG := &tls.Config{...}
-                  ...
-                  $CFG.VerifyConnection = $VC
-              - pattern-not-inside: |
-                  $CFG := &tls.Config{...}
-                  ...
-                  $CFG.VerifyPeerCertificate = $VC
-              - pattern-not-inside: |
-                  $CFG := tls.Config{...}
-                  ...
-                  $CFG.VerifyConnection = $VC
-              - pattern-not-inside: |
-                  $CFG := tls.Config{...}
-                  ...
-                  $CFG.VerifyPeerCertificate = $VC
-          # The field set on a config: typed, made in the same function, or a Transport's.
           - patterns:
               - pattern-either:
-                  - pattern: '($CFG : *tls.Config).InsecureSkipVerify = $V'
-                  - pattern: '($CFG : tls.Config).InsecureSkipVerify = $V'
-                  - pattern: $T.TLSClientConfig.InsecureSkipVerify = $V
-                  - patterns:
-                      - pattern-either:
-                          - pattern-inside: |
-                              $CFG := &tls.Config{...}
-                              ...
-                          - pattern-inside: |
-                              $CFG := tls.Config{...}
-                              ...
-                          - pattern-inside: |
-                              $CFG := new(tls.Config)
-                              ...
-                          - pattern-inside: |
-                              var $CFG tls.Config
-                              ...
-                      - pattern: $CFG.InsecureSkipVerify = $V
-              - pattern-not-inside: |
-                  $CFG.InsecureSkipVerify = $V
-                  ...
-                  $CFG.VerifyConnection = $VC
-              - pattern-not-inside: |
-                  $CFG.InsecureSkipVerify = $V
-                  ...
-                  $CFG.VerifyPeerCertificate = $VC
-              - pattern-not-inside: |
-                  $CFG.VerifyConnection = $VC
-                  ...
-                  $CFG.InsecureSkipVerify = $V
-              - pattern-not-inside: |
-                  $CFG.VerifyPeerCertificate = $VC
-                  ...
-                  $CFG.InsecureSkipVerify = $V
-              # The config's literal sets the callback (`$CFG = ...` also matches `:=` and `var`),
-              # unless the callback is empty: written in place, or a variable or named function
-              # of the file whose body is only `return nil` (as in the branches below).
-              - pattern-not-inside:
+                  - pattern: 'tls.Config{..., InsecureSkipVerify: $V, ...}'
+                  - pattern: $SET.InsecureSkipVerify = $V
+              - pattern-not:
                   patterns:
                     - pattern-either:
-                        - pattern: |
-                            $CFG = &tls.Config{..., VerifyConnection: $VC, ...}
-                            ...
-                            $CFG.InsecureSkipVerify = $V
-                        - pattern: |
-                            $CFG = &tls.Config{..., VerifyPeerCertificate: $VC, ...}
-                            ...
-                            $CFG.InsecureSkipVerify = $V
-                        - pattern: |
-                            $CFG = tls.Config{..., VerifyConnection: $VC, ...}
-                            ...
-                            $CFG.InsecureSkipVerify = $V
-                        - pattern: |
-                            $CFG = tls.Config{..., VerifyPeerCertificate: $VC, ...}
-                            ...
-                            $CFG.InsecureSkipVerify = $V
-                    - pattern-not: |
-                        $CFG = &tls.Config{..., VerifyConnection: func(...) error { return nil }, ...}
-                        ...
-                        $CFG.InsecureSkipVerify = $V
-                    - pattern-not: |
-                        $CFG = &tls.Config{..., VerifyPeerCertificate: func(...) error { return nil }, ...}
-                        ...
-                        $CFG.InsecureSkipVerify = $V
-                    - pattern-not: |
-                        $CFG = tls.Config{..., VerifyConnection: func(...) error { return nil }, ...}
-                        ...
-                        $CFG.InsecureSkipVerify = $V
-                    - pattern-not: |
-                        $CFG = tls.Config{..., VerifyPeerCertificate: func(...) error { return nil }, ...}
-                        ...
-                        $CFG.InsecureSkipVerify = $V
-                    - pattern-not-inside:
-                        patterns:
-                          - pattern-either:
-                              - pattern-inside: |
-                                  $VC = func(...) error { return nil }
+                        - pattern: 'tls.Config{..., InsecureSkipVerify: $V, ...}'
+                        - pattern: $SET.InsecureSkipVerify = $V
+                    - pattern-not:
+                        pattern-either:
+                          # A tls.Config literal (also behind & and inside a Transport, Dial, Client or Dialer).
+                          - patterns:
+                              - pattern: 'tls.Config{..., InsecureSkipVerify: $V, ...}'
+                              - pattern-not: 'tls.Config{..., VerifyConnection: $VC, ...}'
+                              - pattern-not: 'tls.Config{..., VerifyPeerCertificate: $VC, ...}'
+                              # The config stored in a variable whose verification callback is set afterwards.
+                              - pattern-not-inside: |
+                                  $CFG := &tls.Config{...}
                                   ...
-                              - pattern-inside: |
-                                  func $VC(...) error { return nil }
+                                  $CFG.VerifyConnection = $VC
+                              - pattern-not-inside: |
+                                  $CFG := &tls.Config{...}
                                   ...
-                              - pattern-inside: |
+                                  $CFG.VerifyPeerCertificate = $VC
+                              - pattern-not-inside: |
+                                  $CFG := tls.Config{...}
+                                  ...
+                                  $CFG.VerifyConnection = $VC
+                              - pattern-not-inside: |
+                                  $CFG := tls.Config{...}
+                                  ...
+                                  $CFG.VerifyPeerCertificate = $VC
+                          # The field set on a config: typed, made in the same function, or a Transport's.
+                          - patterns:
+                              - pattern-either:
+                                  - pattern: '($CFG : *tls.Config).InsecureSkipVerify = $V'
+                                  - pattern: '($CFG : tls.Config).InsecureSkipVerify = $V'
+                                  - pattern: $T.TLSClientConfig.InsecureSkipVerify = $V
+                                  - patterns:
+                                      - pattern-either:
+                                          - pattern-inside: |
+                                              $CFG := &tls.Config{...}
+                                              ...
+                                          - pattern-inside: |
+                                              $CFG := tls.Config{...}
+                                              ...
+                                          - pattern-inside: |
+                                              $CFG := new(tls.Config)
+                                              ...
+                                          - pattern-inside: |
+                                              var $CFG tls.Config
+                                              ...
+                                      - pattern: $CFG.InsecureSkipVerify = $V
+                              - pattern-not-inside: |
+                                  $CFG.InsecureSkipVerify = $V
+                                  ...
+                                  $CFG.VerifyConnection = $VC
+                              - pattern-not-inside: |
+                                  $CFG.InsecureSkipVerify = $V
+                                  ...
+                                  $CFG.VerifyPeerCertificate = $VC
+                              - pattern-not-inside: |
+                                  $CFG.VerifyConnection = $VC
+                                  ...
+                                  $CFG.InsecureSkipVerify = $V
+                              - pattern-not-inside: |
+                                  $CFG.VerifyPeerCertificate = $VC
+                                  ...
+                                  $CFG.InsecureSkipVerify = $V
+                              # The config's literal sets the callback (`$CFG = ...` also matches `:=` and `var`),
+                              # unless the callback is empty: written in place, or a variable or named function
+                              # of the file whose body is only `return nil` (as in the branches below).
+                              - pattern-not-inside:
+                                  patterns:
+                                    - pattern-either:
+                                        - pattern: |
+                                            $CFG = &tls.Config{..., VerifyConnection: $VC, ...}
+                                            ...
+                                            $CFG.InsecureSkipVerify = $V
+                                        - pattern: |
+                                            $CFG = &tls.Config{..., VerifyPeerCertificate: $VC, ...}
+                                            ...
+                                            $CFG.InsecureSkipVerify = $V
+                                        - pattern: |
+                                            $CFG = tls.Config{..., VerifyConnection: $VC, ...}
+                                            ...
+                                            $CFG.InsecureSkipVerify = $V
+                                        - pattern: |
+                                            $CFG = tls.Config{..., VerifyPeerCertificate: $VC, ...}
+                                            ...
+                                            $CFG.InsecureSkipVerify = $V
+                                    - pattern-not: |
+                                        $CFG = &tls.Config{..., VerifyConnection: func(...) error { return nil }, ...}
+                                        ...
+                                        $CFG.InsecureSkipVerify = $V
+                                    - pattern-not: |
+                                        $CFG = &tls.Config{..., VerifyPeerCertificate: func(...) error { return nil }, ...}
+                                        ...
+                                        $CFG.InsecureSkipVerify = $V
+                                    - pattern-not: |
+                                        $CFG = tls.Config{..., VerifyConnection: func(...) error { return nil }, ...}
+                                        ...
+                                        $CFG.InsecureSkipVerify = $V
+                                    - pattern-not: |
+                                        $CFG = tls.Config{..., VerifyPeerCertificate: func(...) error { return nil }, ...}
+                                        ...
+                                        $CFG.InsecureSkipVerify = $V
+                                    - pattern-not-inside:
+                                        patterns:
+                                          - pattern-either:
+                                              - pattern-inside: |
+                                                  $VC = func(...) error { return nil }
+                                                  ...
+                                              - pattern-inside: |
+                                                  func $VC(...) error { return nil }
+                                                  ...
+                                              - pattern-inside: |
+                                                  func $F(...) { ... }
+                                                  ...
+                                                  func $VC(...) error { return nil }
+                                          - pattern-not-inside: |
+                                              func ($RCV $RT) $VC(...) error { return nil }
+                                              ...
+                                          - pattern-not-inside: |
+                                              func $F(...) { ... }
+                                              ...
+                                              func ($RCV $RT) $VC(...) error { return nil }
+                                          - pattern-not-inside: |
+                                              func ($RT) $VC(...) error { return nil }
+                                              ...
+                                          - pattern-not-inside: |
+                                              func $F(...) { ... }
+                                              ...
+                                              func ($RT) $VC(...) error { return nil }
+                          # A verification callback whose body is only `return nil` verifies nothing: with
+                          # InsecureSkipVerify its verifiedChains are nil (crypto/tls docs), so it trusts all.
+                          - patterns:
+                              - pattern-either:
+                                  - pattern-inside: 'tls.Config{..., VerifyConnection: func(...) error { return nil }, ...}'
+                                  - pattern-inside: 'tls.Config{..., VerifyPeerCertificate: func(...) error { return nil }, ...}'
+                                  - pattern-inside: |
+                                      $CFG := &tls.Config{...}
+                                      ...
+                                      $CFG.VerifyConnection = func(...) error { return nil }
+                                  - pattern-inside: |
+                                      $CFG := &tls.Config{...}
+                                      ...
+                                      $CFG.VerifyPeerCertificate = func(...) error { return nil }
+                                  - pattern-inside: |
+                                      $CFG := tls.Config{...}
+                                      ...
+                                      $CFG.VerifyConnection = func(...) error { return nil }
+                                  - pattern-inside: |
+                                      $CFG := tls.Config{...}
+                                      ...
+                                      $CFG.VerifyPeerCertificate = func(...) error { return nil }
+                              - pattern: 'tls.Config{..., InsecureSkipVerify: $V, ...}'
+                          - patterns:
+                              - pattern-either:
+                                  - pattern-inside: |
+                                      $CFG.InsecureSkipVerify = $V
+                                      ...
+                                      $CFG.VerifyConnection = func(...) error { return nil }
+                                  - pattern-inside: |
+                                      $CFG.VerifyConnection = func(...) error { return nil }
+                                      ...
+                                      $CFG.InsecureSkipVerify = $V
+                                  - pattern-inside: |
+                                      $CFG.InsecureSkipVerify = $V
+                                      ...
+                                      $CFG.VerifyPeerCertificate = func(...) error { return nil }
+                                  - pattern-inside: |
+                                      $CFG.VerifyPeerCertificate = func(...) error { return nil }
+                                      ...
+                                      $CFG.InsecureSkipVerify = $V
+                              - pattern: $CFG.InsecureSkipVerify = $V
+                          # The same empty callback held in a variable (`:=`, `=`, `var`, also at package level)
+                          # or declared as a named function in the file.
+                          - patterns:
+                              - pattern-either:
+                                  - pattern-inside: |
+                                      $NOOP = func(...) error { return nil }
+                                      ...
+                                  - pattern-inside: |
+                                      func $NOOP(...) error { return nil }
+                                      ...
+                                  # Declared after the function that uses it.
+                                  - pattern-inside: |
+                                      func $F(...) { ... }
+                                      ...
+                                      func $NOOP(...) error { return nil }
+                              # Not a method: a method of that name belongs to another type than the callback.
+                              - pattern-not-inside: |
+                                  func ($RCV $RT) $NOOP(...) error { return nil }
+                                  ...
+                              - pattern-not-inside: |
                                   func $F(...) { ... }
                                   ...
-                                  func $VC(...) error { return nil }
-                          - pattern-not-inside: |
-                              func ($RCV $RT) $VC(...) error { return nil }
-                              ...
-                          - pattern-not-inside: |
-                              func $F(...) { ... }
-                              ...
-                              func ($RCV $RT) $VC(...) error { return nil }
-                          - pattern-not-inside: |
-                              func ($RT) $VC(...) error { return nil }
-                              ...
-                          - pattern-not-inside: |
-                              func $F(...) { ... }
-                              ...
-                              func ($RT) $VC(...) error { return nil }
-          # A verification callback whose body is only `return nil` verifies nothing: with
-          # InsecureSkipVerify its verifiedChains are nil (crypto/tls docs), so it trusts all.
-          - patterns:
-              - pattern-either:
-                  - pattern-inside: 'tls.Config{..., VerifyConnection: func(...) error { return nil }, ...}'
-                  - pattern-inside: 'tls.Config{..., VerifyPeerCertificate: func(...) error { return nil }, ...}'
-                  - pattern-inside: |
-                      $CFG := &tls.Config{...}
-                      ...
-                      $CFG.VerifyConnection = func(...) error { return nil }
-                  - pattern-inside: |
-                      $CFG := &tls.Config{...}
-                      ...
-                      $CFG.VerifyPeerCertificate = func(...) error { return nil }
-                  - pattern-inside: |
-                      $CFG := tls.Config{...}
-                      ...
-                      $CFG.VerifyConnection = func(...) error { return nil }
-                  - pattern-inside: |
-                      $CFG := tls.Config{...}
-                      ...
-                      $CFG.VerifyPeerCertificate = func(...) error { return nil }
-              - pattern: 'tls.Config{..., InsecureSkipVerify: $V, ...}'
-          - patterns:
-              - pattern-either:
-                  - pattern-inside: |
-                      $CFG.InsecureSkipVerify = $V
-                      ...
-                      $CFG.VerifyConnection = func(...) error { return nil }
-                  - pattern-inside: |
-                      $CFG.VerifyConnection = func(...) error { return nil }
-                      ...
-                      $CFG.InsecureSkipVerify = $V
-                  - pattern-inside: |
-                      $CFG.InsecureSkipVerify = $V
-                      ...
-                      $CFG.VerifyPeerCertificate = func(...) error { return nil }
-                  - pattern-inside: |
-                      $CFG.VerifyPeerCertificate = func(...) error { return nil }
-                      ...
-                      $CFG.InsecureSkipVerify = $V
-              - pattern: $CFG.InsecureSkipVerify = $V
-          # The same empty callback held in a variable (`:=`, `=`, `var`, also at package level)
-          # or declared as a named function in the file.
-          - patterns:
-              - pattern-either:
-                  - pattern-inside: |
-                      $NOOP = func(...) error { return nil }
-                      ...
-                  - pattern-inside: |
-                      func $NOOP(...) error { return nil }
-                      ...
-                  # Declared after the function that uses it.
-                  - pattern-inside: |
-                      func $F(...) { ... }
-                      ...
-                      func $NOOP(...) error { return nil }
-              # Not a method: a method of that name belongs to another type than the callback.
-              - pattern-not-inside: |
-                  func ($RCV $RT) $NOOP(...) error { return nil }
-                  ...
-              - pattern-not-inside: |
-                  func $F(...) { ... }
-                  ...
-                  func ($RCV $RT) $NOOP(...) error { return nil }
-              - pattern-not-inside: |
-                  func ($RT) $NOOP(...) error { return nil }
-                  ...
-              - pattern-not-inside: |
-                  func $F(...) { ... }
-                  ...
-                  func ($RT) $NOOP(...) error { return nil }
-              - pattern-either:
-                  - pattern-inside: 'tls.Config{..., VerifyConnection: $NOOP, ...}'
-                  - pattern-inside: 'tls.Config{..., VerifyPeerCertificate: $NOOP, ...}'
-                  - pattern-inside: |
-                      $CFG := &tls.Config{...}
-                      ...
-                      $CFG.VerifyConnection = $NOOP
-                  - pattern-inside: |
-                      $CFG := &tls.Config{...}
-                      ...
-                      $CFG.VerifyPeerCertificate = $NOOP
-                  - pattern-inside: |
-                      $CFG := tls.Config{...}
-                      ...
-                      $CFG.VerifyConnection = $NOOP
-                  - pattern-inside: |
-                      $CFG := tls.Config{...}
-                      ...
-                      $CFG.VerifyPeerCertificate = $NOOP
-              - pattern: 'tls.Config{..., InsecureSkipVerify: $V, ...}'
-          - patterns:
-              - pattern-either:
-                  - pattern-inside: |
-                      $NOOP = func(...) error { return nil }
-                      ...
-                  - pattern-inside: |
-                      func $NOOP(...) error { return nil }
-                      ...
-                  # Declared after the function that uses it.
-                  - pattern-inside: |
-                      func $F(...) { ... }
-                      ...
-                      func $NOOP(...) error { return nil }
-              # Not a method: a method of that name belongs to another type than the callback.
-              - pattern-not-inside: |
-                  func ($RCV $RT) $NOOP(...) error { return nil }
-                  ...
-              - pattern-not-inside: |
-                  func $F(...) { ... }
-                  ...
-                  func ($RCV $RT) $NOOP(...) error { return nil }
-              - pattern-not-inside: |
-                  func ($RT) $NOOP(...) error { return nil }
-                  ...
-              - pattern-not-inside: |
-                  func $F(...) { ... }
-                  ...
-                  func ($RT) $NOOP(...) error { return nil }
-              - pattern-either:
-                  - pattern-inside: |
-                      $CFG.InsecureSkipVerify = $V
-                      ...
-                      $CFG.VerifyConnection = $NOOP
-                  - pattern-inside: |
-                      $CFG.VerifyConnection = $NOOP
-                      ...
-                      $CFG.InsecureSkipVerify = $V
-                  - pattern-inside: |
-                      $CFG.InsecureSkipVerify = $V
-                      ...
-                      $CFG.VerifyPeerCertificate = $NOOP
-                  - pattern-inside: |
-                      $CFG.VerifyPeerCertificate = $NOOP
-                      ...
-                      $CFG.InsecureSkipVerify = $V
-              - pattern: $CFG.InsecureSkipVerify = $V
+                                  func ($RCV $RT) $NOOP(...) error { return nil }
+                              - pattern-not-inside: |
+                                  func ($RT) $NOOP(...) error { return nil }
+                                  ...
+                              - pattern-not-inside: |
+                                  func $F(...) { ... }
+                                  ...
+                                  func ($RT) $NOOP(...) error { return nil }
+                              - pattern-either:
+                                  - pattern-inside: 'tls.Config{..., VerifyConnection: $NOOP, ...}'
+                                  - pattern-inside: 'tls.Config{..., VerifyPeerCertificate: $NOOP, ...}'
+                                  - pattern-inside: |
+                                      $CFG := &tls.Config{...}
+                                      ...
+                                      $CFG.VerifyConnection = $NOOP
+                                  - pattern-inside: |
+                                      $CFG := &tls.Config{...}
+                                      ...
+                                      $CFG.VerifyPeerCertificate = $NOOP
+                                  - pattern-inside: |
+                                      $CFG := tls.Config{...}
+                                      ...
+                                      $CFG.VerifyConnection = $NOOP
+                                  - pattern-inside: |
+                                      $CFG := tls.Config{...}
+                                      ...
+                                      $CFG.VerifyPeerCertificate = $NOOP
+                              - pattern: 'tls.Config{..., InsecureSkipVerify: $V, ...}'
+                          - patterns:
+                              - pattern-either:
+                                  - pattern-inside: |
+                                      $NOOP = func(...) error { return nil }
+                                      ...
+                                  - pattern-inside: |
+                                      func $NOOP(...) error { return nil }
+                                      ...
+                                  # Declared after the function that uses it.
+                                  - pattern-inside: |
+                                      func $F(...) { ... }
+                                      ...
+                                      func $NOOP(...) error { return nil }
+                              # Not a method: a method of that name belongs to another type than the callback.
+                              - pattern-not-inside: |
+                                  func ($RCV $RT) $NOOP(...) error { return nil }
+                                  ...
+                              - pattern-not-inside: |
+                                  func $F(...) { ... }
+                                  ...
+                                  func ($RCV $RT) $NOOP(...) error { return nil }
+                              - pattern-not-inside: |
+                                  func ($RT) $NOOP(...) error { return nil }
+                                  ...
+                              - pattern-not-inside: |
+                                  func $F(...) { ... }
+                                  ...
+                                  func ($RT) $NOOP(...) error { return nil }
+                              - pattern-either:
+                                  - pattern-inside: |
+                                      $CFG.InsecureSkipVerify = $V
+                                      ...
+                                      $CFG.VerifyConnection = $NOOP
+                                  - pattern-inside: |
+                                      $CFG.VerifyConnection = $NOOP
+                                      ...
+                                      $CFG.InsecureSkipVerify = $V
+                                  - pattern-inside: |
+                                      $CFG.InsecureSkipVerify = $V
+                                      ...
+                                      $CFG.VerifyPeerCertificate = $NOOP
+                                  - pattern-inside: |
+                                      $CFG.VerifyPeerCertificate = $NOOP
+                                      ...
+                                      $CFG.InsecureSkipVerify = $V
+                              - pattern: $CFG.InsecureSkipVerify = $V
       # The value: the literal true, or a constant declared as true.
       - pattern-either:
           - patterns:

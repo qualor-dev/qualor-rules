@@ -426,6 +426,22 @@ func LookAlikes(o *Options) {
 	_ = mail.Config{Host: "smtp.example.com", InsecureSkipVerify: true}
 }
 
+// The same look-alike set between a config and its empty callback (written in place, or held in
+// a variable): the callback belongs to the config, not to the option.
+func LookAlikeBetween(addr string, o *Options) {
+	inPlace := &tls.Config{}
+	// ok: go.tls-verification-disabled
+	o.InsecureSkipVerify = true
+	inPlace.VerifyConnection = func(cs tls.ConnectionState) error { return nil }
+	tls.Dial("tcp", addr, inPlace)
+	noop := func(cs tls.ConnectionState) error { return nil }
+	held := &tls.Config{}
+	// ok: go.tls-verification-disabled
+	o.InsecureSkipVerify = true
+	held.VerifyConnection = noop
+	tls.Dial("tcp", addr, held)
+}
+
 // Known limits.
 func limits(addr string, base tls.Config) {
 	// A config returned by a function (of this file or another) and changed here has no type
