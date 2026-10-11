@@ -38,6 +38,36 @@ import org.w3c.dom.Document;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 
+// The first class of the file: an enum nested in it, used after its declaration, by its simple
+// name and by its qualified name.
+@RestController
+class NestedEnumController {
+    private final XPath xpath = XPathFactory.newInstance().newXPath();
+    private Document catalog;
+
+    static class Sizes {
+        enum Size {
+            SMALL, LARGE
+        }
+    }
+
+    enum Column {
+        NAME, PRICE
+    }
+
+    @GetMapping("/shared/nested-enum")
+    String nestedEnum(@RequestParam String key, @RequestParam String n) throws XPathExpressionException {
+        // ok: java.xpath-injection
+        xpath.evaluate("//book[@level='" + Column.valueOf(key).name() + "']", catalog);
+        // ok: java.xpath-injection
+        xpath.evaluate("//book[@level='" + NestedEnumController.Column.valueOf(key).name() + "']", catalog);
+        // An enum nested in a nested class, named from outside that class, is not recognised.
+        // todook: java.xpath-injection
+        xpath.evaluate("//book[@level='" + Sizes.Size.valueOf(key).name() + "']", catalog);
+        return "ok";
+    }
+}
+
 enum EarlierKind {
     FIRST, SECOND
 }

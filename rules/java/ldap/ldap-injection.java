@@ -51,6 +51,36 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 
+// The first class of the file: an enum nested in it, used after its declaration, by its simple
+// name and by its qualified name.
+@RestController
+class NestedEnumController {
+    private LdapTemplate ldapTemplate;
+    private static final AttributesMapper<String> CN = attrs -> (String) attrs.get("cn").get();
+
+    static class Sizes {
+        enum Size {
+            SMALL, LARGE
+        }
+    }
+
+    enum Column {
+        NAME, PRICE
+    }
+
+    @GetMapping("/shared/nested-enum")
+    String nestedEnum(@RequestParam String key, @RequestParam String n) {
+        // ok: java.ldap-injection
+        ldapTemplate.search("ou=x", "(cn=" + Column.valueOf(key).name() + ")", CN);
+        // ok: java.ldap-injection
+        ldapTemplate.search("ou=x", "(cn=" + NestedEnumController.Column.valueOf(key).name() + ")", CN);
+        // An enum nested in a nested class, named from outside that class, is not recognised.
+        // todook: java.ldap-injection
+        ldapTemplate.search("ou=x", "(cn=" + Sizes.Size.valueOf(key).name() + ")", CN);
+        return "ok";
+    }
+}
+
 enum EarlierKind {
     FIRST, SECOND
 }

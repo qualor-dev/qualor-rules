@@ -177,7 +177,8 @@ rules:
       - pattern: Enum.valueOf(...)
       - pattern: java.lang.Enum.valueOf(...)
       - patterns:
-          # An enum nested in a class is matched by the class-then-enum form too.
+          # An enum declared before or after a class of the file (also nested in a later class),
+          # or nested in a class and used in it, by its simple name or qualified by its class.
           - pattern-either:
               - pattern-inside: |
                   class $X { ... }
@@ -187,7 +188,11 @@ rules:
                   enum $E { ... }
                   ...
                   class $X { ... }
-          - pattern: $E.valueOf(...)
+              - pattern-inside: |
+                  class $X { ... enum $E { ... } ... }
+          - pattern-either:
+              - pattern: $E.valueOf(...)
+              - pattern: $O.$E.valueOf(...)
     pattern-sinks:
       # ObjectInputStream and XMLDecoder created over request data in the same method: the read.
       # A filter set with setObjectInputFilter before the read restricts the classes.

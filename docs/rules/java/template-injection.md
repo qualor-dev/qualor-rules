@@ -127,7 +127,9 @@ public class GreetingServlet extends HttpServlet {
 - A handler parameter without an annotation is not a source (except a Spring `HttpEntity` or
   `RequestEntity`), and taint is followed through the methods of one file, not into other files.
   Allow-list lookups are recognised as `Map.of(...)` of constants and as `valueOf` of an enum
-  declared in the same file; a lookup in any other map yields that map's values.
+  declared in the same file; an enum nested in a nested class and named from outside that class
+  (`Inner.Kind.valueOf`) may still pass the request data on, and a lookup in any other map yields
+  that map's values.
 - With OpenGrep's `--taint-intrafile` mode, a two-argument `insert` on an object whose class is not
   in the same file (a MyBatis `SqlSession.insert(statement, parameter)`) counts as a write into a
   container, so what that object returns afterwards (`selectOne`) is taken for request data.

@@ -28,6 +28,33 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 
+// The first class of the file: an enum nested in it, used after its declaration, by its simple
+// name and by its qualified name.
+@RestController
+class NestedEnumController {
+    static class Sizes {
+        enum Size {
+            SMALL, LARGE
+        }
+    }
+
+    enum Column {
+        NAME, PRICE
+    }
+
+    @GetMapping("/shared/nested-enum")
+    String nestedEnum(@RequestParam String key, @RequestParam String n) {
+        // ok: java.regex-injection
+        Pattern.compile(Column.valueOf(key).name());
+        // ok: java.regex-injection
+        Pattern.compile(NestedEnumController.Column.valueOf(key).name());
+        // An enum nested in a nested class, named from outside that class, is not recognised.
+        // todook: java.regex-injection
+        Pattern.compile(Sizes.Size.valueOf(key).name());
+        return "ok";
+    }
+}
+
 enum EarlierKind {
     FIRST, SECOND
 }
@@ -348,6 +375,12 @@ class SharedLimitsController {
         // An enum declared before the class.
         // ok: java.regex-injection
         Pattern.compile(EarlierKind.valueOf(key).name());
+        // An enum declared after the class.
+        // ok: java.regex-injection
+        Pattern.compile(FormKind.valueOf(key).name());
+        // valueOf of a class that is not an enum hands the text back.
+        // ruleid: java.regex-injection
+        Pattern.compile(javax.xml.namespace.QName.valueOf(key).getLocalPart());
         StringBuilder single = new StringBuilder();
         single.append(key);
         // A single append, not in a chain.
@@ -477,4 +510,8 @@ class MyBatisSessions {
     static org.apache.ibatis.session.SqlSession open() {
         return null;
     }
+}
+
+enum FormKind {
+    SMALL, LARGE
 }

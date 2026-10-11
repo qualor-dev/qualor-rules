@@ -60,7 +60,8 @@ rules:
     #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
     #   valueOf of an enum declared in this file (or Enum.valueOf): valueOf of an enum
     #   from another file still passes the request data on (a lookup in any other map, a literal
-    #   Map.ofEntries table too, yields the map's values).
+    #   Map.ofEntries table too, yields the map's values), and valueOf of an enum nested in a
+    #   nested class, named from outside that class (Inner.Kind.valueOf), may too.
     # - SpEL and OGNL are reported where the parsed expression is evaluated (getValue, setValue,
     #   getValueType): an expression parsed from request data in one method and evaluated in
     #   another of this file is reported where it is evaluated; one evaluated in another file is
@@ -170,7 +171,8 @@ rules:
       - pattern: Enum.valueOf(...)
       - pattern: java.lang.Enum.valueOf(...)
       - patterns:
-          # An enum nested in a class is matched by the class-then-enum form too.
+          # An enum declared before or after a class of the file (also nested in a later class),
+          # or nested in a class and used in it, by its simple name or qualified by its class.
           - pattern-either:
               - pattern-inside: |
                   class $X { ... }
@@ -180,7 +182,11 @@ rules:
                   enum $E { ... }
                   ...
                   class $X { ... }
-          - pattern: $E.valueOf(...)
+              - pattern-inside: |
+                  class $X { ... enum $E { ... } ... }
+          - pattern-either:
+              - pattern: $E.valueOf(...)
+              - pattern: $O.$E.valueOf(...)
     pattern-sinks:
       # Spring SpEL: an expression parsed from request data and evaluated, unless the evaluation
       # context is a SimpleEvaluationContext (getValue() without a context, or with a root object,

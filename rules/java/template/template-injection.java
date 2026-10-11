@@ -44,6 +44,35 @@ import org.thymeleaf.spring6.SpringTemplateEngine;
 import org.thymeleaf.templatemode.TemplateMode;
 import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver;
 
+// The first class of the file: an enum nested in it, used after its declaration, by its simple
+// name and by its qualified name.
+@RestController
+class NestedEnumController {
+    private TemplateEngine templateEngine;
+
+    static class Sizes {
+        enum Size {
+            SMALL, LARGE
+        }
+    }
+
+    enum Column {
+        NAME, PRICE
+    }
+
+    @GetMapping("/shared/nested-enum")
+    String nestedEnum(@RequestParam String key, @RequestParam String n) {
+        // ok: java.template-injection
+        templateEngine.process("<p>" + Column.valueOf(key).name() + "</p>", new Context());
+        // ok: java.template-injection
+        templateEngine.process("<p>" + NestedEnumController.Column.valueOf(key).name() + "</p>", new Context());
+        // An enum nested in a nested class, named from outside that class, is not recognised.
+        // todook: java.template-injection
+        templateEngine.process("<p>" + Sizes.Size.valueOf(key).name() + "</p>", new Context());
+        return "ok";
+    }
+}
+
 enum EarlierKind {
     FIRST, SECOND
 }

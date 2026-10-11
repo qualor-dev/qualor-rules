@@ -37,7 +37,34 @@ import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-// An enum declared before the first class (the shared enum allow-list forms).
+// The first class of the file: an enum nested in it, used after its declaration, by its simple
+// name and by its qualified name.
+@RestController
+class NestedEnumController {
+    static class Sizes {
+        enum Size {
+            SMALL, LARGE
+        }
+    }
+
+    enum Column {
+        NAME, PRICE
+    }
+
+    @GetMapping("/shared/nested-enum")
+    String nestedEnum(@RequestParam String key, @RequestParam String n) {
+        // ok: java.path-traversal
+        new File("/srv/files", Column.valueOf(key).name()).delete();
+        // ok: java.path-traversal
+        new File("/srv/files", NestedEnumController.Column.valueOf(key).name()).delete();
+        // An enum nested in a nested class, named from outside that class, is not recognised.
+        // todook: java.path-traversal
+        new File("/srv/files", Sizes.Size.valueOf(key).name()).delete();
+        return "ok";
+    }
+}
+
+// An enum declared before the other classes (the shared enum allow-list forms).
 enum EarlierKind {
     ONE, TWO
 }

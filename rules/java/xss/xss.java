@@ -37,7 +37,35 @@ import org.springframework.web.bind.annotation.ResponseBody;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.HtmlUtils;
 
-// An enum declared before the first class (the shared enum allow-list forms).
+// The first class of the file: an enum nested in it, used after its declaration, by its simple
+// name and by its qualified name.
+@RestController
+class NestedEnumController {
+    static class Sizes {
+        enum Size {
+            SMALL, LARGE
+        }
+    }
+
+    enum Column {
+        NAME, PRICE
+    }
+
+    @GetMapping("/shared/nested-enum")
+    String nestedEnum(@RequestParam String key, @RequestParam String n, HttpServletResponse response) throws IOException {
+        PrintWriter out = response.getWriter();
+        // ok: java.xss
+        out.println("<p>" + Column.valueOf(key).name() + "</p>");
+        // ok: java.xss
+        out.println("<p>" + NestedEnumController.Column.valueOf(key).name() + "</p>");
+        // An enum nested in a nested class, named from outside that class, is not recognised.
+        // todook: java.xss
+        out.println("<p>" + Sizes.Size.valueOf(key).name() + "</p>");
+        return "ok";
+    }
+}
+
+// An enum declared before the other classes (the shared enum allow-list forms).
 enum EarlierKind {
     ONE, TWO
 }

@@ -124,6 +124,10 @@ public class HelloServlet extends HttpServlet {
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
   Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
   request body and headers); enum, `List` or `Optional` parameters still count as request data.
+- Allow-list lookups are recognised as `Map.of(...)` of constants and as `valueOf` of an enum
+  declared in the same file; an enum nested in a nested class and named from outside that class
+  (`Inner.Kind.valueOf`) may still pass the request data on, and a lookup in any other map yields
+  that map's values.
 - With OpenGrep's `--taint-intrafile` mode, a two-argument `insert` on an object whose class is not
   in the same file (a MyBatis `SqlSession.insert(statement, parameter)`) counts as a write into a
   container, so what that object returns afterwards (`selectOne`) is taken for request data.

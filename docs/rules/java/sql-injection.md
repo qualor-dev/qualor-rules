@@ -123,8 +123,9 @@ public class OrderController {
   its argument visibly starts as SQL; a query assembled otherwise (a `StringBuilder`) is missed
   there.
 - Allow-list lookups are recognised as `Map.of(...)` of constants read with `get` or `getOrDefault`,
-  and as `valueOf` of an enum declared in the same file; a lookup in any other map yields that map's
-  values.
+  and as `valueOf` of an enum declared in the same file; an enum nested in a nested class and named
+  from outside that class (`Inner.Kind.valueOf`) may still pass the request data on, and a lookup in
+  any other map yields that map's values.
 - With OpenGrep's `--taint-intrafile` mode, a two-argument `insert` on an object whose class is not
   in the same file (a MyBatis `SqlSession.insert(statement, parameter)`) counts as a write into a
   container, so what that object returns afterwards (`selectOne`) is taken for request data.

@@ -55,9 +55,8 @@ rules:
     #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
     #   valueOf of an enum declared in this file (or Enum.valueOf): valueOf of an enum
     #   from another file still passes the request data on (a lookup in any other map, a literal
-    #   Map.ofEntries table too, yields the map's values). An enum of this
-    #   file counts only when a class comes before it or after it (or contains it and another
-    #   class comes before): an enum nested in a file's only class is not recognised.
+    #   Map.ofEntries table too, yields the map's values), and valueOf of an enum nested in a
+    #   nested class, named from outside that class (Inner.Kind.valueOf), may too.
     # - A pattern first checked against a constant pattern (`if (!q.matches("[\\w ]+")) return;`)
     #   is still reported.
     # - The String methods are sinks only on a receiver whose type is visible as String (a typed
@@ -168,7 +167,8 @@ rules:
       - pattern: Enum.valueOf(...)
       - pattern: java.lang.Enum.valueOf(...)
       - patterns:
-          # An enum nested in a class is matched by the class-then-enum form too.
+          # An enum declared before or after a class of the file (also nested in a later class),
+          # or nested in a class and used in it, by its simple name or qualified by its class.
           - pattern-either:
               - pattern-inside: |
                   class $X { ... }
@@ -178,7 +178,11 @@ rules:
                   enum $E { ... }
                   ...
                   class $X { ... }
-          - pattern: $E.valueOf(...)
+              - pattern-inside: |
+                  class $X { ... enum $E { ... } ... }
+          - pattern-either:
+              - pattern: $E.valueOf(...)
+              - pattern: $O.$E.valueOf(...)
       # Pattern.quote makes the text a literal pattern.
       - pattern: java.util.regex.Pattern.quote(...)
     pattern-sinks:
