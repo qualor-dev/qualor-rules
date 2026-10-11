@@ -15,7 +15,9 @@ command:
   `getstatusoutput()`, the `subprocess` functions (`run`, `call`, `check_call`, `check_output`,
   `Popen`) with `shell=True`, `asyncio.create_subprocess_shell()` and `loop.subprocess_shell()`;
 - the command of a shell program in an argument list: the element after `sh -c` (or `bash`,
-  `zsh`, ...), and every element after `cmd /c` or `powershell -Command`;
+  `zsh`, ...), every element after `cmd /c` or `powershell -Command`, the command after
+  PowerShell's `-CommandWithArgs` or `-EncodedCommand`, the script after `-File`, and PowerShell's
+  first positional element (the script `pwsh` runs, or the command `powershell.exe` runs);
 - the program itself: the first element of an argument list, a program string without a shell,
   `executable=`, the program of `asyncio.create_subprocess_exec()`, the path or file of
   `os.exec*()`, `os.spawn*()` and `os.posix_spawn()`, or a whole argument list sent by the client
@@ -108,8 +110,13 @@ def ping():
   POSIX; on Windows the other elements reach `cmd.exe` too. `shlex.quote()` is accepted as
   escaping also in a `cmd /c` command.
 - A shell program's command is followed when its argument list is written in the call or assigned
-  to a variable just before it; a POSIX shell's `-c` counts after up to three option words, and
-  PowerShell's shortened parameter names (`-Comm`, `-enc`) are not recognised.
+  to a variable just before it; a POSIX shell's `-c` counts after up to three option words.
+  PowerShell's parameters are recognised by the names about_pwsh lists, not by other shortened
+  names (`-Comm`, `-enc`). A spread right after `-File` or `-CommandWithArgs`
+  (`["pwsh", "-File", *argv]`) is not taken for the script. For `pwsh`, a script without `.ps1`
+  after pwsh's own switches (`-NoProfile ./deploy -i <request>`) is not recognised as the script,
+  so the switch after it is read as pwsh's own and reported; for `powershell.exe`, an element
+  after a script that follows switches (`-NoProfile x.ps1 <request>`) is missed.
 - Without a shell, a program is recognised when it is visibly a string, a request value, a view
   parameter or a variable assigned one of these; a program concatenated from names only
   (`TOOL_DIR + tool`) is missed. A variable that held request data and then a list with a fixed
@@ -147,6 +154,7 @@ def ping():
 - <https://pubs.opengroup.org/onlinepubs/9799919799/utilities/sh.html>
 - <https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd>
 - <https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh>
+- <https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1>
 - <https://peps.python.org/pep-0008/#constants>
 - <https://flask.palletsprojects.com/en/stable/api/#flask.Request>
 - <https://flask.palletsprojects.com/en/stable/quickstart/#variable-rules>

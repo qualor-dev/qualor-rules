@@ -122,6 +122,185 @@ def shells():
     return "ok"
 
 
+# PowerShell (about_pwsh): the script after -File (-f), the command after -CommandWithArgs (-cwa)
+# and -EncodedCommand (-e, -ec), and the first positional element (pwsh's default parameter is
+# File; powershell.exe takes a first element that is no parameter name as a command). Any
+# element may stand between the shell and its parameter.
+@app.route("/powershell")
+def powershell():
+    script = request.args["script"]
+    cmd = request.args["cmd"]
+    policy = app.config["PS_POLICY"]
+    # ruleid: python.command-injection
+    subprocess.run(["pwsh", "-File", request.args["script"]])
+    # ruleid: python.command-injection
+    subprocess.run(["powershell.exe", "-f", script, "-Name", "report"])
+    # ruleid: python.command-injection
+    subprocess.run(["pwsh", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script])
+    # ruleid: python.command-injection
+    subprocess.run(("pwsh", "-file", script))
+    # ruleid: python.command-injection
+    subprocess.run(args=["C:\\Program Files\\PowerShell\\7\\pwsh.exe", "-cwa", cmd, "first"])
+    # ruleid: python.command-injection
+    subprocess.run(["pwsh", "-EncodedCommand", request.args["b64"]])
+    # ruleid: python.command-injection
+    subprocess.check_output(["powershell", "-ec", request.args["b64"]])
+    # ruleid: python.command-injection
+    subprocess.run(["pwsh", "-ExecutionPolicy", policy, "-Command", cmd])
+    # ruleid: python.command-injection
+    subprocess.run(["cmd", "/s", policy, "/c", cmd])
+    # ruleid: python.command-injection
+    subprocess.run(["pwsh", request.args["script"]])
+    # ruleid: python.command-injection
+    subprocess.run(["pwsh", "-NoProfile", script])
+    # ruleid: python.command-injection
+    subprocess.run(["pwsh", "-WorkingDirectory", "C:\\app", script, "-Verbose"])
+    # ruleid: python.command-injection
+    subprocess.run(["powershell", "-Version", "5.1", script])
+    # ruleid: python.command-injection
+    subprocess.run(["powershell", "Get-Item", request.args["path"]])
+    # ruleid: python.command-injection
+    ps_argv = ["pwsh", "-NoLogo", "-File", script]
+    subprocess.run(ps_argv)
+    # ruleid: python.command-injection
+    ps_tuple = ("powershell", "-NoProfile", "-Command", "Get-Item", request.args["path"])
+    subprocess.run(ps_tuple)
+    # A script's own parameters: after -File's script, after a .ps1 element or, for pwsh, after
+    # a first element that is no parameter name; and $args after -cwa's command.
+    # ok: python.command-injection
+    subprocess.run(["pwsh", "-File", "C:\\scripts\\report.ps1", request.args["name"]])
+    # ok: python.command-injection
+    subprocess.run(["pwsh", "-NoProfile", "-File", "C:\\scripts\\report.ps1", "-Command", cmd])
+    # ok: python.command-injection
+    subprocess.run(["pwsh", "deploy.ps1", "-c", cmd])
+    # ok: python.command-injection
+    subprocess.run(["pwsh", "./deploy", "-Name", cmd])
+    # ok: python.command-injection
+    subprocess.run(["pwsh", "-NoProfile", "C:\\scripts\\report.ps1", cmd])
+    # ok: python.command-injection
+    subprocess.run(("pwsh", "-cwa", "Write-Output $args", cmd, "-c", cmd))
+    # ok: python.command-injection
+    subprocess.run(["pwsh", "-NoProfile", "-Command", "Get-Date"])
+    # ok: python.command-injection
+    subprocess.run(["pwsh", "-NoProfile", "C:\\scripts\\report.ps1", "-c", cmd])
+    # ok: python.command-injection
+    subprocess.run(["pwsh", "./deploy", "-c", cmd])
+    # ok: python.command-injection
+    subprocess.run(["powershell", "-File", "C:\\scripts\\report.ps1", "-NoProfile", cmd])
+    # ok: python.command-injection
+    subprocess.run(["pwsh", "-NoProfile", "C:\\scripts\\report.ps1", "-l", cmd])
+    # ok: python.command-injection
+    subprocess.run(["pwsh", "./deploy", "-NoLogo", cmd])
+    # A spread after -File whose first element is a fixed script.
+    parts = ["C:\\scripts\\report.ps1", request.args["name"]]
+    # ok: python.command-injection
+    subprocess.run(["pwsh", "-File", *parts])
+    # The same shapes as tuples.
+    # ruleid: python.command-injection
+    subprocess.run(("cmd", "/c", "type", request.args["file"]))
+    # ruleid: python.command-injection
+    subprocess.run(("pwsh", script))
+    # ruleid: python.command-injection
+    subprocess.run(("pwsh", "-NoProfile", script))
+    # ruleid: python.command-injection
+    subprocess.run(("pwsh", "-ExecutionPolicy", "Bypass", script))
+    # ruleid: python.command-injection
+    subprocess.run(("powershell", "-Version", "5.1", script))
+    # ruleid: python.command-injection
+    subprocess.run(("powershell", "Get-Item", request.args["path"]))
+    # ok: python.command-injection
+    subprocess.run(("pwsh", "-NoProfile", "C:\\scripts\\report.ps1", "-c", cmd))
+    # ok: python.command-injection
+    subprocess.run(("pwsh", "./deploy", "-c", cmd))
+    # ok: python.command-injection
+    subprocess.run(("pwsh", "-File", *parts))
+    # ok: python.command-injection
+    subprocess.run(("powershell", "-File", "C:\\scripts\\report.ps1", "-NoProfile", cmd))
+    # ok: python.command-injection
+    subprocess.run(("pwsh", "-NoProfile", "C:\\scripts\\report.ps1", "-l", cmd))
+    # ok: python.command-injection
+    subprocess.run(("pwsh", "./deploy", "-NoLogo", cmd))
+    # Look-alikes: another program whose name ends in pwsh, and a value after -File given to cmd.
+    # ok: python.command-injection
+    subprocess.run(["notpwsh", "-f", request.args["script"]])
+    # ok: python.command-injection
+    subprocess.run(["sort", "/c", request.args["file"]])
+    # A spread right after -File or -cwa holds the script (or command) and its arguments; it is not
+    # taken for the script.
+    # todoruleid: python.command-injection
+    subprocess.run(["pwsh", "-File", *request.args.getlist("argv")])
+    # For pwsh, a script without .ps1 after pwsh's own switches is not taken for the script, so a
+    # switch name after it reads as pwsh's own.
+    # todook: python.command-injection
+    subprocess.run(["pwsh", "-NoProfile", "./deploy", "-i", cmd])
+    # For powershell.exe, a positional element after switches is not followed.
+    # todoruleid: python.command-injection
+    subprocess.run(["powershell", "-NoProfile", "C:\\scripts\\report.ps1", cmd])
+    return "ok"
+
+
+@app.route("/powershell-async")
+async def powershell_async():
+    script = request.args["script"]
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", "-NoProfile", "-File", script)
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec("powershell", "-Command", "Get-Item", request.args["path"])
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec("cmd", "/c", "type", request.args["file"])
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", script)
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", "-e", request.args["b64"])
+    # ok: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", "-File", "C:\\scripts\\report.ps1", script)
+    # ok: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", "deploy.ps1", "-c", script)
+    # ok: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", "-cwa", "Write-Output $args", script)
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", "-NoProfile", script)
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", "-ExecutionPolicy", "Bypass", script)
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec("powershell", "-Version", "5.1", script)
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec("powershell", "Get-Item", request.args["path"])
+    # ok: python.command-injection
+    await asyncio.create_subprocess_exec("powershell", "-File", "C:\\scripts\\report.ps1", "-c", script)
+    # ok: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", "-NoProfile", "C:\\scripts\\report.ps1", "-c", script)
+    # ok: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", "./deploy", "-c", script)
+    parts = ["C:\\scripts\\report.ps1", request.args["name"]]
+    # ok: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", "-File", *parts)
+    # ok: python.command-injection
+    await asyncio.create_subprocess_exec("powershell", "-File", "C:\\scripts\\report.ps1", "-NoProfile", script)
+    # ok: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", "-NoProfile", "C:\\scripts\\report.ps1", "-l", script)
+    # ok: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", "./deploy", "-NoLogo", script)
+    return "ok"
+
+
+def django_powershell(request):
+    # ruleid: python.command-injection
+    subprocess.run(["pwsh", "-File", request.GET["script"]])
+    # ok: python.command-injection
+    subprocess.run(["pwsh", "-File", "C:\\scripts\\report.ps1", request.GET["name"]])
+    return HttpResponse("ok")
+
+
+@api.get("/powershell/{script}")
+async def api_powershell(script: str):
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", "-File", script)
+    # ok: python.command-injection
+    await asyncio.create_subprocess_exec("pwsh", "-File", "/opt/scripts/report.ps1", script)
+    return {}
+
+
 # Flask: request data chooses the program (the first element of the argument list, a string
 # program without a shell, executable=, or a whole argument vector sent by the client).
 @app.route("/run")

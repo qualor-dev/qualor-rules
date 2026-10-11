@@ -35,6 +35,7 @@ rules:
         - https://pubs.opengroup.org/onlinepubs/9799919799/utilities/sh.html
         - https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd
         - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh
+        - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1
         - https://peps.python.org/pep-0008/#constants
         - https://flask.palletsprojects.com/en/stable/api/#flask.Request
         - https://flask.palletsprojects.com/en/stable/quickstart/#variable-rules
@@ -70,11 +71,17 @@ rules:
     #   on POSIX (the others are the shell's $0, $1, ...); on Windows the list is joined into one
     #   command line for cmd.exe. shlex.quote() counts as escaping also in a `cmd /c` command,
     #   although it escapes for POSIX shells only.
-    # - A shell program's command (`sh -c`, `cmd /c`, `powershell -Command`, `pwsh -cwa`) is
-    #   followed when the argument list is written in the call or assigned to a variable before
-    #   it (reported where the list is written); a POSIX shell's flag counts after up to three
-    #   option words, and a PowerShell flag not after `-File`. PowerShell's shortened parameter
-    #   names (`-Comm`, `-enc`) are not recognised.
+    # - A shell program's command (`sh -c`, `cmd /c`, `powershell -Command`, `pwsh -cwa`, the
+    #   script after `pwsh -File`) is followed when the argument list is written in the call or
+    #   assigned to a variable before it (reported where the list is written); a POSIX shell's
+    #   flag counts after up to three option words. PowerShell parameters are recognised by the
+    #   names about_pwsh lists (-Command/-c, -CommandWithArgs/-cwa, -EncodedCommand/-e/-ec,
+    #   -File/-f; any case), for pwsh and powershell.exe alike; other shortened names (`-Comm`,
+    #   `-enc`) are not. A spread right after -File or -cwa (`["pwsh", "-File", *argv]`) is not
+    #   taken for the script (todoruleid). For pwsh, a script without .ps1 after pwsh's own
+    #   switches (`-NoProfile ./deploy -i <request>`) is not taken for the script, so the switch
+    #   name after it reads as pwsh's own (todook). For powershell.exe, a positional element
+    #   after switches (`-NoProfile x.ps1 <request>`) is not followed (todoruleid).
     # - Without a shell, a program string is recognised when it is visibly a string (it starts or
     #   ends with a string literal, or is built with str() or os.path.join(); a fixed command
     #   line split into words, `f"ping -c 1 {host}".split()`, is an argument list), a request value
@@ -861,44 +868,113 @@ rules:
               metavariable: $OPT3
               regex: *shell-option
           - focus-metavariable: $CMD
-      # cmd /c (or /k) and PowerShell -Command (or -EncodedCommand) in an argument list, with no
-      # -File before the flag: every element after the flag is part of the command.
+      # cmd.exe and PowerShell (pwsh, powershell.exe; any path, any case) in an argument list
+      # written in the call; the formula on the list is shared with lists assigned before the
+      # call (below).
       - patterns:
           - pattern-either:
-              - patterns:
-                  - pattern: subprocess.$FUNC([..., $SH, ..., $FLAG, ..., $CMD, ...], ...)
-                  - pattern: subprocess.$FUNC($LIST, ...)
-              - patterns:
-                  - pattern: subprocess.$FUNC((..., $SH, ..., $FLAG, ..., $CMD, ...), ...)
-                  - pattern: subprocess.$FUNC($LIST, ...)
-              - patterns:
-                  - pattern: subprocess.$FUNC(..., args=[..., $SH, ..., $FLAG, ..., $CMD, ...], ...)
-                  - pattern: subprocess.$FUNC(..., args=$LIST, ...)
+              - pattern: subprocess.$FUNC($LIST, ...)
+              - pattern: subprocess.$FUNC(..., args=$LIST, ...)
           - metavariable-regex:
               metavariable: $FUNC
               regex: *subprocess-functions
-          - metavariable-regex:
-              metavariable: $SH
-              regex: &windows-shell (?i)^[rbu]{0,2}["']([a-z]:)?([^"']*[\\/])?(cmd|powershell|pwsh)(\.exe)?["']$
-          - metavariable-regex:
-              metavariable: $FLAG
-              regex: &windows-flag (?i)^[rbu]{0,2}["'](/c|/k|-c|-command|-e|-ec|-encodedcommand)["']$
-          - metavariable-regex:
+          - metavariable-pattern:
               metavariable: $LIST
-              regex: (?i)^[\[(][\s\S]*?[rbu]{0,2}["']([a-z]:)?([^"']*[\\/])?(cmd|powershell|pwsh)(\.exe)?["']\s*,(\s*[rbu]{0,2}["'](?!(-f|-file)["'])[^"']*["']\s*,)*\s*[rbu]{0,2}["'](/c|/k|-c|-command|-e|-ec|-encodedcommand)["']\s*,
+              patterns: &windows-shell-list
+                - pattern-either:
+                    # cmd.exe after /c or /k (also after other switches): every later element is
+                    # part of the command line it runs.
+                    - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?cmd([.]exe)?$/", ..., "=~/(?i)^/[ck]$/", ..., $CMD, ...]'
+                    - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?cmd([.]exe)?$/", ..., "=~/(?i)^/[ck]$/", ..., $CMD, ...)'
+                    # PowerShell (about_pwsh; parameter names in any case): every element after
+                    # -Command (-c) is part of the command; the first after -CommandWithArgs (-cwa)
+                    # and the one after -EncodedCommand (-e, -ec) are the command; the one after
+                    # -File (-f) is the script to run. Not after -File or -cwa (the later elements
+                    # are the script's parameters, or fill $args), nor, for pwsh, after a .ps1
+                    # element or a first element that is no parameter name (File is pwsh's default
+                    # parameter: that element is the script). A spread right after -File or -cwa
+                    # holds the script or command and its arguments together: it is not taken for
+                    # the script.
+                    - patterns:
+                        - pattern-either:
+                            - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(c|command)$/", ..., $CMD, ...]'
+                            - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(c|command)$/", ..., $CMD, ...)'
+                            - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", $CMD, ...]'
+                            - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", $CMD, ...)'
+                        - pattern-not: '[..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...]'
+                        - pattern-not: '(..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...)'
+                        - pattern-not: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", ..., "=~/(?i)[.]ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...]'
+                        - pattern-not: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", ..., "=~/(?i)[.]ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...)'
+                        - pattern-not: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...]'
+                        - pattern-not: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...)'
+                        - pattern-not: '[..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", *$REST, ...]'
+                        - pattern-not: '(..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", *$REST, ...)'
+                    # The first positional element, before any command parameter: for pwsh the
+                    # script to run (File is its default parameter), for powershell.exe a script or
+                    # a command. Positional: first, after a switch, or after a parameter and its
+                    # value (-Version takes one in powershell.exe only). about_PowerShell_exe names
+                    # no default parameter, so for powershell.exe a first element that is no
+                    # parameter name and every later one are taken for one command; for pwsh what
+                    # follows a script (a first element that is no parameter name, or a .ps1
+                    # element) are its parameters.
+                    - patterns:
+                        - pattern-either:
+                            - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", $CMD, ...]'
+                            - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", $CMD, ...)'
+                            - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(login|l|interactive|i|mta|sta|noexit|noe|nologo|nol|noninteractive|noni|noprofile|nop|noprofileloadtime|sshservermode|sshs)$/", $CMD, ...]'
+                            - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(login|l|interactive|i|mta|sta|noexit|noe|nologo|nol|noninteractive|noni|noprofile|nop|noprofileloadtime|sshservermode|sshs)$/", $CMD, ...)'
+                            - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(configurationfile|configurationname|config|custompipename|executionpolicy|ex|ep|inputformat|inp|if|outputformat|o|of|settingsfile|settings|windowstyle|w|workingdirectory|wd|wo|psconsolefile)$/", $VALUE, $CMD, ...]'
+                            - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(configurationfile|configurationname|config|custompipename|executionpolicy|ex|ep|inputformat|inp|if|outputformat|o|of|settingsfile|settings|windowstyle|w|workingdirectory|wd|wo|psconsolefile)$/", $VALUE, $CMD, ...)'
+                            - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?powershell([.]exe)?$/", ..., "=~/(?i)^-version$/", $VALUE, $CMD, ...]'
+                            - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?powershell([.]exe)?$/", ..., "=~/(?i)^-version$/", $VALUE, $CMD, ...)'
+                            - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?powershell([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...]'
+                            - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?powershell([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...)'
+                        - pattern-not: '[..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...]'
+                        - pattern-not: '(..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...)'
+                        - pattern-not: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", ..., "=~/(?i)[.]ps1$/", ..., $CMD, ...]'
+                        - pattern-not: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", ..., "=~/(?i)[.]ps1$/", ..., $CMD, ...)'
+                        - pattern-not: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...]'
+                        - pattern-not: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...)'
           - focus-metavariable: $CMD
+      # The same as asyncio.create_subprocess_exec()'s arguments.
       - patterns:
-          - pattern: asyncio.create_subprocess_exec(..., $SH, ..., $FLAG, ..., $CMD, ...)
-          - pattern: $CALL
-          - metavariable-regex:
-              metavariable: $SH
-              regex: *windows-shell
-          - metavariable-regex:
-              metavariable: $FLAG
-              regex: *windows-flag
-          - metavariable-regex:
-              metavariable: $CALL
-              regex: (?i)^(asyncio\.)?create_subprocess_exec\([\s\S]*?[rbu]{0,2}["']([a-z]:)?([^"']*[\\/])?(cmd|powershell|pwsh)(\.exe)?["']\s*,(\s*[rbu]{0,2}["'](?!(-f|-file)["'])[^"']*["']\s*,)*\s*[rbu]{0,2}["'](/c|/k|-c|-command|-e|-ec|-encodedcommand)["']\s*,
+          - pattern-either:
+              # cmd.exe after /c or /k (also after other switches): every later element is part of
+              # the command line it runs.
+              - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?cmd([.]exe)?$/", ..., "=~/(?i)^/[ck]$/", ..., $CMD, ...)'
+              # PowerShell (about_pwsh; parameter names in any case): every element after -Command
+              # (-c) is part of the command; the first after -CommandWithArgs (-cwa) and the one
+              # after -EncodedCommand (-e, -ec) are the command; the one after -File (-f) is the
+              # script to run. Not after -File or -cwa (the later elements are the script's
+              # parameters, or fill $args), nor, for pwsh, after a .ps1 element or a first element
+              # that is no parameter name (File is pwsh's default parameter: that element is the
+              # script). A spread right after -File or -cwa holds the script or command and its
+              # arguments together: it is not taken for the script.
+              - patterns:
+                  - pattern-either:
+                      - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(c|command)$/", ..., $CMD, ...)'
+                      - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", $CMD, ...)'
+                  - pattern-not: 'asyncio.create_subprocess_exec(..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...)'
+                  - pattern-not: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", ..., "=~/(?i)[.]ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...)'
+                  - pattern-not: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...)'
+                  - pattern-not: 'asyncio.create_subprocess_exec(..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", *$REST, ...)'
+              # The first positional element, before any command parameter: for pwsh the script to
+              # run (File is its default parameter), for powershell.exe a script or a command.
+              # Positional: first, after a switch, or after a parameter and its value (-Version
+              # takes one in powershell.exe only). about_PowerShell_exe names no default parameter,
+              # so for powershell.exe a first element that is no parameter name and every later one
+              # are taken for one command; for pwsh what follows a script (a first element that is
+              # no parameter name, or a .ps1 element) are its parameters.
+              - patterns:
+                  - pattern-either:
+                      - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", $CMD, ...)'
+                      - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(login|l|interactive|i|mta|sta|noexit|noe|nologo|nol|noninteractive|noni|noprofile|nop|noprofileloadtime|sshservermode|sshs)$/", $CMD, ...)'
+                      - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(configurationfile|configurationname|config|custompipename|executionpolicy|ex|ep|inputformat|inp|if|outputformat|o|of|settingsfile|settings|windowstyle|w|workingdirectory|wd|wo|psconsolefile)$/", $VALUE, $CMD, ...)'
+                      - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?powershell([.]exe)?$/", ..., "=~/(?i)^-version$/", $VALUE, $CMD, ...)'
+                      - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?powershell([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...)'
+                  - pattern-not: 'asyncio.create_subprocess_exec(..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...)'
+                  - pattern-not: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", ..., "=~/(?i)[.]ps1$/", ..., $CMD, ...)'
+                  - pattern-not: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...)'
           - focus-metavariable: $CMD
       # Shell lists assigned to a variable before the call (reported where the list is written):
       # the list is searched only when a subprocess call uses the variable.
@@ -974,36 +1050,9 @@ rules:
           - metavariable-regex:
               metavariable: $FUNC
               regex: *subprocess-functions
-          - metavariable-regex:
-              metavariable: $LIST
-              regex: (?i)^\[[\s\S]*?[rbu]{0,2}["']([a-z]:)?([^"']*[\\/])?(cmd|powershell|pwsh)(\.exe)?["']\s*,(\s*[rbu]{0,2}["'](?!(-f|-file)["'])[^"']*["']\s*,)*\s*[rbu]{0,2}["'](/c|/k|-c|-command|-e|-ec|-encodedcommand)["']\s*,
           - metavariable-pattern:
               metavariable: $LIST
-              patterns:
-                - pattern: '[..., $SH, ..., $FLAG, ..., $CMD, ...]'
-                - metavariable-regex:
-                    metavariable: $SH
-                    regex: *windows-shell
-                - metavariable-regex:
-                    metavariable: $FLAG
-                    regex: *windows-flag
-          - focus-metavariable: $CMD
-      # PowerShell -CommandWithArgs (-cwa): the first string after the flag is the command; the
-      # later ones fill $args.
-      - patterns:
-          - pattern-either:
-              - pattern: subprocess.$FUNC([..., $SH, ..., $FLAG, $CMD, ...], ...)
-              - pattern: subprocess.$FUNC((..., $SH, ..., $FLAG, $CMD, ...), ...)
-              - pattern: subprocess.$FUNC(..., args=[..., $SH, ..., $FLAG, $CMD, ...], ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *subprocess-functions
-          - metavariable-regex:
-              metavariable: $SH
-              regex: (?i)^[rbu]{0,2}["']([a-z]:)?([^"']*[\\/])?(powershell|pwsh)(\.exe)?["']$
-          - metavariable-regex:
-              metavariable: $FLAG
-              regex: (?i)^[rbu]{0,2}["'](-commandwithargs|-cwa)["']$
+              patterns: *windows-shell-list
           - focus-metavariable: $CMD
       # Without a shell, the whole args value as the program (a string) or the whole argument
       # vector: only when it is visibly a string or a request value (not an argument list built
