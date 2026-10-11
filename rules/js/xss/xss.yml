@@ -1085,7 +1085,7 @@ rules:
               - pattern: $RES.end($BODY, ...)
               # Not $METHOD: a metavariable in a method-name position anywhere in the rule turns
               # the Next.js sources' metavariable-regex on $METHOD into prefilter terms, which
-              # multiplied the prefilter fourfold (22 kB).
+              # gave the prefilter four times the clauses (6.5 kB to 22 kB).
               - patterns:
                   - pattern: return $BODY;
                   - pattern-not: return $RES.$RESMETHOD(...);
