@@ -8,18 +8,24 @@
 ## What it finds
 
 <!-- begin: what-it-finds -->
-TLS client checks that accept anything (JSSE, `javax.net.ssl`):
+TLS client checks that accept anything:
 
 - a `checkServerTrusted` method of an `X509TrustManager` or `X509ExtendedTrustManager` that
   returns without checking the server's certificate chain: an empty body, one that only logs, or
   one that checks a certificate's dates or signature but catches the failure;
 - a `HostnameVerifier` that returns `true` whatever the host: a `verify` method or a lambda given
-  to `setHostnameVerifier` / `setDefaultHostnameVerifier`, assigned to a `HostnameVerifier`
-  variable or cast to one.
+  to `setHostnameVerifier` / `setDefaultHostnameVerifier`, OkHttp's or Jakarta REST's
+  `hostnameVerifier`, Apache HttpClient's `setSSLHostnameVerifier` or `SSLConnectionSocketFactory`,
+  assigned to a `HostnameVerifier` variable or cast to one;
+- an Apache HttpClient `TrustStrategy` that returns `true` whatever the chain (it then trusts the
+  chain without the trust manager): an `isTrusted` method or a lambda given to
+  `loadTrustMaterial` or assigned to a `TrustStrategy` variable;
+- Apache HttpClient 4 and 5's `NoopHostnameVerifier`, `AllowAllHostnameVerifier`,
+  `ALLOW_ALL_HOSTNAME_VERIFIER` and `TrustAllStrategy`, which only switch the check off.
 
 A trust manager that throws `CertificateException`, delegates to another trust manager or hands
-the chain (or a certificate of it) to a check of its own, and a verifier that returns `true` only under a condition, are
-not reported. An empty `checkClientTrusted` is not reported either: a server calls it, and an
+the chain (or a certificate of it) to a check of its own, and a verifier or strategy that returns
+`true` only under a condition, are not reported. An empty `checkClientTrusted` is not reported either: a server calls it, and an
 empty one only means that clients need no certificate. Test code is skipped: the `src/test/`
 tree (also `src/testFixtures/`, `src/integrationTest/` and `src/intTest/`) and files whose
 names end in `Test`, `Tests`, `TestCase`, `IT` or `ITCase`.
@@ -115,11 +121,19 @@ public class Clients {
 - If you must check certificates yourself (pinning, say), call the default trust manager first or
   compare what you need, and throw `CertificateException` when the check fails; in a
   `HostnameVerifier`, return the result of a real check, never a constant `true`.
+- With Apache HttpClient, drop `NoopHostnameVerifier` and `TrustAllStrategy`: keep the default
+  host name verifier, and give `loadTrustMaterial` a trust store with your CA and no strategy
+  (`loadTrustMaterial(trustStore, null)`). With OkHttp or a Jakarta REST client, do not set a
+  host name verifier, and give the builder an `SSLContext` (or socket factory and trust manager)
+  built over that trust store.
 <!-- end: how-to-fix -->
 
 ## Frameworks and APIs covered
 
 - `javax.net.ssl`
+- `okhttp`
+- Jakarta REST (JAX-RS)
+- `apache-httpclient`
 
 ## Known limits
 
@@ -130,10 +144,13 @@ public class Clients {
   `IllegalArgumentException` for a null or empty chain. One certificate of the chain, or a copy
   of it, counts only when it goes to another trust manager or to a method of the same class,
   whatever that method does: an empty or log-only method of the class hides a trust-all manager.
-- A lambda counts as a host name verifier only where the code shows it is one (the JDK setters, a
-  `HostnameVerifier` variable, a cast): one given to another library's builder, such as OkHttp's
-  `hostnameVerifier`, is missed, and so are other libraries' own trust-all and no-op classes
-  (Apache HttpClient's `NoopHostnameVerifier` and `TrustAllStrategy`).
+- A lambda counts as a host name verifier or trust strategy only where the code shows it is one
+  (the setters and `loadTrustMaterial` above, a typed variable, a cast); one returned by a helper
+  method is missed.
+- A trust strategy, like a trust manager, that throws anywhere counts as a check, even when it
+  trusts every other chain without the trust manager.
+- Apache HttpClient's `TrustSelfSignedStrategy`, which trusts any self-signed certificate, is not
+  reported.
 - A trust-all manager given only to a server context (whose `checkServerTrusted` is never called)
   is still reported.
 - Skipping test code by file name also skips a production class whose name ends in `Test` or `IT`.
@@ -152,6 +169,20 @@ public class Clients {
 - <https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/net/ssl/SSLContext.html>
 - <https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/net/ssl/TrustManagerFactory.html>
 - <https://docs.oracle.com/en/java/javase/25/security/java-secure-socket-extension-jsse-reference-guide.html>
+- <https://javadoc.io/static/com.squareup.okhttp3/okhttp/3.14.9/okhttp3/OkHttpClient.Builder.html>
+- <https://jakarta.ee/specifications/platform/10/apidocs/jakarta/ws/rs/client/ClientBuilder.html>
+- <https://hc.apache.org/httpcomponents-client-4.5.x/current/httpclient/apidocs/org/apache/http/conn/ssl/NoopHostnameVerifier.html>
+- <https://hc.apache.org/httpcomponents-client-4.5.x/current/httpclient/apidocs/org/apache/http/conn/ssl/AllowAllHostnameVerifier.html>
+- <https://hc.apache.org/httpcomponents-client-4.5.x/current/httpclient/apidocs/org/apache/http/conn/ssl/TrustAllStrategy.html>
+- <https://hc.apache.org/httpcomponents-client-4.5.x/current/httpclient/apidocs/org/apache/http/conn/ssl/SSLConnectionSocketFactory.html>
+- <https://hc.apache.org/httpcomponents-client-4.5.x/current/httpclient/apidocs/org/apache/http/impl/client/HttpClientBuilder.html>
+- <https://hc.apache.org/httpcomponents-core-4.4.x/current/httpcore/apidocs/org/apache/http/ssl/SSLContextBuilder.html>
+- <https://hc.apache.org/httpcomponents-core-4.4.x/current/httpcore/apidocs/org/apache/http/ssl/TrustStrategy.html>
+- <https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/NoopHostnameVerifier.html>
+- <https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/TrustAllStrategy.html>
+- <https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/ClientTlsStrategyBuilder.html>
+- <https://hc.apache.org/httpcomponents-core-5.3.x/current/httpcore5/apidocs/org/apache/hc/core5/ssl/SSLContextBuilder.html>
+- <https://hc.apache.org/httpcomponents-core-5.3.x/current/httpcore5/apidocs/org/apache/hc/core5/ssl/TrustStrategy.html>
 - <https://maven.apache.org/guides/introduction/introduction-to-the-standard-directory-layout.html>
 - <https://maven.apache.org/surefire/maven-surefire-plugin/test-mojo.html#includes>
 - <https://maven.apache.org/surefire/maven-failsafe-plugin/integration-test-mojo.html#includes>

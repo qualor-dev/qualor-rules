@@ -4,9 +4,10 @@ rules:
     severity: ERROR
     message: >-
       This TLS client check accepts anything: a trust manager whose checkServerTrusted returns
-      without checking the certificate chain trusts every server certificate, and a
-      HostnameVerifier that returns true accepts a certificate issued for another host. Anyone on
-      the network path can then pose as the server and read or change the traffic. Use the default
+      without checking the certificate chain, or an Apache HttpClient TrustStrategy that returns
+      true (TrustAllStrategy), trusts every server certificate, and a HostnameVerifier that returns
+      true (NoopHostnameVerifier) accepts a certificate issued for another host. Anyone on the
+      network path can then pose as the server and read or change the traffic. Use the default
       trust managers (TrustManagerFactory over a key store that holds your private CA), delegate to
       them, or throw CertificateException when your own check fails; keep the default host name
       verification.
@@ -17,7 +18,7 @@ rules:
       kind: issue
       severity: high
       confidence: high
-      frameworks: [javax.net.ssl]
+      frameworks: [javax.net.ssl, okhttp, jax-rs, apache-httpclient]
       sources:
         - https://cwe.mitre.org/data/definitions/295.html
         - https://top10.owasp.org/2025/A07_2025-Authentication_Failures/
@@ -30,6 +31,20 @@ rules:
         - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/net/ssl/SSLContext.html
         - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/javax/net/ssl/TrustManagerFactory.html
         - https://docs.oracle.com/en/java/javase/25/security/java-secure-socket-extension-jsse-reference-guide.html
+        - https://javadoc.io/static/com.squareup.okhttp3/okhttp/3.14.9/okhttp3/OkHttpClient.Builder.html
+        - https://jakarta.ee/specifications/platform/10/apidocs/jakarta/ws/rs/client/ClientBuilder.html
+        - https://hc.apache.org/httpcomponents-client-4.5.x/current/httpclient/apidocs/org/apache/http/conn/ssl/NoopHostnameVerifier.html
+        - https://hc.apache.org/httpcomponents-client-4.5.x/current/httpclient/apidocs/org/apache/http/conn/ssl/AllowAllHostnameVerifier.html
+        - https://hc.apache.org/httpcomponents-client-4.5.x/current/httpclient/apidocs/org/apache/http/conn/ssl/TrustAllStrategy.html
+        - https://hc.apache.org/httpcomponents-client-4.5.x/current/httpclient/apidocs/org/apache/http/conn/ssl/SSLConnectionSocketFactory.html
+        - https://hc.apache.org/httpcomponents-client-4.5.x/current/httpclient/apidocs/org/apache/http/impl/client/HttpClientBuilder.html
+        - https://hc.apache.org/httpcomponents-core-4.4.x/current/httpcore/apidocs/org/apache/http/ssl/SSLContextBuilder.html
+        - https://hc.apache.org/httpcomponents-core-4.4.x/current/httpcore/apidocs/org/apache/http/ssl/TrustStrategy.html
+        - https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/NoopHostnameVerifier.html
+        - https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/TrustAllStrategy.html
+        - https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/ClientTlsStrategyBuilder.html
+        - https://hc.apache.org/httpcomponents-core-5.3.x/current/httpcore5/apidocs/org/apache/hc/core5/ssl/SSLContextBuilder.html
+        - https://hc.apache.org/httpcomponents-core-5.3.x/current/httpcore5/apidocs/org/apache/hc/core5/ssl/TrustStrategy.html
         - https://maven.apache.org/guides/introduction/introduction-to-the-standard-directory-layout.html
         - https://maven.apache.org/surefire/maven-surefire-plugin/test-mojo.html#includes
         - https://maven.apache.org/surefire/maven-failsafe-plugin/integration-test-mojo.html#includes
@@ -57,11 +72,15 @@ rules:
     #   chain.
     # - A trust-all manager given only to a server context (whose checkServerTrusted is never
     #   called) is still reported.
-    # - A lambda is a HostnameVerifier only when it is given to setHostnameVerifier or
-    #   setDefaultHostnameVerifier, assigned to a HostnameVerifier variable or cast to one; a
-    #   lambda given to another library's builder (OkHttp's hostnameVerifier) is missed.
-    # - Other libraries' own trust-all and no-op classes (Apache HttpClient's NoopHostnameVerifier
-    #   and TrustAllStrategy, OkHttp) are not checked.
+    # - A lambda is a HostnameVerifier only when it is given to setHostnameVerifier,
+    #   setDefaultHostnameVerifier, setSSLHostnameVerifier, hostnameVerifier (OkHttp, Jakarta
+    #   REST) or Apache HttpClient 4's SSLConnectionSocketFactory, assigned to a HostnameVerifier
+    #   variable or cast to one; and a TrustStrategy only when it is given to loadTrustMaterial or
+    #   assigned to a TrustStrategy variable. One returned by a helper method is missed.
+    # - A TrustStrategy (like a HostnameVerifier or trust manager) that throws anywhere counts as
+    #   a check, also when it trusts every other chain without the trust manager.
+    # - Apache HttpClient's TrustSelfSignedStrategy, which trusts any self-signed certificate, is
+    #   not checked.
     paths:
       exclude:
         - 'src/test/'
@@ -132,7 +151,8 @@ rules:
               void checkServerTrusted(java.security.cert.X509Certificate[] $CHAIN, ...) { ... for ($CT $C : $CHAIN) { ... $H(..., $C, ...); ... } ... }
       # HostnameVerifier: `return true` that is not under a condition, in a verify method or in a
       # lambda given where a HostnameVerifier is expected, whose body never returns false or
-      # throws.
+      # throws. Apache HttpClient's TrustStrategy is the same for certificates: true means
+      # "trusted without the trust manager" (isTrusted, or a lambda given to loadTrustMaterial).
       - patterns:
           - pattern: return $TRUE;
           - metavariable-regex:
@@ -141,16 +161,25 @@ rules:
           - pattern-either:
               - pattern-inside: |
                   boolean verify(String $H, javax.net.ssl.SSLSession $S) { ... }
+              - pattern-inside: |
+                  boolean isTrusted(java.security.cert.X509Certificate[] $H, String $S) { ... }
               - patterns:
                   - pattern-inside: |
                       ($H, $S) -> { ... }
                   - pattern-either:
+                      # The setters of HttpsURLConnection, OkHttp and Jakarta REST builders
+                      # (hostnameVerifier) and Apache HttpClient 4 and 5 (setSSLHostnameVerifier,
+                      # setHostnameVerifier).
                       - patterns:
                           - pattern-inside: $X.$SET(($H, $S) -> { ... })
                           - metavariable-regex:
                               metavariable: $SET
-                              regex: ^(setHostnameVerifier|setDefaultHostnameVerifier)$
+                              regex: ^(setHostnameVerifier|setDefaultHostnameVerifier|setSSLHostnameVerifier|hostnameVerifier)$
+                      - pattern-inside: new org.apache.http.conn.ssl.SSLConnectionSocketFactory(..., ($H, $S) -> { ... })
+                      - pattern-inside: $X.loadTrustMaterial(..., ($H, $S) -> { ... })
                       - pattern-inside: javax.net.ssl.HostnameVerifier $V = ($H, $S) -> { ... };
+                      - pattern-inside: org.apache.http.ssl.TrustStrategy $V = ($H, $S) -> { ... };
+                      - pattern-inside: org.apache.hc.core5.ssl.TrustStrategy $V = ($H, $S) -> { ... };
                       - pattern-inside: (javax.net.ssl.HostnameVerifier) ($H, $S) -> { ... }
           # (Also an if with an else: a return true in either branch is under a condition.)
           - pattern-not-inside: |
@@ -160,23 +189,46 @@ rules:
           - pattern-not-inside: |
               boolean verify(...) { ... throw $E; ... }
           - pattern-not-inside: |
+              boolean isTrusted(...) { ... return false; ... }
+          - pattern-not-inside: |
+              boolean isTrusted(...) { ... throw $E; ... }
+          - pattern-not-inside: |
               ($H, $S) -> { ... return false; ... }
           - pattern-not-inside: |
               ($H, $S) -> { ... throw $E; ... }
           # (OpenGrep also matches `return true;` on a whole method or lambda whose body is only
           # that statement; the finding is put on the value.)
           - focus-metavariable: $TRUE
-      # The same as an expression lambda: `(host, session) -> true`.
+      # The same as an expression lambda: `(host, session) -> true`, `(chain, authType) -> true`.
       - patterns:
           - pattern-either:
               - patterns:
                   - pattern: $X.$SET(($H, $S) -> $TRUE)
                   - metavariable-regex:
                       metavariable: $SET
-                      regex: ^(setHostnameVerifier|setDefaultHostnameVerifier)$
+                      regex: ^(setHostnameVerifier|setDefaultHostnameVerifier|setSSLHostnameVerifier|hostnameVerifier)$
+              - pattern: new org.apache.http.conn.ssl.SSLConnectionSocketFactory(..., ($H, $S) -> $TRUE)
+              - pattern: $X.loadTrustMaterial(..., ($H, $S) -> $TRUE)
               - pattern: javax.net.ssl.HostnameVerifier $V = ($H, $S) -> $TRUE;
+              - pattern: org.apache.http.ssl.TrustStrategy $V = ($H, $S) -> $TRUE;
+              - pattern: org.apache.hc.core5.ssl.TrustStrategy $V = ($H, $S) -> $TRUE;
               - pattern: (javax.net.ssl.HostnameVerifier) ($H, $S) -> $TRUE
           - metavariable-regex:
               metavariable: $TRUE
               regex: ^true$
           - focus-metavariable: $TRUE
+      # Apache HttpClient 4 and 5's own no-op host name verifiers and trust-all strategy, whose
+      # only use is to switch the check off ("turns hostname verification off", "accepts all
+      # certificates as trusted").
+      - pattern-either:
+          - pattern: org.apache.http.conn.ssl.NoopHostnameVerifier.INSTANCE
+          - pattern: new org.apache.http.conn.ssl.NoopHostnameVerifier()
+          - pattern: org.apache.http.conn.ssl.AllowAllHostnameVerifier.INSTANCE
+          - pattern: new org.apache.http.conn.ssl.AllowAllHostnameVerifier()
+          - pattern: org.apache.http.conn.ssl.SSLConnectionSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER
+          - pattern: org.apache.http.conn.ssl.TrustAllStrategy.INSTANCE
+          - pattern: new org.apache.http.conn.ssl.TrustAllStrategy()
+          - pattern: org.apache.hc.client5.http.ssl.NoopHostnameVerifier.INSTANCE
+          - pattern: new org.apache.hc.client5.http.ssl.NoopHostnameVerifier()
+          - pattern: org.apache.hc.client5.http.ssl.TrustAllStrategy.INSTANCE
+          - pattern: new org.apache.hc.client5.http.ssl.TrustAllStrategy()

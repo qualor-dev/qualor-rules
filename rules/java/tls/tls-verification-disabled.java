@@ -23,6 +23,13 @@ import javax.net.ssl.TrustManager;
 import javax.net.ssl.TrustManagerFactory;
 import javax.net.ssl.X509ExtendedTrustManager;
 import javax.net.ssl.X509TrustManager;
+import okhttp3.OkHttpClient;
+import org.apache.http.conn.ssl.NoopHostnameVerifier;
+import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
+import org.apache.http.conn.ssl.TrustAllStrategy;
+import org.apache.http.impl.client.HttpClients;
+import org.apache.http.ssl.SSLContexts;
+import org.apache.http.ssl.TrustStrategy;
 
 // A trust manager that accepts every server certificate: checkServerTrusted returns without
 // checking anything.
@@ -866,16 +873,373 @@ class Limits {
         };
     }
 
-    // A lambda given to another library's setter is not known to be a HostnameVerifier
-    // (OkHttp's OkHttpClient.Builder.hostnameVerifier).
-    void okhttp(okhttp3.OkHttpClient.Builder builder) {
-        // todoruleid: java.tls-verification-disabled
-        builder.hostnameVerifier((h, s) -> true);
+    // A lambda returned by a helper is not known to be a HostnameVerifier or TrustStrategy.
+    void fromHelper(okhttp3.OkHttpClient.Builder builder) {
+        builder.hostnameVerifier(anyHost());
     }
 
-    // Apache HttpClient's own trust-all and no-op verifier classes are not checked.
-    void apache(org.apache.hc.client5.http.ssl.SSLConnectionSocketFactoryBuilder builder) {
+    private static HostnameVerifier anyHost() {
         // todoruleid: java.tls-verification-disabled
-        builder.setHostnameVerifier(org.apache.hc.client5.http.ssl.NoopHostnameVerifier.INSTANCE);
+        return (h, s) -> true;
+    }
+
+    // A strategy that throws for some chains and trusts every other one without the trust
+    // manager: any throw counts as a check, as for trust managers.
+    SSLContext throwsForLongChains(KeyStore store) throws GeneralSecurityException {
+        return SSLContexts.custom()
+                .loadTrustMaterial(store, (chain, authType) -> {
+                    if (chain.length > 3) {
+                        throw new CertificateException("chain too long");
+                    }
+                    // todoruleid: java.tls-verification-disabled
+                    return true;
+                })
+                .build();
+    }
+
+    // Apache HttpClient's TrustSelfSignedStrategy trusts any self-signed certificate, which
+    // anyone can make; it is not checked.
+    SSLContext selfSigned() throws GeneralSecurityException {
+        return SSLContexts.custom()
+                // todoruleid: java.tls-verification-disabled
+                .loadTrustMaterial(null, new org.apache.http.conn.ssl.TrustSelfSignedStrategy())
+                .build();
+    }
+}
+
+// HTTP client libraries: OkHttp, Jakarta REST (JAX-RS) and Apache HttpClient 4 and 5.
+class ClientLibraries {
+    private static final Set<String> INTERNAL = Set.of("api.internal.example");
+
+    OkHttpClient okhttpAnyHost() {
+        return new OkHttpClient.Builder()
+                // ruleid: java.tls-verification-disabled
+                .hostnameVerifier((hostname, session) -> true)
+                .build();
+    }
+
+    OkHttpClient okhttpAnyHostBlock(OkHttpClient client) {
+        return client.newBuilder()
+                .hostnameVerifier((hostname, session) -> {
+                    // ruleid: java.tls-verification-disabled
+                    return true;
+                })
+                .build();
+    }
+
+    jakarta.ws.rs.client.Client jaxrsAnyHost() {
+        return jakarta.ws.rs.client.ClientBuilder.newBuilder()
+                // ruleid: java.tls-verification-disabled
+                .hostnameVerifier((hostname, session) -> true)
+                .build();
+    }
+
+    org.apache.http.impl.client.CloseableHttpClient apache4NoopVerifier() {
+        return HttpClients.custom()
+                // ruleid: java.tls-verification-disabled
+                .setSSLHostnameVerifier(NoopHostnameVerifier.INSTANCE)
+                .build();
+    }
+
+    org.apache.http.impl.client.CloseableHttpClient apache4AnyHostLambda() {
+        return HttpClients.custom()
+                // ruleid: java.tls-verification-disabled
+                .setSSLHostnameVerifier((hostname, session) -> true)
+                .build();
+    }
+
+    SSLConnectionSocketFactory apache4SocketFactory(SSLContext context) {
+        // ruleid: java.tls-verification-disabled
+        return new SSLConnectionSocketFactory(context, new NoopHostnameVerifier());
+    }
+
+    SSLConnectionSocketFactory apache4SocketFactoryLambda(SSLContext context) {
+        // ruleid: java.tls-verification-disabled
+        return new SSLConnectionSocketFactory(context, (hostname, session) -> true);
+    }
+
+    SSLConnectionSocketFactory apache4AllowAll(SSLContext context) {
+        // ruleid: java.tls-verification-disabled
+        return new SSLConnectionSocketFactory(context, SSLConnectionSocketFactory.ALLOW_ALL_HOSTNAME_VERIFIER);
+    }
+
+    HostnameVerifier apache4AllowAllClass() {
+        // ruleid: java.tls-verification-disabled
+        return new org.apache.http.conn.ssl.AllowAllHostnameVerifier();
+    }
+
+    HostnameVerifier apache4AllowAllInstance() {
+        // ruleid: java.tls-verification-disabled
+        return org.apache.http.conn.ssl.AllowAllHostnameVerifier.INSTANCE;
+    }
+
+    SSLContext apache4TrustAll() throws GeneralSecurityException {
+        return SSLContexts.custom()
+                // ruleid: java.tls-verification-disabled
+                .loadTrustMaterial(null, TrustAllStrategy.INSTANCE)
+                .build();
+    }
+
+    SSLContext apache4TrustAllNew(KeyStore store) throws GeneralSecurityException {
+        return SSLContexts.custom()
+                // ruleid: java.tls-verification-disabled
+                .loadTrustMaterial(store, new TrustAllStrategy())
+                .build();
+    }
+
+    SSLContext apache4TrustAnyLambda() throws GeneralSecurityException {
+        return new org.apache.http.ssl.SSLContextBuilder()
+                // ruleid: java.tls-verification-disabled
+                .loadTrustMaterial(null, (chain, authType) -> true)
+                .build();
+    }
+
+    SSLContext apache4TrustAnyAnonymous() throws GeneralSecurityException {
+        return SSLContexts.custom()
+                .loadTrustMaterial(new TrustStrategy() {
+                    @Override
+                    public boolean isTrusted(X509Certificate[] chain, String authType) {
+                        // ruleid: java.tls-verification-disabled
+                        return true;
+                    }
+                })
+                .build();
+    }
+
+    SSLContext apache4TrustAnyVariable() throws GeneralSecurityException {
+        // ruleid: java.tls-verification-disabled
+        TrustStrategy acceptAll = (chain, authType) -> true;
+        return SSLContexts.custom().loadTrustMaterial(acceptAll).build();
+    }
+
+    org.apache.hc.client5.http.ssl.TlsSocketStrategy apache5NoopVerifier(SSLContext context) {
+        return org.apache.hc.client5.http.ssl.ClientTlsStrategyBuilder.create()
+                .setSslContext(context)
+                // ruleid: java.tls-verification-disabled
+                .setHostnameVerifier(org.apache.hc.client5.http.ssl.NoopHostnameVerifier.INSTANCE)
+                .buildClassic();
+    }
+
+    HostnameVerifier apache5NoopNew() {
+        // ruleid: java.tls-verification-disabled
+        return new org.apache.hc.client5.http.ssl.NoopHostnameVerifier();
+    }
+
+    SSLContext apache5TrustAll() throws GeneralSecurityException {
+        return org.apache.hc.core5.ssl.SSLContextBuilder.create()
+                // ruleid: java.tls-verification-disabled
+                .loadTrustMaterial(org.apache.hc.client5.http.ssl.TrustAllStrategy.INSTANCE)
+                .build();
+    }
+
+    SSLContext apache5TrustAllNew() throws GeneralSecurityException {
+        return org.apache.hc.core5.ssl.SSLContexts.custom()
+                // ruleid: java.tls-verification-disabled
+                .loadTrustMaterial(null, new org.apache.hc.client5.http.ssl.TrustAllStrategy())
+                .build();
+    }
+
+    SSLContext apache5TrustAnyBlock() throws GeneralSecurityException {
+        return org.apache.hc.core5.ssl.SSLContexts.custom()
+                .loadTrustMaterial((chain, authType) -> {
+                    // ruleid: java.tls-verification-disabled
+                    return true;
+                })
+                .build();
+    }
+
+    SSLContext apache5TrustAnyVariable() throws GeneralSecurityException {
+        org.apache.hc.core5.ssl.TrustStrategy acceptAll = (chain, authType) -> {
+            // ruleid: java.tls-verification-disabled
+            return true;
+        };
+        return org.apache.hc.core5.ssl.SSLContexts.custom().loadTrustMaterial(acceptAll).build();
+    }
+
+    SSLContext apache5TrustAnyVariableExpression() throws GeneralSecurityException {
+        // ruleid: java.tls-verification-disabled
+        org.apache.hc.core5.ssl.TrustStrategy acceptAll = (chain, authType) -> true;
+        return org.apache.hc.core5.ssl.SSLContexts.custom().loadTrustMaterial(acceptAll).build();
+    }
+
+    SSLContext apache4TrustAnyVariableBlock() throws GeneralSecurityException {
+        TrustStrategy acceptAll = (chain, authType) -> {
+            // ruleid: java.tls-verification-disabled
+            return true;
+        };
+        return SSLContexts.custom().loadTrustMaterial(acceptAll).build();
+    }
+
+    SSLConnectionSocketFactory apache4SocketFactoryBlock(SSLContext context) {
+        return new SSLConnectionSocketFactory(context, (hostname, session) -> {
+            // ruleid: java.tls-verification-disabled
+            return true;
+        });
+    }
+
+    HostnameVerifier blockVariable() {
+        HostnameVerifier anyHost = (hostname, session) -> {
+            // ruleid: java.tls-verification-disabled
+            return true;
+        };
+        return anyHost;
+    }
+
+    Object blockCast() {
+        return (HostnameVerifier) (hostname, session) -> {
+            // ruleid: java.tls-verification-disabled
+            return true;
+        };
+    }
+
+    // The default verifiers and trust managers.
+    OkHttpClient okhttpDefault() {
+        // ok: java.tls-verification-disabled
+        return new OkHttpClient.Builder().build();
+    }
+
+    OkHttpClient okhttpChecked() {
+        HostnameVerifier platform = HttpsURLConnection.getDefaultHostnameVerifier();
+        return new OkHttpClient.Builder()
+                // ok: java.tls-verification-disabled
+                .hostnameVerifier((hostname, session) -> INTERNAL.contains(hostname) && platform.verify(hostname, session))
+                .build();
+    }
+
+    OkHttpClient okhttpCheckedBlock() {
+        HostnameVerifier platform = HttpsURLConnection.getDefaultHostnameVerifier();
+        return new OkHttpClient.Builder()
+                .hostnameVerifier((hostname, session) -> {
+                    if (!INTERNAL.contains(hostname)) {
+                        return false;
+                    }
+                    // ok: java.tls-verification-disabled
+                    return platform.verify(hostname, session);
+                })
+                .build();
+    }
+
+    jakarta.ws.rs.client.Client jaxrsDefault(SSLContext context) {
+        // ok: java.tls-verification-disabled
+        return jakarta.ws.rs.client.ClientBuilder.newBuilder().sslContext(context).build();
+    }
+
+    org.apache.http.impl.client.CloseableHttpClient apache4Default() {
+        return HttpClients.custom()
+                // ok: java.tls-verification-disabled
+                .setSSLHostnameVerifier(new org.apache.http.conn.ssl.DefaultHostnameVerifier())
+                .build();
+    }
+
+    SSLConnectionSocketFactory apache4Strict(SSLContext context) {
+        // ok: java.tls-verification-disabled
+        return new SSLConnectionSocketFactory(context, SSLConnectionSocketFactory.STRICT_HOSTNAME_VERIFIER);
+    }
+
+    SSLContext apache4OwnTrustStore(KeyStore store) throws GeneralSecurityException {
+        // ok: java.tls-verification-disabled
+        return SSLContexts.custom().loadTrustMaterial(store, null).build();
+    }
+
+    // A strategy that trusts only a pinned certificate without the trust manager, and leaves the
+    // rest to it (false), is a check.
+    SSLContext apache4Pinned(KeyStore store, String pin) throws GeneralSecurityException {
+        return SSLContexts.custom()
+                // ok: java.tls-verification-disabled
+                .loadTrustMaterial(store, (chain, authType) -> pin.equals(HexFormat.of().formatHex(chain[0].getPublicKey().getEncoded())))
+                .build();
+    }
+
+    SSLContext apache5PinnedBlock(String pin) throws GeneralSecurityException {
+        return org.apache.hc.core5.ssl.SSLContexts.custom()
+                .loadTrustMaterial((chain, authType) -> {
+                    if (chain.length == 0) {
+                        return false;
+                    }
+                    // ok: java.tls-verification-disabled
+                    return pin.equals(HexFormat.of().formatHex(chain[0].getPublicKey().getEncoded()));
+                })
+                .build();
+    }
+
+    SSLContext apache4OnlyIfInternal(String host) throws GeneralSecurityException {
+        return SSLContexts.custom()
+                .loadTrustMaterial(new TrustStrategy() {
+                    @Override
+                    public boolean isTrusted(X509Certificate[] chain, String authType) {
+                        if (INTERNAL.contains(host)) {
+                            // ok: java.tls-verification-disabled
+                            return true;
+                        }
+                        return false;
+                    }
+                })
+                .build();
+    }
+}
+
+// Strategies that trust a chain only when every certificate is pinned (false or a throw
+// otherwise, which leaves the chain to the trust manager or rejects it).
+class PinnedStrategies implements TrustStrategy {
+    private final Set<String> pins;
+
+    PinnedStrategies(Set<String> pins) {
+        this.pins = pins;
+    }
+
+    private String fingerprint(X509Certificate certificate) {
+        return HexFormat.of().formatHex(certificate.getPublicKey().getEncoded());
+    }
+
+    @Override
+    public boolean isTrusted(X509Certificate[] chain, String authType) {
+        for (X509Certificate certificate : chain) {
+            if (!pins.contains(fingerprint(certificate))) {
+                return false;
+            }
+        }
+        // ok: java.tls-verification-disabled
+        return true;
+    }
+
+    TrustStrategy strict() {
+        return new TrustStrategy() {
+            @Override
+            public boolean isTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+                if (!pins.contains(fingerprint(chain[0]))) {
+                    throw new CertificateException("unpinned server key");
+                }
+                // ok: java.tls-verification-disabled
+                return true;
+            }
+        };
+    }
+}
+
+// Look-alikes: other classes with the same member names.
+class ClientLookAlikes {
+    // A two-argument lambda that returns true, given to a method of another name.
+    void allFlagsOn(java.util.Map<String, Boolean> flags) {
+        // ok: java.tls-verification-disabled
+        flags.replaceAll((name, value) -> true);
+        flags.replaceAll((name, value) -> {
+            // ok: java.tls-verification-disabled
+            return true;
+        });
+    }
+
+    // ok: java.tls-verification-disabled
+    boolean isTrusted(String user, String role) {
+        return true;
+    }
+
+    Object featureFlag(com.acme.client.flags.Flags flags) {
+        // ok: java.tls-verification-disabled
+        return flags.hostnameVerifier(name -> true);
+    }
+
+    Object ownNoop() {
+        // ok: java.tls-verification-disabled
+        return com.acme.client.flags.NoopHostnameVerifier.INSTANCE;
     }
 }
