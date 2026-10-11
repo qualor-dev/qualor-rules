@@ -10,6 +10,7 @@ import (
 	htmltemplate "html/template"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -17,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 	"text/template"
 	. "text/template"
 	mail "text/template"
@@ -1131,4 +1133,107 @@ func PowerShellSlice(w http.ResponseWriter, r *http.Request) {
 	viaCwa, _ := exec.CommandContext(ctx, "pwsh", "-cwa", args...).Output()
 	// ruleid: go.xss
 	w.Write(viaCwa)
+}
+
+// Test support: a handler inside a function that takes a *testing.T, *testing.B, *testing.F,
+// *testing.M or testing.TB serves only the requests of its own test (an httptest server, a
+// subtest, TestMain), in a _test.go file or in a helper package.
+func NewFixtureServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.xss
+		fmt.Fprintf(w, "<p>%s</p>", r.URL.Query().Get("name"))
+	}))
+}
+
+func recordingServer(tb testing.TB) (*httptest.Server, error) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		// ok: go.xss
+		w.Write(body)
+	}))
+	return srv, nil
+}
+
+func TestHello(t *testing.T) {
+	t.Run("served", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// ok: go.xss
+			fmt.Fprint(w, "<p>"+r.FormValue("bio")+"</p>")
+		}))
+		defer srv.Close()
+	})
+}
+
+func BenchmarkGinPages(b *testing.B) {
+	router := gin.New()
+	router.GET("/pages", func(c *gin.Context) {
+		// ok: go.xss
+		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte("<p>"+c.Query("text")+"</p>"))
+	})
+}
+
+func FuzzEchoPages(f *testing.F) {
+	e := echo.New()
+	e.GET("/pages", func(c echo.Context) error {
+		// ok: go.xss
+		return c.HTML(http.StatusOK, "<p>"+c.QueryParam("text")+"</p>")
+	})
+}
+
+var fixtureCase = func(t *testing.T) {
+	http.HandleFunc("/cases/", func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.xss
+		io.WriteString(w, "<div>"+r.FormValue("case")+"</div>")
+	})
+}
+
+func TestMain(m *testing.M) {
+	http.HandleFunc("/fixtures/", func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.xss
+		greeting.Execute(w, r.URL.Query().Get("name"))
+	})
+	os.Exit(m.Run())
+}
+
+type fixtureSuite struct{ prefix string }
+
+func (s *fixtureSuite) handler(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.xss
+		fmt.Fprintf(w, "%s<p>%s</p>", s.prefix, r.URL.Query().Get("name"))
+	}
+}
+
+// The same handlers outside test support are reported: a parameter of another type named T, or
+// a handler whose name starts with Test, is not a test.
+type Swatch struct{ T string }
+
+func SwatchPreview(t *Swatch, w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.xss
+	fmt.Fprintf(w, "<div class=%q>%s</div>", t.T, r.URL.Query().Get("name"))
+}
+
+func TestPage(w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.xss
+	w.Write([]byte(r.FormValue("body")))
+}
+
+func ServeFixtures() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ruleid: go.xss
+		fmt.Fprintf(w, "<p>%s</p>", r.URL.Query().Get("name"))
+	}))
+}
+
+// A handler declared at the top level of a test file, outside any function that takes a testing
+// parameter, is still reported.
+func fixtureHandler(w http.ResponseWriter, r *http.Request) {
+	// todook: go.xss
+	fmt.Fprintf(w, "<p>%s</p>", r.URL.Query().Get("name"))
+}
+
+func TestFixtureHandler(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(fixtureHandler))
+	defer srv.Close()
 }
