@@ -418,4 +418,29 @@ app.get('/proxy/defaults', async ({ query = {} }, res) => {
   res.send(await (await fetch(query.url)).text());
 });
 
+// Every client function, and look-alikes: the same names on another module (an API client of
+// the application), its instances, and other functions imported by name from the clients.
+const apiClient = require('./api-client');
+const apiInstance = apiClient.create({ retries: 2 });
+const { request: apiRequest } = require('./api-client');
+const { setGlobalDispatcher } = require('undici');
+app.get('/clients/:id', async (req, res) => {
+  const target = req.query.target;
+  // ruleid: js.ssrf
+  await undici.stream(target, { method: 'GET' }, () => process.stdout);
+  // ruleid: js.ssrf
+  undici.pipeline(target, { method: 'GET' }, ({ body }) => body);
+  // ruleid: js.ssrf
+  await undici.fetch(target);
+  // ok: js.ssrf
+  await apiClient.get(target);
+  // ok: js.ssrf
+  await apiInstance.get(target);
+  // ok: js.ssrf
+  await apiRequest(target);
+  // ok: js.ssrf
+  setGlobalDispatcher(target);
+  res.end();
+});
+
 module.exports = { app, fastify, download };

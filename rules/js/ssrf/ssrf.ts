@@ -5,6 +5,15 @@ import * as https from 'node:https';
 import { get } from 'node:http';
 import { fetch as undiciFetch } from 'undici';
 import type { NextRequest } from 'next/server';
+import * as gotNs from 'got';
+import http from 'node:http';
+import apiDefault from './api-client';
+import * as apiNs from './api-client';
+import { request as apiReq } from './api-client';
+import { get as apiGet } from './api-client';
+import { pipeline } from './api-client';
+import { setGlobalDispatcher } from 'undici';
+import { createServer as makeServer } from 'node:http';
 
 const app = express();
 const STATUS_API = 'https://status.example.com/api/';
@@ -66,5 +75,41 @@ export async function ping(request: { url: string }) {
   // ok: js.ssrf
   return fetch(request.url);
 }
+
+// Default and namespace imports of the clients, their instances, and look-alikes: the same names
+// on another module and other functions imported by name from the clients.
+const gotClient = gotNs.extend({ timeout: { request: 1000 } });
+const nsClient = apiNs.create();
+const defaultClient = apiDefault.create();
+app.get('/ts/clients', async (req: Request, res: Response) => {
+  const target = String(req.query.target);
+  // ruleid: js.ssrf
+  await gotNs.get(target);
+  // ruleid: js.ssrf
+  await gotClient(target);
+  // ruleid: js.ssrf
+  await api.post(target);
+  // ruleid: js.ssrf
+  http.get(target, (r) => r.resume());
+  // ok: js.ssrf
+  await apiDefault.get(target);
+  // ok: js.ssrf
+  await apiNs.request(target);
+  // ok: js.ssrf
+  await nsClient.get(target);
+  // ok: js.ssrf
+  await apiReq(target);
+  // ok: js.ssrf
+  await apiGet(target);
+  // ok: js.ssrf
+  await defaultClient.get(target);
+  // ok: js.ssrf
+  await pipeline(target);
+  // ok: js.ssrf
+  setGlobalDispatcher(target);
+  // ok: js.ssrf
+  makeServer(target);
+  res.end();
+});
 
 export default app;

@@ -51,7 +51,6 @@ export const budgetFor = (refMs) => Math.max(BUDGET_MS, Math.round(LOAD_RATIO * 
  * the list shrinks as the rows are done: remove the entry in the commit that does the row.
  */
 export const ALLOWED = Object.freeze({
-  'js.ssrf': { limit: 'none', row: 'js.ssrf#prefilter' },
   'js.template-injection': { limit: 'none', row: 'js.template-injection#prefilter' },
   'python.xss': { limit: 'none', row: 'python.xss#prefilter' },
   'java.xss': { limit: 'none', row: 'java.xss#prefilter' },
