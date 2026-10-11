@@ -323,6 +323,15 @@ ORDER_CLAUSES = {
     "quoted": "\"name\" ASC",
 }
 COLUMN_SETS = {"short": ("id", "name"), "long": ["id", "name", "price"]}
+# A name the module assigns again is not a constant, even when both values are literals.
+REDEFINED_COLUMNS = {"name": "name"}
+REDEFINED_COLUMNS = {"name": "title"}
+# Tables a view changes with update(), setdefault() or |=, and a lower-case name (PEP 8 writes
+# constants in upper case), are not allow-lists either.
+MERGED_COLUMNS = {"name": "name"}
+DEFAULTED_COLUMNS = {"name": "name"}
+UNITED_COLUMNS = {"name": "name"}
+sort_aliases = {"name": "name"}
 
 
 @app.route("/items")
@@ -347,6 +356,22 @@ def items():
     con.execute("SELECT * FROM items ORDER BY " + SORT_COLUMNS.get(request.args["sort"], request.args["sort"]))
     # ruleid: python.sql-injection
     con.execute("SELECT * FROM items ORDER BY " + RELOADED_COLUMNS.get(request.args["sort"], "name"))
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + REDEFINED_COLUMNS.get(request.args["sort"], "name"))
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + MERGED_COLUMNS[request.args["sort"]])
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + DEFAULTED_COLUMNS[request.args["sort"]])
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + UNITED_COLUMNS[request.args["sort"]])
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + sort_aliases[request.args["sort"]])
+    # ok: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + SORT_COLUMNS.get(request.args["sort"]))
+    # An upper-case local is not a constant default.
+    LOCAL_DEFAULT = request.args["default"]
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + SORT_COLUMNS.get(request.args["sort"], LOCAL_DEFAULT))
     # ok: python.sql-injection
     con.execute("SELECT * FROM items ORDER BY " + ORDER_CLAUSES[request.args["o"]])
     # ok: python.sql-injection
@@ -387,6 +412,15 @@ def add_column():
 def reload_columns():
     global RELOADED_COLUMNS
     RELOADED_COLUMNS = dict(request.form)
+    return "ok"
+
+
+@app.post("/columns/merge")
+def merge_columns():
+    MERGED_COLUMNS.update(request.form)
+    DEFAULTED_COLUMNS.setdefault(request.form["key"], request.form["column"])
+    global UNITED_COLUMNS
+    UNITED_COLUMNS |= dict(request.form)
     return "ok"
 
 

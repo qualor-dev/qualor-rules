@@ -528,7 +528,9 @@ rules:
       # numbers, True/False/None; comments allowed between the items), assigned to an upper-case
       # (constant) name that the module never changes (item assignment, update(), setdefault(),
       # |=) or assigns again. A get() default must be a literal, a list/tuple of literals or a
-      # module constant.
+      # module constant. (The exclusions start at a dict, set or comprehension assigned to the
+      # name, not at any assignment: one pattern per assignment of the module made large modules
+      # slow.)
       - patterns:
           - pattern-inside: |
               $ALLOWED = $LITERAL
@@ -540,27 +542,27 @@ rules:
               metavariable: $LITERAL
               regex: ^\{(\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*:(\s|#[^\n]*)*([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None|\[(\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\]|\((\s|#[^\n]*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*,(\s|#[^\n]*)*)*(([rRbBuU]{0,2}"(\\.|[^"\\\n])*"|[rRbBuU]{0,2}'(\\.|[^'\\\n])*'|-?\d+(\.\d+)?|True|False|None)(\s|#[^\n]*)*)?\))(\s|#[^\n]*)*)?\}$
           - pattern-not-inside: |
-              $ALLOWED = $LITERAL
+              $ALLOWED = {...}
               ...
               $ALLOWED[$KEY] = $VALUE
               ...
           - pattern-not-inside: |
-              $ALLOWED = $LITERAL
+              $ALLOWED = {...}
               ...
               $ALLOWED.update(...)
               ...
           - pattern-not-inside: |
-              $ALLOWED = $LITERAL
+              $ALLOWED = {...}
               ...
               $ALLOWED.setdefault(...)
               ...
           - pattern-not-inside: |
-              $ALLOWED = $LITERAL
+              $ALLOWED = {...}
               ...
               $ALLOWED |= $VALUE
               ...
           - pattern-not-inside: |
-              $ALLOWED = $LITERAL
+              $ALLOWED = {...}
               ...
               $ALLOWED = $OTHER
               ...
