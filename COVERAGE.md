@@ -108,6 +108,13 @@ Hints in cells are leads for the doc gate, not facts.
 OpenGrep has no includes, so every taint rule of a language carries its own copy of the
 language's request sources.
 
+The rules are tested and run with OpenGrep's `--taint-intrafile` (package.json `taintIntrafile`,
+written into the pack's manifest), so a helper or wrapper in the same file is followed and only
+other files are not. That mode models `get`-like calls as container reads: the Python shared block
+therefore carries two `dict.get` propagators (key and default into the dict), identical in the 11
+Python taint rules, and a rule whose sink argument comes from such a call (`Paths.get`, an HTTP
+client's `get`) needs a propagator of its own.
+
 - A new taint (request) rule starts from a verbatim copy of the `pattern-sources` (and the
   request propagators) of its language's SQL rule, then adds what the category needs. A taint rule
   with another source (zip slip: the archive entry name) does not copy the request block.
