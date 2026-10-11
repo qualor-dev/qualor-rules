@@ -249,6 +249,27 @@ def report():
     # of the function, so a later lookup of a constant entry is reported.
     # todook: python.path-traversal
     data = send_file(paths.get("daily"))
+    # Request data written into a dict and read back through get(), and a pop() or setdefault()
+    # whose key or default is request data.
+    written = {"default": "reports/daily.csv"}
+    written["custom"] = request.args["o"]
+    # ruleid: python.path-traversal
+    send_file(written.get("custom"))
+    popped = {"default": "reports/daily.csv"}
+    # ruleid: python.path-traversal
+    send_file(popped.pop(request.args["o"]))
+    pop_default = {"default": "reports/daily.csv"}
+    # ruleid: python.path-traversal
+    send_file(pop_default.pop("custom", request.args["o"]))
+    set_key = {"default": "reports/daily.csv"}
+    # ruleid: python.path-traversal
+    send_file(set_key.setdefault(request.args["o"]))
+    set_default = {"default": "reports/daily.csv"}
+    # ruleid: python.path-traversal
+    send_file(set_default.setdefault("custom", request.args["o"]))
+    # An item set to request data makes the dict request data for the rest of the function too.
+    # todook: python.path-traversal
+    send_file(written.get("default"))
     # ok: python.path-traversal
     data = send_file(DOWNLOADS[request.args["download"]])
     # ruleid: python.path-traversal

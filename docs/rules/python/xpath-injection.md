@@ -99,8 +99,11 @@ def email():
 - A function named like a class-based view's handler (`get`, `post`, ..., `dispatch`) that takes
   `(self, request, ...)` in a Django module is taken for one also outside a class: its parameters
   after `request` count as URL arguments.
-- After a `get()` whose key or default is request data, the dict counts as request data for the
-  rest of the function, so a later lookup of a constant entry in it is reported.
+- After a `get()`, `pop()` or `setdefault()` whose key or default is request data, or after an item
+  is set to request data (`d["q"] = request.args["q"]`), the object counts as request data for the
+  rest of the function, whatever it is (a dict, `os.environ`, a cache, a client): a later lookup of
+  a constant entry in it is reported, as is `os.environ.get("HOME")` after
+  `os.environ.get(request.args["k"])`.
 <!-- end: known-limits -->
 
 ## References

@@ -392,6 +392,27 @@ def items():
     # of the function, so a later lookup of a constant entry is reported.
     # todook: python.sql-injection
     con.execute("SELECT * FROM items ORDER BY " + orders.get("default"))
+    # Request data written into a dict and read back through get(), and a pop() or setdefault()
+    # whose key or default is request data.
+    written = {"default": "name"}
+    written["custom"] = request.args["o"]
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + written.get("custom"))
+    popped = {"default": "name"}
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + popped.pop(request.args["o"]))
+    pop_default = {"default": "name"}
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + pop_default.pop("custom", request.args["o"]))
+    set_key = {"default": "name"}
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + set_key.setdefault(request.args["o"]))
+    set_default = {"default": "name"}
+    # ruleid: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + set_default.setdefault("custom", request.args["o"]))
+    # An item set to request data makes the dict request data for the rest of the function too.
+    # todook: python.sql-injection
+    con.execute("SELECT * FROM items ORDER BY " + written.get("default"))
     SORT_COLUMNS = {"name": request.args["fallback"]}
     # ruleid: python.sql-injection
     con.execute("SELECT * FROM items ORDER BY " + SORT_COLUMNS["name"])

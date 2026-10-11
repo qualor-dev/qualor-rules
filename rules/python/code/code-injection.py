@@ -113,6 +113,27 @@ def formula(kind):
     # of the function, so a later lookup of a constant entry is reported.
     # todook: python.code-injection
     h = eval(options.get("expr"))
+    # Request data written into a dict and read back through get(), and a pop() or setdefault()
+    # whose key or default is request data.
+    written = {"default": "1 + 1"}
+    written["custom"] = request.args["o"]
+    # ruleid: python.code-injection
+    eval(written.get("custom"))
+    popped = {"default": "1 + 1"}
+    # ruleid: python.code-injection
+    eval(popped.pop(request.args["o"]))
+    pop_default = {"default": "1 + 1"}
+    # ruleid: python.code-injection
+    eval(pop_default.pop("custom", request.args["o"]))
+    set_key = {"default": "1 + 1"}
+    # ruleid: python.code-injection
+    eval(set_key.setdefault(request.args["o"]))
+    set_default = {"default": "1 + 1"}
+    # ruleid: python.code-injection
+    eval(set_default.setdefault("custom", request.args["o"]))
+    # An item set to request data makes the dict request data for the rest of the function too.
+    # todook: python.code-injection
+    eval(written.get("default"))
     # get() by request data on a table that request data changes elsewhere in the file.
     stored_choice = MACROS.get(kind)
     # ruleid: python.code-injection

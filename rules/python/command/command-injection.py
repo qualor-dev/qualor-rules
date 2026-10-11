@@ -506,6 +506,27 @@ def report(name):
     # of the function, so a later lookup of a constant entry is reported.
     # todook: python.command-injection
     os.system(commands.get("default"))
+    # Request data written into a dict and read back through get(), and a pop() or setdefault()
+    # whose key or default is request data.
+    written = {"default": "uptime"}
+    written["custom"] = request.args["o"]
+    # ruleid: python.command-injection
+    os.system(written.get("custom"))
+    popped = {"default": "uptime"}
+    # ruleid: python.command-injection
+    os.system(popped.pop(request.args["o"]))
+    pop_default = {"default": "uptime"}
+    # ruleid: python.command-injection
+    os.system(pop_default.pop("custom", request.args["o"]))
+    set_key = {"default": "uptime"}
+    # ruleid: python.command-injection
+    os.system(set_key.setdefault(request.args["o"]))
+    set_default = {"default": "uptime"}
+    # ruleid: python.command-injection
+    os.system(set_default.setdefault("custom", request.args["o"]))
+    # An item set to request data makes the dict request data for the rest of the function too.
+    # todook: python.command-injection
+    os.system(written.get("default"))
     # get() by request data on a table that request data changes elsewhere in the file.
     stored_choice = HOOKS.get(name)
     # ruleid: python.command-injection

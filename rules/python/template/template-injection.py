@@ -149,6 +149,27 @@ def greeting(lang):
     # of the function, so a later lookup of a constant entry is reported.
     # todook: python.template-injection
     d2 = render_template_string(texts.get("hello"))
+    # Request data written into a dict and read back through get(), and a pop() or setdefault()
+    # whose key or default is request data.
+    written = {"default": "Hello"}
+    written["custom"] = request.args["o"]
+    # ruleid: python.template-injection
+    render_template_string(written.get("custom"))
+    popped = {"default": "Hello"}
+    # ruleid: python.template-injection
+    render_template_string(popped.pop(request.args["o"]))
+    pop_default = {"default": "Hello"}
+    # ruleid: python.template-injection
+    render_template_string(pop_default.pop("custom", request.args["o"]))
+    set_key = {"default": "Hello"}
+    # ruleid: python.template-injection
+    render_template_string(set_key.setdefault(request.args["o"]))
+    set_default = {"default": "Hello"}
+    # ruleid: python.template-injection
+    render_template_string(set_default.setdefault("custom", request.args["o"]))
+    # An item set to request data makes the dict request data for the rest of the function too.
+    # todook: python.template-injection
+    render_template_string(written.get("default"))
     # get() by request data on a table that request data changes elsewhere in the file.
     stored_choice = SNIPPETS.get(lang)
     # ruleid: python.template-injection

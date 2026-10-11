@@ -145,6 +145,27 @@ def field(name):
     # of the function, so a later lookup of a constant entry is reported.
     # todook: python.xpath-injection
     d2 = catalog.xpath(queries.get("titles"))
+    # Request data written into a dict and read back through get(), and a pop() or setdefault()
+    # whose key or default is request data.
+    written = {"default": "//book/title"}
+    written["custom"] = request.args["o"]
+    # ruleid: python.xpath-injection
+    catalog.xpath(written.get("custom"))
+    popped = {"default": "//book/title"}
+    # ruleid: python.xpath-injection
+    catalog.xpath(popped.pop(request.args["o"]))
+    pop_default = {"default": "//book/title"}
+    # ruleid: python.xpath-injection
+    catalog.xpath(pop_default.pop("custom", request.args["o"]))
+    set_key = {"default": "//book/title"}
+    # ruleid: python.xpath-injection
+    catalog.xpath(set_key.setdefault(request.args["o"]))
+    set_default = {"default": "//book/title"}
+    # ruleid: python.xpath-injection
+    catalog.xpath(set_default.setdefault("custom", request.args["o"]))
+    # An item set to request data makes the dict request data for the rest of the function too.
+    # todook: python.xpath-injection
+    catalog.xpath(written.get("default"))
     # get() by request data on a table that request data changes elsewhere in the file.
     stored_choice = SAVED_QUERIES.get(name)
     # ruleid: python.xpath-injection

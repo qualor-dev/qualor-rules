@@ -2287,3 +2287,33 @@ async def fastapi_results_shell(host: str):
     out = subprocess.check_output(["bash", "-c", "dig " + host], text=True)
     # ok: python.xss
     return HTMLResponse("<pre>" + out + "</pre>")
+
+
+@app.route("/containers")
+def containers():
+    # Request data written into a dict and read back through get(), and a pop() or setdefault()
+    # whose key or default is request data.
+    written = {"default": "Welcome"}
+    written["custom"] = request.args["o"]
+    # ruleid: python.xss
+    make_response(written.get("custom"))
+    popped = {"default": "Welcome"}
+    popped_value = popped.pop(request.args["o"])
+    # ruleid: python.xss
+    make_response(popped_value)
+    pop_default = {"default": "Welcome"}
+    pop_default_value = pop_default.pop("custom", request.args["o"])
+    # ruleid: python.xss
+    make_response(pop_default_value)
+    set_key = {"default": "Welcome"}
+    set_key_value = set_key.setdefault(request.args["o"])
+    # ruleid: python.xss
+    make_response(set_key_value)
+    set_default = {"default": "Welcome"}
+    set_default_value = set_default.setdefault("custom", request.args["o"])
+    # ruleid: python.xss
+    make_response(set_default_value)
+    # An item set to request data makes the dict request data for the rest of the function too.
+    # todook: python.xss
+    make_response(written.get("default"))
+    return "ok"

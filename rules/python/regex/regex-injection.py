@@ -116,6 +116,27 @@ def filter_view(kind):
     # of the function, so a later lookup of a constant entry is reported.
     # todook: python.regex-injection
     d2 = re.compile(patterns.get("words"))
+    # Request data written into a dict and read back through get(), and a pop() or setdefault()
+    # whose key or default is request data.
+    written = {"default": r"w+"}
+    written["custom"] = request.args["o"]
+    # ruleid: python.regex-injection
+    re.compile(written.get("custom"))
+    popped = {"default": r"w+"}
+    # ruleid: python.regex-injection
+    re.compile(popped.pop(request.args["o"]))
+    pop_default = {"default": r"w+"}
+    # ruleid: python.regex-injection
+    re.compile(pop_default.pop("custom", request.args["o"]))
+    set_key = {"default": r"w+"}
+    # ruleid: python.regex-injection
+    re.compile(set_key.setdefault(request.args["o"]))
+    set_default = {"default": r"w+"}
+    # ruleid: python.regex-injection
+    re.compile(set_default.setdefault("custom", request.args["o"]))
+    # An item set to request data makes the dict request data for the rest of the function too.
+    # todook: python.regex-injection
+    re.compile(written.get("default"))
     # get() by request data on a table that request data changes elsewhere in the file.
     stored_choice = SAVED_FILTERS.get(kind)
     # ruleid: python.regex-injection

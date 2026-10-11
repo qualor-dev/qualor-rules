@@ -163,6 +163,27 @@ def sample2(kind):
     # of the function, so a later lookup of a constant entry is reported.
     # todook: python.unsafe-deserialization
     fallback = yaml.load(documents.get("default"), Loader=yaml.Loader)
+    # Request data written into a dict and read back through get(), and a pop() or setdefault()
+    # whose key or default is request data.
+    written = {"default": "a: 1"}
+    written["custom"] = request.args["o"]
+    # ruleid: python.unsafe-deserialization
+    yaml.load(written.get("custom"), Loader=yaml.Loader)
+    popped = {"default": "a: 1"}
+    # ruleid: python.unsafe-deserialization
+    yaml.load(popped.pop(request.args["o"]), Loader=yaml.Loader)
+    pop_default = {"default": "a: 1"}
+    # ruleid: python.unsafe-deserialization
+    yaml.load(pop_default.pop("custom", request.args["o"]), Loader=yaml.Loader)
+    set_key = {"default": "a: 1"}
+    # ruleid: python.unsafe-deserialization
+    yaml.load(set_key.setdefault(request.args["o"]), Loader=yaml.Loader)
+    set_default = {"default": "a: 1"}
+    # ruleid: python.unsafe-deserialization
+    yaml.load(set_default.setdefault("custom", request.args["o"]), Loader=yaml.Loader)
+    # An item set to request data makes the dict request data for the rest of the function too.
+    # todook: python.unsafe-deserialization
+    yaml.load(written.get("default"), Loader=yaml.Loader)
     # ruleid: python.unsafe-deserialization
     preset = yaml.load(PRESETS[kind], Loader=yaml.Loader)
     return str((doc, preset))

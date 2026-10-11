@@ -272,6 +272,27 @@ def partner(name):
     # of the function, so a later lookup of a constant entry is reported.
     # todook: python.ssrf
     requests.get(endpoints.get("status"), timeout=5)
+    # Request data written into a dict and read back through get(), and a pop() or setdefault()
+    # whose key or default is request data.
+    written = {"default": "https://status.example.com/"}
+    written["custom"] = request.args["o"]
+    # ruleid: python.ssrf
+    requests.get(written.get("custom"), timeout=5)
+    popped = {"default": "https://status.example.com/"}
+    # ruleid: python.ssrf
+    requests.get(popped.pop(request.args["o"]), timeout=5)
+    pop_default = {"default": "https://status.example.com/"}
+    # ruleid: python.ssrf
+    requests.get(pop_default.pop("custom", request.args["o"]), timeout=5)
+    set_key = {"default": "https://status.example.com/"}
+    # ruleid: python.ssrf
+    requests.get(set_key.setdefault(request.args["o"]), timeout=5)
+    set_default = {"default": "https://status.example.com/"}
+    # ruleid: python.ssrf
+    requests.get(set_default.setdefault("custom", request.args["o"]), timeout=5)
+    # An item set to request data makes the dict request data for the rest of the function too.
+    # todook: python.ssrf
+    requests.get(written.get("default"), timeout=5)
     return "ok"
 
 

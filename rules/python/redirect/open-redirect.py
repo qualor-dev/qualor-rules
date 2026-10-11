@@ -410,6 +410,27 @@ def out(name):
     # of the function, so a later lookup of a constant entry is reported.
     # todook: python.open-redirect
     d = redirect(targets.get("home"))
+    # Request data written into a dict and read back through get(), and a pop() or setdefault()
+    # whose key or default is request data.
+    written = {"default": "/"}
+    written["custom"] = request.args["o"]
+    # ruleid: python.open-redirect
+    redirect(written.get("custom"))
+    popped = {"default": "/"}
+    # ruleid: python.open-redirect
+    redirect(popped.pop(request.args["o"]))
+    pop_default = {"default": "/"}
+    # ruleid: python.open-redirect
+    redirect(pop_default.pop("custom", request.args["o"]))
+    set_key = {"default": "/"}
+    # ruleid: python.open-redirect
+    redirect(set_key.setdefault(request.args["o"]))
+    set_default = {"default": "/"}
+    # ruleid: python.open-redirect
+    redirect(set_default.setdefault("custom", request.args["o"]))
+    # An item set to request data makes the dict request data for the rest of the function too.
+    # todook: python.open-redirect
+    redirect(written.get("default"))
     # get() by request data on a table that request data changes elsewhere in the file.
     stored_choice = CAMPAIGNS.get(name)
     # ruleid: python.open-redirect
