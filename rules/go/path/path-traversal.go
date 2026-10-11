@@ -381,6 +381,26 @@ func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
 	os.Open(fmt.Sprintf("%s/archived-%t.txt", baseDir, archived))
 }
 
+// A sink called inside a comparison (`if os.Remove(...) != nil`) is a boolean expression as a
+// whole: the number/boolean sanitizer clears it, the sink's arguments included.
+func GinSinkInComparison(c *gin.Context) {
+	// todoruleid: go.path-traversal
+	if os.Remove(filepath.Join(baseDir, c.Param("name"))) != nil {
+		c.Status(http.StatusNotFound)
+	}
+}
+
+func SinkInComparison(w http.ResponseWriter, r *http.Request) {
+	// todoruleid: go.path-traversal
+	if os.WriteFile(r.FormValue("path"), []byte("draft"), 0o644) != nil {
+		http.Error(w, "not saved", http.StatusInternalServerError)
+		return
+	}
+	// todoruleid: go.path-traversal
+	saved := os.WriteFile(filepath.Join(baseDir, r.FormValue("name")), []byte("draft"), 0o644) == nil
+	fmt.Fprintln(w, saved)
+}
+
 // Test support: a handler inside a function that takes a *testing.T, *testing.B, *testing.F,
 // *testing.M or testing.TB serves only the requests of its own test (an httptest server, a
 // subtest, TestMain), in a _test.go file or in a helper package.

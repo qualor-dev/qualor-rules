@@ -105,6 +105,7 @@ func Download(w http.ResponseWriter, r *http.Request) {
   checked yet.
 - The success flag of a bind or decode call (`ok := c.ShouldBindJSON(&x) == nil`) still counts
   as request data, so formatting it into a path is reported.
+- A sink called inside a comparison, such as `if os.Remove(...) != nil`, is not reported.
 - Tests are recognised by a testing parameter of the enclosing function only: a handler declared
   on its own in a test file is still reported.
 <!-- end: known-limits -->
