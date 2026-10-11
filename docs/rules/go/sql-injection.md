@@ -12,6 +12,10 @@ SQL text built from HTTP request data and run through `database/sql` (`Query`, `
 and their `Context` forms on a `*sql.DB`, `*sql.Tx` or `*sql.Conn`) or GORM (`Raw`, `Exec`,
 `Where` with SQL text, and similar). The request data may come from `net/http`, Gin, Echo, chi or
 gorilla/mux: query and form values, path parameters, headers, cookies and decoded JSON bodies.
+
+Code inside a test (a function or method that takes a `*testing.T`, `*testing.B`, `*testing.F`,
+`*testing.M` or `testing.TB`, such as the handler of an `httptest` server a test helper starts) is
+not reported: it only serves the test's own requests.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -111,6 +115,8 @@ func (h *Handler) Orders(w http.ResponseWriter, r *http.Request) {
   character (`string(rune(n))`) is missed.
 - The success flag of a bind or decode call (`ok := c.ShouldBindJSON(&x) == nil`) still counts
   as request data, so formatting it into a query is reported.
+- Tests are recognised by a testing parameter of the enclosing function only: a handler declared
+  on its own in a test file is still reported.
 <!-- end: known-limits -->
 
 ## References
@@ -136,6 +142,8 @@ func (h *Handler) Orders(w http.ResponseWriter, r *http.Request) {
 - <https://gorm.io/docs/security.html>
 - <https://gorm.io/docs/session.html>
 - <https://gorm.io/docs/transactions.html>
+- <https://pkg.go.dev/testing>
+- <https://pkg.go.dev/net/http/httptest>
 
 ## Tests
 

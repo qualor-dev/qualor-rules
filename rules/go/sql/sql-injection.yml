@@ -36,6 +36,8 @@ rules:
         - https://gorm.io/docs/security.html
         - https://gorm.io/docs/session.html
         - https://gorm.io/docs/transactions.html
+        - https://pkg.go.dev/testing
+        - https://pkg.go.dev/net/http/httptest
       since: 2026.10.0
     # Known limits (each has a `todo` line in the test file):
     # - A local variable named like the receiver's field (`db := ...` beside `h.db.Query(...)`)
@@ -55,6 +57,8 @@ rules:
     # - A boolean that holds a Gin or Echo bind call or a JSON decode (the success flag
     #   `ok := c.ShouldBindJSON(&x) == nil`) does not count as clean, so that the struct the call
     #   fills stays request data; the flag formatted into SQL is reported (`todook:`).
+    # - Test support is skipped only inside a function that takes a testing parameter: a handler
+    #   declared at the top level of a test file and only served by a test is reported (`todook:`).
     pattern-sources:
       # The request: net/http's *http.Request, and the same request through Gin and Echo.
       - patterns:
@@ -211,6 +215,17 @@ rules:
           - metavariable-regex:
               metavariable: $E
               regex: ^(?![\s\S]*(\b(Must|Should)?Bind[A-Za-z]*|\.Decode|\bjson\.Unmarshal)\s*\()
+      # Test support (shared by the Go request taint rules): request data inside a function or
+      # method that takes a *testing.T, *testing.B, *testing.F, *testing.M or testing.TB (a test,
+      # a subtest, TestMain, a test helper in any file) comes from the test's own requests, such
+      # as those of an httptest server it starts.
+      - patterns:
+          - pattern-inside: |
+              func $FN(..., $TP $TY, ...) { ... }
+          - metavariable-regex:
+              metavariable: $TY
+              regex: ^(\*testing\.(T|B|F|M)|testing\.TB)$
+          - pattern: $X
     pattern-sinks:
       - patterns:
           - pattern-either:

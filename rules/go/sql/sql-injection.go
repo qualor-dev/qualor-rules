@@ -7,7 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"strconv"
+	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-chi/chi/v5"
@@ -576,4 +579,111 @@ func (h *Handler) EchoNumericOrders(c echo.Context) error {
 	// todook: go.sql-injection
 	h.db.Query(fmt.Sprintf("SELECT * FROM orders WHERE status = %d", q.Status))
 	return nil
+}
+
+// Test support: a handler inside a function that takes a *testing.T, *testing.B, *testing.F,
+// *testing.M or testing.TB serves only the requests of its own test (an httptest server, a
+// subtest, TestMain), in a _test.go file or in a helper package.
+var fixtureDB *sql.DB
+
+func NewFixtureServer(t *testing.T, db *sql.DB) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.sql-injection
+		db.Query("SELECT body FROM fixtures WHERE path = '" + r.URL.Path + "'")
+	}))
+}
+
+func recordingServer(tb testing.TB, db *sql.DB) (*httptest.Server, error) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		// ok: go.sql-injection
+		db.Exec("INSERT INTO requests (method, body) VALUES ('" + r.Method + "', '" + string(body) + "')")
+	}))
+	return srv, nil
+}
+
+func TestOrders(t *testing.T) {
+	t.Run("served", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// ok: go.sql-injection
+			fixtureDB.QueryRow(fmt.Sprintf("SELECT * FROM orders WHERE id = %s", r.FormValue("id")))
+		}))
+		defer srv.Close()
+	})
+}
+
+func BenchmarkGinOrders(b *testing.B) {
+	router := gin.New()
+	router.GET("/orders/:id", func(c *gin.Context) {
+		// ok: go.sql-injection
+		fixtureDB.Query("SELECT * FROM orders WHERE id = " + c.Param("id"))
+	})
+}
+
+func FuzzEchoOrders(f *testing.F) {
+	e := echo.New()
+	e.GET("/orders/:id", func(c echo.Context) error {
+		// ok: go.sql-injection
+		_, err := fixtureDB.Exec("DELETE FROM orders WHERE id = " + c.Param("id"))
+		return err
+	})
+}
+
+var fixtureCase = func(t *testing.T) {
+	http.HandleFunc("/cases/", func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.sql-injection
+		fixtureDB.Query("SELECT * FROM cases WHERE name = '" + r.FormValue("case") + "'")
+	})
+}
+
+func TestMain(m *testing.M) {
+	http.HandleFunc("/fixtures/", func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.sql-injection
+		fixtureDB.Query("SELECT * FROM fixtures WHERE name = '" + r.URL.Query().Get("name") + "'")
+	})
+	os.Exit(m.Run())
+}
+
+type fixtureSuite struct{ db *sql.DB }
+
+func (s *fixtureSuite) handler(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.sql-injection
+		rows, _ := s.db.Query("SELECT * FROM orders WHERE customer = '" + r.URL.Query().Get("customer") + "'")
+		defer rows.Close()
+	}
+}
+
+// The same handlers outside test support are reported: a parameter of another type named T, or
+// a handler whose name starts with Test, is not a test.
+type Theme struct{ T string }
+
+func Preview(t *Theme, w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.sql-injection
+	fixtureDB.Query("SELECT * FROM themes WHERE owner = '" + t.T + "' AND name = '" + r.URL.Query().Get("name") + "'")
+}
+
+func TestPage(w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.sql-injection
+	fixtureDB.Query("SELECT body FROM pages WHERE path = '" + r.URL.Path + "'")
+}
+
+func ServeFixtures(db *sql.DB) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ruleid: go.sql-injection
+		db.Query("SELECT body FROM fixtures WHERE path = '" + r.URL.Path + "'")
+	}))
+}
+
+// A handler declared at the top level of a test file, outside any function that takes a testing
+// parameter, is still reported.
+func fixtureHandler(w http.ResponseWriter, r *http.Request) {
+	// todook: go.sql-injection
+	fixtureDB.Query("SELECT body FROM fixtures WHERE path = '" + r.URL.Path + "'")
+}
+
+func TestFixtureHandler(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(fixtureHandler))
+	defer srv.Close()
 }
