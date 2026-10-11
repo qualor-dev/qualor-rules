@@ -24,6 +24,10 @@ remaining arguments to the script as plain values, so request data there is not 
 
 Request data means query and form values, path parameters, headers, cookies and JSON bodies, read
 through `net/http` or through Gin, Echo, chi or gorilla/mux.
+
+Code inside a test (a function or method that takes a `*testing.T`, `*testing.B`, `*testing.F`,
+`*testing.M` or `testing.TB`, such as the handler of an `httptest` server a test helper starts) is
+not reported: it only serves the test's own requests.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -119,6 +123,8 @@ func Archive(w http.ResponseWriter, r *http.Request) {
   (`powershell.exe -NoProfile Get-Item <request>`) is not followed.
 - Base64 does not count as a sanitizer: request data that is encoded and only decoded into a file
   by the shell is still reported.
+- Tests are recognised by a testing parameter of the enclosing function only: a handler declared
+  on its own in a test file is still reported.
 <!-- end: known-limits -->
 
 ## References
@@ -151,6 +157,8 @@ func Archive(w http.ResponseWriter, r *http.Request) {
 - <https://echo.labstack.com/guide/binding/>
 - <https://pkg.go.dev/github.com/go-chi/chi/v5>
 - <https://pkg.go.dev/github.com/gorilla/mux>
+- <https://pkg.go.dev/testing>
+- <https://pkg.go.dev/net/http/httptest>
 
 ## Tests
 

@@ -7,11 +7,14 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
+	"testing"
 	"unicode/utf16"
 
 	"github.com/gin-gonic/gin"
@@ -449,4 +452,110 @@ func LookAlikes(w http.ResponseWriter, r *http.Request) {
 func runScript(ctx context.Context, script string) error {
 	// ok: go.command-injection
 	return exec.CommandContext(ctx, "sh", "-c", script).Run()
+}
+
+// Test support: a handler inside a function that takes a *testing.T, *testing.B, *testing.F,
+// *testing.M or testing.TB serves only the requests of its own test (an httptest server, a
+// subtest, TestMain), in a _test.go file or in a helper package.
+func NewFixtureServer(t *testing.T, dir string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.command-injection
+		out, _ := exec.Command("sh", "-c", "cat "+dir+r.URL.Path).Output()
+		w.Write(out)
+	}))
+}
+
+func recordingServer(tb testing.TB, dir string) (*httptest.Server, error) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		// ok: go.command-injection
+		exec.Command("sh", "-c", "echo "+r.Method+" "+string(body)+" >> "+dir+"/requests.log").Run()
+	}))
+	return srv, nil
+}
+
+func TestThumbnail(t *testing.T) {
+	t.Run("served", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// ok: go.command-injection
+			exec.Command("bash", "-c", "convert "+r.FormValue("name")+" thumb.png").Run()
+		}))
+		defer srv.Close()
+	})
+}
+
+func BenchmarkGinTools(b *testing.B) {
+	router := gin.New()
+	router.GET("/tools/:tool", func(c *gin.Context) {
+		// ok: go.command-injection
+		exec.Command(c.Param("tool"), "--version").Run()
+	})
+}
+
+func FuzzEchoTools(f *testing.F) {
+	e := echo.New()
+	e.GET("/usage/:dir", func(c echo.Context) error {
+		// ok: go.command-injection
+		return exec.Command("sh", "-c", "du -sh testdata/"+c.Param("dir")).Run()
+	})
+}
+
+var fixtureCase = func(t *testing.T) {
+	http.HandleFunc("/cases/", func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.command-injection
+		exec.Command("cmd", "/C", "type testdata\\"+r.FormValue("case")).Run()
+	})
+}
+
+func TestMain(m *testing.M) {
+	http.HandleFunc("/fixtures/", func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.command-injection
+		exec.CommandContext(r.Context(), "sh", "-c", "ls testdata/"+r.URL.Query().Get("dir")).Run()
+	})
+	os.Exit(m.Run())
+}
+
+type fixtureSuite struct{ root string }
+
+func (s *fixtureSuite) handler(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.command-injection
+		out, _ := exec.Command("sh", "-c", "cat "+s.root+"/"+r.URL.Query().Get("name")).Output()
+		w.Write(out)
+	}
+}
+
+// The same handlers outside test support are reported: a parameter of another type named T, or
+// a handler whose name starts with Test, is not a test.
+type Theme struct{ T string }
+
+func Preview(t *Theme, w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.command-injection
+	exec.Command("sh", "-c", "render "+t.T+" "+r.URL.Query().Get("name")).Run()
+}
+
+func TestPage(w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.command-injection
+	exec.Command("sh", "-c", "cat pages"+r.URL.Path).Run()
+}
+
+func ServeFixtures(dir string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ruleid: go.command-injection
+		out, _ := exec.Command("sh", "-c", "cat "+dir+r.URL.Path).Output()
+		w.Write(out)
+	}))
+}
+
+// A handler declared at the top level of a test file, outside any function that takes a testing
+// parameter, is still reported.
+func fixtureHandler(w http.ResponseWriter, r *http.Request) {
+	// todook: go.command-injection
+	exec.Command("sh", "-c", "cat testdata"+r.URL.Path).Run()
+}
+
+func TestFixtureHandler(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(fixtureHandler))
+	defer srv.Close()
 }
