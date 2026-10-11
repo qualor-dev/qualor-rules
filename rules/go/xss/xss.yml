@@ -37,6 +37,13 @@ rules:
         - https://pkg.go.dev/os#Open
         - https://pkg.go.dev/os#OpenFile
         - https://pkg.go.dev/os#ReadFile
+        - https://pkg.go.dev/os#File.Name
+        - https://pkg.go.dev/os#File.Stat
+        - https://pkg.go.dev/bufio#NewReader
+        - https://pkg.go.dev/bufio#NewReaderSize
+        - https://pkg.go.dev/bufio#NewScanner
+        - https://pkg.go.dev/bytes#Buffer.Grow
+        - https://pkg.go.dev/bytes#Buffer.Truncate
         - https://pkg.go.dev/io/fs#PathError
         - https://pkg.go.dev/html#EscapeString
         - https://pkg.go.dev/os/exec
@@ -105,10 +112,13 @@ rules:
     #   rules drift apart (a command the other rule stops reporting stays silent here, a new sink
     #   there is reported twice).
     # - The content of a file is not request data, even when the request names the file: the
-    #   result of os.ReadFile or ioutil.ReadFile, and a file opened with os.Open or os.OpenFile
-    #   (and what is read from it). A file opened in a `var` declaration is not recognised
-    #   (`todook:`). The error of os.Open names the file and stays request data; the error of
-    #   os.ReadFile is cleared with the call (`todoruleid:`).
+    #   result of os.ReadFile or ioutil.ReadFile, and what io.ReadAll, ioutil.ReadAll, bufio's
+    #   NewReader, NewReaderSize and NewScanner, or io.Copy (as the source) read from a file opened
+    #   with os.Open or os.OpenFile. The file itself stays request data: its Name(), its Stat()
+    #   and the error of os.Open name the file the request chose. Other readers of the file (a
+    #   JSON decoder, io.CopyN, io.LimitReader) and a file opened in a `var` declaration are not
+    #   recognised (`todook:`); the error of os.ReadFile is cleared with the call
+    #   (`todoruleid:`).
     # - A boolean that holds a Gin or Echo bind call or a JSON decode (the success flag
     #   `ok := c.ShouldBindJSON(&x) == nil`) does not count as clean, so that the struct the call
     #   fills stays request data; the flag written into an HTML response is reported (`todook:`).
@@ -434,10 +444,14 @@ rules:
                               - pattern: $RECV.$FLD.Execute($OUT, $DATA)
                               - pattern: $RECV.$FLD.ExecuteTemplate(&$OUT, $NAME, $DATA)
                               - pattern: $RECV.$FLD.ExecuteTemplate($OUT, $NAME, $DATA)
-              # Request data written into the buffer directly: its own Write methods, fmt.Fprint*,
-              # io.WriteString or io.Copy.
+              # Request data written into the buffer directly: its own Write methods and ReadFrom (not
+              # Grow or Truncate, which take a length), fmt.Fprint*, io.WriteString or io.Copy.
               - pattern-either:
-                  - pattern: $OUT.$W($DATA)
+                  - pattern: $OUT.Write($DATA)
+                  - pattern: $OUT.WriteString($DATA)
+                  - pattern: $OUT.WriteByte($DATA)
+                  - pattern: $OUT.WriteRune($DATA)
+                  - pattern: $OUT.ReadFrom($DATA)
                   - pattern: fmt.Fprint(&$OUT, ..., $DATA, ...)
                   - pattern: fmt.Fprint($OUT, ..., $DATA, ...)
                   - pattern: fmt.Fprintf(&$OUT, ..., $DATA, ...)
@@ -505,18 +519,25 @@ rules:
       # The content of a file is not request data, even when the request names the file.
       - pattern: os.ReadFile(...)
       - pattern: ioutil.ReadFile(...)
-      # The same for a file opened by name: the file and every reader of it are clean, but not the
-      # error, which names the file (*os.PathError). (`$F, $ERR = ...` also matches `:=`, not a `var`
-      # declaration.)
+      # The same for what is read from a file opened by name: the file given to io.ReadAll, to
+      # bufio's readers and scanner, or as the source of io.Copy. The file itself
+      # stays request data: its Name() and its Stat() name the file the request chose, and so does
+      # the error (*os.PathError). (`$F, $ERR = ...` also matches `:=`, not a `var` declaration.)
       - patterns:
           - pattern-either:
-              - pattern: |
+              - pattern-inside: |
                   $F, $ERR = os.Open(...)
                   ...
-              - pattern: |
+              - pattern-inside: |
                   $F, $ERR = os.OpenFile(...)
                   ...
-          - focus-metavariable: $F
+          - pattern-either:
+              - pattern: io.ReadAll($F)
+              - pattern: ioutil.ReadAll($F)
+              - pattern: bufio.NewReader($F)
+              - pattern: bufio.NewReaderSize($F, $SIZE)
+              - pattern: bufio.NewScanner($F)
+              - pattern: io.Copy($DST, $F)
       # The command arguments that go.command-injection reports (the same shapes as its sinks):
       # the program, the script after a POSIX shell's -c, everything after cmd.exe's /C or /K,
       # and PowerShell's command, script or first positional argument. Request data there is that

@@ -116,11 +116,12 @@ func Hello(w http.ResponseWriter, r *http.Request) {
   another file, reached through another variable, or imported with a dot are missed. A buffer
   counts only when it is a `bytes.Buffer` or `strings.Builder` declared in the handler (or made
   with `bytes.NewBuffer`, or taken from a `sync.Pool` with a type assertion).
-- The content of a file is not request data, even when the request names the file
-  (`os.ReadFile`, or a file opened with `os.Open` or `os.OpenFile`), but a file opened in a `var`
-  declaration (`var f, err = os.Open(...)`) is not recognised and what it holds is reported. The
-  error of `os.ReadFile`, which names the file, is not reported when written into the page; the
-  error of `os.Open` is.
+- The content of a file is not request data, even when the request names the file:
+  `os.ReadFile`, and what `io.ReadAll`, `bufio`'s readers and scanner or `io.Copy` read from a
+  file opened with `os.Open` or `os.OpenFile`. The file's name (`f.Name()`, `f.Stat()`) and the
+  error of `os.Open` are still request data. Other readers of the file (a JSON decoder, say) and a
+  file opened in a `var` declaration are not recognised, so what they read is reported; the error
+  of `os.ReadFile`, which names the file, is not reported when written into the page.
 - The success flag of a bind or decode call (`ok := c.ShouldBindJSON(&x) == nil`) still counts
   as request data, so writing it into an HTML response is reported.
 - A sink called inside a comparison, such as `if c.HTML(...) != nil`, is not reported.
@@ -151,6 +152,13 @@ func Hello(w http.ResponseWriter, r *http.Request) {
 - <https://pkg.go.dev/os#Open>
 - <https://pkg.go.dev/os#OpenFile>
 - <https://pkg.go.dev/os#ReadFile>
+- <https://pkg.go.dev/os#File.Name>
+- <https://pkg.go.dev/os#File.Stat>
+- <https://pkg.go.dev/bufio#NewReader>
+- <https://pkg.go.dev/bufio#NewReaderSize>
+- <https://pkg.go.dev/bufio#NewScanner>
+- <https://pkg.go.dev/bytes#Buffer.Grow>
+- <https://pkg.go.dev/bytes#Buffer.Truncate>
 - <https://pkg.go.dev/io/fs#PathError>
 - <https://pkg.go.dev/html#EscapeString>
 - <https://pkg.go.dev/os/exec>

@@ -11,6 +11,7 @@ import (
 	"html"
 	htmltemplate "html/template"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -418,6 +419,23 @@ func BufferedDirect(w http.ResponseWriter, r *http.Request) {
 	extra.WriteString(r.FormValue("extra"))
 	// ruleid: go.xss
 	w.Write(extra.Bytes())
+	var raw bytes.Buffer
+	raw.ReadFrom(r.Body)
+	// ruleid: go.xss
+	w.Write(raw.Bytes())
+	var chars strings.Builder
+	for _, ch := range r.FormValue("chars") {
+		chars.WriteRune(ch)
+	}
+	// ruleid: go.xss
+	io.WriteString(w, chars.String())
+	var bytesOut bytes.Buffer
+	tag := r.FormValue("tag")
+	for i := 0; i < len(tag); i++ {
+		bytesOut.WriteByte(tag[i])
+	}
+	// ruleid: go.xss
+	w.Write(bytesOut.Bytes())
 	// Escaped or constant data, and a buffer that does not reach the response.
 	var escaped bytes.Buffer
 	escaped.WriteString(html.EscapeString(r.FormValue("name")))
@@ -443,6 +461,21 @@ func BufferedDirect(w http.ResponseWriter, r *http.Request) {
 }
 
 // The same buffer sent as plain text.
+// Buffer methods that write nothing: Grow and Truncate take a length.
+func BufferSized(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("name")
+	var sb strings.Builder
+	sb.Grow(len(name) + 16)
+	sb.WriteString("<p>" + html.EscapeString(name) + "</p>")
+	// ok: go.xss
+	io.WriteString(w, sb.String())
+	var fixed bytes.Buffer
+	fixed.WriteString("<p>fixed</p>")
+	fixed.Truncate(len(r.FormValue("n")))
+	// ok: go.xss
+	w.Write(fixed.Bytes())
+}
+
 func BufferedDirectPlain(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	var buf bytes.Buffer
@@ -502,6 +535,31 @@ func OpenedPage(w http.ResponseWriter, r *http.Request) {
 		// ok: go.xss
 		io.WriteString(w, lines.Text())
 	}
+	// The file's own name and its FileInfo's name are the name the request chose.
+	// ruleid: go.xss
+	fmt.Fprintf(w, "<h1>%s</h1>", page.Name())
+	info, _ := draft.Stat()
+	// ruleid: go.xss
+	fmt.Fprintf(w, "<h2>%s</h2>", info.Name())
+	var copied bytes.Buffer
+	io.Copy(&copied, page)
+	// ok: go.xss
+	w.Write(copied.Bytes())
+	sized := bufio.NewReaderSize(draft, 4096)
+	line, _ := sized.ReadString('\n')
+	// ok: go.xss
+	io.WriteString(w, line)
+	legacy, _ := ioutil.ReadAll(page)
+	// ok: go.xss
+	w.Write(legacy)
+	// Other readers of the file (a JSON decoder, io.CopyN, io.LimitReader) are not recognised.
+	var meta map[string]string
+	json.NewDecoder(page).Decode(&meta)
+	// todook: go.xss
+	fmt.Fprintf(w, "<title>%s</title>", meta["title"])
+	rest, _ := bufio.NewReader(page).ReadString('\n')
+	// ok: go.xss
+	io.WriteString(w, rest)
 	// The error of os.ReadFile names the file as well, but the call counts as clean as a whole.
 	_, err = os.ReadFile(name)
 	// todoruleid: go.xss
