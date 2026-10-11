@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.ObjectInputFilter;
 import java.io.ObjectInputStream;
+import java.io.Reader;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -231,6 +232,26 @@ class SessionController {
     String notHandler(InputStream body) throws IOException, ClassNotFoundException {
         // ok: java.unsafe-deserialization
         new ObjectInputStream(body).readObject();
+        return "ok";
+    }
+
+    // A raw body stream parameter of a method that another annotation marks.
+    @Deprecated
+    String notMapped(InputStream body) throws IOException, ClassNotFoundException {
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(body).readObject();
+        return "ok";
+    }
+
+    // The raw body as a Reader, its text decoded first.
+    @PostMapping("/sessions/reader")
+    String reader(Reader body) throws IOException, ClassNotFoundException {
+        String text = new java.io.BufferedReader(body).readLine();
+        // ruleid: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(Base64.getDecoder().decode(text))).readObject();
+        // Only the parameter is request data, not every value in the handler.
+        // ok: java.unsafe-deserialization
+        new ObjectInputStream(getClass().getResourceAsStream("/defaults.ser")).readObject();
         return "ok";
     }
 

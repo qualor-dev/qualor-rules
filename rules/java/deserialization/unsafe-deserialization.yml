@@ -85,16 +85,11 @@ rules:
       # The raw request body that Spring MVC and Jakarta REST hand to an InputStream or Reader
       # parameter of a handler.
       - patterns:
+          # @$MAP(...) also matches a mapping annotation written without parentheses.
           - pattern-either:
-              - pattern-inside: |
-                  @$MAP
-                  $RET $M(..., java.io.InputStream $P, ...) { ... }
               - pattern-inside: |
                   @$MAP(...)
                   $RET $M(..., java.io.InputStream $P, ...) { ... }
-              - pattern-inside: |
-                  @$MAP
-                  $RET $M(..., java.io.Reader $P, ...) { ... }
               - pattern-inside: |
                   @$MAP(...)
                   $RET $M(..., java.io.Reader $P, ...) { ... }
