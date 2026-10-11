@@ -534,29 +534,41 @@ rules:
               regex: ^(Sanitize|SanitizeBytes)$
     pattern-sinks:
       # html/template's typed strings: the content is inserted verbatim, so it must come from a
-      # trusted source.
+      # trusted source. The names are written out (one prefilter clause, not two).
       - patterns:
-          - pattern: template.$TYPE($X)
-          - metavariable-regex:
-              metavariable: $TYPE
-              regex: ^(HTML|HTMLAttr|JS|JSStr|URL|CSS|Srcset)$
+          - pattern-either:
+              - pattern: template.HTML($X)
+              - pattern: template.HTMLAttr($X)
+              - pattern: template.JS($X)
+              - pattern: template.JSStr($X)
+              - pattern: template.URL($X)
+              - pattern: template.CSS($X)
+              - pattern: template.Srcset($X)
           - focus-metavariable: $X
       # Writes to the response: fmt.Fprint*, io.WriteString and Write on an http.ResponseWriter,
       # Gin's c.Writer and Echo's c.Response(). net/http sniffs the Content-Type from the first
       # bytes when none is set; a function that first sets a non-HTML type is skipped.
       - patterns:
           - pattern-either:
-              - patterns:
-                  - pattern-either:
-                      - pattern-inside: 'fmt.$F(($W : http.ResponseWriter), ..., $DATA, ...)'
-                      - pattern-inside: 'fmt.$F(($C : *gin.Context).Writer, ..., $DATA, ...)'
-                      - pattern-inside: 'fmt.$F(($C : echo.Context).Response(), ..., $DATA, ...)'
-                      - pattern-inside: 'fmt.$F(($C : *echo.Context).Response(), ..., $DATA, ...)'
-                      - pattern-inside: 'fmt.$F(($C : echo.Context).Response().Writer, ..., $DATA, ...)'
-                      - pattern-inside: 'fmt.$F(($C : *echo.Context).Response().Writer, ..., $DATA, ...)'
-                  - metavariable-regex:
-                      metavariable: $F
-                      regex: ^(Fprint|Fprintf|Fprintln)$
+              # fmt.Fprint, Fprintf and Fprintln, written out (one prefilter clause).
+              - pattern-inside: 'fmt.Fprint(($W : http.ResponseWriter), ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprint(($C : *gin.Context).Writer, ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprint(($C : echo.Context).Response(), ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprint(($C : *echo.Context).Response(), ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprint(($C : echo.Context).Response().Writer, ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprint(($C : *echo.Context).Response().Writer, ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprintf(($W : http.ResponseWriter), ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprintf(($C : *gin.Context).Writer, ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprintf(($C : echo.Context).Response(), ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprintf(($C : *echo.Context).Response(), ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprintf(($C : echo.Context).Response().Writer, ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprintf(($C : *echo.Context).Response().Writer, ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprintln(($W : http.ResponseWriter), ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprintln(($C : *gin.Context).Writer, ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprintln(($C : echo.Context).Response(), ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprintln(($C : *echo.Context).Response(), ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprintln(($C : echo.Context).Response().Writer, ..., $DATA, ...)'
+              - pattern-inside: 'fmt.Fprintln(($C : *echo.Context).Response().Writer, ..., $DATA, ...)'
               - pattern-inside: 'io.WriteString(($W : http.ResponseWriter), $DATA)'
               - pattern-inside: 'io.WriteString(($C : *gin.Context).Writer, $DATA)'
               - pattern-inside: 'io.WriteString(($C : echo.Context).Response(), $DATA)'
@@ -616,229 +628,146 @@ rules:
               # import after its package, so in a file that imports text/template without an alias
               # (and html/template, if at all, under another name) the spelling "template" is
               # text/template; with an alias, the alias is. The template is built in the same
-              # function or as a package variable, is a parameter, or is a field of that type reached through the receiver of a
-              # method of its struct.
+              # function or as a package variable, is a parameter, or is a field of that type reached
+              # through the receiver of a method of its struct.
+              # For the prefilter, the Execute call is the only positive term (its word is rare), and
+              # the template forms are an exclusion: an Execute call into the response that is none of
+              # them is left out. Six positive branches of four conditions each multiplied the CNF
+              # past OpenGrep's limit, and the rule had no prefilter.
               - patterns:
                   - pattern-either:
-                      - patterns:
-                          - pattern-inside: |
-                              import "text/template"
-                              ...
-                          - pattern-not-inside: |
-                              import "html/template"
-                              ...
-                      - patterns:
-                          - pattern-inside: |
-                              import "text/template"
-                              ...
-                          - pattern-inside: |
-                              import $HTML "html/template"
-                              ...
-                  - pattern-either:
-                      - pattern-inside: |
-                          $T := $INIT
-                          ...
-                      - pattern-inside: |
-                          $T, $ERR := $INIT
-                          ...
-                      - pattern-inside: |
-                          $T = $INIT
-                          ...
-                      - pattern-inside: |
-                          var $T = $INIT
-                          ...
-                  - metavariable-pattern:
-                      metavariable: $INIT
+                      - pattern-inside: '$T.Execute(($W : http.ResponseWriter), $DATA)'
+                      - pattern-inside: '$T.Execute(($C : *gin.Context).Writer, $DATA)'
+                      - pattern-inside: '$T.Execute(($C : echo.Context).Response(), $DATA)'
+                      - pattern-inside: '$T.Execute(($C : *echo.Context).Response(), $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($W : http.ResponseWriter), $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : *gin.Context).Writer, $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : echo.Context).Response(), $NAME, $DATA)'
+                      - pattern-inside: '$T.ExecuteTemplate(($C : *echo.Context).Response(), $NAME, $DATA)'
+                  - pattern-not-inside:
                       patterns:
-                        - pattern: $PKG.$CTOR(...)
-                        - metavariable-regex:
-                            metavariable: $CTOR
-                            regex: ^(New|Must|ParseFiles|ParseGlob|ParseFS)$
-                        - metavariable-pattern:
-                            metavariable: $PKG
-                            language: generic
-                            pattern-regex: ^template$
-                  - pattern-either:
-                      - pattern-inside: '$T.Execute(($W : http.ResponseWriter), $DATA)'
-                      - pattern-inside: '$T.Execute(($C : *gin.Context).Writer, $DATA)'
-                      - pattern-inside: '$T.Execute(($C : echo.Context).Response(), $DATA)'
-                      - pattern-inside: '$T.Execute(($C : *echo.Context).Response(), $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($W : http.ResponseWriter), $NAME, $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($C : *gin.Context).Writer, $NAME, $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($C : echo.Context).Response(), $NAME, $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($C : *echo.Context).Response(), $NAME, $DATA)'
-              - patterns:
-                  - pattern-either:
-                      - patterns:
-                          - pattern-inside: |
-                              import "text/template"
-                              ...
-                          - pattern-not-inside: |
-                              import "html/template"
-                              ...
-                      - patterns:
-                          - pattern-inside: |
-                              import "text/template"
-                              ...
-                          - pattern-inside: |
-                              import $HTML "html/template"
-                              ...
-                  - pattern-either:
-                      - pattern-inside: |
-                          func $F(..., $T *$PKG.Template, ...) $RET { ... }
-                      - pattern-inside: |
-                          func $F(..., $T *$PKG.Template, ...) { ... }
-                      - pattern-inside: |
-                          func ($RECV $RT) $F(..., $T *$PKG.Template, ...) $RET { ... }
-                      - pattern-inside: |
-                          func ($RECV $RT) $F(..., $T *$PKG.Template, ...) { ... }
-                  - metavariable-pattern:
-                      metavariable: $PKG
-                      language: generic
-                      pattern-regex: ^template$
-                  - pattern-either:
-                      - pattern-inside: '$T.Execute(($W : http.ResponseWriter), $DATA)'
-                      - pattern-inside: '$T.Execute(($C : *gin.Context).Writer, $DATA)'
-                      - pattern-inside: '$T.Execute(($C : echo.Context).Response(), $DATA)'
-                      - pattern-inside: '$T.Execute(($C : *echo.Context).Response(), $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($W : http.ResponseWriter), $NAME, $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($C : *gin.Context).Writer, $NAME, $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($C : echo.Context).Response(), $NAME, $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($C : *echo.Context).Response(), $NAME, $DATA)'
-              - patterns:
-                  - pattern-either:
-                      - patterns:
-                          - pattern-inside: |
-                              import "text/template"
-                              ...
-                          - pattern-not-inside: |
-                              import "html/template"
-                              ...
-                      - patterns:
-                          - pattern-inside: |
-                              import "text/template"
-                              ...
-                          - pattern-inside: |
-                              import $HTML "html/template"
-                              ...
-                  - pattern-inside: |
-                      type $S struct {
-                        ...
-                        $FLD *$PKG.Template
-                        ...
-                      }
-                      ...
-                  - pattern-either:
-                      - pattern-inside: |
-                          func ($RECV *$S) $F(...) $RET { ... }
-                      - pattern-inside: |
-                          func ($RECV *$S) $F(...) { ... }
-                      - pattern-inside: |
-                          func ($RECV $S) $F(...) $RET { ... }
-                      - pattern-inside: |
-                          func ($RECV $S) $F(...) { ... }
-                  - metavariable-pattern:
-                      metavariable: $PKG
-                      language: generic
-                      pattern-regex: ^template$
-                  - pattern-either:
-                      - pattern-inside: '$RECV.$FLD.Execute(($W : http.ResponseWriter), $DATA)'
-                      - pattern-inside: '$RECV.$FLD.Execute(($C : *gin.Context).Writer, $DATA)'
-                      - pattern-inside: '$RECV.$FLD.Execute(($C : echo.Context).Response(), $DATA)'
-                      - pattern-inside: '$RECV.$FLD.Execute(($C : *echo.Context).Response(), $DATA)'
-                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($W : http.ResponseWriter), $NAME, $DATA)'
-                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($C : *gin.Context).Writer, $NAME, $DATA)'
-                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($C : echo.Context).Response(), $NAME, $DATA)'
-                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($C : *echo.Context).Response(), $NAME, $DATA)'
-              - patterns:
-                  - pattern-inside: |
-                      import $ALIAS "text/template"
-                      ...
-                  - pattern-either:
-                      - pattern-inside: |
-                          $T := $ALIAS.$CTOR(...)
-                          ...
-                      - pattern-inside: |
-                          $T := $ALIAS.$CTOR(...).$M(...)
-                          ...
-                      - pattern-inside: |
-                          $T, $ERR := $ALIAS.$CTOR(...)
-                          ...
-                      - pattern-inside: |
-                          $T, $ERR := $ALIAS.$CTOR(...).$M(...)
-                          ...
-                      - pattern-inside: |
-                          $T, $ERR := $ALIAS.$CTOR(...).$M(...).$M2(...)
-                          ...
-                      - pattern-inside: |
-                          var $T = $ALIAS.$CTOR(...)
-                          ...
-                      - pattern-inside: |
-                          $T = $ALIAS.$CTOR(...)
-                          ...
-                  - metavariable-regex:
-                      metavariable: $CTOR
-                      regex: ^(New|Must|ParseFiles|ParseGlob|ParseFS)$
-                  - pattern-either:
-                      - pattern-inside: '$T.Execute(($W : http.ResponseWriter), $DATA)'
-                      - pattern-inside: '$T.Execute(($C : *gin.Context).Writer, $DATA)'
-                      - pattern-inside: '$T.Execute(($C : echo.Context).Response(), $DATA)'
-                      - pattern-inside: '$T.Execute(($C : *echo.Context).Response(), $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($W : http.ResponseWriter), $NAME, $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($C : *gin.Context).Writer, $NAME, $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($C : echo.Context).Response(), $NAME, $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($C : *echo.Context).Response(), $NAME, $DATA)'
-              - patterns:
-                  - pattern-inside: |
-                      import $ALIAS "text/template"
-                      ...
-                  - pattern-either:
-                      - pattern-inside: |
-                          func $F(..., $T *$ALIAS.Template, ...) $RET { ... }
-                      - pattern-inside: |
-                          func $F(..., $T *$ALIAS.Template, ...) { ... }
-                      - pattern-inside: |
-                          func ($RECV $RT) $F(..., $T *$ALIAS.Template, ...) $RET { ... }
-                      - pattern-inside: |
-                          func ($RECV $RT) $F(..., $T *$ALIAS.Template, ...) { ... }
-                  - pattern-either:
-                      - pattern-inside: '$T.Execute(($W : http.ResponseWriter), $DATA)'
-                      - pattern-inside: '$T.Execute(($C : *gin.Context).Writer, $DATA)'
-                      - pattern-inside: '$T.Execute(($C : echo.Context).Response(), $DATA)'
-                      - pattern-inside: '$T.Execute(($C : *echo.Context).Response(), $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($W : http.ResponseWriter), $NAME, $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($C : *gin.Context).Writer, $NAME, $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($C : echo.Context).Response(), $NAME, $DATA)'
-                      - pattern-inside: '$T.ExecuteTemplate(($C : *echo.Context).Response(), $NAME, $DATA)'
-              - patterns:
-                  - pattern-inside: |
-                      import $ALIAS "text/template"
-                      ...
-                  - pattern-inside: |
-                      type $S struct {
-                        ...
-                        $FLD *$ALIAS.Template
-                        ...
-                      }
-                      ...
-                  - pattern-either:
-                      - pattern-inside: |
-                          func ($RECV *$S) $F(...) $RET { ... }
-                      - pattern-inside: |
-                          func ($RECV *$S) $F(...) { ... }
-                      - pattern-inside: |
-                          func ($RECV $S) $F(...) $RET { ... }
-                      - pattern-inside: |
-                          func ($RECV $S) $F(...) { ... }
-                  - pattern-either:
-                      - pattern-inside: '$RECV.$FLD.Execute(($W : http.ResponseWriter), $DATA)'
-                      - pattern-inside: '$RECV.$FLD.Execute(($C : *gin.Context).Writer, $DATA)'
-                      - pattern-inside: '$RECV.$FLD.Execute(($C : echo.Context).Response(), $DATA)'
-                      - pattern-inside: '$RECV.$FLD.Execute(($C : *echo.Context).Response(), $DATA)'
-                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($W : http.ResponseWriter), $NAME, $DATA)'
-                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($C : *gin.Context).Writer, $NAME, $DATA)'
-                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($C : echo.Context).Response(), $NAME, $DATA)'
-                      - pattern-inside: '$RECV.$FLD.ExecuteTemplate(($C : *echo.Context).Response(), $NAME, $DATA)'
+                        - pattern-either:
+                            - pattern: '$T.Execute(($W : http.ResponseWriter), $DATA)'
+                            - pattern: '$T.Execute(($C : *gin.Context).Writer, $DATA)'
+                            - pattern: '$T.Execute(($C : echo.Context).Response(), $DATA)'
+                            - pattern: '$T.Execute(($C : *echo.Context).Response(), $DATA)'
+                            - pattern: '$T.ExecuteTemplate(($W : http.ResponseWriter), $NAME, $DATA)'
+                            - pattern: '$T.ExecuteTemplate(($C : *gin.Context).Writer, $NAME, $DATA)'
+                            - pattern: '$T.ExecuteTemplate(($C : echo.Context).Response(), $NAME, $DATA)'
+                            - pattern: '$T.ExecuteTemplate(($C : *echo.Context).Response(), $NAME, $DATA)'
+                        # ... unless it is a text/template: how the template is spelled and where it is
+                        # made. (`$T = $X` also matches `:=` and `var` declarations, and a function
+                        # pattern without results or receiver also matches methods and functions with
+                        # results.)
+                        - pattern-not-inside:
+                            pattern-either:
+                              # Unaliased: the spelling "template" is text/template.
+                              - patterns:
+                                  - pattern-either:
+                                      - patterns:
+                                          - pattern-inside: |
+                                              import "text/template"
+                                              ...
+                                          - pattern-not-inside: |
+                                              import "html/template"
+                                              ...
+                                      - patterns:
+                                          - pattern-inside: |
+                                              import "text/template"
+                                              ...
+                                          - pattern-inside: |
+                                              import $HTML "html/template"
+                                              ...
+                                  - pattern-either:
+                                      # Built in the same function or as a package variable.
+                                      - patterns:
+                                          - pattern-either:
+                                              - pattern-inside: |
+                                                  $T = $INIT
+                                                  ...
+                                              - pattern-inside: |
+                                                  $T, $ERR := $INIT
+                                                  ...
+                                          - metavariable-pattern:
+                                              metavariable: $INIT
+                                              patterns:
+                                                - pattern: $PKG.$CTOR(...)
+                                                - metavariable-regex:
+                                                    metavariable: $CTOR
+                                                    regex: ^(New|Must|ParseFiles|ParseGlob|ParseFS)$
+                                                - metavariable-pattern:
+                                                    metavariable: $PKG
+                                                    language: generic
+                                                    pattern-regex: ^template$
+                                      # A parameter.
+                                      - patterns:
+                                          - pattern-inside: |
+                                              func $F(..., $T *$PKG.Template, ...) { ... }
+                                          - metavariable-pattern:
+                                              metavariable: $PKG
+                                              language: generic
+                                              pattern-regex: ^template$
+                                      # A field of that type reached through the receiver.
+                                      - patterns:
+                                          - pattern-inside: |
+                                              type $S struct {
+                                                ...
+                                                $FLD *$PKG.Template
+                                                ...
+                                              }
+                                              ...
+                                          - pattern-either:
+                                              - pattern-inside: |
+                                                  func ($RECV *$S) $F(...) { ... }
+                                              - pattern-inside: |
+                                                  func ($RECV $S) $F(...) { ... }
+                                          - metavariable-pattern:
+                                              metavariable: $PKG
+                                              language: generic
+                                              pattern-regex: ^template$
+                                          - pattern-inside: $RECV.$FLD.$EXEC(...)
+                              # With an alias, the alias is text/template.
+                              - patterns:
+                                  - pattern-inside: |
+                                      import $ALIAS "text/template"
+                                      ...
+                                  - pattern-either:
+                                      - patterns:
+                                          - pattern-either:
+                                              - pattern-inside: |
+                                                  $T = $ALIAS.$CTOR(...)
+                                                  ...
+                                              - pattern-inside: |
+                                                  $T := $ALIAS.$CTOR(...).$M(...)
+                                                  ...
+                                              - pattern-inside: |
+                                                  $T, $ERR := $ALIAS.$CTOR(...)
+                                                  ...
+                                              - pattern-inside: |
+                                                  $T, $ERR := $ALIAS.$CTOR(...).$M(...)
+                                                  ...
+                                              - pattern-inside: |
+                                                  $T, $ERR := $ALIAS.$CTOR(...).$M(...).$M2(...)
+                                                  ...
+                                          - metavariable-regex:
+                                              metavariable: $CTOR
+                                              regex: ^(New|Must|ParseFiles|ParseGlob|ParseFS)$
+                                      - pattern-inside: |
+                                          func $F(..., $T *$ALIAS.Template, ...) { ... }
+                                      - patterns:
+                                          - pattern-inside: |
+                                              type $S struct {
+                                                ...
+                                                $FLD *$ALIAS.Template
+                                                ...
+                                              }
+                                              ...
+                                          - pattern-either:
+                                              - pattern-inside: |
+                                                  func ($RECV *$S) $F(...) { ... }
+                                              - pattern-inside: |
+                                                  func ($RECV $S) $F(...) { ... }
+                                          - pattern-inside: $RECV.$FLD.$EXEC(...)
           - pattern: $DATA
           # A Content-Type that browsers do not render as HTML, set (Set or Add) earlier in the
           # function: a literal type, or one of Echo's MIME constants for JSON, JavaScript, plain

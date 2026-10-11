@@ -57,7 +57,6 @@ export const ALLOWED = Object.freeze({
   'java.xss': { limit: 'none', row: 'java.xss#prefilter' },
   'java.command-injection': { limit: 'none', row: 'java.command-injection#prefilter' },
   'java.open-redirect': { limit: 'none', row: 'java.open-redirect#prefilter' },
-  'go.xss': { limit: 'none', row: 'go.xss#prefilter' },
   // Found by this check on 2026-10-07: the 2026-10-06 survey missed the files with anchors.
   'java.xxe': { limit: 'none', row: 'java.xxe#prefilter' },
   'python.command-injection': { limit: 'none', row: 'python.command-injection#prefilter' },

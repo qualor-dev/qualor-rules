@@ -23,6 +23,7 @@ import (
 
 	"example.com/shop/models"
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/mux"
 	"github.com/labstack/echo/v4"
@@ -625,4 +626,359 @@ func LookAlikes(w http.ResponseWriter, r *http.Request) {
 func renderBanner(w http.ResponseWriter, text string) {
 	// ok: go.xss
 	fmt.Fprintf(w, "<div class=banner>%s</div>", text)
+}
+
+// Every response writer of Gin and Echo (v4's echo.Context interface and v5's *echo.Context).
+func GinWriters(c *gin.Context) {
+	// ruleid: go.xss
+	fmt.Fprint(c.Writer, "<p>"+c.Query("a")+"</p>")
+	// ruleid: go.xss
+	fmt.Fprintln(c.Writer, c.Query("b"))
+	// ruleid: go.xss
+	io.WriteString(c.Writer, c.Query("c"))
+	// ruleid: go.xss
+	greeting.Execute(c.Writer, c.Query("d"))
+	// ruleid: go.xss
+	greeting.ExecuteTemplate(c.Writer, "greeting", c.Query("e"))
+	var buf bytes.Buffer
+	greeting.Execute(&buf, c.Query("f"))
+	// ruleid: go.xss
+	buf.WriteTo(c.Writer)
+	// ruleid: go.xss
+	io.Copy(c.Writer, &buf)
+	pointer := bytes.NewBufferString("")
+	greeting.Execute(pointer, c.Query("g"))
+	// ruleid: go.xss
+	io.Copy(c.Writer, pointer)
+	// ruleid: go.xss
+	c.Data(http.StatusOK, binding.MIMEHTML, []byte(c.Query("h")))
+	page := strings.NewReader("<p>" + c.Query("i") + "</p>")
+	// ruleid: go.xss
+	c.DataFromReader(http.StatusOK, page.Size(), "text/html", page, nil)
+}
+
+func EchoWriters(c echo.Context) error {
+	// ruleid: go.xss
+	fmt.Fprint(c.Response(), c.QueryParam("a"))
+	// ruleid: go.xss
+	fmt.Fprintf(c.Response(), "<p>%s</p>", c.QueryParam("b"))
+	// ruleid: go.xss
+	fmt.Fprintln(c.Response(), c.QueryParam("c"))
+	// ruleid: go.xss
+	fmt.Fprint(c.Response().Writer, c.QueryParam("d"))
+	// ruleid: go.xss
+	fmt.Fprintf(c.Response().Writer, "<p>%s</p>", c.QueryParam("e"))
+	// ruleid: go.xss
+	fmt.Fprintln(c.Response().Writer, c.QueryParam("f"))
+	// ruleid: go.xss
+	io.WriteString(c.Response(), c.QueryParam("g"))
+	// ruleid: go.xss
+	c.Response().Writer.Write([]byte(c.QueryParam("h")))
+	// ruleid: go.xss
+	greeting.ExecuteTemplate(c.Response(), "greeting", c.QueryParam("i"))
+	var buf bytes.Buffer
+	greeting.Execute(&buf, c.QueryParam("j"))
+	// ruleid: go.xss
+	buf.WriteTo(c.Response())
+	// ruleid: go.xss
+	io.Copy(c.Response(), &buf)
+	pointer := bytes.NewBuffer(nil)
+	greeting.Execute(pointer, c.QueryParam("k"))
+	// ruleid: go.xss
+	io.Copy(c.Response(), pointer)
+	// ruleid: go.xss
+	c.Blob(http.StatusOK, "text/html; charset=utf-8", []byte(c.QueryParam("l")))
+	// ruleid: go.xss
+	return c.Stream(http.StatusOK, echo.MIMETextHTML, strings.NewReader(c.QueryParam("m")))
+}
+
+func EchoV5Writers(c *echo.Context) error {
+	// ruleid: go.xss
+	fmt.Fprint(c.Response(), c.QueryParam("a"))
+	// ruleid: go.xss
+	fmt.Fprintf(c.Response(), "<p>%s</p>", c.QueryParam("b"))
+	// ruleid: go.xss
+	fmt.Fprintln(c.Response(), c.QueryParam("c"))
+	// ruleid: go.xss
+	fmt.Fprint(c.Response().Writer, c.QueryParam("d"))
+	// ruleid: go.xss
+	fmt.Fprintf(c.Response().Writer, "<p>%s</p>", c.QueryParam("e"))
+	// ruleid: go.xss
+	fmt.Fprintln(c.Response().Writer, c.QueryParam("f"))
+	// ruleid: go.xss
+	io.WriteString(c.Response(), c.QueryParam("g"))
+	// ruleid: go.xss
+	c.Response().Write([]byte(c.QueryParam("h")))
+	// ruleid: go.xss
+	c.Response().Writer.Write([]byte(c.QueryParam("i")))
+	// ruleid: go.xss
+	greeting.Execute(c.Response(), c.QueryParam("j"))
+	// ruleid: go.xss
+	greeting.ExecuteTemplate(c.Response(), "greeting", c.QueryParam("k"))
+	var buf bytes.Buffer
+	greeting.Execute(&buf, c.QueryParam("l"))
+	// ruleid: go.xss
+	buf.WriteTo(c.Response())
+	// ruleid: go.xss
+	io.Copy(c.Response(), &buf)
+	pointer := bytes.NewBuffer(nil)
+	greeting.Execute(pointer, c.QueryParam("m"))
+	// ruleid: go.xss
+	io.Copy(c.Response(), pointer)
+	// ruleid: go.xss
+	c.HTML(http.StatusOK, c.QueryParam("n"))
+	// ruleid: go.xss
+	c.Blob(http.StatusOK, "image/svg+xml", []byte(c.QueryParam("o")))
+	// ruleid: go.xss
+	c.Blob(http.StatusOK, echo.MIMETextHTML, []byte(c.QueryParam("p")))
+	// ruleid: go.xss
+	return c.Blob(http.StatusOK, echo.MIMETextHTMLCharsetUTF8, []byte(c.QueryParam("q")))
+}
+
+// Non-HTML types set with Echo's constants, by the literal header name or echo.HeaderContentType.
+func EchoApplicationJSONNamed(c echo.Context) error {
+	c.Response().Header().Set("Content-Type", echo.MIMEApplicationJSON)
+	// ok: go.xss
+	_, err := c.Response().Write([]byte(c.QueryParam("msg")))
+	return err
+}
+
+func EchoApplicationJSONCharsetUTF8Named(c echo.Context) error {
+	c.Response().Header().Set("Content-Type", echo.MIMEApplicationJSONCharsetUTF8)
+	// ok: go.xss
+	_, err := c.Response().Write([]byte(c.QueryParam("msg")))
+	return err
+}
+
+func EchoApplicationJavaScriptNamed(c echo.Context) error {
+	c.Response().Header().Set("Content-Type", echo.MIMEApplicationJavaScript)
+	// ok: go.xss
+	_, err := c.Response().Write([]byte(c.QueryParam("msg")))
+	return err
+}
+
+func EchoApplicationJavaScriptCharsetUTF8Named(c echo.Context) error {
+	c.Response().Header().Set("Content-Type", echo.MIMEApplicationJavaScriptCharsetUTF8)
+	// ok: go.xss
+	_, err := c.Response().Write([]byte(c.QueryParam("msg")))
+	return err
+}
+
+func EchoTextPlainCharsetUTF8Named(c echo.Context) error {
+	c.Response().Header().Set("Content-Type", echo.MIMETextPlainCharsetUTF8)
+	// ok: go.xss
+	_, err := c.Response().Write([]byte(c.QueryParam("msg")))
+	return err
+}
+
+func EchoOctetStreamNamed(c echo.Context) error {
+	c.Response().Header().Set("Content-Type", echo.MIMEOctetStream)
+	// ok: go.xss
+	_, err := c.Response().Write([]byte(c.QueryParam("msg")))
+	return err
+}
+
+func EchoApplicationJSONConst(c echo.Context) error {
+	c.Response().Header().Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	// ok: go.xss
+	_, err := c.Response().Write([]byte(c.QueryParam("msg")))
+	return err
+}
+
+func EchoApplicationJSONCharsetUTF8Const(c echo.Context) error {
+	c.Response().Header().Set(echo.HeaderContentType, echo.MIMEApplicationJSONCharsetUTF8)
+	// ok: go.xss
+	_, err := c.Response().Write([]byte(c.QueryParam("msg")))
+	return err
+}
+
+func EchoApplicationJavaScriptConst(c echo.Context) error {
+	c.Response().Header().Set(echo.HeaderContentType, echo.MIMEApplicationJavaScript)
+	// ok: go.xss
+	_, err := c.Response().Write([]byte(c.QueryParam("msg")))
+	return err
+}
+
+func EchoApplicationJavaScriptCharsetUTF8Const(c echo.Context) error {
+	c.Response().Header().Set(echo.HeaderContentType, echo.MIMEApplicationJavaScriptCharsetUTF8)
+	// ok: go.xss
+	_, err := c.Response().Write([]byte(c.QueryParam("msg")))
+	return err
+}
+
+func EchoTextPlainConst(c echo.Context) error {
+	c.Response().Header().Set(echo.HeaderContentType, echo.MIMETextPlain)
+	// ok: go.xss
+	_, err := c.Response().Write([]byte(c.QueryParam("msg")))
+	return err
+}
+
+func EchoTextPlainCharsetUTF8Const(c echo.Context) error {
+	c.Response().Header().Set(echo.HeaderContentType, echo.MIMETextPlainCharsetUTF8)
+	// ok: go.xss
+	_, err := c.Response().Write([]byte(c.QueryParam("msg")))
+	return err
+}
+
+func EchoOctetStreamConst(c echo.Context) error {
+	c.Response().Header().Set(echo.HeaderContentType, echo.MIMEOctetStream)
+	// ok: go.xss
+	_, err := c.Response().Write([]byte(c.QueryParam("msg")))
+	return err
+}
+
+// The header map set directly, and Gin's c.Header.
+func MapHeader(w http.ResponseWriter, r *http.Request) {
+	w.Header()["Content-Type"] = []string{"text/csv"}
+	// ok: go.xss
+	io.WriteString(w, r.FormValue("row"))
+}
+
+func GinPlain(c *gin.Context) {
+	c.Header("Content-Type", "text/plain; charset=utf-8")
+	// ok: go.xss
+	c.Writer.WriteString(c.Query("msg"))
+}
+
+// Every way a text/template is recognised: made in the function, a parameter of a function or a
+// method (with or without results), a field reached through a pointer or value receiver; unaliased
+// and under the alias.
+func LocalTemplates(w http.ResponseWriter, r *http.Request) {
+	files, err := template.ParseFiles("/srv/views/page.tmpl")
+	if err != nil {
+		return
+	}
+	// ruleid: go.xss
+	files.Execute(w, r.FormValue("a"))
+	var later *template.Template
+	later = template.New("later")
+	// ruleid: go.xss
+	later.Execute(w, r.FormValue("b"))
+	short := mail.New("short")
+	// ruleid: go.xss
+	short.Execute(w, r.FormValue("c"))
+	chained := mail.New("chained").Funcs(nil)
+	// ruleid: go.xss
+	chained.Execute(w, r.FormValue("d"))
+	parsed, err := mail.ParseGlob("/srv/views/*.tmpl")
+	if err != nil {
+		return
+	}
+	// ruleid: go.xss
+	parsed.Execute(w, r.FormValue("e"))
+	built, err := mail.New("built").Parse("<p>{{.}}</p>")
+	if err != nil {
+		return
+	}
+	// ruleid: go.xss
+	built.Execute(w, r.FormValue("f"))
+	full, err := mail.New("full").Funcs(nil).Parse("<p>{{.}}</p>")
+	if err != nil {
+		return
+	}
+	// ruleid: go.xss
+	full.Execute(w, r.FormValue("g"))
+	var local = mail.New("local")
+	// ruleid: go.xss
+	local.Execute(w, r.FormValue("h"))
+	var assigned *mail.Template
+	assigned = mail.New("assigned")
+	// ruleid: go.xss
+	assigned.Execute(w, r.FormValue("i"))
+}
+
+func renderText(w http.ResponseWriter, r *http.Request, t *template.Template) {
+	// ruleid: go.xss
+	t.Execute(w, r.FormValue("name"))
+}
+
+func renderMail(w http.ResponseWriter, r *http.Request, t *mail.Template) {
+	// ruleid: go.xss
+	t.Execute(w, r.FormValue("name"))
+}
+
+func renderMailErr(w http.ResponseWriter, r *http.Request, t *mail.Template) error {
+	// ruleid: go.xss
+	return t.Execute(w, r.FormValue("name"))
+}
+
+func (n *Notifier) Render(w http.ResponseWriter, r *http.Request, t *template.Template) {
+	// ruleid: go.xss
+	t.Execute(w, r.FormValue("name"))
+}
+
+func (n *Notifier) RenderErr(w http.ResponseWriter, r *http.Request, t *template.Template) error {
+	// ruleid: go.xss
+	return t.Execute(w, r.FormValue("name"))
+}
+
+func (n *Notifier) RenderMail(w http.ResponseWriter, r *http.Request, t *mail.Template) {
+	// ruleid: go.xss
+	t.Execute(w, r.FormValue("name"))
+}
+
+func (n *Notifier) RenderMailErr(w http.ResponseWriter, r *http.Request, t *mail.Template) error {
+	// ruleid: go.xss
+	return t.Execute(w, r.FormValue("name"))
+}
+
+func (n *Notifier) NotifyErr(w http.ResponseWriter, r *http.Request) error {
+	// ruleid: go.xss
+	return n.body.Execute(w, r.FormValue("name"))
+}
+
+func (n Notifier) NotifyValue(w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.xss
+	n.body.Execute(w, r.FormValue("name"))
+}
+
+func (n Notifier) NotifyValueErr(w http.ResponseWriter, r *http.Request) error {
+	// ruleid: go.xss
+	return n.body.Execute(w, r.FormValue("name"))
+}
+
+type Mailer struct {
+	body *mail.Template
+}
+
+func (m *Mailer) Send(w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.xss
+	m.body.Execute(w, r.FormValue("name"))
+}
+
+func (m *Mailer) SendErr(w http.ResponseWriter, r *http.Request) error {
+	// ruleid: go.xss
+	return m.body.Execute(w, r.FormValue("name"))
+}
+
+func (m Mailer) SendValue(w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.xss
+	m.body.Execute(w, r.FormValue("name"))
+}
+
+func (m Mailer) SendValueErr(w http.ResponseWriter, r *http.Request) error {
+	// ruleid: go.xss
+	return m.body.Execute(w, r.FormValue("name"))
+}
+
+// html/template executed into the Gin and Echo writers.
+func GinSafe(c *gin.Context) {
+	// ok: go.xss
+	safeGreeting.Execute(c.Writer, c.Query("name"))
+	// ok: go.xss
+	safeGreeting.ExecuteTemplate(c.Writer, "greeting", c.Query("name"))
+}
+
+func EchoSafe(c echo.Context) error {
+	// ok: go.xss
+	safeGreeting.Execute(c.Response(), c.QueryParam("name"))
+	// ok: go.xss
+	return safeGreeting.ExecuteTemplate(c.Response(), "greeting", c.QueryParam("name"))
+}
+
+func EchoV5Safe(c *echo.Context) error {
+	// ok: go.xss
+	safeGreeting.Execute(c.Response(), c.QueryParam("name"))
+	// ok: go.xss
+	return safeGreeting.ExecuteTemplate(c.Response(), "greeting", c.QueryParam("name"))
 }
