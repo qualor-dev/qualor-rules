@@ -588,9 +588,9 @@ rules:
       # numbers, True/False/None; comments allowed between the items), assigned to an upper-case
       # (constant) name that the module never changes (item assignment, update(), setdefault(),
       # |=) or assigns again. A get() default must be a literal, a list/tuple of literals or a
-      # module constant. (The exclusions start at a dict, set or comprehension assigned to the
-      # name, not at any assignment: one pattern per assignment of the module made large modules
-      # slow.)
+      # module constant. (The exclusions start where the name is assigned any `{...}` value, a
+      # dict, set or comprehension, rather than at every assignment, which made large modules
+      # slow; so a set and then the dict literal also count as assigning the name again.)
       - patterns:
           - pattern-inside: |
               $ALLOWED = $LITERAL
