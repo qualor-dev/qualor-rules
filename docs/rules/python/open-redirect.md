@@ -101,8 +101,10 @@ def after_login():
   a Django setting, Flask's configuration (`current_app.config["X"]`, the app's `config`) or a
   constant imported or read from the environment. A bare `/` after a setting, a configuration
   value or such a constant, `//` after any constant, `%`-formatting with a constant origin
-  (`"%s/items/%s" % (SITE, id)`) and long chains of concatenation are reported. A constant
-  holding a path on this site (`"/app"`) counts as fixed.
+  (`"%s/items/%s" % (SITE, id)`), long chains of concatenation, and `config.get("X")` or an alias
+  of the configuration are reported. A constant holding a path on this site (`"/app"`) counts as
+  fixed. A setting or configuration value that the code itself sets from request data is still
+  taken for fixed, and so is a redirect written inside such an expression.
 - In middleware, `%`-formatting with a host before the current path (`"https://%s%s" %
   (request.get_host(), request.path)`) is reported. Collapsing slashes is taken for safe, but a
   Flask path can still hold a backslash (`/\evil.example`), which browsers read as `//`.

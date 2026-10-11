@@ -344,7 +344,35 @@ def config_item_more(item_id):
     i = redirect("%s%s" % (app.config["SITE_URL"], item_id))
     # ruleid: python.open-redirect
     j = redirect("%s/items/%s" % (current_app.config[request.args["site"]], item_id))
-    return a or b or c or d or e or f or g or h or i or j
+    # Keys with any letters.
+    # ok: python.open-redirect
+    k = redirect(current_app.config["domain"] + "/items/" + item_id)
+    # ok: python.open-redirect
+    m = redirect(f"{current_app.config['domain']}/items/{item_id}")
+    # ok: python.open-redirect
+    n = redirect(app.config["domain"] + "/items/" + item_id)
+    # ok: python.open-redirect
+    o = redirect(f"{app.config['domain']}/items/{item_id}")
+    # get() and an alias of the configuration are not recognised.
+    # todook: python.open-redirect
+    p = redirect(current_app.config.get("SITE_URL") + "/items/" + item_id)
+    config = current_app.config
+    # todook: python.open-redirect
+    q = redirect(config["SITE_URL"] + "/items/" + item_id)
+    # A sink inside the fixed-origin expression is cleaned with it.
+    # todoruleid: python.open-redirect
+    r = "{}/back/{}".format(current_app.config["SITE_URL"], redirect(request.args["to"]))
+    # todoruleid: python.open-redirect
+    s = current_app.config["SITE_URL"] + "/back/" + redirect(request.args["to"])
+    return a or b or c or d or e or f or g or h or i or j or k or m or n or o or p or q or r or s
+
+
+# A configuration value the code itself sets from request data is still taken for a fixed origin.
+@app.route("/config-set/<item_id>")
+def config_set(item_id):
+    current_app.config["SITE_URL"] = request.args["site"]
+    # todoruleid: python.open-redirect
+    return redirect(current_app.config["SITE_URL"] + "/items/" + item_id)
 
 # Nested tables and implicitly concatenated values are not recognised as allow-lists; an
 # upper-case local is not a constant.
@@ -588,6 +616,17 @@ class ContinueView(View):
     def get(self, request, *args, **kwargs):
         # ruleid: python.open-redirect
         return django_redirect(self.request.GET["to"])
+
+
+def django_setting_set(request, slug):
+    # A setting the code sets from request data is still taken for a fixed origin, and a sink
+    # inside the fixed-origin expression is cleaned with it.
+    settings.SITE_URL = request.GET["site"]
+    # todoruleid: python.open-redirect
+    a = django_redirect(settings.SITE_URL + "/articles/" + slug)
+    # todoruleid: python.open-redirect
+    b = "{}/back/{}".format(settings.SITE_URL, django_redirect(request.GET["to"]))
+    return a or b
 
 
 def django_safe(request, slug):

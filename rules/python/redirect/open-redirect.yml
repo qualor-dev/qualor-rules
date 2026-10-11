@@ -71,8 +71,11 @@ rules:
     #   with %-formatting) or an upper-case constant imported or read from the environment.
     #   %-formatting with a constant origin (`"%s/items/%s" % (SITE, id)`) is not, nor a chain
     #   of more than five operands after a constant ending in "host/", nor more than six after
-    #   `app.config["X"]` (todook). "//" after a constant is refused even when the constant
-    #   holds a host.
+    #   `app.config["X"]`, nor `config.get("X")` or an alias of the configuration (todook).
+    #   "//" after a constant is refused even when the constant holds a host. A setting or
+    #   configuration value that the code itself assigns from request data is still taken for
+    #   a fixed origin, and a sink written inside such an expression (`"{}/x/{}".format(
+    #   settings.SITE, redirect(...))`) is cleaned with it (todoruleid).
     # - Middleware sees every path, so there the current path is request data: Django middleware
     #   methods (`__call__`, `process_request`, `process_view`, `process_response`, ...) and
     #   functions inside a `def ...(get_response)` factory, Flask before_request hooks, and
@@ -1644,7 +1647,7 @@ rules:
                   - pattern: $LEFT + $RIGHT
                   - metavariable-regex:
                       metavariable: $LEFT
-                      regex: ^(flask\.)?current_app\.config\[[rbuRBU]{0,2}("[^"\\n]*"|'[^'\\n]*')\]\s*\+\s*[rbuRBU]{0,2}("|')(/[^/\\"'\s]|[?#])
+                      regex: ^(flask\.)?current_app\.config\[[rbuRBU]{0,2}("[^"\\\n]*"|'[^'\\\n]*')\]\s*\+\s*[rbuRBU]{0,2}("|')(/[^/\\"'\s]|[?#])
                   - metavariable-pattern:
                       metavariable: $LEFT
                       pattern: flask.current_app.config[$KEY]
@@ -1653,7 +1656,7 @@ rules:
                   - pattern: $FSTRING
                   - metavariable-regex:
                       metavariable: $FSTRING
-                      regex: ^[fF]("|')\{(flask\.)?current_app\.config\[("[^"\\n]*"|'[^'\\n]*')\]\}(/[^/\\"'{\s]|[?#])
+                      regex: ^[fF]("|')\{(flask\.)?current_app\.config\[("[^"\\\n]*"|'[^'\\\n]*')\]\}(/[^/\\"'{\s]|[?#])
               - patterns:
                   - pattern: $FORMAT.format(flask.current_app.config[$KEY], ...)
                   - metavariable-regex:
@@ -1690,7 +1693,7 @@ rules:
                   - pattern: $FSTRING
                   - metavariable-regex:
                       metavariable: $FSTRING
-                      regex: ^[fF]("|')\{\w+\.config\[("[^"\\n]*"|'[^'\\n]*')\]\}(/[^/\\"'{\s]|[?#])
+                      regex: ^[fF]("|')\{\w+\.config\[("[^"\\\n]*"|'[^'\\\n]*')\]\}(/[^/\\"'{\s]|[?#])
               - patterns:
                   - pattern: $FORMAT.format($APP.config[$KEY], ...)
                   - metavariable-regex:
@@ -1703,7 +1706,7 @@ rules:
                       regex: ^[rbuRBU]{0,2}("|')%s(/[^/\\"'%\s]|[?#])
           - metavariable-regex:
               metavariable: $KEY
-              regex: ^[rbuRBU]{0,2}("[^"\\n]*"|'[^'\\n]*')$
+              regex: ^[rbuRBU]{0,2}("[^"\\\n]*"|'[^'\\\n]*')$
     pattern-sinks:
       # Flask and Werkzeug redirect(location).
       - patterns:
