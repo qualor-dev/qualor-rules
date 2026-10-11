@@ -1571,6 +1571,33 @@ def results_fetch_scheme():
     return page
 
 
+@app.route("/results/fetch-percent-host")
+def results_fetch_percent_host():
+    # A host filled in by %-formatting is chosen by the request.
+    page = requests.get("https://%s/status" % request.args["host"]).text
+    # ruleid: python.xss
+    return page
+
+
+@app.route("/results/fetch-percent-named-host")
+def results_fetch_percent_named_host():
+    page = requests.get("https://%(host)s/status" % {"host": request.args["host"]}).text
+    # ruleid: python.xss
+    return page
+
+
+@app.route("/results/fetch-hook")
+def results_fetch_hook():
+    # A sanitizer that matches a call also cleans a sink in a function passed to that call: here
+    # the fixed-origin fetch cleans the response hook.
+    requests.get(
+        "https://api.example.com/ping",
+        # todoruleid: python.xss
+        hooks={"response": lambda reply, *args, **kwargs: make_response("<p>" + request.args["q"] + "</p>")},
+    )
+    return "sent"
+
+
 @app.route("/results/fetch-no-separator")
 def results_fetch_no_separator():
     # Without a separator after the host, "@evil.example" in the path sets the host.

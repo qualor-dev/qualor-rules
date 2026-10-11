@@ -117,7 +117,8 @@ def hello(request):
   counts as request data. A page fetched through a requests Session or httpx Client held in a
   variable is taken for stored data when an attribute of the response is used
   (`session.get(url).text`). A fixed origin is recognised only as a literal at the start of the
-  URL; one held in a module constant (`API_BASE + "/items/" + item`) is not.
+  URL; one held in a module constant (`API_BASE + "/items/" + item`) is not. A response written
+  by a function passed to a fixed-origin fetch (a requests response hook) is not checked.
 <!-- end: known-limits -->
 
 ## References

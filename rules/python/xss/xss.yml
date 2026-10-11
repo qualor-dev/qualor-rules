@@ -122,7 +122,9 @@ rules:
     #   attribute of the response is used (`s.get(url).text`, todoruleid); a fixed origin is
     #   recognised only as a literal at the start of the URL given to the requests or httpx
     #   module functions or urlopen(), so one held in a module constant (`API_BASE + "/x/" +
-    #   id`) is still request data (todook).
+    #   id`) is still request data (todook). These sanitizers match the call, so they also clean a
+    #   sink inside a function passed to it (a requests response hook on a fixed-origin fetch,
+    #   todoruleid).
     # Inherited from the request source block (python.sql-injection), each with a `todook` line:
     # - A Flask route parameter with a typed converter (`<int:n>`) is still a source.
     # - A Django URL argument is still a source when its converter (`<int:pk>`, in urls.py) or a
@@ -1498,7 +1500,8 @@ rules:
       # ("https://api.example.com/", or "?" or "#" after the host; also in an f-string), given to
       # the requests or httpx module functions or to urllib.request.urlopen(). A lone scheme
       # (`"https://" + host`) or a host without the separator (`"https://api.example.com" +
-      # path`, where "@evil.example" sets the host) fixes no origin. A page fetched from a URL
+      # path`, where "@evil.example" sets the host) fixes no origin, nor does a host with a
+      # placeholder (`{` of an f-string or format(), `%` of %-formatting). A page fetched from a URL
       # the request chooses stays request data (the attribute sanitizer above leaves these calls
       # out).
       - patterns:
@@ -1512,7 +1515,7 @@ rules:
               regex: ^(get|post|put|patch|delete|head|options)$
           - metavariable-regex:
               metavariable: $URL
-              regex: &fixed-origin ^[rRbBuUfF]{0,2}["'][A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"'\\@{}]+(/(?![/\\])|[?#])
+              regex: &fixed-origin ^[rRbBuUfF]{0,2}["'][A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"'\\@{}%]+(/(?![/\\])|[?#])
       - patterns:
           - pattern-either:
               - pattern: requests.request($METHOD, $URL, ...)
