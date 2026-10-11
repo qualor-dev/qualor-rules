@@ -267,10 +267,84 @@ def env_item(item_id):
     # "/" alone is not a path prefix: "/" + "/evil.example" names another host.
     # ruleid: python.open-redirect
     i = redirect(ROOT_SLASH + request.args["host"])
-    # Flask's app.config is not recognised as an origin.
-    # todook: python.open-redirect
+    # ok: python.open-redirect
     return redirect(current_app.config["SITE_URL"] + "/items/" + item_id)
 
+
+
+# Flask's configuration (current_app.config, the app's config) is set by the operator, like a
+# Django setting: a path segment, a query or a fragment after it stays on its origin.
+@app.route("/config-item/<item_id>")
+def config_item(item_id):
+    # ok: python.open-redirect
+    a = redirect(current_app.config["SITE_URL"] + "/items/" + item_id + "/" + request.args["tab"])
+    # ok: python.open-redirect
+    b = redirect(current_app.config["LOGIN_URL"] + "?next=" + request.full_path)
+    # ok: python.open-redirect
+    c = redirect(f"{current_app.config['SITE_URL']}/items/{item_id}")
+    # ok: python.open-redirect
+    d = redirect("{}/items/{}".format(current_app.config["SITE_URL"], item_id))
+    # ok: python.open-redirect
+    e = redirect("%s/items/%s" % (current_app.config["SITE_URL"], item_id))
+    # ok: python.open-redirect
+    f = redirect(app.config["SITE_URL"] + "/items/" + item_id)
+    # ok: python.open-redirect
+    g = redirect(app.config["SITE_URL"] + "#" + item_id)
+    # ok: python.open-redirect
+    h = redirect(f"{app.config['SITE_URL']}/items/{item_id}")
+    # ok: python.open-redirect
+    i = redirect("{}?item={}".format(app.config["SITE_URL"], item_id))
+    # ok: python.open-redirect
+    j = redirect("%s/items/%s" % (app.config["SITE_URL"], item_id))
+    # A bare "/" after a value that may be empty can start "//host"; nothing after the value
+    # keeps request data from naming the host.
+    # ruleid: python.open-redirect
+    k = redirect(current_app.config["SITE_URL"] + "/" + item_id)
+    # ruleid: python.open-redirect
+    m = redirect(current_app.config["SITE_URL"] + item_id)
+    # ruleid: python.open-redirect
+    n = redirect(app.config["SITE_URL"] + "//" + item_id)
+    # ruleid: python.open-redirect
+    o = redirect(f"{app.config['SITE_URL']}{item_id}")
+    # A configuration key taken from the request is not a fixed origin.
+    # ruleid: python.open-redirect
+    q = redirect(app.config[request.args["site"]] + "/items/" + item_id)
+    # ruleid: python.open-redirect
+    q2 = redirect("{}/items/{}".format(current_app.config[request.args["site"]], item_id))
+    # The config of an object that is not the module's Flask app is not one either.
+    # ruleid: python.open-redirect
+    r = redirect(request.args["profile"].config["SITE_URL"] + "/items/" + item_id)
+    # More than six operands after the app's config are not followed.
+    # todook: python.open-redirect
+    s = redirect(app.config["SITE_URL"] + "/a/" + item_id + "/b/" + item_id + "/c/" + item_id + "/d/" + item_id)
+    return a or b or c or d or e or f or g or h or i or j or k or m or n or o or q or q2 or r or s
+
+
+@app.route("/config-more/<item_id>")
+def config_item_more(item_id):
+    # Chains of every length after the app's config, ending in request data.
+    # ok: python.open-redirect
+    a = redirect(app.config["SITE_URL"] + "/items/" + item_id + request.args["tab"])
+    # ok: python.open-redirect
+    b = redirect(app.config["SITE_URL"] + "/items/" + item_id + "/" + request.args["tab"])
+    # ok: python.open-redirect
+    c = redirect(app.config["SITE_URL"] + "/items/" + item_id + "/" + request.args["tab"] + request.args["page"])
+    # ok: python.open-redirect
+    d = redirect(app.config["SITE_URL"] + "/items/" + item_id + "/" + request.args["tab"] + "/" + request.args["page"])
+    # Nothing after the value keeps request data from naming the host.
+    # ruleid: python.open-redirect
+    e = redirect(f"{current_app.config['SITE_URL']}{item_id}")
+    # ruleid: python.open-redirect
+    f = redirect("{}{}".format(current_app.config["SITE_URL"], item_id))
+    # ruleid: python.open-redirect
+    g = redirect("%s%s" % (current_app.config["SITE_URL"], item_id))
+    # ruleid: python.open-redirect
+    h = redirect("{}{}".format(app.config["SITE_URL"], item_id))
+    # ruleid: python.open-redirect
+    i = redirect("%s%s" % (app.config["SITE_URL"], item_id))
+    # ruleid: python.open-redirect
+    j = redirect("%s/items/%s" % (current_app.config[request.args["site"]], item_id))
+    return a or b or c or d or e or f or g or h or i or j
 
 # Nested tables and implicitly concatenated values are not recognised as allow-lists; an
 # upper-case local is not a constant.

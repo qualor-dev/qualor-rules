@@ -98,10 +98,11 @@ def after_login():
 <!-- begin: known-limits -->
 - A fixed origin is recognised at the start of the URL text: a literal, an upper-case module
   constant holding a literal URL with a scheme and a host, and, before a path segment, `?` or `#`,
-  a Django setting or a constant imported or read from the environment. A bare `/` after a
-  setting or such a constant, `//` after any constant, `%`-formatting with a constant origin
-  (`"%s/items/%s" % (SITE, id)`), long chains of concatenation and a base URL from Flask's
-  `app.config` are reported. A constant holding a path on this site (`"/app"`) counts as fixed.
+  a Django setting, Flask's configuration (`current_app.config["X"]`, the app's `config`) or a
+  constant imported or read from the environment. A bare `/` after a setting, a configuration
+  value or such a constant, `//` after any constant, `%`-formatting with a constant origin
+  (`"%s/items/%s" % (SITE, id)`) and long chains of concatenation are reported. A constant
+  holding a path on this site (`"/app"`) counts as fixed.
 - In middleware, `%`-formatting with a host before the current path (`"https://%s%s" %
   (request.get_host(), request.path)`) is reported. Collapsing slashes is taken for safe, but a
   Flask path can still hold a backslash (`/\evil.example`), which browsers read as `//`.
@@ -174,6 +175,8 @@ def after_login():
 - <https://docs.djangoproject.com/en/stable/topics/http/middleware/>
 - <https://docs.djangoproject.com/en/stable/releases/2.0.8/>
 - <https://flask.palletsprojects.com/en/stable/api/#flask.Flask.before_request>
+- <https://flask.palletsprojects.com/en/stable/config/>
+- <https://flask.palletsprojects.com/en/stable/api/#flask.current_app>
 - <https://werkzeug.palletsprojects.com/en/stable/wrappers/>
 - <https://starlette.dev/middleware/>
 - <https://fastapi.tiangolo.com/tutorial/middleware/>
