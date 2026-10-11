@@ -103,7 +103,7 @@ module.exports = { getStatus };
   (`{ ...insecureTls }`) are not followed, nor are options built first and given to a module
   required in place (`require('tls').connect(port, host, options)`).
 - For the other libraries, a TLS object kept in its own variable and given by shorthand
-  (`new pg.Pool({ ssl })`) or assigned to the options later (`opts.ssl = {...}`), and a `ws` client
+  (`new pg.Pool({ ssl })`) or by name (`ssl: sslOptions`), or assigned to the options later (`opts.ssl = {...}`), and a `ws` client
   imported as an ES default under another name than `WebSocket`, are not followed, and an object under an `https` key is taken for TLS
   options also where the library has no such option (axios).
 - A `checkServerIdentity` that accepts any host, or MongoDB's `tlsAllowInvalidHostnames`, while the

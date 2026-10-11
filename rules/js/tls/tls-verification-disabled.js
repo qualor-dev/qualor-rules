@@ -447,6 +447,11 @@ function otherLibrariesLimits() {
   const ssl = { rejectUnauthorized: false };
   // todoruleid: js.tls-verification-disabled
   const pool = new pg.Pool({ ssl });
+  // The same object given by name, to node-postgres or under Sequelize's dialectOptions.
+  // todoruleid: js.tls-verification-disabled
+  const named = new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: ssl });
+  // todoruleid: js.tls-verification-disabled
+  const viaSequelize = new Sequelize(process.env.DATABASE_URL, { dialect: 'postgres', dialectOptions: { ssl: ssl } });
   // An ssl object handed on to node-postgres by knex (also Sequelize, TypeORM) is reported too.
   // ruleid: js.tls-verification-disabled
   const db = knex({ client: 'pg', connection: { host: 'db.internal', ssl: { rejectUnauthorized: false } } });
@@ -458,7 +463,7 @@ function otherLibrariesLimits() {
   late.ssl = { rejectUnauthorized: false };
   // todoruleid: js.tls-verification-disabled
   const pool2 = new pg.Pool(late);
-  return [pool, db, mongo, pool2];
+  return [pool, named, viaSequelize, db, mongo, pool2];
 }
 
 // The bracket form of NODE_TLS_REJECT_UNAUTHORIZED is matched as text: a constant is not followed

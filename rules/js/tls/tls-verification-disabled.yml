@@ -100,8 +100,9 @@ rules:
     #   (`opts.ssl = { rejectUnauthorized: false }`) and a ws client imported as an ES default under
     #   another name than WebSocket (`import WSClient from 'ws'`) are not followed (`todoruleid:`);
     #   a form for the latter makes OpenGrep drop the prefilter.
-    # - Of the other libraries, a TLS object held in its own variable and given by shorthand
-    #   (`new pg.Pool({ ssl })`) is not followed (`todoruleid:`), and an object under an `https`
+    # - Of the other libraries, a TLS object held in its own variable is not followed, given by
+    #   shorthand (`new pg.Pool({ ssl })`) or by name (`ssl: sslOptions`, also under
+    #   `dialectOptions` or `extra`) (`todoruleid:`), and an object under an `https`
     #   key is taken for TLS options also where the library has no such option (axios)
     #   (`todook:`).
     # - MongoDB's tlsAllowInvalidHostnames (host name check off, chain still verified, CWE-297) is
