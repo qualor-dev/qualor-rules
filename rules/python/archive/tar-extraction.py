@@ -732,11 +732,11 @@ def members_exited(tar, root):
         yield member
 
 
-def members_logged_refused(tar, root):
+def members_logged_skipped(tar, root):
     for member in tar:
         if os.path.isabs(member.name):
             print("absolute name", member.name)
-            raise ValueError(member.name)
+            continue
         yield member
 
 
@@ -756,15 +756,18 @@ def safe_members_generator(archive_path, dest):
     with tarfile.open(archive_path) as tar:
         # ok: python.tar-extraction
         tar.extractall(path=root, members=members_skipped(tar, root))
-    tar = tarfile.open(archive_path)
-    # ok: python.tar-extraction
-    tar.extractall(root, members=members_stopped(tar.getmembers(), root))
-    # ok: python.tar-extraction
-    tar.extractall(root, members=members_exited(tar, root))
-    # ok: python.tar-extraction
-    tar.extractall(root, members=members_logged_refused(tar, root))
-    # ok: python.tar-extraction
-    tar.extractall(root, members=members_target_checked(tar, root))
+    with tarfile.open(archive_path) as tar:
+        # ok: python.tar-extraction
+        tar.extractall(root, members=members_stopped(tar.getmembers(), root))
+    with tarfile.open(archive_path) as tar:
+        # ok: python.tar-extraction
+        tar.extractall(root, members=members_exited(tar, root))
+    with tarfile.open(archive_path) as tar:
+        # ok: python.tar-extraction
+        tar.extractall(root, members=members_logged_skipped(tar, root))
+    with tarfile.open(archive_path) as tar:
+        # ok: python.tar-extraction
+        tar.extractall(root, members=members_target_checked(tar, root))
 
 
 # A guarded generator does not cover a call that does not use it, nor one whose check only logs,
@@ -817,7 +820,7 @@ def members_common_prefix_logged(tar, root):
     for member in tar:
         if os.path.commonprefix([root, os.path.realpath(os.path.join(root, member.name))]) != root:
             print("outside", member.name)
-            raise ValueError(member.name)
+            return
         yield member
 
 
@@ -848,27 +851,37 @@ def unsafe_members_generator(archive_path, dest):
     with tarfile.open(archive_path) as tar:
         # ruleid: python.tar-extraction
         tar.extractall(root)
+    with tarfile.open(archive_path) as tar:
         # ruleid: python.tar-extraction
         tar.extractall(root, members=members_logged(tar, root))
+    with tarfile.open(archive_path) as tar:
         # ruleid: python.tar-extraction
         tar.extractall(root, members=members_prefixed(tar, root))
+    with tarfile.open(archive_path) as tar:
         # ruleid: python.tar-extraction
         tar.extractall(root, members=members_common_prefix(tar, root))
+    with tarfile.open(archive_path) as tar:
         # ruleid: python.tar-extraction
         tar.extractall(root, members=tar.getmembers())
     with tarfile.open(archive_path) as tar:
         # ruleid: python.tar-extraction
         tar.extractall(root, members=members_prefixed_logged(tar, root))
+    with tarfile.open(archive_path) as tar:
         # ruleid: python.tar-extraction
         tar.extractall(root, members=members_prefixed_exit(tar, root))
+    with tarfile.open(archive_path) as tar:
         # ruleid: python.tar-extraction
         tar.extractall(root, members=members_prefixed_skip(tar, root))
+    with tarfile.open(archive_path) as tar:
         # ruleid: python.tar-extraction
         tar.extractall(root, members=members_common_prefix_logged(tar, root))
+    with tarfile.open(archive_path) as tar:
         # ruleid: python.tar-extraction
         tar.extractall(root, members=members_common_prefix_return(tar, root))
+    with tarfile.open(archive_path) as tar:
         # ruleid: python.tar-extraction
         tar.extractall(root, members=members_common_prefix_exit(tar, root))
+    with tarfile.open(archive_path) as tar:
         # ruleid: python.tar-extraction
         tar.extractall(root, members=members_nested_check(tar, root, False))
 
@@ -1139,8 +1152,170 @@ def unpack_prefix_variable(archive_path, dest):
         tar.extractall(root)
 
 
+# Safe: a helper of this file (defined before the call) that loops over the members with the same
+# check and raises or calls sys.exit on a bad one, called with the archive before the extraction
+# in the same block: a bad member stops the program before anything is extracted.
+def refuse_outside(tar, root):
+    for member in tar.getmembers():
+        if os.path.commonpath([root, os.path.realpath(os.path.join(root, member.name))]) != root:
+            raise ValueError("outside the destination: " + member.name)
+
+
+def refuse_absolute(members):
+    for member in members:
+        target = member.name
+        if os.path.isabs(target) or ".." in target.split("/"):
+            print("refusing", target)
+            sys.exit(1)
+
+
+def refuse_absolute_logged(tar):
+    for member in tar:
+        if os.path.isabs(member.name):
+            print("absolute name", member.name)
+            raise ValueError(member.name)
+
+
+def refuse_target(tar, root):
+    for member in tar:
+        target = os.path.realpath(os.path.join(root, member.name))
+        if os.path.commonpath([root, target]) != root:
+            raise ValueError(member.name)
+
+
+def safe_helper_checked(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        refuse_outside(tar, root)
+        # ok: python.tar-extraction
+        tar.extractall(root)
+    with tarfile.open(archive_path) as tar:
+        refuse_absolute_logged(tar)
+        # ok: python.tar-extraction
+        tar.extractall(root)
+    with tarfile.open(archive_path) as tar:
+        refuse_target(tar, root)
+        # ok: python.tar-extraction
+        tar.extractall(root)
+    with tarfile.open(archive_path) as tar:
+        refuse_absolute(tar.getmembers())
+        for member in tar.getmembers():
+            # ok: python.tar-extraction
+            tar.extract(member, root)
+
+
+# A helper that only returns (the caller extracts anyway), logs, checks after the extraction or
+# another archive, or checks a character prefix or os.path.commonprefix() is no guard.
+def report_outside(tar, root):
+    for member in tar.getmembers():
+        if os.path.commonpath([root, os.path.realpath(os.path.join(root, member.name))]) != root:
+            return False
+    return True
+
+
+def log_outside(tar, root):
+    for member in tar:
+        if os.path.isabs(member.name):
+            print("absolute name", member.name)
+
+
+def refuse_prefixed(tar, root):
+    for member in tar:
+        if not os.path.realpath(os.path.join(root, member.name)).startswith(root):
+            raise ValueError(member.name)
+
+
+def refuse_common_prefix(tar, root):
+    for member in tar:
+        if os.path.commonprefix([root, os.path.realpath(os.path.join(root, member.name))]) != root:
+            raise ValueError(member.name)
+
+
+def refuse_prefixed_logged(tar, root):
+    for member in tar:
+        if not os.path.realpath(os.path.join(root, member.name)).startswith(root):
+            print("outside", member.name)
+            raise ValueError(member.name)
+
+
+def refuse_common_prefix_logged(tar, root):
+    for member in tar:
+        if os.path.commonprefix([root, os.path.realpath(os.path.join(root, member.name))]) != root:
+            print("outside", member.name)
+            sys.exit(1)
+
+
+def unsafe_helper_checked(archive_path, other_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        report_outside(tar, root)
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+    with tarfile.open(archive_path) as tar:
+        log_outside(tar, root)
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+    with tarfile.open(archive_path) as tar:
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+        refuse_outside(tar, root)
+    with tarfile.open(archive_path) as tar, tarfile.open(other_path) as other:
+        refuse_outside(other, root)
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+    with tarfile.open(archive_path) as tar:
+        refuse_prefixed(tar, root)
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+    with tarfile.open(archive_path) as tar:
+        refuse_common_prefix(tar, root)
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+    with tarfile.open(archive_path) as tar:
+        refuse_prefixed_logged(tar, root)
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+    with tarfile.open(archive_path) as tar:
+        refuse_common_prefix_logged(tar, root)
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+    with tarfile.open(archive_path) as tar:
+        refuse_prefixed(tar.getmembers(), root)
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+    with tarfile.open(archive_path) as tar:
+        refuse_common_prefix(tar.getmembers(), root)
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+
+
+# A helper is not checked to loop over the archive it is given: one that checks other names
+# counts as a guard.
+def refuse_reserved(tar, names):
+    for name in names:
+        if name in ("con", "nul"):
+            raise ValueError(name)
+
+
+def unpack_unrelated_helper(archive_path, dest, names):
+    with tarfile.open(archive_path) as tar:
+        refuse_reserved(tar, names)
+        # todoruleid: python.tar-extraction
+        tar.extractall(dest)
+
+
+# A checking generator called on its own is taken for a checking helper, although its body never
+# runs without iteration.
+def unpack_generator_called(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        members_checked(tar, root)
+        # todoruleid: python.tar-extraction
+        tar.extractall(root)
+
+
 # A default filter set on the TarFile class for the whole program (the docs' global default; the
-# other cases of this file assume none is set), and a check made by a helper, are not seen.
+# other cases of this file assume none is set) is not seen.
 def configure_tarfile():
     tarfile.TarFile.extraction_filter = staticmethod(tarfile.data_filter)
 
@@ -1152,17 +1327,41 @@ def unpack_after_configure(archive_path, dest):
         tar.extractall(dest)
 
 
-def check_members(tar, dest):
+# A checking helper defined after its caller, a checking method called on self, and a helper whose
+# result decides (`if not inside(tar, root): raise ...`) are not read.
+def unpack_helper_later(archive_path, dest):
+    with tarfile.open(archive_path) as tar:
+        check_members_later(tar, dest)
+        # todook: python.tar-extraction
+        tar.extractall(dest)
+
+
+def check_members_later(tar, dest):
     for member in tar.getmembers():
         if os.path.isabs(member.name):
             raise ValueError(member.name)
 
 
-def unpack_helper_checked(archive_path, dest):
+class Unpacker:
+    def check(self, tar):
+        for member in tar.getmembers():
+            if os.path.isabs(member.name):
+                raise ValueError(member.name)
+
+    def unpack(self, archive_path, dest):
+        with tarfile.open(archive_path) as tar:
+            self.check(tar)
+            # todook: python.tar-extraction
+            tar.extractall(dest)
+
+
+def unpack_helper_result(archive_path, dest):
+    root = os.path.realpath(dest)
     with tarfile.open(archive_path) as tar:
-        check_members(tar, dest)
+        if not report_outside(tar, root):
+            raise ValueError("outside the destination")
         # todook: python.tar-extraction
-        tar.extractall(dest)
+        tar.extractall(root)
 
 
 # A check of the member inside another condition counts although it leaves only on some paths.

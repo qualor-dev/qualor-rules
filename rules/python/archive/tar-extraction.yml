@@ -69,7 +69,12 @@ rules:
     # a continue counts too. So does the same check in a members= generator of this file defined
     # before the call (`extractall(root, members=checked(tar, root))`), on the member it then
     # yields: a raise, return, sys.exit or continue before the yield means a bad member is never
-    # extracted. A check that only logs, a continue before extractall(), and an if
+    # extracted. So does a helper function of this file defined before the call that loops over
+    # the members with the same check and raises or calls sys.exit (a return leaves only the
+    # helper), called with the archive or its getmembers() before the call in the same block or
+    # an enclosing one (`check(tar, root)`, then `tar.extractall(root)`). In a generator or a
+    # helper the exit must be the if's first statement or follow one statement; one nested in
+    # another condition does not count. A check that only logs, a continue before extractall(), and an if
     # on something else are not checks (`ruleid:`). Nor is a check on a character prefix, which a
     # sibling directory passes (lesson 18): startswith() of a prefix that is not a literal and
     # does not end in a separator (`root + os.sep`, `+ os.path.sep`, `+ "/"`,
@@ -101,7 +106,12 @@ rules:
     #   member`) is fully_trusted under another name and is not reported (`todoruleid:`).
     # - A prefix that ends in a separator but is held in a variable (`prefix = root + os.sep`) is
     #   taken for a character prefix, so its guard is reported (`todook:`).
-    # - Checks the rule does not read are reported (`todook:`): a check in a helper function, a
+    # - A checking helper is not checked to loop over the archive it is given, so one that checks
+    #   other names counts (`todoruleid:`); nor does it have to be a plain function: a checking
+    #   generator called on its own (its body does not run) counts too (`todoruleid:`).
+    # - Checks the rule does not read are reported (`todook:`): a checking helper defined after
+    #   the call, a checking method called on self, a helper whose result decides (`if not
+    #   inside(tar, root): raise ...`), a
     #   members= generator that yields only inside a check (`if inside: yield member`, the form
     #   of the docs' name selection by extension, so not a guard), a guarded generator defined
     #   after the call or iterated by a loop that calls extract(), an if with more than one
@@ -427,6 +437,69 @@ rules:
                         - metavariable-regex: &generator-exit
                             metavariable: $EXIT
                             regex: ^(?:(?:raise|return|continue)\b|sys\.exit\()
+                  # ... or a helper function of this file, defined before, that loops over the members
+                  # with the same check and raises or calls sys.exit (a return only leaves the helper),
+                  # called with the archive before the call in the same block or an enclosing one.
+                  - pattern-not:
+                      patterns:
+                        - pattern: $X.$EXTRACT(...)
+                        - pattern-either:
+                            - pattern-inside: |
+                                $HELPER(..., $X, ...)
+                                ...
+                            - pattern-inside: |
+                                $HELPER(..., $X.getmembers(), ...)
+                                ...
+                        - pattern-either:
+                            - pattern-inside: |
+                                def $HELPER(...):
+                                    ...
+                                    for $M in $ITER:
+                                        ...
+                                        if <... $M ...>:
+                                            $EXIT
+                                        ...
+                                    ...
+                                ...
+                            - pattern-inside: |
+                                def $HELPER(...):
+                                    ...
+                                    for $M in $ITER:
+                                        ...
+                                        if <... $M ...>:
+                                            $S1
+                                            $EXIT
+                                        ...
+                                    ...
+                                ...
+                            - pattern-inside: |
+                                def $HELPER(...):
+                                    ...
+                                    for $M in $ITER:
+                                        ...
+                                        $P = <... $M ...>
+                                        ...
+                                        if <... $P ...>:
+                                            $EXIT
+                                        ...
+                                    ...
+                                ...
+                            - pattern-inside: |
+                                def $HELPER(...):
+                                    ...
+                                    for $M in $ITER:
+                                        ...
+                                        $P = <... $M ...>
+                                        ...
+                                        if <... $P ...>:
+                                            $S1
+                                            $EXIT
+                                        ...
+                                    ...
+                                ...
+                        - metavariable-regex: &helper-exit
+                            metavariable: $EXIT
+                            regex: ^(?:raise\b|sys\.exit\()
               # ... except a guard of the same forms whose check is on a character prefix, which a
               # sibling directory passes (`/srv/data-evil` starts with `/srv/data`; lesson 18):
               # startswith() of a prefix that is not a literal and does not end in a separator
@@ -622,6 +695,72 @@ rules:
                               ...
                           ...
                   - metavariable-regex: *generator-exit
+              # The same exception for the check of a helper (above).
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $HELPER(..., $X, ...)
+                          ...
+                      - pattern-inside: |
+                          $HELPER(..., $X.getmembers(), ...)
+                          ...
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $HELPER(...):
+                              ...
+                              for $M in $ITER:
+                                  ...
+                                  if <... $S.startswith($B) ...>:
+                                      $EXIT
+                                  ...
+                              ...
+                          ...
+                      - pattern-inside: |
+                          def $HELPER(...):
+                              ...
+                              for $M in $ITER:
+                                  ...
+                                  if <... $S.startswith($B) ...>:
+                                      $S1
+                                      $EXIT
+                                  ...
+                              ...
+                          ...
+                  - metavariable-regex:
+                      metavariable: $B
+                      regex: ^(?!\s*(?:[rRbBuUfF]{0,2}["']|\())(?!.*(?:\+\s*(?:os\.sep|os\.path\.sep|"/"|'/')|os\.path\.join\(.*,\s*(?:""|'')\))\s*$)
+                  - metavariable-regex: *helper-exit
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $HELPER(..., $X, ...)
+                          ...
+                      - pattern-inside: |
+                          $HELPER(..., $X.getmembers(), ...)
+                          ...
+                  - pattern-either:
+                      - pattern-inside: |
+                          def $HELPER(...):
+                              ...
+                              for $M in $ITER:
+                                  ...
+                                  if <... os.path.commonprefix(...) ...>:
+                                      $EXIT
+                                  ...
+                              ...
+                          ...
+                      - pattern-inside: |
+                          def $HELPER(...):
+                              ...
+                              for $M in $ITER:
+                                  ...
+                                  if <... os.path.commonprefix(...) ...>:
+                                      $S1
+                                      $EXIT
+                                  ...
+                              ...
+                          ...
+                  - metavariable-regex: *helper-exit
       # shutil.unpack_archive: the filter goes to the tar unpacker; zip takes none.
       - patterns:
           - pattern-either:
