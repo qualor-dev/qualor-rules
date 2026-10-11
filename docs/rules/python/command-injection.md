@@ -17,8 +17,9 @@ command:
 - the command of a shell program in an argument list: the element after `sh -c` (or `bash`,
   `zsh`, ...), and every element after `cmd /c` or `powershell -Command`;
 - the program itself: the first element of an argument list, a program string without a shell,
-  `executable=`, the program of `asyncio.create_subprocess_exec()`, or a whole argument list sent
-  by the client (`request.args.getlist("argv")`, `shlex.split(request.form["cmd"])`).
+  `executable=`, the program of `asyncio.create_subprocess_exec()`, the path or file of
+  `os.exec*()`, `os.spawn*()` and `os.posix_spawn()`, or a whole argument list sent by the client
+  (`request.args.getlist("argv")`, `shlex.split(request.form["cmd"])`).
 
 A fixed program with request data only as further list elements is not reported, also when the
 list is a fixed command line split into words (`f"ping -c 1 {host}".split()`): without a shell,
@@ -113,7 +114,8 @@ def ping():
   parameter or a variable assigned one of these; a program concatenated from names only
   (`TOOL_DIR + tool`) is missed. A variable that held request data and then a list with a fixed
   program, and a helper's list passed with `shell=True`, are reported.
-- `os.exec*()` and `os.spawn*()` are not covered.
+- `os.exec*()`, `os.spawn*()` and `os.posix_spawn()` are checked for their program only: a shell
+  given its command after `-c` there (`os.execl("/bin/sh", "sh", "-c", cmd)`) is missed.
 - Request sources are recognised by their shape. A Flask route parameter with a converter
   (`<int:n>`) and a Django URL argument made numeric by its converter still count as request data;
   a function whose first parameter is named `request`, in a module that imports Django, is taken
@@ -138,6 +140,7 @@ def ping():
 - <https://docs.python.org/3/library/subprocess.html#subprocess.getstatusoutput>
 - <https://docs.python.org/3/library/os.html#os.system>
 - <https://docs.python.org/3/library/os.html#os.popen>
+- <https://docs.python.org/3/library/os.html#process-management>
 - <https://docs.python.org/3/library/asyncio-subprocess.html>
 - <https://docs.python.org/3/library/asyncio-eventloop.html#running-subprocesses>
 - <https://docs.python.org/3/library/shlex.html>

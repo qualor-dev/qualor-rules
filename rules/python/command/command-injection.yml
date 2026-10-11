@@ -6,8 +6,8 @@ rules:
     message: >-
       Data from the HTTP request reaches an operating system command: run by a shell (os.system,
       os.popen, `shell=True`, create_subprocess_shell, or a shell program such as `sh -c`), its
-      shell metacharacters can start other commands, and as the program it runs whatever the
-      client names. Run a fixed program with an argument list and no shell
+      shell metacharacters can start other commands, and as the program (subprocess, os.exec*(),
+      os.spawn*()) it runs whatever the client names. Run a fixed program with an argument list and no shell
       (`subprocess.run(["git", "log", ref])`), pick values from an allow-list, and quote what must
       go into a shell command with `shlex.quote()`.
     metadata:
@@ -28,6 +28,7 @@ rules:
         - https://docs.python.org/3/library/subprocess.html#subprocess.getstatusoutput
         - https://docs.python.org/3/library/os.html#os.system
         - https://docs.python.org/3/library/os.html#os.popen
+        - https://docs.python.org/3/library/os.html#process-management
         - https://docs.python.org/3/library/asyncio-subprocess.html
         - https://docs.python.org/3/library/asyncio-eventloop.html#running-subprocesses
         - https://docs.python.org/3/library/shlex.html
@@ -82,7 +83,9 @@ rules:
     #   function. A program concatenated from names only (`TOOL_DIR + tool`) is missed. A variable
     #   that held request data and then an argument list with a fixed program is still taken for
     #   the request value; with a shell, a helper's argument list is taken for a command string.
-    # - os.exec*() and os.spawn*() are not covered.
+    # - os.exec*(), os.spawn*() and os.posix_spawn*() count for their program only: a shell
+    #   program given its command after -c there (`os.execl("/bin/sh", "sh", "-c", cmd)`) is
+    #   not followed.
     # - Sources are the Python SQL rule's block. A Flask route parameter with a typed converter
     #   (`<int:n>`) is still a source: the converter is in the URL rule, not in the function.
     #   FastAPI parameters annotated int, float or bool (also `Annotated[int, ...]`), and
@@ -728,6 +731,30 @@ rules:
                   - pattern: $LOOP.subprocess_exec($FACTORY, $PROGRAM, ...)
           - pattern-not: asyncio.create_subprocess_exec(*$ARGS, ...)
           - pattern-not: $ANY.subprocess_exec($FACTORY, *$ARGS, ...)
+          - focus-metavariable: $PROGRAM
+      # os.exec*(), os.spawn*() and os.posix_spawn*(): the program is the path or file argument,
+      # the first of exec* and posix_spawn*, the second of spawn* (after the mode). The arguments
+      # after it are the program's own (the first is the name it sees as argv[0]).
+      - patterns:
+          - pattern-either:
+              - pattern: os.execl($PROGRAM, ...)
+              - pattern: os.execle($PROGRAM, ...)
+              - pattern: os.execlp($PROGRAM, ...)
+              - pattern: os.execlpe($PROGRAM, ...)
+              - pattern: os.execv($PROGRAM, ...)
+              - pattern: os.execve($PROGRAM, ...)
+              - pattern: os.execvp($PROGRAM, ...)
+              - pattern: os.execvpe($PROGRAM, ...)
+              - pattern: os.spawnl($MODE, $PROGRAM, ...)
+              - pattern: os.spawnle($MODE, $PROGRAM, ...)
+              - pattern: os.spawnlp($MODE, $PROGRAM, ...)
+              - pattern: os.spawnlpe($MODE, $PROGRAM, ...)
+              - pattern: os.spawnv($MODE, $PROGRAM, ...)
+              - pattern: os.spawnve($MODE, $PROGRAM, ...)
+              - pattern: os.spawnvp($MODE, $PROGRAM, ...)
+              - pattern: os.spawnvpe($MODE, $PROGRAM, ...)
+              - pattern: os.posix_spawn($PROGRAM, ...)
+              - pattern: os.posix_spawnp($PROGRAM, ...)
           - focus-metavariable: $PROGRAM
       # ... and the program of a list or tuple assigned to a variable in the function and passed
       # whole (reported where the list is written).

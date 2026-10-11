@@ -340,6 +340,9 @@ def add_hook():
 
 # Look-alikes: methods named run/system/popen of other objects.
 class Scheduler:
+    def execv(self, name, args):
+        return name, args
+
     def run(self, job, shell=False):
         return job
 
@@ -429,11 +432,99 @@ def tool_dir():
     return "ok"
 
 
-# os.exec*() and os.spawn*() are not covered.
+# os.exec*(), os.spawn*() and os.posix_spawn*(): the path or file argument is the program (the
+# first of exec* and posix_spawn*, the second of spawn* after the mode). The arguments after it
+# are the program's own, starting with the name it sees as argv[0].
 @app.route("/exec")
 def exec_program():
-    # todoruleid: python.command-injection
+    prog = request.args["prog"]
+    # ruleid: python.command-injection
     os.execvp(request.args["prog"], ["prog"])
+    # ruleid: python.command-injection
+    os.execl(prog, prog, "--version")
+    # ruleid: python.command-injection
+    os.execle("/opt/tools/" + prog, prog, {"PATH": "/usr/bin"})
+    # ruleid: python.command-injection
+    os.execlp(prog, prog)
+    # ruleid: python.command-injection
+    os.execlpe(prog, prog, os.environ)
+    # ruleid: python.command-injection
+    os.execv(f"/opt/tools/{prog}", [prog])
+    # ruleid: python.command-injection
+    os.execve(prog, [prog], {})
+    # ruleid: python.command-injection
+    os.execvpe(prog, [prog], os.environ)
+    # ruleid: python.command-injection
+    os.spawnl(os.P_WAIT, prog, prog)
+    # ruleid: python.command-injection
+    os.spawnle(os.P_NOWAIT, prog, prog, {})
+    # ruleid: python.command-injection
+    os.spawnlp(os.P_WAIT, request.form["tool"], "tool")
+    # ruleid: python.command-injection
+    os.spawnlpe(os.P_WAIT, prog, prog, os.environ)
+    # ruleid: python.command-injection
+    os.spawnv(os.P_WAIT, prog, [prog])
+    # ruleid: python.command-injection
+    os.spawnve(os.P_WAIT, prog, [prog], {})
+    # ruleid: python.command-injection
+    os.spawnvp(os.P_WAIT, request.get_json()["tool"], ["tool"])
+    # ruleid: python.command-injection
+    os.spawnvpe(os.P_WAIT, prog, [prog], os.environ)
+    # ruleid: python.command-injection
+    os.posix_spawn(prog, [prog], os.environ)
+    # ruleid: python.command-injection
+    os.posix_spawnp(request.headers["X-Tool"], ["tool"], None)
+
+
+@app.route("/exec-safe")
+def exec_safe():
+    # A fixed program with request data among its arguments, a program picked from an
+    # allow-list, and request data only in argv[0] or the environment.
+    # ok: python.command-injection
+    os.execvp("git", ["git", "log", request.args["ref"]])
+    # ok: python.command-injection
+    os.execl("/usr/bin/du", "du", "-sh", request.args["dir"])
+    # ok: python.command-injection
+    os.spawnlp(os.P_WAIT, "convert", "convert", request.args["src"], "out.png")
+    # ok: python.command-injection
+    os.spawnv(os.P_WAIT, "/usr/bin/tar", ("tar", "czf", "/backups/x.tgz", request.form["dir"]))
+    # ok: python.command-injection
+    os.posix_spawnp("ping", ["ping", "-c", "1", request.args["host"]], os.environ)
+    # ok: python.command-injection
+    os.execvp(TOOLS[request.args["tool"]], ["tool"])
+    # ok: python.command-injection
+    os.spawnvp(os.P_WAIT, TOOLS.get(request.args["tool"], "uptime"), ["tool"])
+    # ok: python.command-injection
+    os.execv("/usr/bin/env", [request.args["name"]])
+    # ok: python.command-injection
+    os.execve("/usr/bin/env", ["env"], {"LANG": request.args["lang"]})
+    # Look-alikes: functions of the same name on other objects.
+    # ok: python.command-injection
+    Scheduler().execv(request.args["prog"], [])
+    # ok: python.command-injection
+    os.path.exists(request.args["prog"])
+    # A shell program given its command after -c: the command is shell code, not followed here.
+    # todoruleid: python.command-injection
+    os.execl("/bin/sh", "sh", "-c", request.args["cmd"])
+    # todoruleid: python.command-injection
+    os.spawnvp(os.P_WAIT, "sh", ["sh", "-c", request.args["cmd"]])
+
+
+def django_exec(request, tool):
+    # ruleid: python.command-injection
+    os.execvp(tool, [tool])
+    # ruleid: python.command-injection
+    os.spawnlp(os.P_WAIT, request.GET["tool"], "tool")
+    # ok: python.command-injection
+    os.spawnlp(os.P_WAIT, "file", "file", request.GET["path"])
+
+
+@api.get("/exec/{tool}")
+def api_exec(tool: str, count: int = 1):
+    # ruleid: python.command-injection
+    os.posix_spawnp(tool, [tool], None)
+    # ok: python.command-injection
+    os.execvp("ping", ["ping", "-c", str(count), tool])
 
 
 # With a shell, a helper's argument list is taken for a command string.
