@@ -5,6 +5,9 @@ import type { NextRequest } from 'next/server';
 import { buildCard, buildBanner as banner } from './cards';
 import * as widgets from './widgets';
 import axios from 'axios';
+import * as cp from 'node:child_process';
+import childProcess from 'child_process';
+import { execFile } from 'child_process';
 
 const app = express();
 
@@ -21,6 +24,24 @@ app.get('/card/:id', async (req: Request, res: Response) => {
   // A method named like a function the file imports by name is not taken for another object's.
   // todook: js.xss
   res.send(await widgets.buildCard(req.params.id));
+});
+
+// The output execFile() hands to its callback, with ES module imports (namespace, default,
+// named), stdout and stderr, with and without options.
+app.get('/tools/echo', (req: Request, res: Response) => {
+  const msg = req.query.msg as string;
+  // ruleid: js.xss
+  cp.execFile('echo', [msg], (err, stdout) => res.send(stdout));
+  // ruleid: js.xss
+  cp.execFile('echo', [msg], (err, stdout, stderr) => res.send(stderr));
+  // ruleid: js.xss
+  childProcess.execFile('echo', [msg], { encoding: 'utf8' }, (err, stdout, stderr) => res.send(stderr));
+  // ruleid: js.xss
+  execFile('echo', [msg], { timeout: 500 }, (err, stdout) => res.send(stdout));
+  // ruleid: js.xss
+  execFile('echo', [msg], { timeout: 500 }, (err, stdout, stderr) => res.send(stderr));
+  // ok: js.xss
+  execFile('uptime', [], { timeout: 500 }, (err, stdout) => res.send(stdout));
 });
 
 // TypeScript: typed Express handlers.

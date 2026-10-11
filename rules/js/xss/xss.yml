@@ -25,6 +25,7 @@ rules:
         - https://expressjs.com/en/4x/api.html#req
         - https://expressjs.com/en/5x/api.html#req
         - https://nodejs.org/api/http.html
+        - https://nodejs.org/api/child_process.html#child_processexecfilefile-args-options-callback
         - https://fastify.dev/docs/latest/Reference/Reply/
         - https://fastify.dev/docs/latest/Reference/Routes/
         - https://fastify.dev/docs/latest/Reference/Request/
@@ -71,8 +72,9 @@ rules:
     #   also after a lone scheme or `//`. One fetched from a fixed origin, a path of this site, a
     #   URL in a variable or a template on a constant base is that service's data. Limits of that:
     #   the output of execFileSync()/spawnSync() with a request-chosen program is reported again
-    #   (`todook:`); output given to a callback (`execFile('echo', [x], (err, out) => ...)`) is
-    #   not followed (`todoruleid:`); a request-chosen URL held in a variable first (`const
+    #   (`todook:`); the output execFile() hands to a callback written in the call is followed,
+    #   but not one passed by name (`execFile('echo', [x], sendOutput)`) nor the output streams of
+    #   spawn() (`child.stdout.on('data', ...)`) (`todoruleid:`); a request-chosen URL held in a variable first (`const
     #   target = req.query.url; await axios.get(target)`) is taken for stored data, and so is a
     #   URL whose request value has another name than req, request or a destructured field name
     #   (`(r, res)`, `({ query: q }, res)`, `({ query: { url } }, res)`) (`todoruleid:`). An
@@ -376,6 +378,52 @@ rules:
               regex: ^(?:axios|got|superagent|undici)$
         from: $FROM
         to: $CLIENT
+      # The output execFile() hands to its callback (`execFile('echo', [x], (err, stdout) =>
+      # res.send(stdout))`): a fixed program given request data as an argument can print it back,
+      # as the value of execFileSync() does. Only the argument list carries it over (not an
+      # options object, not the program: the output of a request-chosen program is
+      # js.command-injection's finding).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $CP = require($M)
+                  ...
+              - pattern-inside: |
+                  import * as $CP from $M;
+                  ...
+              - pattern-inside: |
+                  import $CP from $M;
+                  ...
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(?:node:)?child_process["'`]?$
+          - pattern-either:
+              - pattern: '$CP.execFile($PROG, $ARGS, function ($ERR, $OUT, ...) { ... })'
+              - pattern: '$CP.execFile($PROG, $ARGS, function ($ERR, $STDOUT, $OUT, ...) { ... })'
+              - pattern: '$CP.execFile($PROG, $ARGS, $OPTS, function ($ERR, $OUT, ...) { ... })'
+              - pattern: '$CP.execFile($PROG, $ARGS, $OPTS, function ($ERR, $STDOUT, $OUT, ...) { ... })'
+          - pattern-not: '$CP.execFile($PROG, {...}, ...)'
+        from: $ARGS
+        to: $OUT
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  const {..., execFile, ...} = require($M);
+                  ...
+              - pattern-inside: |
+                  import {..., execFile, ...} from $M;
+                  ...
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(?:node:)?child_process["'`]?$
+          - pattern-either:
+              - pattern: 'execFile($PROG, $ARGS, function ($ERR, $OUT, ...) { ... })'
+              - pattern: 'execFile($PROG, $ARGS, function ($ERR, $STDOUT, $OUT, ...) { ... })'
+              - pattern: 'execFile($PROG, $ARGS, $OPTS, function ($ERR, $OUT, ...) { ... })'
+              - pattern: 'execFile($PROG, $ARGS, $OPTS, function ($ERR, $STDOUT, $OUT, ...) { ... })'
+          - pattern-not: 'execFile($PROG, {...}, ...)'
+        from: $ARGS
+        to: $OUT
     pattern-sanitizers:
       - pattern: Number.parseInt(...)
       - pattern: Number.parseFloat(...)

@@ -443,6 +443,7 @@ const axios = require('axios');
 const got = require('got');
 const execAsync = util.promisify(childProcess.exec);
 const PAGES = '/srv/pages';
+const jobs = require('./job-queue');
 const API_BASE = 'https://api.example.com';
 const SCHEME = 'https:';
 const pagesOrigin = 'https://pages.example.com';
@@ -476,9 +477,38 @@ app.get('/tools/echo', (req, res) => {
   // A request-chosen program is js.command-injection's finding; its output is reported again.
   // todook: js.xss
   res.send(execFileSync(req.query.tool, ['--version']).toString());
-  // The output given to a callback is not followed.
-  // todoruleid: js.xss
+  // The output execFile() hands to its callback, from the argument list: stdout and stderr, with
+  // or without options, through the module object too.
+  // ruleid: js.xss
   execFile('echo', [req.query.msg], (err, stdout) => res.send(stdout));
+  childProcess.execFile('echo', ['-n', req.query.msg], { timeout: 1000 }, function (err, stdout) {
+    // ruleid: js.xss
+    res.send('<pre>' + stdout + '</pre>');
+  });
+  const lsArgs = ['-l', req.query.dir];
+  execFile('ls', lsArgs, (err, stdout, stderr) => {
+    // ruleid: js.xss
+    res.send('<pre>' + stderr + '</pre>');
+  });
+  // A fixed program with constant arguments, a request-chosen program (js.command-injection's
+  // finding), request data in the options only, and execFile() of another object.
+  // ok: js.xss
+  execFile('date', ['+%F'], (err, stdout) => res.send(stdout));
+  // ok: js.xss
+  execFile(req.query.tool, ['--version'], (err, stdout) => res.send(stdout));
+  // ok: js.xss
+  execFile('ls', { cwd: path.join(PAGES, req.query.dir) }, (err, stdout) => res.send(stdout));
+  // ok: js.xss
+  childProcess.execFile('ls', { cwd: path.join(PAGES, req.query.dir) }, (err, stdout) => res.send(stdout));
+  // ok: js.xss
+  jobs.execFile('echo', [req.query.msg], (err, out) => res.send(out));
+  // A callback passed by name, and the output streams of spawn(), are not followed.
+  const sendOutput = (err, out) => res.send(out);
+  // todoruleid: js.xss
+  execFile('echo', [req.query.msg], sendOutput);
+  const child = childProcess.spawn('echo', [req.query.msg]);
+  // todoruleid: js.xss
+  child.stdout.on('data', (chunk) => res.send(chunk));
 });
 
 app.get('/pages/:name', (req, res) => {

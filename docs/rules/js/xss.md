@@ -18,8 +18,9 @@ The results of other weaknesses are not reported a second time: what `exec()`/`e
 and what `readFileSync()` reads are not taken for request data, because request data in the
 command or the file name is already a command injection or a path traversal finding of its own.
 The output of a fixed program given request data as an argument (`execFileSync('echo', [x])`)
-can print it back and is reported, and so is a page fetched from a URL that the request chooses
-(`fetch(req.query.url)`, `axios.get(req.query.url)`, `` axios.get(`https://${req.query.host}/x`) ``):
+can print it back and is reported, also when `execFile()` hands it to a callback
+(`execFile('echo', [x], (err, stdout) => res.send(stdout))`), and so is a page fetched from a
+URL that the request chooses (`fetch(req.query.url)`, `axios.get(req.query.url)`, `` axios.get(`https://${req.query.host}/x`) ``):
 its content belongs to whoever chose the URL. A page fetched from a fixed origin (a literal one, or
 a constant or configuration value such as `API_BASE` or `process.env.API_URL` followed by `/`, `?`
 or `#`) or a path of this site (also through got's `.json()` shortcut), or with `axios`/`got` from a
@@ -108,8 +109,8 @@ app.get('/hello', (req, res) => {
   `const { body: { name } } = req;`), except a field with a default value in the parameter list
   (`({ query = {} }, res)`), which is not checked.
 - Output of a request-chosen program (`execFileSync(req.query.tool)`) is reported here as well as
-  by the command injection rule; output handed to a callback (`execFile('echo', [x], (err, out)
-  => ...)`) is not followed; a request-chosen URL given to `axios` or `got` is recognised by the names of the
+  by the command injection rule; output that `execFile()` hands to a callback
+  passed by name, and the output streams of `spawn()`, are not followed; a request-chosen URL given to `axios` or `got` is recognised by the names of the
   request value (`req`, `request`, a destructured `query`, `params`, `body`, `headers`, `cookies`
   or `nextUrl`), so one stored in a variable first or reached through another name is missed; and a request
   value held in an UPPER_CASE variable (`const BASE = req.query.base`) is taken for a configured
@@ -125,6 +126,7 @@ app.get('/hello', (req, res) => {
 - <https://expressjs.com/en/4x/api.html#req>
 - <https://expressjs.com/en/5x/api.html#req>
 - <https://nodejs.org/api/http.html>
+- <https://nodejs.org/api/child_process.html#child_processexecfilefile-args-options-callback>
 - <https://fastify.dev/docs/latest/Reference/Reply/>
 - <https://fastify.dev/docs/latest/Reference/Routes/>
 - <https://fastify.dev/docs/latest/Reference/Request/>
