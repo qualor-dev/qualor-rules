@@ -1,8 +1,11 @@
 package views
 
 import (
+	"bytes"
 	"embed"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -17,6 +20,7 @@ import (
 
 	"example.com/shop/models"
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/mux"
 	"github.com/labstack/echo/v4"
@@ -218,6 +222,125 @@ func EchoPreview(c echo.Context) error {
 	template.New("x").Parse(c.QueryParam("tpl"))
 	// ok: go.template-injection
 	return c.Render(http.StatusOK, "preview", campaign)
+}
+
+// A bind or decode call inside a condition (`if c.ShouldBindJSON(&in) == nil`) fills the struct
+// with request data like the `err :=` form. A bound value used only in a comparison does not
+// taint what the branch chooses.
+type LayoutInput struct {
+	Body   string   `json:"body" query:"body"`
+	Footer string   `json:"footer" query:"footer"`
+	Style  string   `json:"style" query:"style"`
+	Tags   []string `json:"tags" query:"tags"`
+}
+
+func GinBindInCondition(c *gin.Context) {
+	var in LayoutInput
+	if c.ShouldBindJSON(&in) == nil {
+		// ruleid: go.template-injection
+		template.New("body").Parse(in.Body)
+	}
+	var query LayoutInput
+	if c.ShouldBindQuery(&query) != nil {
+		return
+	}
+	// ruleid: go.template-injection
+	template.New("footer").Parse("<footer>" + query.Footer + "</footer>")
+	target := new(LayoutInput)
+	if c.ShouldBind(target) == nil && target.Body != "" {
+		// ruleid: go.template-injection
+		texttemplate.New("body").Parse(target.Body)
+	}
+	var strict LayoutInput
+	if errors.Is(c.ShouldBindJSON(&strict), io.EOF) {
+		return
+	}
+	// ruleid: go.template-injection
+	template.New("body").Funcs(funcs).Parse(strict.Body)
+	var empty LayoutInput
+	if c.ShouldBindJSON(&empty) == io.EOF {
+		return
+	}
+	// ruleid: go.template-injection
+	template.New("body").Parse(empty.Body)
+	var forced LayoutInput
+	if c.MustBindWith(&forced, binding.JSON) != nil {
+		return
+	}
+	// ruleid: go.template-injection
+	template.New("footer").Parse(fmt.Sprintf("<footer>%s</footer>", forced.Footer))
+	// The bound values only compared: the branches choose constants.
+	layout := "<main>{{.}}</main>"
+	if query.Style == "wide" {
+		layout = `<main class="wide">{{.}}</main>`
+	}
+	// ok: go.template-injection
+	template.New("layout").Parse(layout)
+	verbose := in.Style == "debug" && in.Body != ""
+	// ok: go.template-injection
+	template.New("layout").Parse(map[bool]string{true: "<pre>{{.}}</pre>", false: "<p>{{.}}</p>"}[verbose])
+	tagged := in.Tags != nil
+	// ok: go.template-injection
+	template.New("layout").Parse(fmt.Sprintf(`<main data-tagged="%t">{{.}}</main>`, tagged))
+	switch query.Style {
+	case "wide":
+		// ok: go.template-injection
+		template.New("layout").Parse(`<main class="wide">{{.}}</main>`)
+	}
+	// Other comparisons with nil, and calls that fill a variable, stay booleans.
+	multi := c.QueryArray("tag") != nil
+	// ok: go.template-injection
+	template.New("layout").Parse(fmt.Sprintf(`<main data-multi="%t">{{.}}</main>`, multi))
+	raw, _ := c.GetRawData()
+	var revision uint32
+	known := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &revision) == nil
+	// ok: go.template-injection
+	template.New("layout").Parse(fmt.Sprintf(`<main data-known="%t">{{.}}</main>`, known))
+	// The success flag of a bind call is reported: the comparison holds the bind call, and
+	// the call's result counts as request data.
+	var draft LayoutInput
+	parsed := c.ShouldBindJSON(&draft) == nil
+	// todook: go.template-injection
+	template.New("layout").Parse(fmt.Sprintf(`<main data-valid="%t">{{.}}</main>`, parsed))
+}
+
+func EchoBindInCondition(c echo.Context) error {
+	var in LayoutInput
+	if c.Bind(&in) != nil {
+		return nil
+	}
+	// ruleid: go.template-injection
+	template.New("body").Parse(in.Body)
+	var filter LayoutInput
+	if echo.BindQueryParams(c, &filter) == nil {
+		// ruleid: go.template-injection
+		texttemplate.New("footer").Parse(filter.Footer)
+	}
+	layout := "<main>{{.}}</main>"
+	if filter.Style == "wide" {
+		layout = `<main class="wide">{{.}}</main>`
+	}
+	// ok: go.template-injection
+	template.New("layout").Parse(layout)
+	return nil
+}
+
+func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
+	var in LayoutInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		return
+	}
+	// ruleid: go.template-injection
+	template.New("body").Parse(in.Body)
+	body, _ := io.ReadAll(r.Body)
+	var sub LayoutInput
+	if json.Unmarshal(body, &sub) == nil {
+		// ruleid: go.template-injection
+		template.New("footer").Parse("<footer>" + sub.Footer + "</footer>")
+	}
+	wide := in.Style == "wide"
+	// ok: go.template-injection
+	template.New("layout").Parse(fmt.Sprintf(`<main data-wide="%t">{{.}}</main>`, wide))
 }
 
 // Limits of the shared request source block (go.sql-injection).

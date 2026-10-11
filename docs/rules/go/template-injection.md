@@ -98,6 +98,8 @@ func Hello(w http.ResponseWriter, r *http.Request) {
   template returned by a function of another package is not followed.
 - HTML-escaping the text first does not help (the template actions survive escaping), so it is
   not treated as making the text safe.
+- The success flag of a bind or decode call (`ok := c.ShouldBindJSON(&x) == nil`) still counts
+  as request data, so formatting it into template text is reported.
 - The binder of the Echo instance is not a source, and numeric struct fields count as safe only
   when the struct is declared in the same file.
 - Tests are recognised by a testing parameter of the enclosing function only: a handler declared
