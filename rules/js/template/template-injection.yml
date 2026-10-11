@@ -395,11 +395,20 @@ rules:
               ...
               Object.assign($TABLE, ...);
               ...
+    # Performance: OpenGrep's prefilter (skip a file that lacks the rule's words) multiplies the
+    # positive conditions of the sinks, one factor per sink and per branch, and gives up (None:
+    # every JS file is matched in full) past about 50,000 clauses. So the module import is bound
+    # once for all module functions, and the conditions that give no word (which engine a function
+    # belongs to, the request-object test, the response name, the EJS view gates) are exclusions
+    # of the same shape with the condition reversed. After a change,
+    # `opengrep-core -prefilter_of_rules <this file>` must print a small Some, and a large
+    # minified file with the rule's words in it must scan in seconds with `--timeout 0`.
     pattern-sinks:
-      # The template source: the first argument of EJS render/compile, Pug render/compile/
-      # compileClient, Handlebars compile/precompile, Nunjucks renderString/compile/
-      # precompileString and lodash template, on the imported module.
+      # The engines' functions on the module imported whole (require, a default or namespace
+      # import). Which function belongs to which engine is checked by exclusions; the file names
+      # the engine in quotes, a word for OpenGrep's prefilter.
       - patterns:
+          - pattern-regex: (?s)\A.*["'`](?:ejs|pug|handlebars|nunjucks|lodash|lodash\.template|lodash/template)["'`].*\z
           - pattern-either:
               - pattern-inside: |
                   $MOD = require($M)
@@ -410,107 +419,244 @@ rules:
               - pattern-inside: |
                   import * as $MOD from $M;
                   ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?ejs["'`]?$
-          - pattern: $MOD.$FN($TPL, ...)
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(?:render|compile)$
-          - focus-metavariable: $TPL
-      - patterns:
+          # (the module, as an exclusion of the imports of other modules)
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        $MOD = require($M)
+                        ...
+                    - pattern-inside: |
+                        import $MOD from $M;
+                        ...
+                    - pattern-inside: |
+                        import * as $MOD from $M;
+                        ...
+                - metavariable-regex:
+                    metavariable: $M
+                    regex: ^(?!["'`]?(?:ejs|pug|handlebars|nunjucks|lodash|lodash\.template|lodash/template)["'`]?$)
           - pattern-either:
-              - pattern-inside: |
-                  $MOD = require($M)
-                  ...
-              - pattern-inside: |
-                  import $MOD from $M;
-                  ...
-              - pattern-inside: |
-                  import * as $MOD from $M;
-                  ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?pug["'`]?$
-          - pattern: $MOD.$FN($TPL, ...)
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(?:render|compile|compileClient|compileClientWithDependenciesTracked)$
-          - focus-metavariable: $TPL
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $MOD = require($M)
-                  ...
-              - pattern-inside: |
-                  import $MOD from $M;
-                  ...
-              - pattern-inside: |
-                  import * as $MOD from $M;
-                  ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?handlebars["'`]?$
-          - pattern: $MOD.$FN($TPL, ...)
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(?:compile|precompile)$
-          - focus-metavariable: $TPL
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $MOD = require($M)
-                  ...
-              - pattern-inside: |
-                  import $MOD from $M;
-                  ...
-              - pattern-inside: |
-                  import * as $MOD from $M;
-                  ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?nunjucks["'`]?$
-          - pattern: $MOD.$FN($TPL, ...)
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(?:renderString|compile|precompileString)$
-          - focus-metavariable: $TPL
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $MOD = require($M)
-                  ...
-              - pattern-inside: |
-                  import $MOD from $M;
-                  ...
-              - pattern-inside: |
-                  import * as $MOD from $M;
-                  ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?lodash["'`]?$
-          - pattern: $MOD.$FN($TPL, ...)
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(?:template)$
-          - focus-metavariable: $TPL
-      # The same functions imported by name (also renamed), and lodash.template's own package.
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  const {..., $FN, ...} = require($M);
-                  ...
-              - pattern-inside: |
-                  import {..., $FN, ...} from $M;
-                  ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?(?:ejs|pug|handlebars|nunjucks|lodash)["'`]?$
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(?:render|compile|compileClient|compileClientWithDependenciesTracked|precompile|renderString|precompileString|template)$
-          - pattern: $FN($TPL, ...)
-          - focus-metavariable: $TPL
+              # The template source: the first argument of EJS render/compile, Pug render/compile/
+              # compileClient, Handlebars compile/precompile, Nunjucks renderString/compile/
+              # precompileString and new Template(), and lodash template.
+              - patterns:
+                  - pattern-either:
+                      - pattern: $MOD.render($SINK, ...)
+                      - pattern: $MOD.compile($SINK, ...)
+                      - pattern: $MOD.compileClient($SINK, ...)
+                      - pattern: $MOD.compileClientWithDependenciesTracked($SINK, ...)
+                      - pattern: $MOD.precompile($SINK, ...)
+                      - pattern: $MOD.renderString($SINK, ...)
+                      - pattern: $MOD.precompileString($SINK, ...)
+                      - pattern: $MOD.template($SINK, ...)
+                      - pattern: new $MOD.Template($SINK, ...)
+                  # render: EJS and Pug
+                  - pattern-not:
+                      patterns:
+                        - pattern-either:
+                            - pattern-inside: |
+                                $MOD = require($M)
+                                ...
+                            - pattern-inside: |
+                                import $MOD from $M;
+                                ...
+                            - pattern-inside: |
+                                import * as $MOD from $M;
+                                ...
+                        - metavariable-regex:
+                            metavariable: $M
+                            regex: ^(?!["'`]?(?:ejs|pug)["'`]?$)
+                        - pattern: $MOD.render($SINK, ...)
+                  # (compile and compileClient are not paired: no engine of the list has a function of
+                  # these names that does not compile a template)
+                  # precompile: Handlebars
+                  - pattern-not:
+                      patterns:
+                        - pattern-either:
+                            - pattern-inside: |
+                                $MOD = require($M)
+                                ...
+                            - pattern-inside: |
+                                import $MOD from $M;
+                                ...
+                            - pattern-inside: |
+                                import * as $MOD from $M;
+                                ...
+                        - metavariable-regex:
+                            metavariable: $M
+                            regex: ^(?!["'`]?handlebars["'`]?$)
+                        - pattern: $MOD.precompile($SINK, ...)
+                  # renderString, precompileString and new Template(): Nunjucks
+                  - pattern-not:
+                      patterns:
+                        - pattern-either:
+                            - pattern-inside: |
+                                $MOD = require($M)
+                                ...
+                            - pattern-inside: |
+                                import $MOD from $M;
+                                ...
+                            - pattern-inside: |
+                                import * as $MOD from $M;
+                                ...
+                        - metavariable-regex:
+                            metavariable: $M
+                            regex: ^(?!["'`]?nunjucks["'`]?$)
+                        - pattern-either:
+                            - pattern: $MOD.renderString($SINK, ...)
+                            - pattern: $MOD.precompileString($SINK, ...)
+                            - pattern: new $MOD.Template($SINK, ...)
+                  # template: lodash
+                  - pattern-not:
+                      patterns:
+                        - pattern-either:
+                            - pattern-inside: |
+                                $MOD = require($M)
+                                ...
+                            - pattern-inside: |
+                                import $MOD from $M;
+                                ...
+                            - pattern-inside: |
+                                import * as $MOD from $M;
+                                ...
+                        - metavariable-regex:
+                            metavariable: $M
+                            regex: ^(?!["'`]?lodash["'`]?$)
+                        - pattern: $MOD.template($SINK, ...)
+              # lodash.template's own package, called directly. (The module as an exclusion, and
+              # its name over the whole file, a word for OpenGrep's prefilter.)
+              - patterns:
+                  - pattern-regex: (?s)\A.*lodash[./]template.*\z
+                  - pattern: $MOD($SINK, ...)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either:
+                            - pattern-inside: |
+                                $MOD = require($M)
+                                ...
+                            - pattern-inside: |
+                                import $MOD from $M;
+                                ...
+                            - pattern-inside: |
+                                import * as $MOD from $M;
+                                ...
+                        - metavariable-regex:
+                            metavariable: $M
+                            regex: ^(?!["'`]?(?:lodash\.template|lodash/template)["'`]?$)
+                        - pattern: $MOD($SINK, ...)
+              # Nunjucks: renderString() of an Environment made in the file; Handlebars: compile()
+              # and precompile() of an instance made with create().
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $INST = new $MOD.Environment(...);
+                          ...
+                      - pattern-inside: |
+                          $INST = $MOD.configure(...);
+                          ...
+                      - pattern-inside: |
+                          $INST = $MOD.create();
+                          ...
+                  - pattern-either:
+                      - pattern: $INST.renderString($SINK, ...)
+                      - pattern: $INST.compile($SINK, ...)
+                      - pattern: $INST.precompile($SINK, ...)
+                  # (create, from Handlebars: lodash has a create() too; the engines have no other
+                  # pairs of these names, so they are not excluded)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either:
+                            - pattern-inside: |
+                                $MOD = require($M)
+                                ...
+                            - pattern-inside: |
+                                import $MOD from $M;
+                                ...
+                            - pattern-inside: |
+                                import * as $MOD from $M;
+                                ...
+                        - metavariable-regex:
+                            metavariable: $M
+                            regex: ^(?!["'`]?handlebars["'`]?$)
+                        - pattern-inside: |
+                            $INST = $MOD.create();
+                            ...
+                        - pattern-either:
+                            - pattern: $INST.renderString($SINK, ...)
+                            - pattern: $INST.compile($SINK, ...)
+                            - pattern: $INST.precompile($SINK, ...)
+              # EJS options from the request (delimiter, outputFunctionName, escape, localsName and
+              # the like change how the template is compiled): the options argument of render,
+              # compile and renderFile.
+              - patterns:
+                  - pattern-either:
+                      - pattern: $MOD.render($TPL, $DATA, $SINK, ...)
+                      - pattern: $MOD.compile($TPL, $SINK, ...)
+                      - pattern: $MOD.renderFile($FILE, $DATA, $SINK, ...)
+                  - pattern-not: $MOD.renderFile($FILE, $DATA, function (...) { ... })
+                  - pattern-not: $MOD.renderFile($FILE, $DATA, (...) => { ... })
+                  - pattern-not: $MOD.renderFile($FILE, $DATA, (...) => $BODY)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either:
+                            - pattern-inside: |
+                                $MOD = require($M)
+                                ...
+                            - pattern-inside: |
+                                import $MOD from $M;
+                                ...
+                            - pattern-inside: |
+                                import * as $MOD from $M;
+                                ...
+                        - metavariable-regex:
+                            metavariable: $M
+                            regex: ^(?!["'`]?ejs["'`]?$)
+                        - pattern-either:
+                            - pattern: $MOD.render($TPL, $DATA, $SINK, ...)
+                            - pattern: $MOD.compile($TPL, $SINK, ...)
+                            - pattern: $MOD.renderFile($FILE, $DATA, $SINK, ...)
+              # EJS: a request object passed whole (or spread) as the data of a render (the EJS
+              # docs name `res.render('index', req.query)`): EJS reads render options from it.
+              - patterns:
+                  - pattern-either:
+                      - pattern: $MOD.render($TPL, $SINK, ...)
+                      - pattern: $MOD.renderFile($FILE, $SINK, ...)
+                      - pattern: '$MOD.render($TPL, {..., ...$SINK, ...}, ...)'
+                      - pattern: '$MOD.renderFile($FILE, {..., ...$SINK, ...}, ...)'
+                  # (the request-object test, as an exclusion)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either:
+                            - pattern: $MOD.render($TPL, $SINK, ...)
+                            - pattern: $MOD.renderFile($FILE, $SINK, ...)
+                            - pattern: '$MOD.render($TPL, {..., ...$SINK, ...}, ...)'
+                            - pattern: '$MOD.renderFile($FILE, {..., ...$SINK, ...}, ...)'
+                        - metavariable-regex:
+                            metavariable: $SINK
+                            regex: ^(?![A-Za-z_$][\w$]*\.(?:query|body|params|cookies|signedCookies|headers)$)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either:
+                            - pattern-inside: |
+                                $MOD = require($M)
+                                ...
+                            - pattern-inside: |
+                                import $MOD from $M;
+                                ...
+                            - pattern-inside: |
+                                import * as $MOD from $M;
+                                ...
+                        - metavariable-regex:
+                            metavariable: $M
+                            regex: ^(?!["'`]?ejs["'`]?$)
+                        - pattern-either:
+                            - pattern: $MOD.render($TPL, $SINK, ...)
+                            - pattern: $MOD.renderFile($FILE, $SINK, ...)
+                            - pattern: '$MOD.render($TPL, {..., ...$SINK, ...}, ...)'
+                            - pattern: '$MOD.renderFile($FILE, {..., ...$SINK, ...}, ...)'
+          - focus-metavariable: $SINK
+      # The same functions imported by name (also renamed; the require form also matches
+      # `const { compile } = require('pug')`). The name is checked by exclusions.
       - patterns:
           - pattern-either:
               - pattern-inside: |
@@ -519,215 +665,126 @@ rules:
               - pattern-inside: |
                   import {$ORIG as $FN} from $M;
                   ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?(?:ejs|pug|handlebars|nunjucks|lodash)["'`]?$
-          - metavariable-regex:
-              metavariable: $ORIG
-              regex: ^(?:render|compile|compileClient|compileClientWithDependenciesTracked|precompile|renderString|precompileString|template)$
+              - pattern-inside: |
+                  import {..., $FN, ...} from $M;
+                  ...
+          # (the module: its quoted name in the file, a word for OpenGrep's prefilter, and the
+          # import of another module as an exclusion)
+          - pattern-regex: (?s)\A.*["'`](?:ejs|pug|handlebars|nunjucks|lodash)["'`].*\z
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        const {..., $ORIG: $FN, ...} = require($M);
+                        ...
+                    - pattern-inside: |
+                        import {$ORIG as $FN} from $M;
+                        ...
+                    - pattern-inside: |
+                        import {..., $FN, ...} from $M;
+                        ...
+                - metavariable-regex:
+                    metavariable: $M
+                    regex: ^(?!["'`]?(?:ejs|pug|handlebars|nunjucks|lodash)["'`]?$)
           - pattern: $FN($TPL, ...)
+          - pattern-not-inside:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: |
+                        const {..., $ORIG: $FN, ...} = require($M);
+                        ...
+                    - pattern-inside: |
+                        import {$ORIG as $FN} from $M;
+                        ...
+                - metavariable-regex:
+                    metavariable: $ORIG
+                    regex: ^(?!(?:render|compile|compileClient|compileClientWithDependenciesTracked|precompile|renderString|precompileString|template)$)
+          - pattern-not-inside:
+              patterns:
+                - pattern-inside: |
+                    import {..., $FN, ...} from $M;
+                    ...
+                - metavariable-regex:
+                    metavariable: $FN
+                    regex: ^(?!(?:render|compile|compileClient|compileClientWithDependenciesTracked|precompile|renderString|precompileString|template)$)
           - focus-metavariable: $TPL
+      # EJS as the view engine: a request object passed whole (or spread) as the data of
+      # res.render() in a file that sets EJS as the view engine (`app.set('view engine', 'ejs')`)
+      # or registers it for another extension (`app.engine('html', ejs.renderFile)`), or with a
+      # view name that ends in .ejs, which Express renders with EJS. The response name, the
+      # request-object test and these conditions are exclusions; each condition names ejs, a word
+      # for OpenGrep's prefilter.
       - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $MOD = require($M)
-                  ...
-              - pattern-inside: |
-                  import $MOD from $M;
-                  ...
-              - pattern-inside: |
-                  import * as $MOD from $M;
-                  ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?(?:lodash\.template|lodash/template)["'`]?$
-          - pattern: $MOD($TPL, ...)
-          - focus-metavariable: $TPL
-      # Nunjucks: new Template(source), and renderString() of an Environment made in the file.
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $MOD = require($M)
-                  ...
-              - pattern-inside: |
-                  import $MOD from $M;
-                  ...
-              - pattern-inside: |
-                  import * as $MOD from $M;
-                  ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?nunjucks["'`]?$
-          - pattern: new $MOD.Template($TPL, ...)
-          - focus-metavariable: $TPL
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $MOD = require($M)
-                  ...
-              - pattern-inside: |
-                  import $MOD from $M;
-                  ...
-              - pattern-inside: |
-                  import * as $MOD from $M;
-                  ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?nunjucks["'`]?$
-          - pattern-either:
-              - pattern-inside: |
-                  $ENV = new $MOD.Environment(...);
-                  ...
-              - pattern-inside: |
-                  $ENV = $MOD.configure(...);
-                  ...
-          - pattern: $ENV.renderString($TPL, ...)
-          - focus-metavariable: $TPL
-      # Handlebars: compile() and precompile() of an instance made with create().
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $MOD = require($M)
-                  ...
-              - pattern-inside: |
-                  import $MOD from $M;
-                  ...
-              - pattern-inside: |
-                  import * as $MOD from $M;
-                  ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?handlebars["'`]?$
-          - pattern-inside: |
-              $HB = $MOD.create();
-              ...
-          - pattern: $HB.$FN($TPL, ...)
-          - metavariable-regex:
-              metavariable: $FN
-              regex: ^(?:compile|precompile)$
-          - focus-metavariable: $TPL
-      # EJS options from the request (delimiter, outputFunctionName, escape, localsName and the
-      # like change how the template is compiled): the options argument of render, compile and
-      # renderFile.
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $MOD = require($M)
-                  ...
-              - pattern-inside: |
-                  import $MOD from $M;
-                  ...
-              - pattern-inside: |
-                  import * as $MOD from $M;
-                  ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?ejs["'`]?$
-          - pattern-either:
-              - pattern: $MOD.render($TPL, $DATA, $OPTS, ...)
-              - pattern: $MOD.compile($TPL, $OPTS, ...)
-              - pattern: $MOD.renderFile($FILE, $DATA, $OPTS, ...)
-          - pattern-not: $MOD.renderFile($FILE, $DATA, function (...) { ... })
-          - pattern-not: $MOD.renderFile($FILE, $DATA, (...) => { ... })
-          - pattern-not: $MOD.renderFile($FILE, $DATA, (...) => $BODY)
-          - focus-metavariable: $OPTS
-      # EJS: a request object passed whole (or spread) as the data of a render (the EJS docs name
-      # `res.render('index', req.query)`): EJS reads render options from it.
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $MOD = require($M)
-                  ...
-              - pattern-inside: |
-                  import $MOD from $M;
-                  ...
-              - pattern-inside: |
-                  import * as $MOD from $M;
-                  ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?ejs["'`]?$
-          - pattern-either:
-              - pattern: $MOD.render($TPL, $DATA, ...)
-              - pattern: $MOD.renderFile($FILE, $DATA, ...)
-              - pattern: '$MOD.render($TPL, {..., ...$DATA, ...}, ...)'
-              - pattern: '$MOD.renderFile($FILE, {..., ...$DATA, ...}, ...)'
-          - metavariable-regex:
-              metavariable: $DATA
-              regex: ^[A-Za-z_$][\w$]*\.(?:query|body|params|cookies|signedCookies|headers)$
-          - focus-metavariable: $DATA
-      - patterns:
-          - pattern-inside: |
-              $APP.set($KEY, $ENGINE);
-              ...
-          - metavariable-regex:
-              metavariable: $KEY
-              regex: ^["'`]view engine["'`]$
-          - metavariable-regex:
-              metavariable: $ENGINE
-              regex: ^["'`]ejs["'`]$
+          - pattern-regex: (?s)\A.*ejs.*\z
           - pattern-either:
               - pattern-inside: function ($REQ, $RES, ...) { ... }
               - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
-          - metavariable-regex:
-              metavariable: $RES
-              regex: ^(res|resp|response|_res|_response)$
           - pattern-either:
               - pattern: $RES.render($VIEW, $DATA, ...)
               - pattern: '$RES.render($VIEW, {..., ...$DATA, ...}, ...)'
-          - metavariable-regex:
-              metavariable: $DATA
-              regex: ^[A-Za-z_$][\w$]*\.(?:query|body|params|cookies|signedCookies|headers)$
-          - focus-metavariable: $DATA
-      # ... or that registers EJS for another extension (app.engine('html', ejs.renderFile)),
-      - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $MOD = require($M)
-                  ...
-              - pattern-inside: |
-                  import $MOD from $M;
-                  ...
-              - pattern-inside: |
-                  import * as $MOD from $M;
-                  ...
-          - metavariable-regex:
-              metavariable: $M
-              regex: ^["'`]?ejs["'`]?$
-          - pattern-inside: |
-              $APP.engine($EXT, $MOD.$RENDER);
-              ...
-          - metavariable-regex:
-              metavariable: $RENDER
-              regex: ^(?:renderFile|__express)$
-          - pattern-either:
-              - pattern-inside: function ($REQ, $RES, ...) { ... }
-              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
-          - metavariable-regex:
-              metavariable: $RES
-              regex: ^(res|resp|response|_res|_response)$
-          - pattern-either:
-              - pattern: $RES.render($VIEW, $DATA, ...)
-              - pattern: '$RES.render($VIEW, {..., ...$DATA, ...}, ...)'
-          - metavariable-regex:
-              metavariable: $DATA
-              regex: ^[A-Za-z_$][\w$]*\.(?:query|body|params|cookies|signedCookies|headers)$
-          - focus-metavariable: $DATA
-      # ... or with a view name that ends in .ejs, which Express renders with EJS.
-      - patterns:
-          - pattern-either:
-              - pattern-inside: function ($REQ, $RES, ...) { ... }
-              - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
-          - metavariable-regex:
-              metavariable: $RES
-              regex: ^(res|resp|response|_res|_response)$
-          - pattern-either:
-              - pattern: $RES.render($VIEW, $DATA, ...)
-              - pattern: '$RES.render($VIEW, {..., ...$DATA, ...}, ...)'
-          - metavariable-regex:
-              metavariable: $DATA
-              regex: ^[A-Za-z_$][\w$]*\.(?:query|body|params|cookies|signedCookies|headers)$
-          - metavariable-regex:
-              metavariable: $VIEW
-              regex: ^["'`][^"'`]*\.ejs["'`]$
+          - pattern-not:
+              patterns:
+                - pattern-either:
+                    - pattern-inside: function ($REQ, $RES, ...) { ... }
+                    - pattern-inside: function $HANDLER($REQ, $RES, ...) { ... }
+                - metavariable-regex:
+                    metavariable: $RES
+                    regex: ^(?!(res|resp|response|_res|_response)$)
+                - pattern-either:
+                    - pattern: $RES.render($VIEW, $DATA, ...)
+                    - pattern: '$RES.render($VIEW, {..., ...$DATA, ...}, ...)'
+          - pattern-not:
+              patterns:
+                - pattern-either:
+                    - pattern: $RES.render($VIEW, $DATA, ...)
+                    - pattern: '$RES.render($VIEW, {..., ...$DATA, ...}, ...)'
+                - metavariable-regex:
+                    metavariable: $DATA
+                    regex: ^(?![A-Za-z_$][\w$]*\.(?:query|body|params|cookies|signedCookies|headers)$)
+          # (not outside one of the three EJS conditions)
+          - pattern-not:
+              patterns:
+                - pattern-either:
+                    - pattern: $RES.render($VIEW, $DATA, ...)
+                    - pattern: '$RES.render($VIEW, {..., ...$DATA, ...}, ...)'
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-inside: |
+                          $APP.set($KEY, $ENGINE);
+                          ...
+                      - metavariable-regex:
+                          metavariable: $KEY
+                          regex: ^["'`]view engine["'`]$
+                      - metavariable-regex:
+                          metavariable: $ENGINE
+                          regex: ^["'`]ejs["'`]$
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-either:
+                          - pattern-inside: |
+                              $MOD = require($M)
+                              ...
+                          - pattern-inside: |
+                              import $MOD from $M;
+                              ...
+                          - pattern-inside: |
+                              import * as $MOD from $M;
+                              ...
+                      - metavariable-regex:
+                          metavariable: $M
+                          regex: ^["'`]?ejs["'`]?$
+                      - pattern-inside: |
+                          $APP.engine($EXT, $MOD.$RENDER);
+                          ...
+                      - metavariable-regex:
+                          metavariable: $RENDER
+                          regex: ^(?:renderFile|__express)$
+                - pattern-not:
+                    patterns:
+                      - pattern-either:
+                          - pattern: $RES.render($VIEW, $DATA, ...)
+                          - pattern: '$RES.render($VIEW, {..., ...$DATA, ...}, ...)'
+                      - metavariable-regex:
+                          metavariable: $VIEW
+                          regex: ^["'`][^"'`]*\.ejs["'`]$
           - focus-metavariable: $DATA

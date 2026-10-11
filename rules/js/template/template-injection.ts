@@ -5,6 +5,11 @@ import nunjucks from 'nunjucks';
 import { template } from 'lodash';
 import { renderString as njkString } from 'nunjucks';
 import { NextRequest } from 'next/server';
+import * as pugNs from 'pug';
+import * as njkNs from 'nunjucks';
+import * as hbsNs from 'handlebars';
+import * as lodashNs from 'lodash';
+import * as helpersNs from './view-helpers';
 
 const router = Router();
 
@@ -32,6 +37,11 @@ router.get('/ts/home', (req: Request, res: Response) => {
 router.get('/ts/page', (req: Request, res: Response) => {
   // ruleid: js.template-injection
   res.render('page.ejs', req.query);
+});
+
+router.get('/ts/page-spread', (req: Request, res: Response) => {
+  // ruleid: js.template-injection
+  res.render('page.ejs', { title: 'Page', ...req.body });
 });
 
 router.get('/ts/page-safe', (req: Request, res: Response) => {
@@ -63,6 +73,67 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 export function preview(request: { tpl: string }) {
   // ok: js.template-injection
   return ejs.render(request.tpl);
+}
+
+// Functions of these names that take no template source (namespace imports).
+const blank = lodashNs.create();
+router.post('/ts/engine-names', (req: Request, res: Response) => {
+  const text = String(req.body.text);
+  // ok: js.template-injection
+  const a = njkNs.render(text, {});
+  // ok: js.template-injection
+  const b = njkNs.precompile(text);
+  // ok: js.template-injection
+  const c = hbsNs.template(text);
+  // ok: js.template-injection
+  const d = pugNs.renderString(text);
+  // ok: js.template-injection
+  const g = helpersNs.render(text);
+  // ok: js.template-injection
+  const i = blank.compile(text);
+  // ok: js.template-injection
+  const j = pugNs.compile('p= name', req.body);
+  // ok: js.template-injection
+  const k = pugNs.render('p= name', req.body);
+  // ok: js.template-injection
+  const o = helpersNs.compile(text);
+  res.json({ a, b, c, d, g, i, j, k, o });
+});
+
+// Views rendered by another engine: a view name that is not .ejs, an app whose view engine is
+// not EJS, and engines registered with other functions.
+router.get('/ts/pug-view', (req: Request, res: Response) => {
+  // ok: js.template-injection
+  res.render('page.pug', req.query);
+});
+router.get('/ts/pug-view-spread', (req: Request, res: Response) => {
+  // ok: js.template-injection
+  res.render('page.pug', { ...req.body });
+});
+export function pugViews(site: any) {
+  site.set('view engine', 'pug');
+  site.set('views', 'ejs');
+  site.engine('html', pugNs.renderFile);
+  site.engine('htm', ejs.compile);
+  site.get('/ts/site', (req: Request, res: Response) => {
+    // ok: js.template-injection
+    res.render('site', req.query);
+  });
+}
+export function cjsViews(site: any) {
+  const engine = require('ejs');
+  site.engine('html', engine.__express);
+  site.get('/ts/cjs-site', (req: Request, res: Response) => {
+    // ruleid: js.template-injection
+    res.render('site', req.query);
+  });
+}
+export function ejsViews(site: any) {
+  site.engine('html', ejs.renderFile);
+  site.get('/ts/ejs-site', (req: Request, res: Response) => {
+    // ruleid: js.template-injection
+    res.render('site', req.query);
+  });
 }
 
 export default router;

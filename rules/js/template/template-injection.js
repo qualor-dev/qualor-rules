@@ -225,4 +225,127 @@ app.get('/preview/defaults', ({ query = {} }, res) => {
   res.send(ejs.render(query.tpl, { user: 'guest' }));
 });
 
+// Functions of these names that take no template source: an engine's own function of another
+// engine's name (nunjucks.render takes a template name, nunjucks.precompile a path), the same
+// names on other modules, and what lodash's create() makes.
+const helpers = require('./view-helpers');
+const { escape } = require('lodash');
+const { render: renderHelper } = require('./view-helpers');
+const blank = _.create();
+app.post('/engine-names', (req, res) => {
+  const text = req.body.text;
+  // ok: js.template-injection
+  const a = nunjucks.render(text, {});
+  // ok: js.template-injection
+  const b = nunjucks.precompile(text);
+  // ok: js.template-injection
+  const c = Handlebars.template(text);
+  // ok: js.template-injection
+  const d = pug.renderString(text);
+  // ok: js.template-injection
+  const e = Handlebars.precompileString(text);
+  // ok: js.template-injection
+  const f = new pug.Template(text);
+  // ok: js.template-injection
+  const g = helpers.render(text);
+  // ok: js.template-injection
+  const h = helpers(text);
+  // ok: js.template-injection
+  const i = blank.compile(text);
+  // ok: js.template-injection
+  const j = pug.compile('p= name', req.body);
+  // ok: js.template-injection
+  const k = pug.render('p= name', req.body);
+  // ok: js.template-injection
+  const l = pug.renderFile('views/card.pug', { ...req.query });
+  // ok: js.template-injection
+  const m = escape(text);
+  // ok: js.template-injection
+  const n = renderHelper(text);
+  // ok: js.template-injection
+  const o = helpers.compile(text);
+  // ok: js.template-injection
+  const p = _(text);
+  // ok: js.template-injection
+  const q = blank.renderString(text);
+  // ok: js.template-injection
+  const r = blank.precompile(text);
+  // ok: js.template-injection
+  const s = nunjucks.render('mail.njk', {}, req.query.done);
+  // ok: js.template-injection
+  const u = pug.renderFile('views/card.pug', {}, req.body);
+  // ok: js.template-injection
+  const v = pug.renderFile('views/card.pug', req.body);
+  // ok: js.template-injection
+  const w = pug.render('p= name', { ...req.body });
+  res.json({ a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p, q, r, s, u, v, w });
+});
+
+// The rarer compile functions and an instance's precompile, with request data.
+app.post('/more-engines', (req, res) => {
+  // ruleid: js.template-injection
+  const a = pug.compileClientWithDependenciesTracked(req.body.source);
+  // ruleid: js.template-injection
+  const b = nunjucks.precompileString(req.body.source, { name: 'x' });
+  // ruleid: js.template-injection
+  const c = hbs.precompile(req.body.source);
+  // ruleid: js.template-injection
+  const d = ejs.compile('<?= x ?>', { delimiter: req.query.d });
+  // ruleid: js.template-injection
+  ejs.renderFile(path.join(__dirname, 'views', 'card.ejs'), {}, { delimiter: req.query.d });
+  // A field of the request is data, not the options object.
+  // ok: js.template-injection
+  const e = ejs.render(GREETING, { ...req.query.user });
+  // ok: js.template-injection
+  ejs.renderFile(path.join(__dirname, 'views', 'card.ejs'), { ...req.body.profile });
+  // ok: js.template-injection
+  res.render('index', { ...req.query.user });
+  res.json({ a, b, c: c.length, d: d({}), e });
+});
+
+// EJS: a callback given to renderFile is no options object, also when it reads the request.
+app.get('/file-callbacks', (req, res) => {
+  const file = path.join(__dirname, 'views', 'card.ejs');
+  // ok: js.template-injection
+  ejs.renderFile(file, { a: 1 }, (err, html) => res.send(html + req.query.footer));
+  // ok: js.template-injection
+  ejs.renderFile(file, { a: 1 }, (err, html) => {
+    res.send(html + req.query.footer);
+  });
+  // ok: js.template-injection
+  ejs.renderFile(file, { a: 1 }, function (err, html) {
+    res.send(html + req.query.footer);
+  });
+  // ruleid: js.template-injection
+  ejs.renderFile(file, { ...req.body });
+});
+
+// A named handler function; a response parameter named ctx is not taken for Express.
+function legacyPage(req, res) {
+  // ruleid: js.template-injection
+  res.render('legacy', req.query);
+}
+app.get('/legacy', legacyPage);
+app.get('/ctx', (req, ctx) => {
+  // ok: js.template-injection
+  ctx.render('index', req.query);
+});
+function ctxPage(req, ctx) {
+  // ok: js.template-injection
+  ctx.render('index', { ...req.query });
+}
+app.get('/ctx-page', ctxPage);
+
+// The EJS engine registered on an app made in a function: its views after the registration.
+function htmlViews() {
+  const engine = require('ejs');
+  const site = express();
+  site.engine('html', engine.renderFile);
+  site.get('/site', (req, res) => {
+    // ruleid: js.template-injection
+    res.render('site', req.query);
+  });
+  return site;
+}
+
 module.exports = { app, fastify, renderPreview };
