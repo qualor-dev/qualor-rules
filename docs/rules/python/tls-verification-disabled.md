@@ -20,8 +20,8 @@ client:
 - `check_hostname = False` on a client context (`ssl.create_default_context()`,
   `ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)`), even when the certificate chain is still checked;
 - urllib3's `cert_reqs="CERT_NONE"` and `assert_hostname=False`;
-- SDK switches their documentation describes: `verify=False` for boto3, botocore and aioboto3
-  clients and hvac's Vault client, `verify_certs=False` for Elasticsearch and OpenSearch,
+- SDK switches their documentation describes: `verify=False` for boto3 and botocore clients
+  and hvac's Vault client, `verify_certs=False` for Elasticsearch and OpenSearch,
   OpenSearch's `ssl_assert_hostname=False`, redis-py's `ssl_cert_reqs="none"` (or
   `ssl.CERT_NONE`, also in a `rediss://` URL given to `from_url()`), and the `tlsInsecure`,
   `tlsAllowInvalidCertificates` and `tlsAllowInvalidHostnames` options of PyMongo's
@@ -109,7 +109,6 @@ def fetch_status():
 - urllib3
 - `boto3`
 - `botocore`
-- `aioboto3`
 - `elasticsearch`
 - `opensearch-py`
 - `pymongo`
@@ -133,7 +132,8 @@ def fetch_status():
   position, options in a dict and a MongoDB connection string built at run time are missed. So are
   switches whose documentation names them without saying what they do (redis-py's
   `ssl_check_hostname=False` and `ssl_cert_reqs=None`, Elasticsearch's `ssl_assert_hostname`),
-  and `AsyncOpenSearch`, which the opensearch-py API reference does not list. A list of hosts
+  and `AsyncOpenSearch`, which the opensearch-py API reference does not list. aioboto3 is not
+  checked: its documentation does not describe `verify`. A list of hosts
   that starts with an `http://` host is taken for plain HTTP, even when `https://` hosts follow.
 - A bare `ssl.SSLContext()` (without `PROTOCOL_TLS_CLIENT`) verifies nothing by default, and its use
   as a client cannot be seen where it is made: it is not reported, nor is `check_hostname = False`
@@ -181,8 +181,6 @@ def fetch_status():
 - <https://redis.readthedocs.io/en/stable/examples/ssl_connection_examples.html>
 - <https://motor.readthedocs.io/en/stable/api-asyncio/asyncio_motor_client.html>
 - <https://motor.readthedocs.io/en/stable/api-tornado/motor_client.html>
-- <https://aioboto3.readthedocs.io/en/latest/readme.html>
-- <https://aioboto3.readthedocs.io/en/latest/usage.html>
 - <https://docs.python.org/3/library/ssl.html#ssl.SSLContext.check_hostname>
 - <https://docs.python.org/3/library/ssl.html#ssl.SSLContext.verify_mode>
 - <https://docs.python.org/3/library/ssl.html#ssl.CERT_NONE>

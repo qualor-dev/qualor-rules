@@ -471,7 +471,7 @@ def sdk_limits(url, region):
 
 # More SDK switches: OpenSearch ssl_assert_hostname=False ("use hostname verification if not
 # False"), redis-py ssl_cert_reqs "none" (or CERT_NONE) on its clients, pools and connections and
-# in a rediss:// URL, Motor's clients (PyMongo's options), and aioboto3 (boto3's verify=False).
+# in a rediss:// URL, and Motor's clients (PyMongo's options).
 async def more_sdk_clients(url, endpoint, host):
     # ruleid: python.tls-verification-disabled
     search = OpenSearch(hosts=[{"host": endpoint, "port": 9200}], use_ssl=True, ssl_assert_hostname=False)
@@ -527,15 +527,17 @@ async def more_sdk_clients(url, endpoint, host):
     docs_uri = AsyncIOMotorClient("mongodb://db.example.com:27017/?tls=true&tlsInsecure=true")
     # ruleid: python.tls-verification-disabled
     docs_tornado_uri = motor.motor_tornado.MotorClient("mongodb+srv://cluster.example.com/?tlsAllowInvalidHostnames=true")
-    # ruleid: python.tls-verification-disabled
+    # aioboto3 is not checked: its documentation does not describe verify (it says only that it
+    # wraps boto3 and aiobotocore).
+    # todoruleid: python.tls-verification-disabled
     s3 = aioboto3.Session().client("s3", verify=False)
-    # ruleid: python.tls-verification-disabled
+    # todoruleid: python.tls-verification-disabled
     s3_res = aioboto3.Session().resource("s3", verify=False)
     aws = aioboto3.Session()
-    # ruleid: python.tls-verification-disabled
+    # todoruleid: python.tls-verification-disabled
     async with aws.client("sqs", region_name="eu-central-1", verify=False) as sqs:
         await sqs.list_queues()
-    # ruleid: python.tls-verification-disabled
+    # todoruleid: python.tls-verification-disabled
     async with aws.resource("dynamodb", verify=False) as dynamo:
         await dynamo.Table("items")
     return (search, search_mod, cache, strict, imported, acache, cluster, pool, by_url, by_cls_url,

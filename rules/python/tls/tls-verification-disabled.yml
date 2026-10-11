@@ -24,7 +24,7 @@ rules:
       kind: issue
       severity: high
       confidence: high
-      frameworks: [requests, httpx, aiohttp, ssl, urllib3, boto3, botocore, aioboto3, elasticsearch, opensearch-py, pymongo, motor, redis-py, hvac]
+      frameworks: [requests, httpx, aiohttp, ssl, urllib3, boto3, botocore, elasticsearch, opensearch-py, pymongo, motor, redis-py, hvac]
       sources:
         - https://cwe.mitre.org/data/definitions/295.html
         - https://cwe.mitre.org/data/definitions/297.html
@@ -52,8 +52,6 @@ rules:
         - https://redis.readthedocs.io/en/stable/examples/ssl_connection_examples.html
         - https://motor.readthedocs.io/en/stable/api-asyncio/asyncio_motor_client.html
         - https://motor.readthedocs.io/en/stable/api-tornado/motor_client.html
-        - https://aioboto3.readthedocs.io/en/latest/readme.html
-        - https://aioboto3.readthedocs.io/en/latest/usage.html
         - https://docs.python.org/3/library/ssl.html#ssl.SSLContext.check_hostname
         - https://docs.python.org/3/library/ssl.html#ssl.SSLContext.verify_mode
         - https://docs.python.org/3/library/ssl.html#ssl.CERT_NONE
@@ -140,11 +138,12 @@ rules:
     #   verify given by position (client()'s fifth parameter), options in a dict, and a PyMongo
     #   connection string built at run time are missed, and so is an Elasticsearch or OpenSearch
     #   host list that starts with an http:// host and goes on with https:// ones (only the
-    #   first host is read). Clients of boto3, botocore or aioboto3 sessions made in the same
-    #   function or module are followed, not sessions from a factory. Switches that their
-    #   documentation names without saying what they do are not checked: redis-py's
-    #   ssl_check_hostname=False and ssl_cert_reqs=None, Elasticsearch's ssl_assert_hostname;
-    #   nor is AsyncOpenSearch, which the opensearch-py API reference does not list.
+    #   first host is read). Clients of boto3 or botocore sessions made in the same function or
+    #   module are followed, not sessions from a factory. Switches that their documentation
+    #   names without saying what they do are not checked: redis-py's ssl_check_hostname=False
+    #   and ssl_cert_reqs=None, Elasticsearch's ssl_assert_hostname; nor is AsyncOpenSearch,
+    #   which the opensearch-py API reference does not list, nor aioboto3, whose documentation
+    #   does not describe verify (it says only that aioboto3 wraps boto3 and aiobotocore).
     # - An aiohttp ClientSession is followed as a requests Session is (assigned earlier, `async
     #   with`, a typed parameter, a self attribute set by __init__); one from a factory function
     #   is not, nor are options passed as a dict (`todoruleid:`).
@@ -183,7 +182,7 @@ rules:
     # libraries must scan in about a second with --timeout 0. Check again after an OpenGrep
     # upgrade.
     patterns:
-      - pattern-regex: (?s)\A(?=.*?\b(?:requests|httpx|aiohttp|ssl|urllib3|boto3|botocore|elasticsearch|opensearchpy|pymongo|hvac|redis|motor|aioboto3)\b).*\z
+      - pattern-regex: (?s)\A(?=.*?\b(?:requests|httpx|aiohttp|ssl|urllib3|boto3|botocore|elasticsearch|opensearchpy|pymongo|hvac|redis|motor)\b).*\z
       - pattern-either:
           # No word, and no code writes it (`x is not x is not x`); it must stay: see
           # Performance above.
@@ -203,8 +202,8 @@ rules:
           # Sessions assigned earlier in the function or module, opened by a with (`async with`)
           # block, or a typed parameter: a requests Session (requests.Session, the lowercase
           # requests.session factory, or requests.sessions.Session), an aiohttp ClientSession, and
-          # a boto3, botocore or aioboto3 session. One branch for these libraries, with the method
-          # names written out (see Performance above). So a session of one library is also matched
+          # a boto3 or botocore session. One branch for the three libraries, with the method names
+          # written out (see Performance above). So a session of one library is also matched
           # against the other libraries' sinks: in practice that pairing occurs only in code that
           # cannot run (the other sessions have no such method, or reject its keyword with a
           # TypeError) or sets a `verify` attribute nothing reads, and when the name is rebound
@@ -252,9 +251,6 @@ rules:
                       ...
                   - pattern-inside: |
                       $S = botocore.session.Session(...)
-                      ...
-                  - pattern-inside: |
-                      $S = aioboto3.Session(...)
                       ...
               - pattern-either:
                   # requests: the request methods with verify=False, or the `verify` attribute
@@ -391,8 +387,6 @@ rules:
                   - pattern: boto3.session.Session(...).resource(..., verify=False, ...)
                   - pattern: botocore.session.get_session(...).create_client(..., verify=False, ...)
                   - pattern: botocore.session.Session(...).create_client(..., verify=False, ...)
-                  - pattern: aioboto3.Session(...).client(..., verify=False, ...)
-                  - pattern: aioboto3.Session(...).resource(..., verify=False, ...)
               - pattern-not: $CALL(..., use_ssl=False, ...)
               - pattern-not: $CALL(..., endpoint_url="=~/^http:\/\//", ...)
           # Elasticsearch and OpenSearch: verify_certs=False, and OpenSearch's
