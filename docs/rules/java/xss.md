@@ -124,6 +124,9 @@ public class HelloServlet extends HttpServlet {
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
   Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
   request body and headers); enum, `List` or `Optional` parameters still count as request data.
+- With OpenGrep's `--taint-intrafile` mode, a two-argument `insert` on an object whose class is not
+  in the same file (a MyBatis `SqlSession.insert(statement, parameter)`) counts as a write into a
+  container, so what that object returns afterwards (`selectOne`) is taken for request data.
 <!-- end: known-limits -->
 
 ## References

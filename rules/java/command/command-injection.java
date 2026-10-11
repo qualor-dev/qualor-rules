@@ -723,6 +723,13 @@ class SharedFormsController {
         labels.replace("k", "old", key);
         // ok: java.command-injection
         Runtime.getRuntime().exec("ping -c 1 " + String.valueOf(labels.size()));
+        // OpenGrep's --taint-intrafile mode takes a two-argument insert on a class without a body
+        // in this file (a MyBatis session) for a container write: what the session returns
+        // afterwards is taken for request data.
+        org.apache.ibatis.session.SqlSession session = MyBatisSessions.open();
+        session.insert("notes.add", key);
+        // todook: java.command-injection
+        Runtime.getRuntime().exec("ping -c 1 " + String.valueOf(session.selectOne("notes.latest")));
         return "ok";
     }
 
@@ -1039,5 +1046,11 @@ class Held {
 
     List<String> getBody() {
         return body;
+    }
+}
+
+class MyBatisSessions {
+    static org.apache.ibatis.session.SqlSession open() {
+        return null;
     }
 }

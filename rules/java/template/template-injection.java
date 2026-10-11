@@ -448,6 +448,13 @@ class SharedLimitsController {
         labels.replace("k", "old", key);
         // ok: java.template-injection
         templateEngine.process(String.valueOf(labels.size()), new Context());
+        // OpenGrep's --taint-intrafile mode takes a two-argument insert on a class without a body
+        // in this file (a MyBatis session) for a container write: what the session returns
+        // afterwards is taken for request data.
+        org.apache.ibatis.session.SqlSession session = MyBatisSessions.open();
+        session.insert("notes.add", key);
+        // todook: java.template-injection
+        templateEngine.process(String.valueOf(session.selectOne("notes.latest")), new Context());
         StringBuilder chained = new StringBuilder();
         chained.append("<p>").append(key).append("</p>");
         // ruleid: java.template-injection
@@ -533,5 +540,11 @@ class PartNote {
 
     String getText() {
         return text;
+    }
+}
+
+class MyBatisSessions {
+    static org.apache.ibatis.session.SqlSession open() {
+        return null;
     }
 }

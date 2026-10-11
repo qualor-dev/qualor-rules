@@ -475,6 +475,13 @@ class SharedFormsController {
         labels.replace("k", "old", key);
         // ok: java.unsafe-deserialization
         new ObjectInputStream(new ByteArrayInputStream(String.valueOf(String.valueOf(labels.size())).getBytes())).readObject();
+        // OpenGrep's --taint-intrafile mode takes a two-argument insert on a class without a body
+        // in this file (a MyBatis session) for a container write: what the session returns
+        // afterwards is taken for request data.
+        org.apache.ibatis.session.SqlSession session = MyBatisSessions.open();
+        session.insert("notes.add", key);
+        // todook: java.unsafe-deserialization
+        new ObjectInputStream(new ByteArrayInputStream(String.valueOf(String.valueOf(session.selectOne("notes.latest"))).getBytes())).readObject();
         return "ok";
     }
 
@@ -528,5 +535,11 @@ class PartNote {
 
     String getText() {
         return text;
+    }
+}
+
+class MyBatisSessions {
+    static org.apache.ibatis.session.SqlSession open() {
+        return null;
     }
 }

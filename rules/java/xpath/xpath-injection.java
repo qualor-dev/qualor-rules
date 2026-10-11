@@ -406,6 +406,13 @@ class SharedLimitsController {
         labels.replace("k", "old", key);
         // ok: java.xpath-injection
         xpath.evaluate("//book/" + String.valueOf(labels.size()), catalog);
+        // OpenGrep's --taint-intrafile mode takes a two-argument insert on a class without a body
+        // in this file (a MyBatis session) for a container write: what the session returns
+        // afterwards is taken for request data.
+        org.apache.ibatis.session.SqlSession session = MyBatisSessions.open();
+        session.insert("notes.add", key);
+        // todook: java.xpath-injection
+        xpath.evaluate("//book/" + String.valueOf(session.selectOne("notes.latest")), catalog);
         return "ok";
     }
 
@@ -483,5 +490,11 @@ class PartNote {
 
     String getText() {
         return text;
+    }
+}
+
+class MyBatisSessions {
+    static org.apache.ibatis.session.SqlSession open() {
+        return null;
     }
 }

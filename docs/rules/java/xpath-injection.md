@@ -112,6 +112,9 @@ public class EmailController {
   any other map yields that map's values.
 - On the OWASP Benchmark (xpathi) the rule reports 3 of the 20 safe cases (false positive rate
   15 %, against 95 % for FindSecBugs) and finds 14 of the 15 real cases.
+- With OpenGrep's `--taint-intrafile` mode, a two-argument `insert` on an object whose class is not
+  in the same file (a MyBatis `SqlSession.insert(statement, parameter)`) counts as a write into a
+  container, so what that object returns afterwards (`selectOne`) is taken for request data.
 <!-- end: known-limits -->
 
 ## References

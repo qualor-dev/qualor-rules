@@ -112,6 +112,9 @@ public class CartServlet extends HttpServlet {
 - A filter is recognised only when `setObjectInputFilter` is called on the stream before the read
   in the same method; a JVM-wide filter (`ObjectInputFilter.Config.setSerialFilter`, the
   `jdk.serialFilter` property) is not seen.
+- With OpenGrep's `--taint-intrafile` mode, a two-argument `insert` on an object whose class is not
+  in the same file (a MyBatis `SqlSession.insert(statement, parameter)`) counts as a write into a
+  container, so what that object returns afterwards (`selectOne`) is taken for request data.
 <!-- end: known-limits -->
 
 ## References

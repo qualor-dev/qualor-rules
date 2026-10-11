@@ -447,6 +447,13 @@ class SharedLimitsController {
         labels.replace("k", "old", key);
         // ok: java.expression-injection
         elp.eval(String.valueOf(labels.size()));
+        // OpenGrep's --taint-intrafile mode takes a two-argument insert on a class without a body
+        // in this file (a MyBatis session) for a container write: what the session returns
+        // afterwards is taken for request data.
+        org.apache.ibatis.session.SqlSession session = MyBatisSessions.open();
+        session.insert("notes.add", key);
+        // todook: java.expression-injection
+        elp.eval(String.valueOf(session.selectOne("notes.latest")));
         StringBuilder chained = new StringBuilder();
         chained.append("price * ").append(key);
         // ruleid: java.expression-injection
@@ -531,5 +538,11 @@ class PartNote {
 
     String getText() {
         return text;
+    }
+}
+
+class MyBatisSessions {
+    static org.apache.ibatis.session.SqlSession open() {
+        return null;
     }
 }

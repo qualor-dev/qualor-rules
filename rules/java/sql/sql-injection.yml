@@ -65,6 +65,10 @@ rules:
     #   Map.ofEntries table too, yields the map's values).
     # - Conditions are not evaluated: a switch over a value computed from constants still counts
     #   its request-data branch.
+    # - In OpenGrep's --taint-intrafile mode a two-argument insert on an object whose class has
+    #   no body in this file (a MyBatis SqlSession's insert(statement, parameter)) counts as a
+    #   write into a container: what the object returns afterwards (selectOne) is taken for
+    #   request data.
     pattern-sources:
       - patterns:
           - pattern-either:
@@ -113,8 +117,10 @@ rules:
         to: $SB
       # ... and text put in with insert or replace (also later in an append chain), when the
       # receiver is a StringBuilder or StringBuffer (by its type, also for a builder declared
-      # with var and created in place). Other classes' insert and replace (Map.replace, a
-      # MyBatis session's insert) are not followed by this item.
+      # with var and created in place). Other classes' insert and replace (Map.replace) are not
+      # followed by this item; OpenGrep's --taint-intrafile mode itself still takes a
+      # two-argument insert on a class without a body in the file for a container write (a
+      # Known limit).
       - patterns:
           - pattern-either:
               - pattern: $SB.insert($I, $X, ...)

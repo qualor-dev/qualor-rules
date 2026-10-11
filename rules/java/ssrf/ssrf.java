@@ -435,6 +435,13 @@ class SharedFormsController {
         labels.replace("k", "old", key);
         // ok: java.ssrf
         new URL("https://" + String.valueOf(labels.size()) + "/status").openStream();
+        // OpenGrep's --taint-intrafile mode takes a two-argument insert on a class without a body
+        // in this file (a MyBatis session) for a container write: what the session returns
+        // afterwards is taken for request data.
+        org.apache.ibatis.session.SqlSession session = MyBatisSessions.open();
+        session.insert("notes.add", key);
+        // todook: java.ssrf
+        new URL("https://" + String.valueOf(session.selectOne("notes.latest")) + "/status").openStream();
         return "ok";
     }
 
@@ -669,5 +676,11 @@ class BuilderController {
         // ok: java.ssrf
         new URL(first.toString()).openStream();
         return "ok";
+    }
+}
+
+class MyBatisSessions {
+    static org.apache.ibatis.session.SqlSession open() {
+        return null;
     }
 }

@@ -631,6 +631,13 @@ class SharedFormsController {
         labels.replace("k", "old", key);
         // ok: java.sql-injection
         connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + String.valueOf(labels.size()) + "'");
+        // OpenGrep's --taint-intrafile mode takes a two-argument insert on a class without a body
+        // in this file (a MyBatis session) for a container write: what the session returns
+        // afterwards is taken for request data.
+        org.apache.ibatis.session.SqlSession session = MyBatisSessions.open();
+        session.insert("notes.add", key);
+        // todook: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + String.valueOf(session.selectOne("notes.latest")) + "'");
         return "ok";
     }
 
@@ -684,5 +691,11 @@ class PartNote {
 
     String getText() {
         return text;
+    }
+}
+
+class MyBatisSessions {
+    static org.apache.ibatis.session.SqlSession open() {
+        return null;
     }
 }

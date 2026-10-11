@@ -927,6 +927,13 @@ class SharedFormsController {
         labels.replace("k", "old", key);
         // ok: java.xss
         out.println("<p>" + String.valueOf(labels.size()) + "</p>");
+        // OpenGrep's --taint-intrafile mode takes a two-argument insert on a class without a body
+        // in this file (a MyBatis session) for a container write: what the session returns
+        // afterwards is taken for request data.
+        org.apache.ibatis.session.SqlSession session = MyBatisSessions.open();
+        session.insert("notes.add", key);
+        // todook: java.xss
+        out.println("<p>" + String.valueOf(session.selectOne("notes.latest")) + "</p>");
         return "ok";
     }
 
@@ -1615,5 +1622,11 @@ class ResponseFormsConsumesXmlResource {
     public String echo(@QueryParam("q") String q) {
         // ok: java.xss
         return "{\"q\":\"" + q + "\"}";
+    }
+}
+
+class MyBatisSessions {
+    static org.apache.ibatis.session.SqlSession open() {
+        return null;
     }
 }

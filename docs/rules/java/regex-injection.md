@@ -111,6 +111,9 @@ public class NameController {
   source. Allow-list lookups are recognised as `Map.of(...)` of constants and as `valueOf` of an
   enum declared in the same file, but not of an enum nested in the file's only class; a lookup in
   any other map yields that map's values.
+- With OpenGrep's `--taint-intrafile` mode, a two-argument `insert` on an object whose class is not
+  in the same file (a MyBatis `SqlSession.insert(statement, parameter)`) counts as a write into a
+  container, so what that object returns afterwards (`selectOne`) is taken for request data.
 <!-- end: known-limits -->
 
 ## References
