@@ -80,12 +80,6 @@ rules:
     #   not followed, and the inbound Host header (`req.Host`, `pr.In.Host`) is not a source, so a
     #   proxy that routes by it is missed (`todoruleid:`). Other HTTP clients are not followed
     #   yet.
-    # - A boolean that holds a Gin or Echo bind call or a JSON decode (the success flag
-    #   `ok := c.ShouldBindJSON(&x) == nil`) does not count as clean, so that the struct the call
-    #   fills stays request data; the flag formatted into a URL is reported (`todook:`).
-    # - A sink called inside a comparison (`if httputil.NewSingleHostReverseProxy(u) == nil`,
-    #   `ok := ... != nil`) is a boolean as a whole, and the number/boolean sanitizer clears it with
-    #   the request data in its arguments (`todoruleid:`).
     # Inherited from the request source block (go.sql-injection):
     # - The Echo instance's binder (`c.Echo().Binder.Bind(&x, c)`) is not a source (`todoruleid:`).
     # - Numeric fields count as clean only when their type is known in the file: a struct declared
@@ -286,17 +280,16 @@ rules:
       - pattern: strconv.ParseBool(...)
       # A number or boolean (a numeric field of a bound struct, say) cannot name a host. The type
       # must be known in the file: a struct of another package stays tainted as a whole.
-      - patterns:
+      - exact: true
+        # Exact: the value of the number or boolean is clean, not what it is computed from, so a
+        # sink called in a comparison (`if run(x) != nil`), nested in a compared call or inside a
+        # callback given to one is still reported, and the struct a bind or decode call in a
+        # comparison fills (`ok := c.ShouldBindJSON(&x) == nil`) stays request data.
+        patterns:
           - pattern: $E
           - metavariable-type:
               metavariable: $E
               types: [int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool]
-          # A comparison that holds a Gin or Echo bind call or a JSON decode
-          # (`c.ShouldBindJSON(&x) == nil`, `errors.Is(c.Bind(&x), ...)`) is a boolean too, but
-          # sanitizing it would also clear the struct the call fills.
-          - metavariable-regex:
-              metavariable: $E
-              regex: ^(?![\s\S]*(\b(Must|Should)?Bind[A-Za-z]*|\.Decode|\bjson\.Unmarshal)\s*\()
       # A url.URL literal with a non-empty Host: net/url writes the path, query, fragment and user
       # info after the host, escaped (as go.open-redirect). Its scheme, host and opaque part (which
       # replaces everything after the scheme) stay request data.

@@ -511,12 +511,14 @@ func GinBindInCondition(c *gin.Context) {
 	known := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &level) == nil
 	// ok: go.command-injection
 	exec.Command("sh", "-c", fmt.Sprintf("echo known=%t", known)).Run()
-	// The success flag of a bind call is reported: the comparison holds the bind call, and
-	// the call's result counts as request data.
+	// The success flag of a bind call is a boolean: only its value is clean, and the struct the
+	// call fills stays request data.
 	var draft ScriptInput
 	parsed := c.ShouldBindJSON(&draft) == nil
-	// todook: go.command-injection
+	// ok: go.command-injection
 	exec.Command("sh", "-c", fmt.Sprintf("echo valid=%t", parsed)).Run()
+	// ruleid: go.command-injection
+	exec.Command("sh", "-c", draft.Script).Run()
 }
 
 func EchoBindInCondition(c echo.Context) error {
@@ -558,15 +560,16 @@ func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
 	exec.Command("sh", "-c", fmt.Sprintf("deploy --dry-run=%t", dry)).Run()
 }
 
-// A sink called inside a comparison (`if exec.Command(...).Run() != nil`) is a boolean
-// expression as a whole: the number/boolean sanitizer clears it, the sink's arguments included.
+// A sink called inside a comparison (`if exec.Command(...).Run() != nil`) is still a sink: only
+// the comparison's value is a boolean. The same for a sink inside a callback given to a compared
+// call.
 func GinSinkInComparison(c *gin.Context) {
-	// todoruleid: go.command-injection
+	// ruleid: go.command-injection
 	if exec.Command("sh", "-c", "tar xf "+c.Query("archive")).Run() != nil {
 		c.Status(http.StatusInternalServerError)
 		return
 	}
-	// todoruleid: go.command-injection
+	// ruleid: go.command-injection
 	reachable := exec.Command("bash", "-c", "ping -c 1 "+c.Param("host")).Run() == nil
 	if !reachable {
 		c.Status(http.StatusBadGateway)
@@ -577,9 +580,20 @@ func retryUntil(done func() bool) {}
 
 func RetryProbe(w http.ResponseWriter, r *http.Request) {
 	retryUntil(func() bool {
-		// todoruleid: go.command-injection
+		// ruleid: go.command-injection
 		return exec.Command("sh", "-c", r.FormValue("probe")).Run() == nil
 	})
+}
+
+func withRetry(op func() error) error { return op() }
+
+func RetryInCondition(c *gin.Context) {
+	if withRetry(func() error {
+		// ruleid: go.command-injection
+		return exec.Command("sh", "-c", "backup "+c.Query("target")).Run()
+	}) != nil {
+		c.Status(http.StatusBadGateway)
+	}
 }
 
 // Look-alikes: a Command method of another type, and a function that is not a handler.

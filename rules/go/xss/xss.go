@@ -949,12 +949,14 @@ func GinBindInCondition(c *gin.Context) {
 	known := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &version) == nil
 	// ok: go.xss
 	fmt.Fprintf(c.Writer, "<p>known: %t</p>", known)
-	// The success flag of a bind call is reported: the comparison holds the bind call, and
-	// the call's result counts as request data.
+	// The success flag of a bind call is a boolean: only its value is clean, and the struct the
+	// call fills stays request data.
 	var draft NoteInput
 	parsed := c.ShouldBindJSON(&draft) == nil
-	// todook: go.xss
+	// ok: go.xss
 	fmt.Fprintf(c.Writer, "<p>valid: %t</p>", parsed)
+	// ruleid: go.xss
+	fmt.Fprintf(c.Writer, "<p>%s</p>", draft.Body)
 }
 
 func EchoBindInCondition(c echo.Context) error {
@@ -995,14 +997,15 @@ func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "<p>dark: %t</p>", dark)
 }
 
-// A sink called inside a comparison (`if c.HTML(...) != nil`) is a boolean expression as a
-// whole: the number/boolean sanitizer clears it, the sink's arguments included.
+// A sink called inside a comparison (`if c.HTML(...) != nil`) is still a sink: only the
+// comparison's value is a boolean. The same for a text/template executed in a comparison, and for
+// a sink inside a callback that returns a comparison or is given to a compared call.
 func EchoSinkInComparison(c echo.Context) error {
-	// todoruleid: go.xss
+	// ruleid: go.xss
 	if c.HTML(http.StatusOK, "<p>"+c.QueryParam("q")+"</p>") != nil {
 		return nil
 	}
-	// todoruleid: go.xss
+	// ruleid: go.xss
 	sent := c.HTMLBlob(http.StatusOK, []byte(c.FormValue("html"))) == nil
 	if !sent {
 		return echo.ErrInternalServerError
@@ -1014,10 +1017,37 @@ func retryUntil(done func() bool) {}
 
 func RetryRender(c echo.Context) error {
 	retryUntil(func() bool {
-		// todoruleid: go.xss
+		// ruleid: go.xss
 		return c.HTML(http.StatusOK, c.QueryParam("banner")) == nil
 	})
 	return nil
+}
+
+func ExecuteInComparison(w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.xss
+	if greeting.Execute(w, r.FormValue("b")) != nil {
+		return
+	}
+	// ruleid: go.xss
+	shown := greeting.ExecuteTemplate(w, "greeting", r.FormValue("c")) == nil
+	// ok: go.xss
+	fmt.Fprintf(w, "<p>shown: %t</p>", shown)
+	// ok: go.xss
+	if safeGreeting.Execute(w, r.FormValue("d")) != nil {
+		return
+	}
+}
+
+func withRetry(op func() error) error { return op() }
+
+func GinRetryRender(c *gin.Context) {
+	if withRetry(func() error {
+		// ruleid: go.xss
+		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(c.Query("page")))
+		return nil
+	}) != nil {
+		c.Status(http.StatusInternalServerError)
+	}
 }
 
 // Limits of the shared request source block (go.sql-injection).

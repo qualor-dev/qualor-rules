@@ -123,10 +123,6 @@ func Archive(w http.ResponseWriter, r *http.Request) {
   (`powershell.exe -NoProfile Get-Item <request>`) is not followed.
 - Base64 does not count as a sanitizer: request data that is encoded and only decoded into a file
   by the shell is still reported.
-- The success flag of a bind or decode call (`ok := c.ShouldBindJSON(&x) == nil`) still counts
-  as request data, so formatting it into a shell script is reported.
-- A sink called inside a comparison, such as `if exec.Command(...).Run() != nil`, is not
-  reported.
 - Tests are recognised by a testing parameter of the enclosing function only: a handler declared
   on its own in a test file is still reported.
 <!-- end: known-limits -->

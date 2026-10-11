@@ -559,12 +559,14 @@ func GinBindInCondition(c *gin.Context) {
 	known := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &shard) == nil
 	// ok: go.ssrf
 	http.Get(fmt.Sprintf("https://known-%t.example.com/", known))
-	// The success flag of a bind call is reported: the comparison holds the bind call, and
-	// the call's result counts as request data.
+	// The success flag of a bind call is a boolean: only its value is clean, and the struct the
+	// call fills stays request data.
 	var draft FetchInput
 	parsed := c.ShouldBindJSON(&draft) == nil
-	// todook: go.ssrf
+	// ok: go.ssrf
 	http.Get(fmt.Sprintf("https://valid-%t.example.com/", parsed))
+	// ruleid: go.ssrf
+	http.Get(draft.URL)
 }
 
 func EchoBindInCondition(c echo.Context) error {
@@ -606,22 +608,51 @@ func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
 	http.Get(fmt.Sprintf("https://europe-%t.example.com/", europe))
 }
 
-// A sink called inside a comparison (`if httputil.NewSingleHostReverseProxy(...) == nil`) is a
-// boolean expression as a whole: the number/boolean sanitizer clears it, the sink's arguments
-// included. The net/http clients return two values and cannot sit in a comparison.
+// A sink called inside a comparison (`if httputil.NewSingleHostReverseProxy(...) == nil`) is
+// still a sink: only the comparison's value is a boolean. The net/http clients return two values
+// and cannot be compared themselves, but they can sit in a callback given to a compared call.
 func GinSinkInComparison(c *gin.Context) {
 	backend, err := url.Parse(c.Query("backend"))
 	if err != nil {
 		return
 	}
-	// todoruleid: go.ssrf
+	// ruleid: go.ssrf
 	if httputil.NewSingleHostReverseProxy(backend) == nil {
 		c.Status(http.StatusBadGateway)
 		return
 	}
-	// todoruleid: go.ssrf
+	// ruleid: go.ssrf
 	ready := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: c.Param("node")}) != nil
 	if !ready {
+		c.Status(http.StatusBadGateway)
+	}
+}
+
+func withRetry(op func() error) error { return op() }
+
+func retryUntil(done func() bool) {}
+
+func RetryFetch(w http.ResponseWriter, r *http.Request) {
+	if withRetry(func() error {
+		// ruleid: go.ssrf
+		_, err := http.Get(r.FormValue("u"))
+		return err
+	}) != nil {
+		http.Error(w, "unreachable", http.StatusBadGateway)
+	}
+	retryUntil(func() bool {
+		// ruleid: go.ssrf
+		resp, err := http.Post(r.FormValue("hook"), "application/json", nil)
+		return err == nil && resp.StatusCode == http.StatusOK
+	})
+}
+
+func GinRetryFetch(c *gin.Context) {
+	if withRetry(func() error {
+		// ruleid: go.ssrf
+		_, err := http.Get(c.Query("u"))
+		return err
+	}) != nil {
 		c.Status(http.StatusBadGateway)
 	}
 }

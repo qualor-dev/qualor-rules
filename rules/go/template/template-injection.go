@@ -296,12 +296,14 @@ func GinBindInCondition(c *gin.Context) {
 	known := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &revision) == nil
 	// ok: go.template-injection
 	template.New("layout").Parse(fmt.Sprintf(`<main data-known="%t">{{.}}</main>`, known))
-	// The success flag of a bind call is reported: the comparison holds the bind call, and
-	// the call's result counts as request data.
+	// The success flag of a bind call is a boolean: only its value is clean, and the struct the
+	// call fills stays request data.
 	var draft LayoutInput
 	parsed := c.ShouldBindJSON(&draft) == nil
-	// todook: go.template-injection
+	// ok: go.template-injection
 	template.New("layout").Parse(fmt.Sprintf(`<main data-valid="%t">{{.}}</main>`, parsed))
+	// ruleid: go.template-injection
+	template.New("draft").Parse(draft.Body)
 }
 
 func EchoBindInCondition(c echo.Context) error {
@@ -343,20 +345,38 @@ func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
 	template.New("layout").Parse(fmt.Sprintf(`<main data-wide="%t">{{.}}</main>`, wide))
 }
 
-// A sink called inside a comparison (`if template.Must(template.New(...).Parse(...)) == nil`)
-// is a boolean expression as a whole: the number/boolean sanitizer clears it, the sink's
-// arguments included. Parse alone returns two values and cannot sit in a comparison.
+// A sink nested in a call whose result is compared (`if template.Must(template.New(...).Parse(...))
+// == nil`) is still a sink: only the comparison's value is a boolean. Parse alone returns two
+// values and cannot be compared itself, but it can sit in a callback given to a compared call.
 func GinSinkInComparison(c *gin.Context) {
-	// todoruleid: go.template-injection
+	// ruleid: go.template-injection
 	if template.Must(template.New("note").Parse(c.Query("tpl"))) == nil {
 		c.Status(http.StatusBadRequest)
 		return
 	}
-	// todoruleid: go.template-injection
+	// ruleid: go.template-injection
 	compiled := template.Must(template.New("card").Parse("<div>"+c.PostForm("card")+"</div>")) != nil
 	if !compiled {
 		c.Status(http.StatusBadRequest)
 	}
+}
+
+func withRetry(op func() error) error { return op() }
+
+func retryUntil(done func() bool) {}
+
+func RetryParse(c *gin.Context) {
+	if withRetry(func() error {
+		// ruleid: go.template-injection
+		_, err := template.New("retry").Parse(c.Query("tpl"))
+		return err
+	}) != nil {
+		c.Status(http.StatusBadRequest)
+	}
+	retryUntil(func() bool {
+		// ruleid: go.template-injection
+		return texttemplate.Must(texttemplate.New("mail").Parse(c.PostForm("mail"))) != nil
+	})
 }
 
 // Limits of the shared request source block (go.sql-injection).

@@ -400,12 +400,14 @@ func (h *Handler) GinBindInCondition(c *gin.Context) {
 	known := h.db.QueryRow("SELECT stock FROM items WHERE name = ?", c.Query("item")).Scan(&stock) == nil
 	// ok: go.sql-injection
 	h.db.Exec(fmt.Sprintf("UPDATE lookups SET found = %t", known))
-	// The success flag of a bind call is reported: the comparison holds the bind call, and
-	// the call's result counts as request data.
+	// The success flag of a bind call is a boolean: only its value is clean, and the struct the
+	// call fills stays request data.
 	var draft SortInput
 	parsed := c.ShouldBindJSON(&draft) == nil
-	// todook: go.sql-injection
+	// ok: go.sql-injection
 	h.db.Exec(fmt.Sprintf("UPDATE drafts SET valid = %t", parsed))
+	// ruleid: go.sql-injection
+	h.db.Query("SELECT * FROM drafts WHERE name = '" + draft.Name + "'")
 }
 
 func (h *Handler) EchoBindInCondition(c echo.Context) error {
@@ -439,6 +441,37 @@ func (h *Handler) DecodeInCondition(w http.ResponseWriter, r *http.Request) {
 	tagged := in.Name == "featured"
 	// ok: go.sql-injection
 	h.db.Query(fmt.Sprintf("SELECT * FROM items WHERE featured = %t", tagged))
+}
+
+// A sink called inside a comparison is still a sink: only the comparison's value is a boolean.
+// The same for a sink nested in a call whose result is compared, and for one inside a callback
+// given to a compared call.
+func (s *Store) SinkInComparison(c *gin.Context) {
+	// ruleid: go.sql-injection
+	if s.gdb.Exec("DELETE FROM items WHERE name = '" + c.Query("name") + "'").Error != nil {
+		c.Status(http.StatusInternalServerError)
+		return
+	}
+	// ruleid: go.sql-injection
+	changed := s.gdb.Exec("UPDATE items SET seen = 1 WHERE tag = '" + c.Param("tag") + "'").RowsAffected > 0
+	// ok: go.sql-injection
+	s.gdb.Exec(fmt.Sprintf("UPDATE stats SET changed = %t", changed))
+	// ruleid: go.sql-injection
+	if errors.Unwrap(s.gdb.Raw("SELECT * FROM items WHERE name = '" + c.Query("raw") + "'").Error) == nil {
+		c.Status(http.StatusOK)
+	}
+}
+
+func withRetry(op func() error) error { return op() }
+
+func (h *Handler) RetryInCondition(w http.ResponseWriter, r *http.Request) {
+	if withRetry(func() error {
+		// ruleid: go.sql-injection
+		_, err := h.db.Exec("DELETE FROM sessions WHERE token = '" + r.FormValue("token") + "'")
+		return err
+	}) != nil {
+		http.Error(w, "not deleted", http.StatusInternalServerError)
+	}
 }
 
 // A binder held in a struct field, typed as *echo.DefaultBinder.

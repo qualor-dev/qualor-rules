@@ -54,9 +54,6 @@ rules:
     #   tainted (`todook:`).
     # - A clean number turned back into a character (`string(rune(n))`, `%c`) is missed
     #   (`todoruleid:`).
-    # - A boolean that holds a Gin or Echo bind call or a JSON decode (the success flag
-    #   `ok := c.ShouldBindJSON(&x) == nil`) does not count as clean, so that the struct the call
-    #   fills stays request data; the flag formatted into SQL is reported (`todook:`).
     # - Test support is skipped only inside a function that takes a testing parameter: a handler
     #   declared at the top level of a test file and only served by a test is reported (`todook:`).
     pattern-sources:
@@ -204,17 +201,16 @@ rules:
       - pattern: strconv.ParseBool(...)
       # A number or boolean (a numeric field of a bound struct, say) cannot carry SQL text. The
       # type must be known in the file: a struct of another package stays tainted as a whole.
-      - patterns:
+      - exact: true
+        # Exact: the value of the number or boolean is clean, not what it is computed from, so a
+        # sink called in a comparison (`if run(x) != nil`), nested in a compared call or inside a
+        # callback given to one is still reported, and the struct a bind or decode call in a
+        # comparison fills (`ok := c.ShouldBindJSON(&x) == nil`) stays request data.
+        patterns:
           - pattern: $E
           - metavariable-type:
               metavariable: $E
               types: [int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool]
-          # A comparison that holds a Gin or Echo bind call or a JSON decode
-          # (`c.ShouldBindJSON(&x) == nil`, `errors.Is(c.Bind(&x), ...)`) is a boolean too, but
-          # sanitizing it would also clear the struct the call fills.
-          - metavariable-regex:
-              metavariable: $E
-              regex: ^(?![\s\S]*(\b(Must|Should)?Bind[A-Za-z]*|\.Decode|\bjson\.Unmarshal)\s*\()
       # Test support (shared by the Go request taint rules): request data inside a function or
       # method that takes a *testing.T, *testing.B, *testing.F, *testing.M or testing.TB (a test,
       # a subtest, TestMain, a test helper in any file) comes from the test's own requests, such

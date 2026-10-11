@@ -870,12 +870,14 @@ func GinBindInCondition(c *gin.Context) {
 	known := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &region) == nil
 	// ok: go.open-redirect
 	c.Redirect(http.StatusFound, fmt.Sprintf("https://known-%t.example.com/", known))
-	// The success flag of a bind call is reported: the comparison holds the bind call, and
-	// the call's result counts as request data.
+	// The success flag of a bind call is a boolean: only its value is clean, and the struct the
+	// call fills stays request data.
 	var draft ReturnInput
 	parsed := c.ShouldBindJSON(&draft) == nil
-	// todook: go.open-redirect
+	// ok: go.open-redirect
 	c.Redirect(http.StatusFound, fmt.Sprintf("https://valid-%t.example.com/", parsed))
+	// ruleid: go.open-redirect
+	c.Redirect(http.StatusFound, draft.Next)
 }
 
 func EchoBindInCondition(c echo.Context) error {
@@ -916,15 +918,15 @@ func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("https://german-%t.example.com/", german), http.StatusFound)
 }
 
-// A sink called inside a comparison (`if c.Redirect(...) != nil`) is a boolean expression as a
-// whole: the number/boolean sanitizer clears it, the sink's arguments included. net/http's and
-// Gin's redirects return nothing and cannot sit in a comparison.
+// A sink called inside a comparison (`if c.Redirect(...) != nil`) is still a sink: only the
+// comparison's value is a boolean. net/http's and Gin's redirects return nothing and cannot be
+// compared themselves, but they can sit in a callback given to a compared call.
 func EchoSinkInComparison(c echo.Context) error {
-	// todoruleid: go.open-redirect
+	// ruleid: go.open-redirect
 	if c.Redirect(http.StatusFound, c.QueryParam("next")) != nil {
 		return echo.ErrBadRequest
 	}
-	// todoruleid: go.open-redirect
+	// ruleid: go.open-redirect
 	moved := c.Redirect(http.StatusSeeOther, "https://"+c.Param("host")+"/") == nil
 	if !moved {
 		return echo.ErrBadRequest
@@ -936,10 +938,32 @@ func retryUntil(done func() bool) {}
 
 func RetryRedirect(c echo.Context) error {
 	retryUntil(func() bool {
-		// todoruleid: go.open-redirect
+		// ruleid: go.open-redirect
 		return c.Redirect(http.StatusFound, c.FormValue("back")) == nil
 	})
 	return nil
+}
+
+func withRetry(op func() error) error { return op() }
+
+func GinRetryRedirect(c *gin.Context) {
+	if withRetry(func() error {
+		// ruleid: go.open-redirect
+		c.Redirect(http.StatusFound, c.Query("next"))
+		return nil
+	}) != nil {
+		c.Status(http.StatusBadRequest)
+	}
+}
+
+func RetryRedirectHTTP(w http.ResponseWriter, r *http.Request) {
+	if withRetry(func() error {
+		// ruleid: go.open-redirect
+		http.Redirect(w, r, r.FormValue("next"), http.StatusFound)
+		return nil
+	}) != nil {
+		http.Error(w, "no redirect", http.StatusBadRequest)
+	}
 }
 
 // Limits of the shared request source block (go.sql-injection).

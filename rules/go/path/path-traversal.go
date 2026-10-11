@@ -335,12 +335,14 @@ func GinBindInCondition(c *gin.Context) {
 	known := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &level) == nil
 	// ok: go.path-traversal
 	os.Open(fmt.Sprintf("%s/known-%t.txt", baseDir, known))
-	// The success flag of a bind call is reported: the comparison holds the bind call, and
-	// the call's result counts as request data.
+	// The success flag of a bind call is a boolean: only its value is clean, and the struct the
+	// call fills stays request data.
 	var draft PathInput
 	parsed := c.ShouldBindJSON(&draft) == nil
-	// todook: go.path-traversal
+	// ok: go.path-traversal
 	os.Open(fmt.Sprintf("%s/valid-%t.txt", baseDir, parsed))
+	// ruleid: go.path-traversal
+	os.Open(draft.Name)
 }
 
 func EchoBindInCondition(c echo.Context) error {
@@ -381,24 +383,46 @@ func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
 	os.Open(fmt.Sprintf("%s/archived-%t.txt", baseDir, archived))
 }
 
-// A sink called inside a comparison (`if os.Remove(...) != nil`) is a boolean expression as a
-// whole: the number/boolean sanitizer clears it, the sink's arguments included.
+// A sink called inside a comparison (`if os.Remove(...) != nil`) is still a sink: only the
+// comparison's value is a boolean. The same for a sink nested in a call whose result is a
+// boolean, and for one inside a callback that returns a comparison or is given to a compared call.
 func GinSinkInComparison(c *gin.Context) {
-	// todoruleid: go.path-traversal
+	// ruleid: go.path-traversal
 	if os.Remove(filepath.Join(baseDir, c.Param("name"))) != nil {
 		c.Status(http.StatusNotFound)
 	}
 }
 
 func SinkInComparison(w http.ResponseWriter, r *http.Request) {
-	// todoruleid: go.path-traversal
+	// ruleid: go.path-traversal
 	if os.WriteFile(r.FormValue("path"), []byte("draft"), 0o644) != nil {
 		http.Error(w, "not saved", http.StatusInternalServerError)
 		return
 	}
-	// todoruleid: go.path-traversal
+	// ruleid: go.path-traversal
 	saved := os.WriteFile(filepath.Join(baseDir, r.FormValue("name")), []byte("draft"), 0o644) == nil
 	fmt.Fprintln(w, saved)
+	// ruleid: go.path-traversal
+	if errors.Is(os.Remove(r.FormValue("old")), fs.ErrNotExist) {
+		return
+	}
+}
+
+func retryUntil(done func() bool) {}
+
+func withRetry(op func() error) error { return op() }
+
+func RetryInCondition(c *gin.Context) {
+	retryUntil(func() bool {
+		// ruleid: go.path-traversal
+		return os.Remove(filepath.Join(baseDir, c.Query("lock"))) == nil
+	})
+	if withRetry(func() error {
+		// ruleid: go.path-traversal
+		return os.WriteFile(filepath.Join(baseDir, c.Query("out")), []byte("done"), 0o644)
+	}) != nil {
+		c.Status(http.StatusInternalServerError)
+	}
 }
 
 // Test support: a handler inside a function that takes a *testing.T, *testing.B, *testing.F,
