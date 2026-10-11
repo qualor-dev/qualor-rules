@@ -444,6 +444,10 @@ const got = require('got');
 const execAsync = util.promisify(childProcess.exec);
 const PAGES = '/srv/pages';
 const API_BASE = 'https://api.example.com';
+const SCHEME = 'https:';
+const pagesOrigin = 'https://pages.example.com';
+const config = { pagesBase: process.env.PAGES_URL };
+const linkTo = (href) => '<a href="' + href + '">' + href + '</a>';
 
 app.get('/tools/ls', (req, res) => {
   // ok: js.xss
@@ -527,11 +531,63 @@ app.get('/preview', async (req, res) => {
   const { data: chosen } = await axios.get(target);
   // todoruleid: js.xss
   res.send(chosen);
-  // An origin held in a constant, given to fetch() itself, is not recognised: the page counts as
-  // request data.
+  // An origin held in a constant or a configuration value, given to fetch(), axios() or got()
+  // itself, is fixed when a path, query or fragment separator follows it.
   const viaConstant = await fetch(API_BASE + '/pages/' + req.query.id);
-  // todook: js.xss
+  // ok: js.xss
   res.send(await viaConstant.text());
+  const viaTemplate = await fetch(`${API_BASE}/pages/${req.query.id}`);
+  // ok: js.xss
+  res.send(await viaTemplate.text());
+  const viaEnv = await fetch(process.env.PAGES_URL + '?id=' + req.query.id + '&v=' + req.query.v);
+  // ok: js.xss
+  res.send(await viaEnv.text());
+  const { data: viaConfig } = await axios(config.pagesBase + '/pages/' + req.query.id + '?lang=' + req.query.lang + '&raw=1');
+  // ok: js.xss
+  res.send(viaConfig);
+  const viaLocal = await fetch(pagesOrigin + '#' + req.query.id + '-top');
+  // ok: js.xss
+  res.send(await viaLocal.text());
+  const viaConfigTemplate = await fetch(`${config.pagesBase}/pages/${req.query.id}`);
+  // ok: js.xss
+  res.send(await viaConfigTemplate.text());
+  // Only the HTTP clients' own calls: another function given such a URL returns text with the
+  // request value in it.
+  // ruleid: js.xss
+  res.send(linkTo(API_BASE + '/pages/' + req.query.id));
+  // ruleid: js.xss
+  res.send(linkTo(`${API_BASE}/pages/${req.query.id}`));
+  // ruleid: js.xss
+  res.send(linkTo(`${config.pagesBase}/pages/${req.query.id}`));
+  // Without a separator after the origin, `@evil.example` names another host; after `//` or `/\`
+  // the request value is the host; a constant that holds only a scheme fixes no host.
+  const noSeparator = await fetch(API_BASE + req.query.path);
+  // ruleid: js.xss
+  res.send(await noSeparator.text());
+  const noSeparatorTemplate = await fetch(`${API_BASE}${req.query.path}`);
+  // ruleid: js.xss
+  res.send(await noSeparatorTemplate.text());
+  const doubleSlash = await fetch(API_BASE + '//' + req.query.host);
+  // ruleid: js.xss
+  res.send(await doubleSlash.text());
+  const schemeOnly = await fetch(SCHEME + '/' + req.query.host + '/status');
+  // ruleid: js.xss
+  res.send(await schemeOnly.text());
+  const schemeOnlyTemplate = await fetch(`${SCHEME}/${req.query.host}/status`);
+  // ruleid: js.xss
+  res.send(await schemeOnlyTemplate.text());
+  const chosenBase = req.query.base;
+  const viaChosen = await fetch(chosenBase + '/pages/' + req.query.id);
+  // ruleid: js.xss
+  res.send(await viaChosen.text());
+  const viaChosenTemplate = await fetch(`${chosenBase}/pages/${req.query.id}`);
+  // ruleid: js.xss
+  res.send(await viaChosenTemplate.text());
+  // A request value held in an UPPER_CASE local is taken for a configured origin.
+  const BASE = req.query.base;
+  const viaUpper = await fetch(BASE + '/pages/' + req.query.id);
+  // todoruleid: js.xss
+  res.send(await viaUpper.text());
 });
 
 // The request-chosen URL is recognised by the names of the request value: under another name

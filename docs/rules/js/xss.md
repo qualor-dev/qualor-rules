@@ -20,9 +20,11 @@ command or the file name is already a command injection or a path traversal find
 The output of a fixed program given request data as an argument (`execFileSync('echo', [x])`)
 can print it back and is reported, and so is a page fetched from a URL that the request chooses
 (`fetch(req.query.url)`, `axios.get(req.query.url)`, `` axios.get(`https://${req.query.host}/x`) ``):
-its content belongs to whoever chose the URL. A page fetched from a fixed origin or a path of this
-site (also through got's `.json()` shortcut), or with `axios`/`got` from a URL in a variable or on
-a constant base, with request data only in the path or the body, is taken for that service's data.
+its content belongs to whoever chose the URL. A page fetched from a fixed origin (a literal one, or
+a constant or configuration value such as `API_BASE` or `process.env.API_URL` followed by `/`, `?`
+or `#`) or a path of this site (also through got's `.json()` shortcut), or with `axios`/`got` from a
+URL in a variable or on a constant base, with request data only in the path or the body, is taken
+for that service's data.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -109,8 +111,9 @@ app.get('/hello', (req, res) => {
   by the command injection rule; output handed to a callback (`execFile('echo', [x], (err, out)
   => ...)`) is not followed; a request-chosen URL given to `axios` or `got` is recognised by the names of the
   request value (`req`, `request`, a destructured `query`, `params`, `body`, `headers`, `cookies`
-  or `nextUrl`), so one stored in a variable first or reached through another name is missed; and `fetch()` given an origin held in a constant (`API_BASE +
-  '/pages/' + id`) does not recognise it, so such a page counts as request data.
+  or `nextUrl`), so one stored in a variable first or reached through another name is missed; and a request
+  value held in an UPPER_CASE variable (`const BASE = req.query.base`) is taken for a configured
+  origin, so a page fetched from `BASE + '/pages/' + id` is not reported.
 <!-- end: known-limits -->
 
 ## References

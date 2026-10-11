@@ -75,8 +75,11 @@ rules:
     #   not followed (`todoruleid:`); a request-chosen URL held in a variable first (`const
     #   target = req.query.url; await axios.get(target)`) is taken for stored data, and so is a
     #   URL whose request value has another name than req, request or a destructured field name
-    #   (`(r, res)`, `({ query: q }, res)`, `({ query: { url } }, res)`) (`todoruleid:`); fetch() itself given an origin held in a constant (`fetch(API_BASE +
-    #   '/pages/' + id)`) counts as request data (`todook:`).
+    #   (`(r, res)`, `({ query: q }, res)`, `({ query: { url } }, res)`) (`todoruleid:`). An
+    #   origin given to fetch(), axios() or got() is a constant or configuration value by its name
+    #   (UPPER_CASE, process.env, this.*, config/settings objects) unless the file binds it to a
+    #   literal, so a request value held in an UPPER_CASE local (`const BASE = req.query.base`,
+    #   then `fetch(BASE + '/pages/' + id)`) is taken for a fixed origin (`todoruleid:`).
     # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
     #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
     #   source, and a one-parameter callback given to get/post/... after a path literal (also on
@@ -691,6 +694,76 @@ rules:
           - metavariable-regex:
               metavariable: $URL
               regex: ^["'`](?:(?:https?:)?//[^/\\?#@"'`$]+(?:/(?![/\\])|[?#])|/(?![/\\]))
+      # The same from an origin held in a constant or a configuration value (UPPER_CASE constants,
+      # process.env, this.*, config/settings objects, or a name the file binds to a literal with a
+      # host) followed by a string that starts with a path, query or fragment separator
+      # (`fetch(API_BASE + '/pages/' + id)`, `` fetch(`${API_BASE}/pages/${id}`) ``). Without the
+      # separator (`API_BASE + id`: `@evil.example` sets the host), with `//` or `/\` after the
+      # base, or from a name the file binds to a literal without a host (`const SCHEME =
+      # 'https:'`), the page stays request data.
+      - exact: true
+        patterns:
+          - pattern-either:
+              - pattern: $HTTP($FIRST + "$V" + $S1, ...)
+              - pattern: $HTTP($FIRST + "$V" + $S1 + $S2, ...)
+              - pattern: $HTTP($FIRST + "$V" + $S1 + $S2 + $S3, ...)
+          - metavariable-regex:
+              metavariable: $HTTP
+              regex: ^(?:fetch|axios|got)$
+          - metavariable-regex:
+              metavariable: $V
+              regex: ^(?:/(?![/\\])|[?#])
+          - metavariable-pattern:
+              metavariable: $FIRST
+              patterns:
+                - pattern-either:
+                    - patterns:
+                        - pattern: $ANYBASE
+                        - pattern-not: '"$K"'
+                        - metavariable-regex:
+                            metavariable: $ANYBASE
+                            regex: ^(?:[A-Z][A-Z0-9_]*|process\.env\.\w+|this\.\w+(?:\.\w+)*|\w*(?:[Cc]onfig|[Ss]ettings|[Ee]nv|[Cc]onf|[Cc]fg)\w*(?:\.\w+)+)$
+                    - patterns:
+                        - pattern: '"$K"'
+                        - metavariable-regex:
+                            metavariable: $K
+                            regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\]+
+      # Templates on such an origin, in two items: a name that the file does not bind to a literal,
+      # and a name that it binds to a literal with a host. (A metavariable-regex on an interpolated
+      # name inside the metavariable-pattern makes OpenGrep 1.30 give up the whole file:
+      # "Invalid_argument: String.sub" with config.x.)
+      - exact: true
+        patterns:
+          - pattern: $HTTP(`${$FIRST}...`, ...)
+          - pattern: $HTTP($URL, ...)
+          - metavariable-regex:
+              metavariable: $HTTP
+              regex: ^(?:fetch|axios|got)$
+          - metavariable-regex:
+              metavariable: $URL
+              regex: ^`\$\{\s*(?:[A-Z][A-Z0-9_]*|process\.env\.\w+|this\.\w+(?:\.\w+)*|\w*(?:[Cc]onfig|[Ss]ettings|[Ee]nv|[Cc]onf|[Cc]fg)\w*(?:\.\w+)+)\s*\}(?:/(?![/\\])|[?#])
+          - metavariable-pattern:
+              metavariable: $FIRST
+              patterns:
+                - pattern: $ANYBASE
+                - pattern-not: '"$K"'
+      - exact: true
+        patterns:
+          - pattern: $HTTP(`${$FIRST}...`, ...)
+          - pattern: $HTTP($URL, ...)
+          - metavariable-regex:
+              metavariable: $HTTP
+              regex: ^(?:fetch|axios|got)$
+          - metavariable-regex:
+              metavariable: $URL
+              regex: ^`\$\{\s*[A-Za-z_$][\w$]*\s*\}(?:/(?![/\\])|[?#])
+          - metavariable-pattern:
+              metavariable: $FIRST
+              patterns:
+                - pattern: '"$K"'
+                - metavariable-regex:
+                    metavariable: $K
+                    regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\]+
       # Comparisons and negations give booleans, which Express sends as JSON.
       - pattern-either:
           - pattern: $A === $B
