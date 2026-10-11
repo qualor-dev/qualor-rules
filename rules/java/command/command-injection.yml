@@ -28,6 +28,10 @@ rules:
         - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Runtime.html
         - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/ProcessBuilder.html
         - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/List.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/ArrayList.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/LinkedList.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/Vector.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/CopyOnWriteArrayList.html
         - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/servletrequest
         - https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest
         - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestparam.html
@@ -59,12 +63,15 @@ rules:
     # - In a list that gets a shell added, every later element counts as shell code, even a
     #   positional parameter after a fixed script.
     # - A whole command is a sink only when the request hands it over: a request getter or a split
-    #   of request text (in place or through a variable the method assigns), or, in place only, a
-    #   bound handler parameter or a field of it, or the list or array body of an HttpEntity or
-    #   RequestEntity parameter. Such a parameter or body held in a variable or copied into a new
-    #   list (new ArrayList<>(...)) first is missed. Lists and arrays the method builds (in any
-    #   form) are checked by their first element where it is visible, and lists from helper
-    #   methods are accepted: a list filled with add, with the request value first, is missed.
+    #   of request text (in place or through a variable the method assigns), or a bound handler
+    #   parameter or a field of it, or the list or array body of an HttpEntity or RequestEntity
+    #   parameter (in place, copied into a new list of the JDK or with List.copyOf, or through a
+    #   variable the method assigns from one of these). A copy of a copy, and a request getter's
+    #   vector copied into a new list in place, are missed; a list class of another file built
+    #   from the vector is accepted (it may add or drop elements). Lists and arrays the method
+    #   builds (in any form) are checked by their first element where it is visible, and lists
+    #   from helper methods are accepted: a list filled with add, with the request value first,
+    #   is missed.
     # - For POSIX shells only the element right after -c is shell code; for cmd.exe (/c, /k) and
     #   PowerShell (-Command, -c) every later element is.
     # - The environment: an entry is judged by its literal "NAME=" prefix, inline or in a variable
@@ -287,7 +294,7 @@ rules:
                               ...
           - focus-metavariable: $CMD
       # A handler parameter bound from the request (a list, an array, a body object) passed whole,
-      # or a field or the array of it.
+      # or a field or the array of it, also copied into a new list in place.
       - patterns:
           - pattern-either: &bound-parameter-commands
               - pattern: new ProcessBuilder($P)
@@ -300,6 +307,16 @@ rules:
               - pattern: (Runtime $RT).exec($P.$GET(...).toArray(...), ...)
               - pattern: Runtime.getRuntime().exec($P.toArray(...), ...)
               - pattern: Runtime.getRuntime().exec($P.$GET(...).toArray(...), ...)
+              - pattern: new ProcessBuilder(List.copyOf($P))
+              - pattern: new ProcessBuilder(List.copyOf($P.$GET(...)))
+              - pattern: (ProcessBuilder $B).command(List.copyOf($P))
+              - pattern: (ProcessBuilder $B).command(List.copyOf($P.$GET(...)))
+              - &bound-parameter-copies
+                pattern-either:
+                  - pattern: new ProcessBuilder(new $C($P))
+                  - pattern: new ProcessBuilder(new $C($P.$GET(...)))
+                  - pattern: (ProcessBuilder $B).command(new $C($P))
+                  - pattern: (ProcessBuilder $B).command(new $C($P.$GET(...)))
           # Not outside a method with such a parameter: an exclusion, which costs the prefilter
           # nothing.
           - pattern-not:
@@ -316,14 +333,28 @@ rules:
                       - metavariable-regex:
                           metavariable: $T
                           regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+          # A copy is a new list of the JDK (another class may add or drop elements).
+          - pattern-not:
+              patterns:
+                - *bound-parameter-copies
+                - metavariable-regex:
+                    metavariable: $C
+                    regex: &not-a-list-copy ^(?!(java\.util\.(concurrent\.)?)?(ArrayList|LinkedList|Vector|CopyOnWriteArrayList)\b)
           - focus-metavariable: $P
       # The body of a Spring MVC HttpEntity or RequestEntity parameter that is a list or an array of
-      # strings, passed whole (an array body given to Runtime.exec is a command-string sink above).
+      # strings, passed whole (an array body given to Runtime.exec is a command-string sink above),
+      # also copied into a new list in place.
       - patterns:
           - pattern-either: &entity-body-commands
               - pattern: new ProcessBuilder($P.getBody())
               - pattern: (ProcessBuilder $B).command($P.getBody())
               - pattern: Runtime.getRuntime().exec($P.getBody().toArray(...), ...)
+              - pattern: new ProcessBuilder(List.copyOf($P.getBody()))
+              - pattern: (ProcessBuilder $B).command(List.copyOf($P.getBody()))
+              - &entity-body-copies
+                pattern-either:
+                  - pattern: new ProcessBuilder(new $C($P.getBody()))
+                  - pattern: (ProcessBuilder $B).command(new $C($P.getBody()))
           # Not outside a method with such a parameter (the source already requires a mapped
           # handler): an exclusion, which costs OpenGrep's prefilter nothing.
           - pattern-not:
@@ -334,8 +365,98 @@ rules:
                       - pattern-inside: $RET $M(..., $T $P, ...) { ... }
                       - metavariable-regex:
                           metavariable: $T
-                          regex: ^(org\.springframework\.http\.)?(HttpEntity|RequestEntity)\s*<\s*((java\.util\.)?(List|Collection)\s*<|String\s*\[)
+                          regex: &entity-vector-type ^(org\.springframework\.http\.)?(HttpEntity|RequestEntity)\s*<\s*((java\.util\.)?(List|Collection)\s*<|String\s*\[)
+          - pattern-not:
+              patterns:
+                - *entity-body-copies
+                - metavariable-regex:
+                    metavariable: $C
+                    regex: *not-a-list-copy
           - focus-metavariable: $P
+      # A variable that the method assigns from such a parameter, a field of it or such a body,
+      # or from a new list copied from one of them, passed whole.
+      - patterns:
+          - pattern-either: &held-vector-commands
+              - pattern: new ProcessBuilder($L)
+              - pattern: (ProcessBuilder $B).command($L)
+              - pattern: (Runtime $RT).exec($L, ...)
+              - pattern: Runtime.getRuntime().exec($L, ...)
+              - pattern: (Runtime $RT).exec($L.toArray(...), ...)
+              - pattern: Runtime.getRuntime().exec($L.toArray(...), ...)
+          # Only such a variable: the others are excluded (exclusions cost OpenGrep's prefilter
+          # nothing).
+          - pattern-not:
+              patterns:
+                - pattern-either: *held-vector-commands
+                # A bound parameter or a field of it, also copied.
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+                      - pattern-either:
+                          - pattern-inside: |
+                              $L = $P;
+                              ...
+                          - pattern-inside: |
+                              $L = $P.$GET(...);
+                              ...
+                          - pattern-inside: |
+                              $L = List.copyOf($P);
+                              ...
+                          - pattern-inside: |
+                              $L = List.copyOf($P.$GET(...));
+                              ...
+                      - metavariable-regex:
+                          metavariable: $ANN
+                          regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|RequestPart|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+                      - metavariable-regex:
+                          metavariable: $T
+                          regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+                      - pattern-either:
+                          - pattern-inside: |
+                              $L = new $C($P);
+                              ...
+                          - pattern-inside: |
+                              $L = new $C($P.$GET(...));
+                              ...
+                      - metavariable-regex:
+                          metavariable: $ANN
+                          regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|RequestPart|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+                      - metavariable-regex:
+                          metavariable: $T
+                          regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
+                      - metavariable-regex:
+                          metavariable: $C
+                          regex: &list-copy ^(java\.util\.(concurrent\.)?)?(ArrayList|LinkedList|Vector|CopyOnWriteArrayList)\b
+                # An HttpEntity or RequestEntity body, also copied.
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-inside: $RET $M(..., $T $P, ...) { ... }
+                      - pattern-either:
+                          - pattern-inside: |
+                              $L = $P.getBody();
+                              ...
+                          - pattern-inside: |
+                              $L = List.copyOf($P.getBody());
+                              ...
+                      - metavariable-regex:
+                          metavariable: $T
+                          regex: *entity-vector-type
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-inside: $RET $M(..., $T $P, ...) { ... }
+                      - pattern-inside: |
+                          $L = new $C($P.getBody());
+                          ...
+                      - metavariable-regex:
+                          metavariable: $T
+                          regex: *entity-vector-type
+                      - metavariable-regex:
+                          metavariable: $C
+                          regex: *list-copy
+          - focus-metavariable: $L
       # An annotated String[] handler parameter handed to Runtime.exec(String[], ...) as it is.
       - patterns:
           - pattern-either: &array-parameter-commands

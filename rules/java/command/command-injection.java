@@ -5,8 +5,10 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Vector;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
@@ -184,6 +186,9 @@ class BackupServlet extends HttpServlet {
         // ruleid: java.command-injection
         List<String> argv = Arrays.asList(request.getParameterValues("argv"));
         new ProcessBuilder(argv).start();
+        // A request getter's vector copied into a new list in place is missed.
+        // todoruleid: java.command-injection
+        new ProcessBuilder(new ArrayList<>(Arrays.asList(request.getParameterValues("argv")))).start();
 
         // The environment: a fixed name with a request value is accepted, except for variables
         // that decide what runs.
@@ -320,6 +325,7 @@ class ReportServlet extends HttpServlet {
 // Spring MVC: path variables, request parameters and bodies.
 @RestController
 class ToolController {
+    private Runtime shell;
     @GetMapping("/tools/{tool}")
     String run(@PathVariable String tool, @RequestParam String target, @RequestParam int count) throws IOException {
         // ruleid: java.command-injection
@@ -385,17 +391,130 @@ class ToolController {
         return "ok";
     }
 
-    // A request vector passed whole through a variable or a copy is not followed.
+    // A request vector passed whole through a variable or a new list copied from it.
     @PostMapping("/jobs/held")
     String held(RequestEntity<List<String>> request, @RequestBody List<String> argv) throws IOException {
         List<String> fromBody = request.getBody();
-        // todoruleid: java.command-injection
+        // ruleid: java.command-injection
         new ProcessBuilder(fromBody).start();
-        // todoruleid: java.command-injection
+        // ruleid: java.command-injection
         new ProcessBuilder(new ArrayList<>(request.getBody())).start();
         List<String> bound = argv;
-        // todoruleid: java.command-injection
+        // ruleid: java.command-injection
         new ProcessBuilder(bound).start();
+        return "ok";
+    }
+
+    @PostMapping("/jobs/held-forms")
+    String heldForms(HttpEntity<String[]> entity, RequestEntity<List<String>> request, @RequestBody JobForm form,
+            @RequestParam("argv") String[] argv, @RequestParam List<String> args) throws IOException {
+        ProcessBuilder builder = new ProcessBuilder();
+        Runtime runtime = Runtime.getRuntime();
+        // Copies in place: a list class of the JDK, or List.copyOf.
+        // ruleid: java.command-injection
+        builder.command(new java.util.LinkedList<String>(request.getBody()));
+        // ruleid: java.command-injection
+        new ProcessBuilder(List.copyOf(request.getBody())).start();
+        // ruleid: java.command-injection
+        builder.command(List.copyOf(request.getBody()));
+        // ruleid: java.command-injection
+        new ProcessBuilder(new ArrayList<>(args)).start();
+        // ruleid: java.command-injection
+        builder.command(new ArrayList<>(form.getArguments()));
+        // ruleid: java.command-injection
+        new ProcessBuilder(new java.util.concurrent.CopyOnWriteArrayList<>(form.getArguments())).start();
+        // ruleid: java.command-injection
+        builder.command(new Vector<>(args));
+        // ruleid: java.command-injection
+        new ProcessBuilder(List.copyOf(args)).start();
+        // ruleid: java.command-injection
+        new ProcessBuilder(List.copyOf(form.getArguments())).start();
+        // ruleid: java.command-injection
+        builder.command(List.copyOf(args));
+        // ruleid: java.command-injection
+        builder.command(List.copyOf(form.getArguments()));
+        // Variables the method assigns from a vector, or from a copy of one.
+        String[] steps = entity.getBody();
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec(steps);
+        List<String> copiedBody = new ArrayList<>(request.getBody());
+        // ruleid: java.command-injection
+        shell.exec(copiedBody.toArray(new String[0]));
+        List<String> copiedOfBody = List.copyOf(request.getBody());
+        // ruleid: java.command-injection
+        builder.command(copiedOfBody);
+        String[] held = argv;
+        // ruleid: java.command-injection
+        runtime.exec(held, new String[] {"LANG=C"});
+        List<String> fields = form.getArguments();
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec(fields.toArray(new String[0]));
+        List<String> copiedArgs = new LinkedList<>(args);
+        // ruleid: java.command-injection
+        new ProcessBuilder(copiedArgs).start();
+        List<String> copiedFields = new ArrayList<>(form.getArguments());
+        // ruleid: java.command-injection
+        builder.command(copiedFields);
+        List<String> copiedOfArgs = List.copyOf(args);
+        // ruleid: java.command-injection
+        new ProcessBuilder(copiedOfArgs).start();
+        List<String> copiedOfFields = List.copyOf(form.getArguments());
+        // ruleid: java.command-injection
+        new ProcessBuilder(copiedOfFields).start();
+        // A copy of a copy is missed.
+        List<String> copiedTwice = new ArrayList<>(copiedArgs);
+        // todoruleid: java.command-injection
+        new ProcessBuilder(copiedTwice).start();
+        // A list class of another file may change the elements: not a copy of the vector.
+        // ok: java.command-injection
+        new ProcessBuilder(new GuardedCommand(args)).start();
+        // ok: java.command-injection
+        builder.command(new GuardedCommand(args));
+        // ok: java.command-injection
+        new ProcessBuilder(new GuardedCommand(form.getArguments())).start();
+        // ok: java.command-injection
+        builder.command(new GuardedCommand(form.getArguments()));
+        // ok: java.command-injection
+        new ProcessBuilder(new GuardedCommand(request.getBody())).start();
+        // ok: java.command-injection
+        builder.command(new GuardedCommand(request.getBody()));
+        List<String> guarded = new GuardedCommand(args);
+        // ok: java.command-injection
+        new ProcessBuilder(guarded).start();
+        List<String> guardedBody = new GuardedCommand(request.getBody());
+        // ok: java.command-injection
+        new ProcessBuilder(guardedBody).start();
+        // A list the method builds with a fixed program and an element of the vector.
+        List<String> fixed = new ArrayList<>(List.of("echo"));
+        fixed.add(args.get(0));
+        // ok: java.command-injection
+        new ProcessBuilder(fixed).start();
+        // ... and copies of that list, or of an entity the method builds from it.
+        // ok: java.command-injection
+        new ProcessBuilder(new ArrayList<>(fixed)).start();
+        // ok: java.command-injection
+        builder.command(new ArrayList<>(fixed));
+        // ok: java.command-injection
+        new ProcessBuilder(new ArrayList<>(fixed.subList(0, 2))).start();
+        // ok: java.command-injection
+        builder.command(new ArrayList<>(fixed.subList(0, 2)));
+        // ok: java.command-injection
+        new ProcessBuilder(List.copyOf(fixed)).start();
+        // ok: java.command-injection
+        builder.command(List.copyOf(fixed));
+        // ok: java.command-injection
+        new ProcessBuilder(List.copyOf(fixed.subList(0, 2))).start();
+        // ok: java.command-injection
+        builder.command(List.copyOf(fixed.subList(0, 2)));
+        HttpEntity<List<String>> wrapped = new HttpEntity<>(fixed);
+        // ok: java.command-injection
+        new ProcessBuilder(new ArrayList<>(wrapped.getBody())).start();
+        // ok: java.command-injection
+        builder.command(new ArrayList<>(wrapped.getBody()));
+        // ok: java.command-injection
+        new ProcessBuilder(List.copyOf(wrapped.getBody())).start();
+        // ok: java.command-injection
+        builder.command(List.copyOf(wrapped.getBody()));
         return "ok";
     }
 
@@ -1051,6 +1170,14 @@ class CommandFormsController {
     void runList(@org.springframework.lang.Nullable List<String> words) throws IOException {
         // ok: java.command-injection
         new ProcessBuilder(words);
+        // ok: java.command-injection
+        new ProcessBuilder(new ArrayList<>(words));
+        List<String> held = words;
+        // ok: java.command-injection
+        new ProcessBuilder(held);
+        List<String> copied = new ArrayList<>(words);
+        // ok: java.command-injection
+        new ProcessBuilder(copied);
     }
 
     void runArray(@org.springframework.lang.Nullable String[] words) throws IOException {
@@ -1061,6 +1188,14 @@ class CommandFormsController {
     void runHeld(Held held) throws IOException {
         // ok: java.command-injection
         new ProcessBuilder(held.getBody());
+        // ok: java.command-injection
+        new ProcessBuilder(new ArrayList<>(held.getBody()));
+        List<String> body = held.getBody();
+        // ok: java.command-injection
+        new ProcessBuilder(body);
+        List<String> copied = new ArrayList<>(held.getBody());
+        // ok: java.command-injection
+        new ProcessBuilder(copied);
     }
 }
 

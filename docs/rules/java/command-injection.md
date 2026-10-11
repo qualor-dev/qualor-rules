@@ -102,8 +102,9 @@ public class PingController {
 - Lists and arrays the method builds are judged by their first element; a list filled with `add`,
   with the request value first, is missed.
 - A bound list or array parameter, or the list body of an `HttpEntity` or `RequestEntity`, counts
-  as a whole command only when it is passed in place: held in a variable or copied into a new list
-  first, it is missed.
+  as a whole command in place, copied into a new list (`new ArrayList<>(...)`, `List.copyOf`) or
+  held in a variable; a copy of a copy, and a request parameter array copied into a new list in
+  place, are missed. A list class of your own built from it is accepted.
 - Request data as a separate argument of a fixed program is accepted, although a value starting
   with `-` may be read as an option (argument injection, CWE-88).
 - Taint is followed through the methods of one file, not into other files: a helper in another
@@ -129,6 +130,10 @@ public class PingController {
 - <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/Runtime.html>
 - <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/ProcessBuilder.html>
 - <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/List.html>
+- <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/ArrayList.html>
+- <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/LinkedList.html>
+- <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/Vector.html>
+- <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/CopyOnWriteArrayList.html>
 - <https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/servletrequest>
 - <https://jakarta.ee/specifications/servlet/6.0/apidocs/jakarta.servlet/jakarta/servlet/http/httpservletrequest>
 - <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/requestparam.html>
