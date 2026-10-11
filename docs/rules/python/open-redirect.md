@@ -109,8 +109,10 @@ def after_login():
 - In middleware, a host before the current path keeps the redirect on that host, also when the
   path is sliced or changed; a slice or `lstrip("/")` that drops the path's leading `/` can
   extend the host (`"https://%s%s" % (request.get_host(), request.path[1:])` with the path
-  `/.evil.example/`) and is not reported. Collapsing slashes is taken for safe, but a Flask path
-  can still hold a backslash (`/\evil.example`), which browsers read as `//`.
+  `/.evil.example/`) and is not reported. The request's own host sliced
+  (`request.get_host()[4:]`, dropping `www.`) is not taken for a host, so such a redirect is
+  reported. Collapsing slashes is taken for safe, but a Flask path can still hold a backslash
+  (`/\evil.example`), which browsers read as `//`.
 - A check of the parsed host (`urlparse(x).netloc`) is not recognised. Django's
   `url_has_allowed_host_and_scheme()` (`is_safe_url()` before Django 3.0) is recognised in the
   branch where it holds (also an `elif`, and the `else` of a failing check), after a failing

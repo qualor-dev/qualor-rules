@@ -87,7 +87,9 @@ rules:
     #   `__call__(self, scope, receive, send)`. A host before it keeps it on that host (a
     #   literal, `"https://" + request.get_host()`, a URL constant; in concatenation, an
     #   f-string, %-formatting or str.format()), also when the path is sliced or changed, although
-    #   a slice or `lstrip("/")` that drops its leading "/" extends the host (todoruleid).
+    #   a slice or `lstrip("/")` that drops its leading "/" extends the host (todoruleid). The
+    #   request's own host sliced (`request.get_host()[4:]`, dropping "www.") is not taken for a
+    #   host, so such a redirect is reported in every form (todook).
     #   `re.sub(r"/+", "/", path)` is taken for
     #   safe, although Werkzeug keeps a backslash ("/\evil.example") in a Flask path
     #   (todoruleid).
@@ -1300,7 +1302,7 @@ rules:
           - pattern: $FSTRING
           - metavariable-regex:
               metavariable: $FSTRING
-              regex: ^[fF]("|')[A-Za-z][A-Za-z0-9+.-]*://([^/"'{}%\s\\]|\{(self\.)?request\.(get_host\(\)|host)\})+\{((flask\.)?request\.(path|full_path)|(self\.)?request\.(path|path_info|get_full_path\([^()]*\)|get_full_path_info\([^()]*\))|\w+\.url\.path|\w+\[("|')path("|')\])(?!\w)
+              regex: ^[fF]("|')[A-Za-z][A-Za-z0-9+.-]*://([^/"'{}%\s\\]|\{(self\.)?request\.(get_host\(\)|host)\})+\{((flask\.)?request\.(path|full_path)|(self\.)?request\.(path|path_info|get_full_path\([^()]*\)|get_full_path_info\([^()]*\))|\w+\.url\.path|\w+\[("|')path("|')\])(\[[^\[\]{}]*\]|\.\w+\([^(){}]*\))*\}
       - patterns:
           - pattern-inside: |
               $ORIGIN = $VALUE
@@ -1333,7 +1335,8 @@ rules:
       # request.path)`, `"{}{}".format(SITE, request.get_full_path())`): the current path fills
       # the placeholder right after a literal scheme and host, after the request's own host in
       # the second placeholder after a literal scheme, or after such a constant in the first two
-      # placeholders.
+      # placeholders. The path may be sliced or changed by method calls, nothing else (not a
+      # conditional expression with another value).
       - patterns:
           - pattern-either:
               - pattern: $FORMAT % $CURRENT
@@ -1344,7 +1347,7 @@ rules:
               regex: ^[rbuRBU]{0,2}("|')[A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s\\]+(%s|\{0?\})
           - metavariable-regex:
               metavariable: $CURRENT
-              regex: *current-path
+              regex: &current-path-chain ^((flask\.)?request\.(path|full_path)|(self\.)?request\.(path|path_info|get_full_path\([^()]*\)|get_full_path_info\([^()]*\))|\w+\.url\.path|\w+\[("|')path("|')\])(\[[^\[\]]*\]|\.\w+\([^()]*\))*$
       - patterns:
           - pattern-either:
               - pattern: $FORMAT % ($HOST, $CURRENT, ...)
@@ -1357,7 +1360,7 @@ rules:
               regex: ^(self\.)?request\.(get_host\(\)|host)$
           - metavariable-regex:
               metavariable: $CURRENT
-              regex: *current-path
+              regex: *current-path-chain
       - patterns:
           - pattern-inside: |
               $ORIGIN = $VALUE
@@ -1383,7 +1386,7 @@ rules:
               regex: ^[rbuRBU]{0,2}("|')(%s%s|\{0?\}\{1?\})
           - metavariable-regex:
               metavariable: $CURRENT
-              regex: *current-path
+              regex: *current-path-chain
       # Starlette's URL.replace() with keywords that keep the host
       # (`request.url.replace(path=...)`, `replace(scheme="https")`).
       - patterns:

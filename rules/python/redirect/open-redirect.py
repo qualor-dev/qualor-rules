@@ -1077,6 +1077,29 @@ class MovedSiteMiddleware:
         if request.path.startswith("/next3/"):
             # ruleid: python.open-redirect
             return HttpResponseRedirect("%s%s" % (SITE, request.GET["next"]))
+        # The path or other request data, chosen by a condition, in the path's place.
+        if request.path.startswith("/either1/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("https://%s%s" % (request.get_host(), request.path if request.GET.get("x") else request.GET["next"]))
+        if request.path.startswith("/either2/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("https://{}{}".format(request.get_host(), request.path if request.GET.get("x") else request.GET["next"]))
+        if request.path.startswith("/either3/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("https://www.example.com%s" % (request.path if request.GET.get("x") else request.GET["next"]))
+        if request.path.startswith("/either4/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("{}{}".format(SITE, request.path if request.GET.get("x") else request.GET["next"]))
+        if request.path.startswith("/either5/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect(f"https://{request.get_host()}{request.path if request.GET.get('x') else request.GET['next']}")
+        # The request's host sliced (dropping "www.") is not recognised as a host in any form.
+        if request.get_host().startswith("www."):
+            # todook: python.open-redirect
+            return HttpResponsePermanentRedirect("https://%s%s" % (request.get_host()[4:], request.path))
+        if request.get_host().startswith("www2."):
+            # todook: python.open-redirect
+            return HttpResponsePermanentRedirect("https://" + request.get_host()[5:] + request.path)
         return self.get_response(request)
 
 
