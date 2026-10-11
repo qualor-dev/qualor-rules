@@ -53,7 +53,7 @@ app = Flask(__name__)
 def ping():
     host = request.args["host"]
     out = subprocess.run("ping -c 1 " + host, shell=True, capture_output=True)
-    return out.stdout
+    return {"output": out.stdout.decode()}
 ```
 
 **Compliant:** a fixed program with an argument list and no shell; the host name is one argument.
@@ -70,7 +70,7 @@ app = Flask(__name__)
 def ping():
     host = request.args["host"]
     out = subprocess.run(["ping", "-c", "1", "--", host], capture_output=True)
-    return out.stdout
+    return {"output": out.stdout.decode()}
 ```
 <!-- end: example -->
 

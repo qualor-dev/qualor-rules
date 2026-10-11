@@ -50,6 +50,20 @@ rules:
         - https://starlette.dev/middleware/
         - https://starlette.dev/requests/
         - https://fastapi.tiangolo.com/tutorial/middleware/
+        - https://docs.python.org/3/library/subprocess.html
+        - https://docs.python.org/3/library/os.html#os.popen
+        - https://docs.python.org/3/library/os.html#process-management
+        - https://docs.python.org/3/library/asyncio-subprocess.html
+        - https://docs.python.org/3/library/asyncio-eventloop.html#running-subprocesses
+        - https://pubs.opengroup.org/onlinepubs/9799919799/utilities/sh.html
+        - https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd
+        - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh
+        - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1
+        - https://docs.python.org/3/library/functions.html#open
+        - https://docs.python.org/3/library/pathlib.html
+        - https://requests.readthedocs.io/en/latest/api/
+        - https://www.python-httpx.org/api/
+        - https://docs.python.org/3/library/urllib.request.html
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A Flask view is a function decorated with route()/get()/post()/... in a module that
@@ -93,6 +107,22 @@ rules:
     #   membership check (`if x not in ALLOWED: return`) is not, nor is a nested table (todook).
     # - After a get() whose key or default is request data, the dict counts as request data for
     #   the rest of the function: a later lookup of a constant entry in it is reported (todook).
+    #   And a get() called on a call's result (`requests.Session().get(url)`) passes no request
+    #   data on (todoruleid).
+    # - The results of other rules' sinks (a decision, as in js.xss, java.xss and go.xss): the
+    #   output of a command whose shell command, program, or shell, cmd.exe or PowerShell script
+    #   carries request data (python.command-injection's finding), and the content of a file
+    #   read with open() or pathlib (python.path-traversal's, when the request names the file),
+    #   are not request data here (`ok:`, not a limit). The command positions are a copy of
+    #   python.command-injection's sinks (see the sanitizers) and must change with them. A
+    #   fixed program's output stays request data, and so does a page fetched from a URL the
+    #   request chooses (ruling J2). Limits of that: a file read by iterating over it (`for line
+    #   in f`) or through a helper is still request data (todook); a page fetched through a
+    #   requests Session or httpx Client held in a variable is taken for stored data when an
+    #   attribute of the response is used (`s.get(url).text`, todoruleid); a fixed origin is
+    #   recognised only as a literal at the start of the URL given to the requests or httpx
+    #   module functions or urlopen(), so one held in a module constant (`API_BASE + "/x/" +
+    #   id`) is still request data (todook).
     # Inherited from the request source block (python.sql-injection), each with a `todook` line:
     # - A Flask route parameter with a typed converter (`<int:n>`) is still a source.
     # - A Django URL argument is still a source when its converter (`<int:pk>`, in urls.py) or a
@@ -699,8 +729,12 @@ rules:
       # An attribute of an object that a call returned (a database row looked up by a request
       # id, a helper's result), read in place or through a variable assigned (also with :=) in
       # the function: stored or computed data, not the request's own text. Left out: request
-      # accessors, the URL parsers of urllib.parse, json.loads(), pydantic validation, and calls
-      # that receive request data whole (a form built from `request.POST`, `Model(**body)`).
+      # accessors, the URL parsers of urllib.parse, json.loads(), pydantic validation, calls
+      # that receive request data whole (a form built from `request.POST`, `Model(**body)`), and
+      # the results of other rules' sinks, which the sanitizers below judge: the requests,
+      # httpx and urllib.request fetches (a page from a URL the request chooses is request
+      # data), subprocess (the output of a fixed program given request data), and a file from
+      # open() or pathlib (its name is the path the request chose).
       - patterns:
           - pattern-either:
               - patterns:
@@ -717,7 +751,7 @@ rules:
               - pattern: $INIT.$ATTR
           - metavariable-regex:
               metavariable: $INIT
-              regex: ^(?!(self\.)?request\b|([\w.]*\.)?(urlparse|urlsplit|urldefrag)\(|json\.loads\(|[\w.]*\.(model_validate|model_validate_json|parse_obj|parse_raw)\(|[\w.]*\.(FILES|POST|GET|COOKIES|META|args|form|files|values|headers|cookies|query_params)\.)[A-Za-z_][\w.]*\((?!(?s:.*)(\b\w+\.(POST|GET|FILES|form|args|values|json|data|query_params)\b(?!\s*[\[.(])|get_json\(|\*\*))
+              regex: ^(?!(self\.)?request\b|(requests|httpx|subprocess|pathlib)\.|(urllib\.request\.)?urlopen\(|open\(|([\w.]*\.)?(urlparse|urlsplit|urldefrag)\(|json\.loads\(|[\w.]*\.(model_validate|model_validate_json|parse_obj|parse_raw)\(|[\w.]*\.(FILES|POST|GET|COOKIES|META|args|form|files|values|headers|cookies|query_params)\.)[A-Za-z_][\w.]*\((?!(?s:.*)(\b\w+\.(POST|GET|FILES|form|args|values|json|data|query_params)\b(?!\s*[\[.(])|get_json\(|\*\*))
           - pattern-not-inside: $X.$ATTR(...)
       # Flask: the request's own JSON value returned whole through a variable, `return data`,
       # `return data, 201` or `return data or {}` after `data = request.get_json()` (also
@@ -854,6 +888,644 @@ rules:
       # HTML sanitisers that keep an allow-list of tags and attributes.
       - pattern: bleach.clean(...)
       - pattern: nh3.clean(...)
+      # The results of other rules' sinks (a decision, as in js.xss, java.xss and go.xss). What
+      # a command prints is request data only through the arguments python.command-injection
+      # does not report: request data in a command a shell runs, in the program, or in the
+      # command or script of a shell, cmd.exe or PowerShell is that rule's finding, and the
+      # output of such a command is not reported a second time. A fixed program given request
+      # data as an argument (echo, a shell's positional parameters) may print it back, so its
+      # output stays request data. The items from here to the file sanitizers are a verbatim
+      # copy of python.command-injection's sinks (its anchors too), as sanitizers of the same
+      # arguments: a change to that rule's sinks must be copied here, or the two rules drift
+      # apart (a command the other rule stops reporting stays silent here, a new sink there is
+      # reported twice).
+      # A command string that a shell runs.
+      - patterns:
+          - pattern-either:
+              - pattern: os.system($CMD)
+              - pattern: os.popen($CMD, ...)
+              - pattern: subprocess.getoutput($CMD, ...)
+              - pattern: subprocess.getstatusoutput($CMD, ...)
+              - pattern: asyncio.create_subprocess_shell($CMD, ...)
+              - pattern: asyncio.get_running_loop().subprocess_shell($FACTORY, $CMD, ...)
+              - pattern: asyncio.get_event_loop().subprocess_shell($FACTORY, $CMD, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $LOOP = asyncio.get_running_loop()
+                          ...
+                      - pattern-inside: |
+                          $LOOP = asyncio.get_event_loop()
+                          ...
+                  - pattern: $LOOP.subprocess_shell($FACTORY, $CMD, ...)
+          - focus-metavariable: $CMD
+      # subprocess with a shell (shell= anything but False, 0 or None): a command string is shell
+      # code. Of an argument list only the first element is (the program sink below).
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FUNC($CMD, ..., shell=$SHELL, ...)
+              - pattern: subprocess.$FUNC(..., args=$CMD, ..., shell=$SHELL, ...)
+              - pattern: subprocess.$FUNC(..., shell=$SHELL, ..., args=$CMD, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: &subprocess-functions ^(run|call|check_call|check_output|Popen)$
+          - metavariable-regex:
+              metavariable: $SHELL
+              regex: ^(?!(False|0|None)$)
+          - pattern-not: subprocess.$FUNC([...], ...)
+          - pattern-not: subprocess.$FUNC(($ITEM, ...), ...)
+          - pattern-not: subprocess.$FUNC(..., args=[...], ...)
+          - pattern-not: subprocess.$FUNC(..., args=($ITEM, ...), ...)
+          - pattern-not-inside: |
+              $CMD = [...]
+              ...
+          - pattern-not-inside: |
+              $CMD = ($ITEM, ...)
+              ...
+          - focus-metavariable: $CMD
+      # The program: the first element of an argument list (with a shell, the command string),
+      # the executable= replacement, and the program of asyncio's exec functions.
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FUNC([$PROGRAM, ...], ...)
+              - pattern: subprocess.$FUNC(($PROGRAM, ...), ...)
+              - pattern: subprocess.$FUNC([$PROGRAM, ...] + $REST, ...)
+              - pattern: subprocess.$FUNC(..., args=[$PROGRAM, ...], ...)
+              - pattern: subprocess.$FUNC(..., args=($PROGRAM, ...), ...)
+              - pattern: subprocess.$FUNC(..., executable=$PROGRAM, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - focus-metavariable: $PROGRAM
+      - patterns:
+          - pattern-either:
+              - pattern: asyncio.create_subprocess_exec($PROGRAM, ...)
+              - pattern: asyncio.get_running_loop().subprocess_exec($FACTORY, $PROGRAM, ...)
+              - pattern: asyncio.get_event_loop().subprocess_exec($FACTORY, $PROGRAM, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $LOOP = asyncio.get_running_loop()
+                          ...
+                      - pattern-inside: |
+                          $LOOP = asyncio.get_event_loop()
+                          ...
+                  - pattern: $LOOP.subprocess_exec($FACTORY, $PROGRAM, ...)
+          - pattern-not: asyncio.create_subprocess_exec(*$ARGS, ...)
+          - pattern-not: $ANY.subprocess_exec($FACTORY, *$ARGS, ...)
+          - focus-metavariable: $PROGRAM
+      # os.exec*(), os.spawn*() and os.posix_spawn*(): the program is the path or file argument,
+      # the first of exec* and posix_spawn*, the second of spawn* (after the mode). The arguments
+      # after it are the program's own (the first is the name it sees as argv[0]).
+      - patterns:
+          - pattern-either:
+              - pattern: os.execl($PROGRAM, ...)
+              - pattern: os.execle($PROGRAM, ...)
+              - pattern: os.execlp($PROGRAM, ...)
+              - pattern: os.execlpe($PROGRAM, ...)
+              - pattern: os.execv($PROGRAM, ...)
+              - pattern: os.execve($PROGRAM, ...)
+              - pattern: os.execvp($PROGRAM, ...)
+              - pattern: os.execvpe($PROGRAM, ...)
+              - pattern: os.spawnl($MODE, $PROGRAM, ...)
+              - pattern: os.spawnle($MODE, $PROGRAM, ...)
+              - pattern: os.spawnlp($MODE, $PROGRAM, ...)
+              - pattern: os.spawnlpe($MODE, $PROGRAM, ...)
+              - pattern: os.spawnv($MODE, $PROGRAM, ...)
+              - pattern: os.spawnve($MODE, $PROGRAM, ...)
+              - pattern: os.spawnvp($MODE, $PROGRAM, ...)
+              - pattern: os.spawnvpe($MODE, $PROGRAM, ...)
+              - pattern: os.posix_spawn($PROGRAM, ...)
+              - pattern: os.posix_spawnp($PROGRAM, ...)
+          - focus-metavariable: $PROGRAM
+      # ... and the program of a list or tuple assigned to a variable in the function and passed
+      # whole (reported where the list is written).
+      - patterns:
+          - pattern-either:
+              - patterns:
+                  - pattern-inside: |
+                      $VAR = [$PROGRAM, ...]
+                      ...
+                      subprocess.$FUNC($VAR, ...)
+                  - pattern: $VAR = [$PROGRAM, ...]
+              - patterns:
+                  - pattern-inside: |
+                      $VAR = ($PROGRAM, ...)
+                      ...
+                      subprocess.$FUNC($VAR, ...)
+                  - pattern: $VAR = ($PROGRAM, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - focus-metavariable: $PROGRAM
+      # A POSIX shell program in an argument list (also after sudo or env), followed by up to
+      # three option words and its -c flag: the element after the flag is shell code; the later
+      # ones are the shell's $0, $1, ... A word after a script operand is the script's argument.
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FUNC([..., $SH, $FLAG, $CMD, ...], ...)
+              - pattern: subprocess.$FUNC((..., $SH, $FLAG, $CMD, ...), ...)
+              - pattern: subprocess.$FUNC(..., args=[..., $SH, $FLAG, $CMD, ...], ...)
+              - pattern: asyncio.$FUNC(..., $SH, $FLAG, $CMD, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: &shell-functions ^(run|call|check_call|check_output|Popen|create_subprocess_exec)$
+          - metavariable-regex:
+              metavariable: $SH
+              regex: &posix-shell ^[rRbBuU]{0,2}["']((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)["']$
+          - metavariable-regex:
+              metavariable: $FLAG
+              regex: &posix-flag ^[rRbBuU]{0,2}["']-[a-zA-Z]*c[a-zA-Z]*["']$
+          - focus-metavariable: $CMD
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FUNC([..., $SH, $OPT1, $FLAG, $CMD, ...], ...)
+              - pattern: subprocess.$FUNC((..., $SH, $OPT1, $FLAG, $CMD, ...), ...)
+              - pattern: subprocess.$FUNC(..., args=[..., $SH, $OPT1, $FLAG, $CMD, ...], ...)
+              - pattern: asyncio.$FUNC(..., $SH, $OPT1, $FLAG, $CMD, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *shell-functions
+          - metavariable-regex:
+              metavariable: $SH
+              regex: *posix-shell
+          - metavariable-regex:
+              metavariable: $FLAG
+              regex: *posix-flag
+          - metavariable-regex:
+              metavariable: $OPT1
+              regex: &shell-option ^[rRbBuU]{0,2}["']([-+][^"']*|pipefail|errexit|nounset|xtrace|noglob|posix)["']$
+          - focus-metavariable: $CMD
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FUNC([..., $SH, $OPT1, $OPT2, $FLAG, $CMD, ...], ...)
+              - pattern: subprocess.$FUNC((..., $SH, $OPT1, $OPT2, $FLAG, $CMD, ...), ...)
+              - pattern: subprocess.$FUNC(..., args=[..., $SH, $OPT1, $OPT2, $FLAG, $CMD, ...], ...)
+              - pattern: asyncio.$FUNC(..., $SH, $OPT1, $OPT2, $FLAG, $CMD, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *shell-functions
+          - metavariable-regex:
+              metavariable: $SH
+              regex: *posix-shell
+          - metavariable-regex:
+              metavariable: $FLAG
+              regex: *posix-flag
+          - metavariable-regex:
+              metavariable: $OPT1
+              regex: *shell-option
+          - metavariable-regex:
+              metavariable: $OPT2
+              regex: *shell-option
+          - focus-metavariable: $CMD
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FUNC([..., $SH, $OPT1, $OPT2, $OPT3, $FLAG, $CMD, ...], ...)
+              - pattern: subprocess.$FUNC((..., $SH, $OPT1, $OPT2, $OPT3, $FLAG, $CMD, ...), ...)
+              - pattern: subprocess.$FUNC(..., args=[..., $SH, $OPT1, $OPT2, $OPT3, $FLAG, $CMD, ...], ...)
+              - pattern: asyncio.$FUNC(..., $SH, $OPT1, $OPT2, $OPT3, $FLAG, $CMD, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *shell-functions
+          - metavariable-regex:
+              metavariable: $SH
+              regex: *posix-shell
+          - metavariable-regex:
+              metavariable: $FLAG
+              regex: *posix-flag
+          - metavariable-regex:
+              metavariable: $OPT1
+              regex: *shell-option
+          - metavariable-regex:
+              metavariable: $OPT2
+              regex: *shell-option
+          - metavariable-regex:
+              metavariable: $OPT3
+              regex: *shell-option
+          - focus-metavariable: $CMD
+      # cmd.exe and PowerShell (pwsh, powershell.exe; any path, any case) in an argument list
+      # written in the call; the formula on the list is shared with lists assigned before the
+      # call (below).
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FUNC($LIST, ...)
+              - pattern: subprocess.$FUNC(..., args=$LIST, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - metavariable-pattern:
+              metavariable: $LIST
+              patterns: &windows-shell-list
+                - pattern-either:
+                    # cmd.exe after /c or /k (also after other switches): every later element is
+                    # part of the command line it runs.
+                    - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?cmd([.]exe)?$/", ..., "=~/(?i)^/[ck]$/", ..., $CMD, ...]'
+                    - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?cmd([.]exe)?$/", ..., "=~/(?i)^/[ck]$/", ..., $CMD, ...)'
+                    # PowerShell (about_pwsh; parameter names in any case): every element after
+                    # -Command (-c) is part of the command; the first after -CommandWithArgs (-cwa)
+                    # and the one after -EncodedCommand (-e, -ec) are the command; the one after
+                    # -File (-f) is the script to run. Not after -File or -cwa (the later elements
+                    # are the script's parameters, or fill $args), nor, for pwsh, after a .ps1
+                    # element or a first element that is no parameter name (File is pwsh's default
+                    # parameter: that element is the script). A spread right after -File or -cwa
+                    # holds the script or command and its arguments together: it is not taken for
+                    # the script.
+                    - patterns:
+                        - pattern-either:
+                            - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(c|command)$/", ..., $CMD, ...]'
+                            - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(c|command)$/", ..., $CMD, ...)'
+                            - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", $CMD, ...]'
+                            - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", $CMD, ...)'
+                        - pattern-not: '[..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...]'
+                        - pattern-not: '(..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...)'
+                        - pattern-not: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", ..., "=~/(?i)[.]ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...]'
+                        - pattern-not: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", ..., "=~/(?i)[.]ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...)'
+                        - pattern-not: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...]'
+                        - pattern-not: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...)'
+                        - pattern-not: '[..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", *$REST, ...]'
+                        - pattern-not: '(..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", *$REST, ...)'
+                    # The first positional element, before any command parameter: for pwsh the
+                    # script to run (File is its default parameter), for powershell.exe a script or
+                    # a command. Positional: first, after a switch, or after a parameter and its
+                    # value (-Version takes one in powershell.exe only). about_PowerShell_exe names
+                    # no default parameter, so for powershell.exe a first element that is no
+                    # parameter name and every later one are taken for one command; for pwsh what
+                    # follows a script (a first element that is no parameter name, or a .ps1
+                    # element) are its parameters.
+                    - patterns:
+                        - pattern-either:
+                            - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", $CMD, ...]'
+                            - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", $CMD, ...)'
+                            - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(login|l|interactive|i|mta|sta|noexit|noe|nologo|nol|noninteractive|noni|noprofile|nop|noprofileloadtime|sshservermode|sshs)$/", $CMD, ...]'
+                            - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(login|l|interactive|i|mta|sta|noexit|noe|nologo|nol|noninteractive|noni|noprofile|nop|noprofileloadtime|sshservermode|sshs)$/", $CMD, ...)'
+                            - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(configurationfile|configurationname|config|custompipename|executionpolicy|ex|ep|inputformat|inp|if|outputformat|o|of|settingsfile|settings|windowstyle|w|workingdirectory|wd|wo|psconsolefile)$/", $VALUE, $CMD, ...]'
+                            - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(configurationfile|configurationname|config|custompipename|executionpolicy|ex|ep|inputformat|inp|if|outputformat|o|of|settingsfile|settings|windowstyle|w|workingdirectory|wd|wo|psconsolefile)$/", $VALUE, $CMD, ...)'
+                            - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?powershell([.]exe)?$/", ..., "=~/(?i)^-version$/", $VALUE, $CMD, ...]'
+                            - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?powershell([.]exe)?$/", ..., "=~/(?i)^-version$/", $VALUE, $CMD, ...)'
+                            - pattern: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?powershell([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...]'
+                            - pattern: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?powershell([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...)'
+                        - pattern-not: '[..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...]'
+                        - pattern-not: '(..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...)'
+                        - pattern-not: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", ..., "=~/(?i)[.]ps1$/", ..., $CMD, ...]'
+                        - pattern-not: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", ..., "=~/(?i)[.]ps1$/", ..., $CMD, ...)'
+                        - pattern-not: '[..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...]'
+                        - pattern-not: '(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...)'
+          - focus-metavariable: $CMD
+      # The same as asyncio.create_subprocess_exec()'s arguments.
+      - patterns:
+          - pattern-either:
+              # cmd.exe after /c or /k (also after other switches): every later element is part of
+              # the command line it runs.
+              - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?cmd([.]exe)?$/", ..., "=~/(?i)^/[ck]$/", ..., $CMD, ...)'
+              # PowerShell (about_pwsh; parameter names in any case): every element after -Command
+              # (-c) is part of the command; the first after -CommandWithArgs (-cwa) and the one
+              # after -EncodedCommand (-e, -ec) are the command; the one after -File (-f) is the
+              # script to run. Not after -File or -cwa (the later elements are the script's
+              # parameters, or fill $args), nor, for pwsh, after a .ps1 element or a first element
+              # that is no parameter name (File is pwsh's default parameter: that element is the
+              # script). A spread right after -File or -cwa holds the script or command and its
+              # arguments together: it is not taken for the script.
+              - patterns:
+                  - pattern-either:
+                      - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(c|command)$/", ..., $CMD, ...)'
+                      - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", $CMD, ...)'
+                  - pattern-not: 'asyncio.create_subprocess_exec(..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...)'
+                  - pattern-not: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", ..., "=~/(?i)[.]ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...)'
+                  - pattern-not: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...)'
+                  - pattern-not: 'asyncio.create_subprocess_exec(..., "=~/(?i)^-(f|file|cwa|commandwithargs)$/", *$REST, ...)'
+              # The first positional element, before any command parameter: for pwsh the script to
+              # run (File is its default parameter), for powershell.exe a script or a command.
+              # Positional: first, after a switch, or after a parameter and its value (-Version
+              # takes one in powershell.exe only). about_PowerShell_exe names no default parameter,
+              # so for powershell.exe a first element that is no parameter name and every later one
+              # are taken for one command; for pwsh what follows a script (a first element that is
+              # no parameter name, or a .ps1 element) are its parameters.
+              - patterns:
+                  - pattern-either:
+                      - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", $CMD, ...)'
+                      - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(login|l|interactive|i|mta|sta|noexit|noe|nologo|nol|noninteractive|noni|noprofile|nop|noprofileloadtime|sshservermode|sshs)$/", $CMD, ...)'
+                      - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?(pwsh|powershell)([.]exe)?$/", ..., "=~/(?i)^-(configurationfile|configurationname|config|custompipename|executionpolicy|ex|ep|inputformat|inp|if|outputformat|o|of|settingsfile|settings|windowstyle|w|workingdirectory|wd|wo|psconsolefile)$/", $VALUE, $CMD, ...)'
+                      - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?powershell([.]exe)?$/", ..., "=~/(?i)^-version$/", $VALUE, $CMD, ...)'
+                      - pattern: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?powershell([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...)'
+                  - pattern-not: 'asyncio.create_subprocess_exec(..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $CMD, ...)'
+                  - pattern-not: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", ..., "=~/(?i)[.]ps1$/", ..., $CMD, ...)'
+                  - pattern-not: 'asyncio.create_subprocess_exec(..., "=~/(?i)^([a-z]:)?(.*[^a-z0-9_.-])?pwsh([.]exe)?$/", "=~/^[^-]/", ..., $CMD, ...)'
+          - focus-metavariable: $CMD
+      # Shell lists assigned to a variable before the call (reported where the list is written):
+      # the list is searched only when a subprocess call uses the variable.
+      - patterns:
+          - pattern-inside: |
+              $VAR = $LIST
+              ...
+              subprocess.$FUNC($VAR, ...)
+          - pattern: $VAR = $LIST
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - metavariable-pattern:
+              metavariable: $LIST
+              pattern-either:
+                - patterns:
+                    - pattern: '[..., $SH, $FLAG, $CMD, ...]'
+                    - metavariable-regex:
+                        metavariable: $SH
+                        regex: *posix-shell
+                    - metavariable-regex:
+                        metavariable: $FLAG
+                        regex: *posix-flag
+                - patterns:
+                    - pattern: '[..., $SH, $OPT1, $FLAG, $CMD, ...]'
+                    - metavariable-regex:
+                        metavariable: $SH
+                        regex: *posix-shell
+                    - metavariable-regex:
+                        metavariable: $FLAG
+                        regex: *posix-flag
+                    - metavariable-regex:
+                        metavariable: $OPT1
+                        regex: *shell-option
+                - patterns:
+                    - pattern: '[..., $SH, $OPT1, $OPT2, $FLAG, $CMD, ...]'
+                    - metavariable-regex:
+                        metavariable: $SH
+                        regex: *posix-shell
+                    - metavariable-regex:
+                        metavariable: $FLAG
+                        regex: *posix-flag
+                    - metavariable-regex:
+                        metavariable: $OPT1
+                        regex: *shell-option
+                    - metavariable-regex:
+                        metavariable: $OPT2
+                        regex: *shell-option
+                - patterns:
+                    - pattern: '[..., $SH, $OPT1, $OPT2, $OPT3, $FLAG, $CMD, ...]'
+                    - metavariable-regex:
+                        metavariable: $SH
+                        regex: *posix-shell
+                    - metavariable-regex:
+                        metavariable: $FLAG
+                        regex: *posix-flag
+                    - metavariable-regex:
+                        metavariable: $OPT1
+                        regex: *shell-option
+                    - metavariable-regex:
+                        metavariable: $OPT2
+                        regex: *shell-option
+                    - metavariable-regex:
+                        metavariable: $OPT3
+                        regex: *shell-option
+          - focus-metavariable: $CMD
+      - patterns:
+          - pattern-inside: |
+              $VAR = $LIST
+              ...
+              subprocess.$FUNC($VAR, ...)
+          - pattern: $VAR = $LIST
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - metavariable-pattern:
+              metavariable: $LIST
+              patterns: *windows-shell-list
+          - focus-metavariable: $CMD
+      # Without a shell, the whole args value as the program (a string) or the whole argument
+      # vector: only when it is visibly a string or a request value (not an argument list built
+      # by the code): a string literal at either end, str(), os.path.join() (but not a fixed
+      # command line split into words, `"ping -c 1".split() + [host]`), a request value with
+      # its subscripts and methods, or shlex.split() of a request value; in place, ...
+      - patterns:
+          - pattern-either:
+              - pattern: subprocess.$FUNC($ARGS, ...)
+              - pattern: subprocess.$FUNC(..., args=$ARGS, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - metavariable-regex:
+              metavariable: $ARGS
+              regex: &visible-value ^((?![\s\S]*\.(r?split|splitlines)\([^()]*\)\s*(\+[\s\S]*)?$)([rRbBuUfF]{0,2}["']|str\(|os\.path\.join\(|.*["']\s*$)|(\(\s*)?(await\s+)?(flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[|shlex\.split\(\s*(\(\s*)?(await\s+)?((flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[))
+          - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - focus-metavariable: $ARGS
+      # ... or through a variable assigned such a value in the function, ...
+      - patterns:
+          - pattern-inside: |
+              $ARGS = $VALUE
+              ...
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: *visible-value
+          - pattern-either:
+              - pattern: subprocess.$FUNC($ARGS, ...)
+              - pattern: subprocess.$FUNC(..., args=$ARGS, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - focus-metavariable: $ARGS
+      # ... or a subscript, method or shlex.split() of a variable assigned a request value (a JSON
+      # body, request.args, ...), in place or through another variable, ...
+      - patterns:
+          - pattern-inside: |
+              $VAR = $VALUE
+              ...
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: &request-value ^((\(\s*)?(await\s+)?(flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[)
+          - pattern-either:
+              - pattern: subprocess.$FUNC($VAR[$KEY], ...)
+              - pattern: subprocess.$FUNC($VAR[$KEY].$METHOD(...), ...)
+              - pattern: subprocess.$FUNC($VAR.$METHOD(...), ...)
+              - pattern: subprocess.$FUNC($VAR.$METHOD(...).$THEN(...), ...)
+              - pattern: subprocess.$FUNC(shlex.split($VAR), ...)
+              - pattern: subprocess.$FUNC(shlex.split($VAR[$KEY]), ...)
+              - pattern: subprocess.$FUNC(shlex.split($VAR.$METHOD(...)), ...)
+              - pattern: subprocess.$FUNC(..., args=$VAR[$KEY], ...)
+              - pattern: subprocess.$FUNC(..., args=$VAR[$KEY].$METHOD(...), ...)
+              - pattern: subprocess.$FUNC(..., args=$VAR.$METHOD(...), ...)
+              - pattern: subprocess.$FUNC(..., args=shlex.split($VAR), ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - focus-metavariable: $VAR
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $VAR = $VALUE
+                  ...
+                  $ARGS = $VAR[$KEY]
+                  ...
+              - pattern-inside: |
+                  $VAR = $VALUE
+                  ...
+                  $ARGS = $VAR[$KEY].$METHOD(...)
+                  ...
+              - pattern-inside: |
+                  $VAR = $VALUE
+                  ...
+                  $ARGS = $VAR.$METHOD(...)
+                  ...
+              - pattern-inside: |
+                  $VAR = $VALUE
+                  ...
+                  $ARGS = $VAR.$METHOD(...).$THEN(...)
+                  ...
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: *request-value
+          - pattern-either:
+              - pattern: subprocess.$FUNC($ARGS, ...)
+              - pattern: subprocess.$FUNC($ARGS.$SPLIT(...), ...)
+              - pattern: subprocess.$FUNC(shlex.split($ARGS), ...)
+              - pattern: subprocess.$FUNC(..., args=$ARGS, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - focus-metavariable: $ARGS
+      # ... or a parameter of the view (a route parameter, a FastAPI body model and its fields),
+      # in place or through a variable.
+      - patterns:
+          - pattern-inside: |
+              def $VIEW(..., $PARAM, ...):
+                ...
+          - pattern-either:
+              - pattern: subprocess.$FUNC($PARAM, ...)
+              - pattern: subprocess.$FUNC($PARAM.$ATTR, ...)
+              - pattern: subprocess.$FUNC($PARAM[$KEY], ...)
+              - pattern: subprocess.$FUNC($PARAM.$METHOD(...), ...)
+              - pattern: subprocess.$FUNC(shlex.split($PARAM), ...)
+              - pattern: subprocess.$FUNC(shlex.split($PARAM.$ATTR), ...)
+              - pattern: subprocess.$FUNC(..., args=$PARAM, ...)
+              - pattern: subprocess.$FUNC(..., args=$PARAM.$ATTR, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - focus-metavariable: $PARAM
+      - patterns:
+          - pattern-inside: |
+              def $VIEW(..., $PARAM, ...):
+                ...
+          - pattern-inside: |
+              $ARGS = $PARAM.$ATTR
+              ...
+          - pattern-either:
+              - pattern: subprocess.$FUNC($ARGS, ...)
+              - pattern: subprocess.$FUNC(..., args=$ARGS, ...)
+          - metavariable-regex:
+              metavariable: $FUNC
+              regex: *subprocess-functions
+          - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - focus-metavariable: $ARGS
+      # The same for the argument vector unpacked into asyncio.create_subprocess_exec(*argv).
+      - patterns:
+          - pattern: asyncio.create_subprocess_exec(*$ARGS, ...)
+          - metavariable-regex:
+              metavariable: $ARGS
+              regex: &request-vector ^((\(\s*)?(await\s+)?(flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[|shlex\.split\(\s*(\(\s*)?(await\s+)?((flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[))
+          - focus-metavariable: $ARGS
+      - patterns:
+          - pattern-inside: |
+              $ARGS = $VALUE
+              ...
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: *request-vector
+          - pattern: asyncio.create_subprocess_exec(*$ARGS, ...)
+          - focus-metavariable: $ARGS
+      - patterns:
+          - pattern-inside: |
+              $VAR = $VALUE
+              ...
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: *request-value
+          - pattern-either:
+              - pattern: asyncio.create_subprocess_exec(*$VAR[$KEY], ...)
+              - pattern: asyncio.create_subprocess_exec(*$VAR.$METHOD(...), ...)
+              - pattern: asyncio.create_subprocess_exec(*shlex.split($VAR), ...)
+              - pattern: asyncio.create_subprocess_exec(*shlex.split($VAR[$KEY]), ...)
+          - focus-metavariable: $VAR
+      - patterns:
+          - pattern-inside: |
+              def $VIEW(..., $PARAM, ...):
+                ...
+          - pattern-either:
+              - pattern: asyncio.create_subprocess_exec(*$PARAM, ...)
+              - pattern: asyncio.create_subprocess_exec(*$PARAM.$ATTR, ...)
+              - pattern: asyncio.create_subprocess_exec(*$PARAM.$METHOD(...), ...)
+              - pattern: asyncio.create_subprocess_exec(*shlex.split($PARAM), ...)
+              - pattern: asyncio.create_subprocess_exec(*shlex.split($PARAM.$ATTR), ...)
+          - focus-metavariable: $PARAM
+      # The content of a file is not request data, even when the request names the file (that is
+      # python.path-traversal's finding): what read(), readline() and readlines() return for a
+      # file opened with open() (in place, assigned, or in a with statement), and read_text() and
+      # read_bytes() of a pathlib.Path (made in place, joined with `/`, or assigned). The file
+      # object itself stays request data: its name is the path the request chose.
+      - pattern: open(...).read(...)
+      - pattern: open(...).readline(...)
+      - pattern: open(...).readlines(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $F = open(...)
+                  ...
+              - pattern-inside: |
+                  with open(...) as $F:
+                    ...
+          - pattern-either:
+              - pattern: $F.read(...)
+              - pattern: $F.readline(...)
+              - pattern: $F.readlines(...)
+      - pattern: pathlib.Path(...).read_text(...)
+      - pattern: pathlib.Path(...).read_bytes(...)
+      - pattern: (pathlib.Path(...) / $NAME).read_text(...)
+      - pattern: (pathlib.Path(...) / $NAME).read_bytes(...)
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $P = pathlib.Path(...)
+                  ...
+              - pattern-inside: |
+                  $P = pathlib.Path(...) / $NAME
+                  ...
+          - pattern-either:
+              - pattern: $P.read_text(...)
+              - pattern: $P.read_bytes(...)
+      # A page fetched from a fixed origin is that service's data (ruling J2): a URL whose
+      # literal start holds the scheme, the host and a separator after the host
+      # ("https://api.example.com/", or "?" or "#" after the host; also in an f-string), given to
+      # the requests or httpx module functions or to urllib.request.urlopen(). A lone scheme
+      # (`"https://" + host`) or a host without the separator (`"https://api.example.com" +
+      # path`, where "@evil.example" sets the host) fixes no origin. A page fetched from a URL
+      # the request chooses stays request data (the attribute sanitizer above leaves these calls
+      # out).
+      - patterns:
+          - pattern-either:
+              - pattern: requests.$FN($URL, ...)
+              - pattern: requests.$FN(..., url=$URL, ...)
+              - pattern: httpx.$FN($URL, ...)
+              - pattern: httpx.$FN(..., url=$URL, ...)
+          - metavariable-regex:
+              metavariable: $FN
+              regex: ^(get|post|put|patch|delete|head|options)$
+          - metavariable-regex:
+              metavariable: $URL
+              regex: &fixed-origin ^[rRbBuUfF]{0,2}["'][A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"'\\@{}]+(/(?![/\\])|[?#])
+      - patterns:
+          - pattern-either:
+              - pattern: requests.request($METHOD, $URL, ...)
+              - pattern: requests.request(..., url=$URL, ...)
+              - pattern: httpx.request($METHOD, $URL, ...)
+              - pattern: httpx.request(..., url=$URL, ...)
+              - pattern: httpx.stream($METHOD, $URL, ...)
+              - pattern: httpx.stream(..., url=$URL, ...)
+              - pattern: urllib.request.urlopen($URL, ...)
+              - pattern: urllib.request.urlopen(..., url=$URL, ...)
+          - metavariable-regex:
+              metavariable: $URL
+              regex: *fixed-origin
     pattern-sinks:
       # Every response-body sink below takes only a value that is visibly text: an expression
       # that is not a call (a name, a lookup, +, %, an f-string), or str(...) or a string method

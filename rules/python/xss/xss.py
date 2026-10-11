@@ -1,6 +1,12 @@
 from starlette.middleware.base import BaseHTTPMiddleware
+import asyncio
 import html
 import json
+import os
+import shlex
+import pathlib
+import subprocess
+import urllib.request
 from urllib import parse
 from urllib.parse import urlparse
 from typing import Annotated
@@ -9,7 +15,9 @@ import bleach
 import fastapi
 import fastapi.responses
 import markupsafe
+import httpx
 import nh3
+import requests
 from django.http import HttpResponse, HttpResponseNotFound, JsonResponse
 from django.shortcuts import render
 from django.template.loader import get_template, render_to_string
@@ -1330,3 +1338,925 @@ class NoticeRouter:
 def notice_hook():
     # ruleid: python.xss
     HTMLResponse("<p>" + request.args["q"] + "</p>")
+
+
+# The results of other rules' sinks (a decision, as in js.xss, java.xss and go.xss): what a command
+# prints when request data chose the command (its shell command, its program, the script of a
+# shell, cmd.exe or PowerShell) is python.command-injection's finding, and the content of a file
+# the request named is python.path-traversal's: neither is reported again here. A fixed program
+# given request data as an argument can print it back, so its output stays request data, and so
+# does a page fetched from a URL the request chooses (ruling J2); one fetched from a fixed origin
+# is that service's data.
+PAGES = "/srv/pages"
+API_BASE = "https://api.example.com"
+
+
+@app.route("/results/shell")
+def results_shell():
+    listing = subprocess.check_output("ls -l " + request.args["dir"], shell=True)
+    # ok: python.xss
+    return listing
+
+
+@app.route("/results/shell-inline")
+def results_shell_inline():
+    # ok: python.xss
+    return subprocess.check_output(f"du -sh {request.args['dir']}", shell=True).decode()
+
+
+@app.route("/results/popen")
+def results_popen():
+    found = os.popen("grep -r " + request.args["word"] + " /srv/docs").read()
+    # ok: python.xss
+    return "<pre>" + found + "</pre>"
+
+
+@app.route("/results/getoutput")
+def results_getoutput():
+    status = subprocess.getoutput("systemctl status " + request.args["unit"])
+    # ok: python.xss
+    return "<pre>" + status + "</pre>"
+
+
+@app.route("/results/program")
+def results_program():
+    version = subprocess.check_output([request.args["tool"], "--version"], text=True)
+    # ok: python.xss
+    return "<p>" + version + "</p>"
+
+
+@app.route("/results/program-string")
+def results_program_string():
+    version = subprocess.check_output(request.args["tool"], text=True)
+    # ok: python.xss
+    return "<p>" + version + "</p>"
+
+
+@app.route("/results/sh-c")
+def results_sh_c():
+    found = subprocess.check_output(["sh", "-c", "grep " + request.args["word"] + " notes.txt"], text=True)
+    # ok: python.xss
+    return "<pre>" + found + "</pre>"
+
+
+@app.route("/results/run-shell")
+def results_run_shell():
+    done = subprocess.run("ping -c 1 " + request.args["host"], shell=True, capture_output=True, text=True)
+    report = done.stdout
+    # ok: python.xss
+    return "<pre>" + report + "</pre>"
+
+
+@app.route("/results/popen-shell")
+def results_popen_shell():
+    proc = subprocess.Popen("whois " + request.args["domain"], shell=True, stdout=subprocess.PIPE, text=True)
+    out, _ = proc.communicate()
+    # ok: python.xss
+    return "<pre>" + out + "</pre>"
+
+
+@app.route("/results/pwsh")
+def results_pwsh():
+    out = subprocess.check_output(["pwsh", "-NoProfile", "-Command", "Get-Service " + request.args["name"]], text=True)
+    # ok: python.xss
+    return "<pre>" + out + "</pre>"
+
+
+@app.route("/results/cmd-list")
+def results_cmd_list():
+    argv = ["cmd.exe", "/c", "dir " + request.args["dir"]]
+    out = subprocess.check_output(argv, text=True)
+    # ok: python.xss
+    return "<pre>" + out + "</pre>"
+
+
+@app.route("/results/echo")
+def results_echo():
+    out = subprocess.check_output(["echo", request.args["msg"]], text=True)
+    # ruleid: python.xss
+    return "<p>" + out + "</p>"
+
+
+@app.route("/results/echo-run")
+def results_echo_run():
+    done = subprocess.run(["figlet", request.args["msg"]], capture_output=True, text=True)
+    # ruleid: python.xss
+    return "<pre>" + done.stdout + "</pre>"
+
+
+@app.route("/results/echo-popen")
+def results_echo_popen():
+    proc = subprocess.Popen(["cowsay", request.args["msg"]], stdout=subprocess.PIPE, text=True)
+    out, _ = proc.communicate()
+    # ruleid: python.xss
+    return "<pre>" + out + "</pre>"
+
+
+@app.route("/results/sh-positional")
+def results_sh_positional():
+    # The command is fixed; the request value is the shell's $1, which it prints back.
+    out = subprocess.check_output(["sh", "-c", 'echo "Hello $1"', "sh", request.args["name"]], text=True)
+    # ruleid: python.xss
+    return "<p>" + out + "</p>"
+
+
+@app.route("/results/file")
+def results_file():
+    content = open(os.path.join(PAGES, request.args["page"])).read()
+    # ok: python.xss
+    return content
+
+
+@app.route("/results/file-with")
+def results_file_with():
+    with open(os.path.join(PAGES, request.args["page"]), encoding="utf-8") as page:
+        body = page.read()
+    # ok: python.xss
+    return body
+
+
+@app.route("/results/file-lines/<name>")
+def results_file_lines(name):
+    page = open(os.path.join(PAGES, name))
+    lines = page.readlines()
+    # ok: python.xss
+    return "<br>".join(lines)
+
+
+@app.route("/results/path/<name>")
+def results_path(name):
+    body = pathlib.Path(PAGES, name).read_text()
+    # ok: python.xss
+    return body
+
+
+@app.route("/results/path-join/<name>")
+def results_path_join(name):
+    target = pathlib.Path(PAGES) / name
+    # ok: python.xss
+    return target.read_text().strip()
+
+
+@app.route("/results/path-bytes/<name>")
+def results_path_bytes(name):
+    # ok: python.xss
+    return Response((pathlib.Path(PAGES) / name).read_bytes(), mimetype="text/html")
+
+
+@app.route("/results/file-name")
+def results_file_name():
+    # The file object still names the file the request chose.
+    page = open(os.path.join(PAGES, request.args["page"]))
+    # ruleid: python.xss
+    return "<p>Opened " + page.name + "</p>"
+
+
+@app.route("/results/path-name/<name>")
+def results_path_name(name):
+    # ruleid: python.xss
+    return "<p>Opened " + pathlib.Path(PAGES, name).name + "</p>"
+
+
+@app.route("/results/fetch-url")
+def results_fetch_url():
+    reply = urllib.request.urlopen(request.args["url"])
+    # ruleid: python.xss
+    return "<p>Fetched " + reply.url + "</p>"
+
+
+@app.route("/results/file-iter")
+def results_file_iter():
+    # Iterating over the file (or reading it through a helper) is not recognised as reading it.
+    rows = []
+    with open(os.path.join(PAGES, request.args["page"])) as page:
+        for line in page:
+            rows.append(line)
+    # todook: python.xss
+    return "".join(rows)
+
+
+@app.route("/results/fetch")
+def results_fetch():
+    reply = requests.get(request.args["url"])
+    # ruleid: python.xss
+    return reply.text
+
+
+@app.route("/results/fetch-inline")
+def results_fetch_inline():
+    page = requests.get(request.args["url"], timeout=5).text
+    # ruleid: python.xss
+    return page
+
+
+@app.route("/results/fetch-urlopen")
+def results_fetch_urlopen():
+    page = urllib.request.urlopen(request.args["url"]).read()
+    # ruleid: python.xss
+    return page
+
+
+@app.route("/results/fetch-httpx")
+def results_fetch_httpx():
+    page = httpx.get(request.args["url"]).text
+    # ruleid: python.xss
+    return page
+
+
+@app.route("/results/fetch-scheme")
+def results_fetch_scheme():
+    # A lone scheme fixes no host.
+    page = requests.get("https://" + request.args["host"] + "/status").text
+    # ruleid: python.xss
+    return page
+
+
+@app.route("/results/fetch-no-separator")
+def results_fetch_no_separator():
+    # Without a separator after the host, "@evil.example" in the path sets the host.
+    page = requests.get("https://api.example.com" + request.args["path"]).text
+    # ruleid: python.xss
+    return page
+
+
+@app.route("/results/fetch-session-inline")
+def results_fetch_session_inline():
+    page = requests.Session().post(request.args["url"]).content
+    # ruleid: python.xss
+    return page
+
+
+@app.route("/results/fetch-session-inline-get")
+def results_fetch_session_inline_get():
+    # get() on a call's result: the dict.get() propagator gives the key's request data to the
+    # receiver, which is no variable here, so it is lost.
+    page = requests.Session().get(request.args["url"]).content
+    # todoruleid: python.xss
+    return page
+
+
+@app.route("/results/fetch-fixed")
+def results_fetch_fixed():
+    page = requests.get("https://api.example.com/items/" + request.args["id"]).text
+    # ok: python.xss
+    return page
+
+
+@app.route("/results/fetch-fixed-fstring")
+def results_fetch_fixed_fstring():
+    item = requests.get(f"https://api.example.com/items/{request.args['id']}", timeout=5).json()
+    # ok: python.xss
+    return "<h1>" + item["title"] + "</h1>"
+
+
+@app.route("/results/fetch-fixed-query")
+def results_fetch_fixed_query():
+    feed = urllib.request.urlopen("https://feeds.example.com?q=" + request.args["q"]).read()
+    # ok: python.xss
+    return feed
+
+
+@app.route("/results/fetch-fixed-keyword")
+def results_fetch_fixed_keyword():
+    page = httpx.request("GET", url="https://api.example.com/pages/" + request.args["id"]).text
+    # ok: python.xss
+    return page
+
+
+@app.route("/results/fetch-session")
+def results_fetch_session():
+    # A Session held in a variable: the attribute of its result is taken for stored data.
+    session = requests.Session()
+    page = session.get(request.args["url"]).text
+    # todoruleid: python.xss
+    return page
+
+
+@app.route("/results/fetch-constant-base")
+def results_fetch_constant_base():
+    # An origin held in a module constant is not recognised.
+    page = requests.get(API_BASE + "/items/" + request.args["id"]).json()
+    # todook: python.xss
+    return "<h1>" + page["title"] + "</h1>"
+
+
+# Every form of the file and fetch results above, as a page body.
+@app.route("/results/more/<name>")
+def results_more(name):
+    first = open(os.path.join(PAGES, name)).readline()
+    # ok: python.xss
+    make_response(first)
+    every = open(os.path.join(PAGES, name)).readlines()
+    # ok: python.xss
+    make_response("".join(every))
+    with open(os.path.join(PAGES, name)) as page:
+        title = page.readline()
+    # ok: python.xss
+    make_response(title)
+    raw = pathlib.Path(PAGES, name).read_bytes()
+    # ok: python.xss
+    make_response(raw)
+    joined = (pathlib.Path(PAGES) / name).read_text()
+    # ok: python.xss
+    make_response(joined)
+    joined_raw = (pathlib.Path(PAGES) / name).read_bytes()
+    # ok: python.xss
+    make_response(joined_raw)
+    target = pathlib.Path(PAGES, name)
+    text = target.read_text()
+    # ok: python.xss
+    make_response(text)
+    data = target.read_bytes()
+    # ok: python.xss
+    make_response(data)
+    return "done"
+
+
+@app.route("/results/more-fetch/<item>")
+def results_more_fetch(item):
+    a = requests.post(url="https://api.example.com/render/" + item).text
+    # ok: python.xss
+    make_response(a)
+    b = httpx.get("https://api.example.com/items/" + item).text
+    # ok: python.xss
+    make_response(b)
+    c = httpx.post(url="https://api.example.com/render?item=" + item).text
+    # ok: python.xss
+    make_response(c)
+    d = requests.request("GET", "https://api.example.com/items/" + item).text
+    # ok: python.xss
+    make_response(d)
+    e = requests.request(method="GET", url="https://api.example.com/items/" + item).text
+    # ok: python.xss
+    make_response(e)
+    f = httpx.request("GET", f"https://api.example.com/items/{item}").text
+    # ok: python.xss
+    make_response(f)
+    with httpx.stream("GET", "https://api.example.com/items/" + item) as streamed:
+        g = streamed.read()
+    # ok: python.xss
+    make_response(g)
+    with httpx.stream(method="GET", url="https://api.example.com/items/" + item) as streamed:
+        h = streamed.read()
+    # ok: python.xss
+    make_response(h)
+    i = urllib.request.urlopen(url="https://api.example.com/items/" + item).read()
+    # ok: python.xss
+    make_response(i)
+    j = httpx.get(item).text
+    # ruleid: python.xss
+    make_response(j)
+    return "done"
+
+
+class Collect(asyncio.SubprocessProtocol):
+    pass
+
+
+class Job(BaseModel):
+    argv: list[str]
+    line: str
+
+
+# Every command position python.command-injection reports, whose output is therefore not
+# reported here (the sanitizers copied from that rule).
+@app.route("/results/commands/<arg>")
+async def results_commands(arg):
+    q = request.args["q"]
+    status = os.system("ping -c 1 " + q)
+    # ok: python.xss
+    make_response(status)
+    pair = subprocess.getstatusoutput("ls " + q)
+    # ok: python.xss
+    make_response(pair)
+    proc = await asyncio.create_subprocess_shell("ls " + q, stdout=asyncio.subprocess.PIPE)
+    shell_out, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(shell_out)
+    running = await asyncio.get_running_loop().subprocess_shell(Collect, "ls " + q)
+    # ok: python.xss
+    make_response(running)
+    current = await asyncio.get_event_loop().subprocess_shell(Collect, "ls " + q)
+    # ok: python.xss
+    make_response(current)
+    loop = asyncio.get_running_loop()
+    looped = await loop.subprocess_shell(Collect, "ls " + q)
+    # ok: python.xss
+    make_response(looped)
+    keyword = subprocess.check_output(args="ls " + q, shell=True)
+    # ok: python.xss
+    make_response(keyword)
+    keyword_last = subprocess.check_output(shell=True, args="ls " + q)
+    # ok: python.xss
+    make_response(keyword_last)
+    program_tuple = subprocess.check_output((q, "--version"))
+    # ok: python.xss
+    make_response(program_tuple)
+    program_plus = subprocess.check_output([q] + ["--version"])
+    # ok: python.xss
+    make_response(program_plus)
+    program_args = subprocess.check_output(args=[q, "--version"])
+    # ok: python.xss
+    make_response(program_args)
+    program_args_tuple = subprocess.check_output(args=(q, "--version"))
+    # ok: python.xss
+    make_response(program_args_tuple)
+    replaced = subprocess.check_output(["tool", "--version"], executable=q)
+    # ok: python.xss
+    make_response(replaced)
+    exec_proc = await asyncio.create_subprocess_exec(q, "--version", stdout=asyncio.subprocess.PIPE)
+    exec_out, _ = await exec_proc.communicate()
+    # ok: python.xss
+    make_response(exec_out)
+    exec_running = await asyncio.get_running_loop().subprocess_exec(Collect, q)
+    # ok: python.xss
+    make_response(exec_running)
+    exec_current = await asyncio.get_event_loop().subprocess_exec(Collect, q)
+    # ok: python.xss
+    make_response(exec_current)
+    event_loop = asyncio.get_event_loop()
+    exec_looped = await event_loop.subprocess_exec(Collect, q)
+    # ok: python.xss
+    make_response(exec_looped)
+    shell_looped = await event_loop.subprocess_shell(Collect, "ls " + q)
+    # ok: python.xss
+    make_response(shell_looped)
+    return "done"
+
+
+# os.exec*(), os.spawn*() and os.posix_spawn*() return no output (an exit status or a process id,
+# or they never return); their program is still that rule's finding.
+@app.route("/results/spawn")
+def results_spawn():
+    q = request.args["q"]
+    a = os.execl(q, "tool")
+    # ok: python.xss
+    make_response(a)
+    b = os.execle(q, "tool", {})
+    # ok: python.xss
+    make_response(b)
+    c = os.execlp(q, "tool")
+    # ok: python.xss
+    make_response(c)
+    d = os.execlpe(q, "tool", {})
+    # ok: python.xss
+    make_response(d)
+    e = os.execv(q, ["tool"])
+    # ok: python.xss
+    make_response(e)
+    f = os.execve(q, ["tool"], {})
+    # ok: python.xss
+    make_response(f)
+    g = os.execvp(q, ["tool"])
+    # ok: python.xss
+    make_response(g)
+    h = os.execvpe(q, ["tool"], {})
+    # ok: python.xss
+    make_response(h)
+    i = os.spawnl(os.P_WAIT, q, "tool")
+    # ok: python.xss
+    make_response(i)
+    j = os.spawnle(os.P_WAIT, q, "tool", {})
+    # ok: python.xss
+    make_response(j)
+    k = os.spawnlp(os.P_WAIT, q, "tool")
+    # ok: python.xss
+    make_response(k)
+    m = os.spawnlpe(os.P_WAIT, q, "tool", {})
+    # ok: python.xss
+    make_response(m)
+    n = os.spawnv(os.P_WAIT, q, ["tool"])
+    # ok: python.xss
+    make_response(n)
+    o = os.spawnve(os.P_WAIT, q, ["tool"], {})
+    # ok: python.xss
+    make_response(o)
+    p = os.spawnvp(os.P_WAIT, q, ["tool"])
+    # ok: python.xss
+    make_response(p)
+    r = os.spawnvpe(os.P_WAIT, q, ["tool"], {})
+    # ok: python.xss
+    make_response(r)
+    s = os.posix_spawn(q, ["tool"], {})
+    # ok: python.xss
+    make_response(s)
+    t = os.posix_spawnp(q, ["tool"], {})
+    # ok: python.xss
+    make_response(t)
+    return "done"
+
+
+# Argument lists: a request-chosen program in a list held in a variable, and the command of a
+# POSIX shell after -c (after up to three option words), in place and held in a variable.
+@app.route("/results/shells")
+async def results_shells():
+    q = request.args["q"]
+    held = [q, "--version"]
+    # ok: python.xss
+    make_response(subprocess.check_output(held).decode())
+    held_tuple = (q, "--version")
+    # ok: python.xss
+    make_response(subprocess.check_output(held_tuple).decode())
+    a = subprocess.check_output(("sh", "-c", "ls " + q))
+    # ok: python.xss
+    make_response(a)
+    b = subprocess.check_output(args=["sh", "-c", "ls " + q])
+    # ok: python.xss
+    make_response(b)
+    proc = await asyncio.create_subprocess_exec("sh", "-c", "ls " + q, stdout=asyncio.subprocess.PIPE)
+    c, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(c)
+    d = subprocess.check_output(["bash", "-e", "-c", "ls " + q])
+    # ok: python.xss
+    make_response(d)
+    e = subprocess.check_output(("bash", "-e", "-c", "ls " + q))
+    # ok: python.xss
+    make_response(e)
+    f = subprocess.check_output(args=["bash", "-e", "-c", "ls " + q])
+    # ok: python.xss
+    make_response(f)
+    proc = await asyncio.create_subprocess_exec("bash", "-e", "-c", "ls " + q, stdout=asyncio.subprocess.PIPE)
+    g, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(g)
+    h = subprocess.check_output(["bash", "-e", "-u", "-c", "ls " + q])
+    # ok: python.xss
+    make_response(h)
+    i = subprocess.check_output(("bash", "-e", "-u", "-c", "ls " + q))
+    # ok: python.xss
+    make_response(i)
+    j = subprocess.check_output(args=["bash", "-e", "-u", "-c", "ls " + q])
+    # ok: python.xss
+    make_response(j)
+    proc = await asyncio.create_subprocess_exec("bash", "-e", "-u", "-c", "ls " + q, stdout=asyncio.subprocess.PIPE)
+    k, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(k)
+    m = subprocess.check_output(["bash", "-e", "-u", "-x", "-c", "ls " + q])
+    # ok: python.xss
+    make_response(m)
+    n = subprocess.check_output(("bash", "-e", "-u", "-x", "-c", "ls " + q))
+    # ok: python.xss
+    make_response(n)
+    o = subprocess.check_output(args=["bash", "-e", "-u", "-x", "-c", "ls " + q])
+    # ok: python.xss
+    make_response(o)
+    proc = await asyncio.create_subprocess_exec("bash", "-e", "-u", "-x", "-c", "ls " + q, stdout=asyncio.subprocess.PIPE)
+    p, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(p)
+    argv0 = ["sh", "-c", "ls " + q]
+    # ok: python.xss
+    make_response(subprocess.check_output(argv0).decode())
+    argv1 = ["bash", "-e", "-c", "ls " + q]
+    # ok: python.xss
+    make_response(subprocess.check_output(argv1).decode())
+    argv2 = ["bash", "-e", "-u", "-c", "ls " + q]
+    # ok: python.xss
+    make_response(subprocess.check_output(argv2).decode())
+    argv3 = ["bash", "-e", "-u", "-x", "-c", "ls " + q]
+    # ok: python.xss
+    make_response(subprocess.check_output(argv3).decode())
+    return "done"
+
+
+# cmd.exe after /c or /k, and PowerShell's command, script and first positional argument, in a
+# list or tuple written in the call, given as args=, to asyncio's exec, or held in a variable.
+@app.route("/results/windows")
+async def results_windows():
+    q = request.args["q"]
+    a = subprocess.check_output(["cmd", "/c", "dir " + q])
+    # ok: python.xss
+    make_response(a)
+    b = subprocess.check_output(("cmd.exe", "/k", "dir " + q))
+    # ok: python.xss
+    make_response(b)
+    c = subprocess.check_output(args=["cmd", "/c", "dir " + q])
+    # ok: python.xss
+    make_response(c)
+    d = subprocess.check_output(("pwsh", "-Command", "Get-Item " + q))
+    # ok: python.xss
+    make_response(d)
+    e = subprocess.check_output(["pwsh", "-cwa", "Get-Item " + q])
+    # ok: python.xss
+    make_response(e)
+    f = subprocess.check_output(("powershell.exe", "-EncodedCommand", q))
+    # ok: python.xss
+    make_response(f)
+    g = subprocess.check_output(["pwsh", q])
+    # ok: python.xss
+    make_response(g)
+    h = subprocess.check_output(("pwsh", q))
+    # ok: python.xss
+    make_response(h)
+    i = subprocess.check_output(["pwsh", "-NoProfile", q])
+    # ok: python.xss
+    make_response(i)
+    j = subprocess.check_output(("pwsh", "-NoProfile", q))
+    # ok: python.xss
+    make_response(j)
+    k = subprocess.check_output(["pwsh", "-ExecutionPolicy", "Bypass", q])
+    # ok: python.xss
+    make_response(k)
+    m = subprocess.check_output(("pwsh", "-ExecutionPolicy", "Bypass", q))
+    # ok: python.xss
+    make_response(m)
+    n = subprocess.check_output(["powershell.exe", "-Version", "5.1", q])
+    # ok: python.xss
+    make_response(n)
+    o = subprocess.check_output(("powershell.exe", "-Version", "5.1", q))
+    # ok: python.xss
+    make_response(o)
+    p = subprocess.check_output(["powershell.exe", "Get-Item", q])
+    # ok: python.xss
+    make_response(p)
+    r = subprocess.check_output(("powershell.exe", "Get-Item", q))
+    # ok: python.xss
+    make_response(r)
+    proc = await asyncio.create_subprocess_exec("cmd", "/c", "dir " + q, stdout=asyncio.subprocess.PIPE)
+    s, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(s)
+    proc = await asyncio.create_subprocess_exec("pwsh", "-Command", "Get-Item " + q, stdout=asyncio.subprocess.PIPE)
+    t, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(t)
+    proc = await asyncio.create_subprocess_exec("pwsh", "-File", q, stdout=asyncio.subprocess.PIPE)
+    u, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(u)
+    proc = await asyncio.create_subprocess_exec("pwsh", q, stdout=asyncio.subprocess.PIPE)
+    v, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(v)
+    proc = await asyncio.create_subprocess_exec("pwsh", "-NoLogo", q, stdout=asyncio.subprocess.PIPE)
+    w, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(w)
+    proc = await asyncio.create_subprocess_exec("pwsh", "-WorkingDirectory", "/srv", q, stdout=asyncio.subprocess.PIPE)
+    x, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(x)
+    proc = await asyncio.create_subprocess_exec("powershell", "-Version", "5.1", q, stdout=asyncio.subprocess.PIPE)
+    y, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(y)
+    proc = await asyncio.create_subprocess_exec("powershell", "Get-Item", q, stdout=asyncio.subprocess.PIPE)
+    z, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(z)
+    held = ["pwsh", "-Command", "Get-Item " + q]
+    # ok: python.xss
+    make_response(subprocess.check_output(held).decode())
+    return "done"
+
+
+# A program string or argument vector that is request data itself, in place, through a variable,
+# or as a view parameter; and the vector unpacked into asyncio.create_subprocess_exec().
+@app.route("/results/vectors/<arg>")
+async def results_vectors(arg):
+    a = subprocess.check_output(args=request.args["tool"])
+    # ok: python.xss
+    make_response(a)
+    tool = request.args["tool"]
+    b = subprocess.check_output(tool)
+    # ok: python.xss
+    make_response(b)
+    form = request.form
+    c = subprocess.check_output(form["tool"])
+    # ok: python.xss
+    make_response(c)
+    d = subprocess.check_output(form["tool"].strip())
+    # ok: python.xss
+    make_response(d)
+    e = subprocess.check_output(form.getlist("argv"))
+    # ok: python.xss
+    make_response(e)
+    f = subprocess.check_output(form.getlist("argv").copy())
+    # ok: python.xss
+    make_response(f)
+    g = subprocess.check_output(shlex.split(tool))
+    # ok: python.xss
+    make_response(g)
+    h = subprocess.check_output(shlex.split(form["line"]))
+    # ok: python.xss
+    make_response(h)
+    text = request.get_data(as_text=True)
+    i = subprocess.check_output(shlex.split(text.strip()))
+    # ok: python.xss
+    make_response(i)
+    j = subprocess.check_output(args=form["tool"])
+    # ok: python.xss
+    make_response(j)
+    k = subprocess.check_output(args=form["tool"].strip())
+    # ok: python.xss
+    make_response(k)
+    m = subprocess.check_output(args=form.getlist("argv"))
+    # ok: python.xss
+    make_response(m)
+    n = subprocess.check_output(args=shlex.split(tool))
+    # ok: python.xss
+    make_response(n)
+    line = form["line"]
+    o = subprocess.check_output(line.split())
+    # ok: python.xss
+    make_response(o)
+    stripped = form["line"].strip()
+    p = subprocess.check_output(shlex.split(stripped))
+    # ok: python.xss
+    make_response(p)
+    listed = form.getlist("argv")
+    r = subprocess.check_output(args=listed)
+    # ok: python.xss
+    make_response(r)
+    t = subprocess.check_output(arg)
+    # ok: python.xss
+    make_response(t)
+    u = subprocess.check_output(arg.lower())
+    # ok: python.xss
+    make_response(u)
+    v = subprocess.check_output(shlex.split(arg))
+    # ok: python.xss
+    make_response(v)
+    w = subprocess.check_output(args=arg)
+    # ok: python.xss
+    make_response(w)
+    proc = await asyncio.create_subprocess_exec(*request.form.getlist("argv"), stdout=asyncio.subprocess.PIPE)
+    x, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(x)
+    vector = shlex.split(request.args["line"])
+    proc = await asyncio.create_subprocess_exec(*vector, stdout=asyncio.subprocess.PIPE)
+    y, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(y)
+    proc = await asyncio.create_subprocess_exec(*form.getlist("argv"), stdout=asyncio.subprocess.PIPE)
+    z, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(z)
+    proc = await asyncio.create_subprocess_exec(*shlex.split(arg), stdout=asyncio.subprocess.PIPE)
+    zz, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(zz)
+    return "done"
+
+
+# The same Windows shells' lists held in a variable, and the remaining program and vector forms.
+@app.route("/results/windows-held")
+async def results_windows_held():
+    q = request.args["q"]
+    a = ("cmd", "/c", "dir " + q)
+    # ok: python.xss
+    make_response(subprocess.check_output(a).decode())
+    b = ("pwsh", "-c", "Get-Item " + q)
+    # ok: python.xss
+    make_response(subprocess.check_output(b).decode())
+    c = ["pwsh", "-cwa", "Get-Item " + q]
+    # ok: python.xss
+    make_response(subprocess.check_output(c).decode())
+    d = ("pwsh", "-CommandWithArgs", "Get-Item " + q)
+    # ok: python.xss
+    make_response(subprocess.check_output(d).decode())
+    e = ["pwsh", q]
+    # ok: python.xss
+    make_response(subprocess.check_output(e).decode())
+    f = ("pwsh", q)
+    # ok: python.xss
+    make_response(subprocess.check_output(f).decode())
+    g = ["pwsh", "-Login", q]
+    # ok: python.xss
+    make_response(subprocess.check_output(g).decode())
+    h = ("pwsh", "-NoExit", q)
+    # ok: python.xss
+    make_response(subprocess.check_output(h).decode())
+    i = ["pwsh", "-WindowStyle", "Hidden", q]
+    # ok: python.xss
+    make_response(subprocess.check_output(i).decode())
+    j = ("pwsh", "-wd", "/srv", q)
+    # ok: python.xss
+    make_response(subprocess.check_output(j).decode())
+    k = ["powershell", "-Version", "5.1", q]
+    # ok: python.xss
+    make_response(subprocess.check_output(k).decode())
+    m = ("powershell", "-version", "5.1", q)
+    # ok: python.xss
+    make_response(subprocess.check_output(m).decode())
+    n = ["powershell", "Get-Item", q]
+    # ok: python.xss
+    make_response(subprocess.check_output(n).decode())
+    o = ("powershell", "Get-Item", q)
+    # ok: python.xss
+    make_response(subprocess.check_output(o).decode())
+    loop = asyncio.get_running_loop()
+    p = await loop.subprocess_exec(Collect, q)
+    # ok: python.xss
+    make_response(p)
+    tool = request.args["tool"]
+    r = subprocess.check_output(args=tool)
+    # ok: python.xss
+    make_response(r)
+    form = request.form
+    picked = form["tool"]
+    s = subprocess.check_output(picked)
+    # ok: python.xss
+    make_response(s)
+    copied = form.getlist("argv").copy()
+    t = subprocess.check_output(copied)
+    # ok: python.xss
+    make_response(t)
+    proc = await asyncio.create_subprocess_exec(*form["argv"], stdout=asyncio.subprocess.PIPE)
+    u, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(u)
+    line = request.args["line"]
+    proc = await asyncio.create_subprocess_exec(*shlex.split(line), stdout=asyncio.subprocess.PIPE)
+    v, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(v)
+    proc = await asyncio.create_subprocess_exec(*shlex.split(form["line"]), stdout=asyncio.subprocess.PIPE)
+    w, _ = await proc.communicate()
+    # ok: python.xss
+    make_response(w)
+    return "done"
+
+
+@api.post("/results/vectors")
+async def fastapi_results_vectors(job: Job, extra: dict):
+    a = subprocess.check_output(job.argv)
+    # ok: python.xss
+    HTMLResponse(a)
+    b = subprocess.check_output(extra["argv"])
+    # ok: python.xss
+    HTMLResponse(b)
+    c = subprocess.check_output(shlex.split(job.line))
+    # ok: python.xss
+    HTMLResponse(c)
+    d = subprocess.check_output(args=job.argv)
+    # ok: python.xss
+    HTMLResponse(d)
+    argv = job.argv
+    e = subprocess.check_output(argv)
+    # ok: python.xss
+    HTMLResponse(e)
+    ee = subprocess.check_output(args=argv)
+    # ok: python.xss
+    HTMLResponse(ee)
+    proc = await asyncio.create_subprocess_exec(*job.argv, stdout=asyncio.subprocess.PIPE)
+    f, _ = await proc.communicate()
+    # ok: python.xss
+    HTMLResponse(f)
+    proc = await asyncio.create_subprocess_exec(*job, stdout=asyncio.subprocess.PIPE)
+    g, _ = await proc.communicate()
+    # ok: python.xss
+    HTMLResponse(g)
+    proc = await asyncio.create_subprocess_exec(*job.lines(), stdout=asyncio.subprocess.PIPE)
+    h, _ = await proc.communicate()
+    # ok: python.xss
+    HTMLResponse(h)
+    proc = await asyncio.create_subprocess_exec(*shlex.split(job.line), stdout=asyncio.subprocess.PIPE)
+    i, _ = await proc.communicate()
+    # ok: python.xss
+    HTMLResponse(i)
+    return "done"
+
+
+def django_results(request):
+    out = subprocess.check_output("finger " + request.GET["user"], shell=True, text=True)
+    # ok: python.xss
+    return HttpResponse("<pre>" + out + "</pre>")
+
+
+def django_results_file(request, name):
+    with open(os.path.join(PAGES, name)) as page:
+        text = page.read()
+    # ok: python.xss
+    return HttpResponse(text)
+
+
+def django_results_fetch(request):
+    page = requests.post(request.POST["hook"], json={"ping": 1}).text
+    # ruleid: python.xss
+    return HttpResponse(page)
+
+
+@api.get("/results/fetch", response_class=HTMLResponse)
+async def fastapi_results_fetch(url: str):
+    async with httpx.AsyncClient() as client:
+        reply = await client.get(url)
+    # ruleid: python.xss
+    return reply.text
+
+
+@api.get("/results/echo")
+async def fastapi_results_echo(msg: str):
+    out = subprocess.check_output(["echo", msg], text=True)
+    # ruleid: python.xss
+    return HTMLResponse("<p>" + out + "</p>")
+
+
+@api.get("/results/shell")
+async def fastapi_results_shell(host: str):
+    out = subprocess.check_output(["bash", "-c", "dig " + host], text=True)
+    # ok: python.xss
+    return HTMLResponse("<pre>" + out + "</pre>")

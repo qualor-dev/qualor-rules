@@ -17,7 +17,11 @@ HTTP request data written into an HTML response without escaping:
   format string of `format_html()`.
 
 Autoescaping templates (`render_template()`, Django's `render()`), JSON responses and escaped values
-are not reported.
+are not reported. Neither is the output of a command that request data chose, nor the content of a
+file it named: those are the findings of the command-injection and path-traversal rules. The
+output of a fixed program given request data (`echo`) and a page fetched from a URL the request
+chooses still count as request data; a page fetched from a fixed origin
+(`"https://api.example.com/items/" + item`) does not.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -106,7 +110,14 @@ def hello(request):
   `(self, request, ...)` in a Django module is taken for one also outside a class: its parameters
   after `request` count as URL arguments.
 - After a `get()` whose key or default is request data, the dict counts as request data for the
-  rest of the function, so a later lookup of a constant entry in it is reported.
+  rest of the function, so a later lookup of a constant entry in it is reported. A `get()` called
+  on a call's result (`requests.Session().get(url)`) passes no request data on.
+- The command positions that make a command's output not count are those the command-injection
+  rule reports. A file read by iterating over it (`for line in f`) or through a helper still
+  counts as request data. A page fetched through a requests Session or httpx Client held in a
+  variable is taken for stored data when an attribute of the response is used
+  (`session.get(url).text`). A fixed origin is recognised only as a literal at the start of the
+  URL; one held in a module constant (`API_BASE + "/items/" + item`) is not.
 <!-- end: known-limits -->
 
 ## References
@@ -143,6 +154,20 @@ def hello(request):
 - <https://starlette.dev/middleware/>
 - <https://starlette.dev/requests/>
 - <https://fastapi.tiangolo.com/tutorial/middleware/>
+- <https://docs.python.org/3/library/subprocess.html>
+- <https://docs.python.org/3/library/os.html#os.popen>
+- <https://docs.python.org/3/library/os.html#process-management>
+- <https://docs.python.org/3/library/asyncio-subprocess.html>
+- <https://docs.python.org/3/library/asyncio-eventloop.html#running-subprocesses>
+- <https://pubs.opengroup.org/onlinepubs/9799919799/utilities/sh.html>
+- <https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd>
+- <https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh>
+- <https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe?view=powershell-5.1>
+- <https://docs.python.org/3/library/functions.html#open>
+- <https://docs.python.org/3/library/pathlib.html>
+- <https://requests.readthedocs.io/en/latest/api/>
+- <https://www.python-httpx.org/api/>
+- <https://docs.python.org/3/library/urllib.request.html>
 
 ## Tests
 
