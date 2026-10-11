@@ -1113,3 +1113,22 @@ func PowerShellOutput(w http.ResponseWriter, r *http.Request) {
 	// ruleid: go.xss
 	w.Write(ps37)
 }
+
+// PowerShell given its arguments as a slice: go.command-injection does not follow slices, so the
+// output stays request data here.
+func PowerShellSlice(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	args := []string{"-NoProfile", "-File", "report.ps1", r.FormValue("name")}
+	viaSlice, _ := exec.Command("pwsh", args...).Output()
+	// ruleid: go.xss
+	w.Write(viaSlice)
+	viaContext, _ := exec.CommandContext(ctx, "powershell.exe", args...).Output()
+	// ruleid: go.xss
+	w.Write(viaContext)
+	viaFile, _ := exec.Command("pwsh", "-NoProfile", "-File", args...).Output()
+	// ruleid: go.xss
+	w.Write(viaFile)
+	viaCwa, _ := exec.CommandContext(ctx, "pwsh", "-cwa", args...).Output()
+	// ruleid: go.xss
+	w.Write(viaCwa)
+}

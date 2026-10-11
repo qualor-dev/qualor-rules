@@ -234,6 +234,30 @@ func PowerShellParams(w http.ResponseWriter, r *http.Request) {
 	// reads as pwsh's.
 	// todook: go.command-injection
 	exec.Command("pwsh", "-NoProfile", "./deploy", "-i", q).Run()
+	// A fixed script given the request value through an argument slice.
+	fixed := []string{"-NoProfile", "-File", "resize.ps1", q}
+	// ok: go.command-injection
+	exec.Command("pwsh", fixed...).Run()
+	// ok: go.command-injection
+	exec.CommandContext(ctx, "powershell.exe", fixed...).Run()
+	rest := []string{"-File", "resize.ps1", q}
+	// ok: go.command-injection
+	exec.Command("pwsh", "-NoProfile", rest...).Run()
+	// ok: go.command-injection
+	exec.CommandContext(ctx, "powershell.exe", "-ExecutionPolicy", "Bypass", rest...).Run()
+	// A slice after -File or -cwa holds the script or command and its arguments; after -Command
+	// it is the command.
+	cmdArgs := []string{"Get-Item", q}
+	// ok: go.command-injection
+	exec.Command("pwsh", "-NoProfile", "-File", rest...).Run()
+	// ok: go.command-injection
+	exec.CommandContext(ctx, "pwsh", "-cwa", cmdArgs...).Run()
+	// ruleid: go.command-injection
+	exec.Command("pwsh", "-NoProfile", "-Command", cmdArgs...).Run()
+	// The arguments given as a slice are not followed, as for the POSIX shells above.
+	tail := []string{"-NoProfile", "-Command", "Get-Item " + q}
+	// todoruleid: go.command-injection
+	exec.Command("pwsh", tail...).Run()
 	// powershell.exe: a positional argument after its switches is not followed.
 	// todoruleid: go.command-injection
 	exec.Command("powershell.exe", "-NoProfile", "Get-ChildItem", q).Run()

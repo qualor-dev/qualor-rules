@@ -506,6 +506,10 @@ rules:
           - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", ..., "=~/(?i)\.ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...)
           - pattern-not: exec.Command("=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
           - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
+          # A slice spread after -cwa or -File holds the command or script and its arguments, which
+          # are not followed (Known limits); after -Command or -EncodedCommand it is the command.
+          - pattern-not: exec.Command($PS, ..., "=~/(?i)^-(cwa|commandwithargs|f|file)$/", $REST...)
+          - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/(?i)^-(cwa|commandwithargs|f|file)$/", $REST...)
           - focus-metavariable: $SCRIPT
       - patterns:
           - pattern-either:
@@ -525,6 +529,9 @@ rules:
           - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", ..., "=~/(?i)\.ps1$/", ..., $SCRIPT, ...)
           - pattern-not: exec.Command("=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
           - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
+          # A spread argument slice (`args...`) is not followed (Known limits).
+          - pattern-not: exec.Command($PS, ..., $REST...)
+          - pattern-not: exec.CommandContext($CTX, $PS, ..., $REST...)
           - focus-metavariable: $SCRIPT
       # URL escaping: the output holds only letters, digits, "-_.~", "%" and "+".
       - pattern: url.QueryEscape(...)

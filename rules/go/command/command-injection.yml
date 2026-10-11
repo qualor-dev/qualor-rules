@@ -51,8 +51,11 @@ rules:
     # - An allow-list written as an `if` check that returns early is not followed: the value
     #   checked is still reported (`todook:`). A switch or map lookup that yields constants is.
     # - os.StartProcess and syscall.Exec are not followed yet (`todoruleid:`).
-    # - Arguments given as a slice (`exec.Command("sh", args...)`) and the arguments of a batch
-    #   file (which cmd.exe parses again) are not followed (`todoruleid:`).
+    # - Arguments given as a slice (`exec.Command("sh", args...)`, `exec.Command("pwsh", args...)`)
+    #   and the arguments of a batch file (which cmd.exe parses again) are not followed
+    #   (`todoruleid:`); neither is a slice after PowerShell's -File or -CommandWithArgs, which holds
+    #   the script or command with its arguments (`ok:`). A slice spread right after -Command or
+    #   -EncodedCommand is taken for the command.
     # - PowerShell parameters are recognised by the names about_pwsh lists (-Command/-c,
     #   -CommandWithArgs/-cwa, -EncodedCommand/-e/-ec, -File/-f; any case), for pwsh and
     #   powershell.exe alike; other prefixes such as `-enc` are not (`todoruleid:`). For pwsh, a
@@ -271,6 +274,10 @@ rules:
           - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", ..., "=~/(?i)\.ps1$/", ..., "=~/(?i)^-(c|command|cwa|commandwithargs|e|ec|encodedcommand|f|file)$/", ..., $SCRIPT, ...)
           - pattern-not: exec.Command("=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
           - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
+          # A slice spread after -cwa or -File holds the command or script and its arguments, which
+          # are not followed (Known limits); after -Command or -EncodedCommand it is the command.
+          - pattern-not: exec.Command($PS, ..., "=~/(?i)^-(cwa|commandwithargs|f|file)$/", $REST...)
+          - pattern-not: exec.CommandContext($CTX, $PS, ..., "=~/(?i)^-(cwa|commandwithargs|f|file)$/", $REST...)
           - focus-metavariable: $SCRIPT
       # The first positional argument, before any command parameter: for pwsh the script to run
       # (File is the default parameter), for powershell.exe a script or a command. Positional
@@ -298,6 +305,9 @@ rules:
           - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", ..., "=~/(?i)\.ps1$/", ..., $SCRIPT, ...)
           - pattern-not: exec.Command("=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
           - pattern-not: exec.CommandContext($CTX, "=~/(?i)^(.*[^a-z0-9])?pwsh(\.exe)?$/", "=~/^[^-]/", ..., $SCRIPT, ...)
+          # A spread argument slice (`args...`) is not followed (Known limits).
+          - pattern-not: exec.Command($PS, ..., $REST...)
+          - pattern-not: exec.CommandContext($CTX, $PS, ..., $REST...)
           - focus-metavariable: $SCRIPT
       # The program itself: the name or path given to Command or CommandContext, or Cmd.Path.
       - patterns:

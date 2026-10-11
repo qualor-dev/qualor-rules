@@ -105,8 +105,10 @@ func Archive(w http.ResponseWriter, r *http.Request) {
 - An allow-list written as an `if` check that returns early is not recognised: the checked value
   is still reported. A `switch` or map lookup that yields constants is recognised.
 - `os.StartProcess` and `syscall.Exec` are not checked yet.
-- Arguments passed as a slice (`exec.Command("sh", args...)`) and the arguments of a Windows batch
-  file are not followed.
+- Arguments passed as a slice (`exec.Command("sh", args...)`, `exec.Command("pwsh", args...)`)
+  and the arguments of a Windows batch file are not followed. A slice after PowerShell's `-File`
+  or `-CommandWithArgs` is not followed either; a slice right after `-Command` or
+  `-EncodedCommand` counts as the command.
 - PowerShell's parameters are recognised under the names its documentation lists
   (`-Command`/`-c`, `-CommandWithArgs`/`-cwa`, `-EncodedCommand`/`-e`/`-ec`, `-File`/`-f`), not
   under other abbreviations such as `-enc` or `-Comm`.
