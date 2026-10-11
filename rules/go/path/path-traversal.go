@@ -1,8 +1,11 @@
 package files
 
 import (
+	"bytes"
 	"embed"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -18,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/mux"
 	"github.com/labstack/echo/v4"
@@ -257,6 +261,124 @@ func EchoFiles(c echo.Context) error {
 	c.Attachment(filepath.Join(baseDir, "report.pdf"), c.QueryParam("name"))
 	// ok: go.path-traversal
 	return c.File(filepath.Join(baseDir, filepath.Base(c.Param("name"))))
+}
+
+// A bind or decode call inside a condition (`if c.ShouldBindJSON(&in) == nil`) fills the struct
+// with request data like the `err :=` form. A bound value used only in a comparison does not
+// taint what the branch chooses.
+type PathInput struct {
+	Name string   `json:"name" query:"name"`
+	Dir  string   `json:"dir" query:"dir"`
+	Mode string   `json:"mode" query:"mode"`
+	Tags []string `json:"tags" query:"tags"`
+}
+
+func GinBindInCondition(c *gin.Context) {
+	var in PathInput
+	if c.ShouldBindJSON(&in) == nil {
+		// ruleid: go.path-traversal
+		os.ReadFile(filepath.Join(baseDir, in.Name))
+	}
+	var query PathInput
+	if c.ShouldBindQuery(&query) != nil {
+		return
+	}
+	// ruleid: go.path-traversal
+	os.Open(baseDir + "/" + query.Dir)
+	target := new(PathInput)
+	if c.ShouldBind(target) == nil && target.Name != "" {
+		// ruleid: go.path-traversal
+		os.Remove(filepath.Join(baseDir, target.Name))
+	}
+	var strict PathInput
+	if errors.Is(c.ShouldBindJSON(&strict), io.EOF) {
+		return
+	}
+	// ruleid: go.path-traversal
+	os.WriteFile(filepath.Join(baseDir, strict.Name), []byte("draft"), 0o644)
+	var empty PathInput
+	if c.ShouldBindJSON(&empty) == io.EOF {
+		return
+	}
+	// ruleid: go.path-traversal
+	os.Create(filepath.Join(baseDir, empty.Name))
+	var forced PathInput
+	if c.MustBindWith(&forced, binding.JSON) != nil {
+		return
+	}
+	// ruleid: go.path-traversal
+	c.File(filepath.Join(baseDir, forced.Name))
+	// The bound values only compared: the branches choose constants.
+	dir := "public"
+	if query.Mode == "private" {
+		dir = "private"
+	}
+	// ok: go.path-traversal
+	os.Open(filepath.Join(baseDir, dir))
+	verbose := in.Mode == "verbose" && in.Name != ""
+	// ok: go.path-traversal
+	os.Open(map[bool]string{true: "/var/log/app/debug.log", false: "/var/log/app/info.log"}[verbose])
+	tagged := in.Tags != nil
+	// ok: go.path-traversal
+	os.Open(fmt.Sprintf("%s/tagged-%t.txt", baseDir, tagged))
+	switch query.Mode {
+	case "private":
+		// ok: go.path-traversal
+		os.Open(filepath.Join(baseDir, "private"))
+	}
+	// Other comparisons with nil, and calls that fill a variable, stay booleans.
+	multi := c.QueryArray("file") != nil
+	// ok: go.path-traversal
+	os.Open(fmt.Sprintf("%s/multi-%t.txt", baseDir, multi))
+	raw, _ := c.GetRawData()
+	var level uint32
+	known := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &level) == nil
+	// ok: go.path-traversal
+	os.Open(fmt.Sprintf("%s/known-%t.txt", baseDir, known))
+	// The success flag of a bind call is reported: the comparison holds the bind call, and
+	// the call's result counts as request data.
+	var draft PathInput
+	parsed := c.ShouldBindJSON(&draft) == nil
+	// todook: go.path-traversal
+	os.Open(fmt.Sprintf("%s/valid-%t.txt", baseDir, parsed))
+}
+
+func EchoBindInCondition(c echo.Context) error {
+	var in PathInput
+	if c.Bind(&in) != nil {
+		return nil
+	}
+	// ruleid: go.path-traversal
+	os.Open(filepath.Join(baseDir, in.Name))
+	var filter PathInput
+	if echo.BindQueryParams(c, &filter) == nil {
+		// ruleid: go.path-traversal
+		c.Attachment(filepath.Join(baseDir, filter.Name), "report.pdf")
+	}
+	report := "daily.pdf"
+	if filter.Mode == "weekly" {
+		report = "weekly.pdf"
+	}
+	// ok: go.path-traversal
+	return c.File(filepath.Join(baseDir, report))
+}
+
+func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
+	var in PathInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		return
+	}
+	// ruleid: go.path-traversal
+	http.ServeFile(w, r, filepath.Join(baseDir, in.Name))
+	body, _ := io.ReadAll(r.Body)
+	var sub PathInput
+	if json.Unmarshal(body, &sub) == nil {
+		// ruleid: go.path-traversal
+		os.ReadFile(filepath.Join(baseDir, sub.Name))
+	}
+	archived := in.Mode == "archive"
+	// ok: go.path-traversal
+	os.Open(fmt.Sprintf("%s/archived-%t.txt", baseDir, archived))
 }
 
 // Test support: a handler inside a function that takes a *testing.T, *testing.B, *testing.F,
