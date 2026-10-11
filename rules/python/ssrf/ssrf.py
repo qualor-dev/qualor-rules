@@ -524,6 +524,8 @@ class ProxyMiddleware(BaseHTTPMiddleware):
         requests.get(incoming.url.scheme)
         # ok: python.ssrf
         requests.get(str(incoming.url.port))
+        # ok: python.ssrf
+        requests.get(str(incoming.url.is_secure))
         return await call_next(incoming)
 
 

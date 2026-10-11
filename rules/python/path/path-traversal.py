@@ -464,6 +464,8 @@ class UploadMiddleware(BaseHTTPMiddleware):
         open(os.path.join(UPLOAD_FOLDER, incoming.url.scheme))
         # ok: python.path-traversal
         open(os.path.join(UPLOAD_FOLDER, str(incoming.url.port)))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, str(incoming.url.is_secure)))
         return await call_next(incoming)
 
 

@@ -705,6 +705,8 @@ class AuditMiddleware(BaseHTTPMiddleware):
         sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.scheme + "')")
         # ok: python.sql-injection
         sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + str(incoming.url.port) + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + str(incoming.url.is_secure) + "')")
         return await call_next(incoming)
 
 

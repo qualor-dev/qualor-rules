@@ -587,11 +587,11 @@ rules:
                       - pattern: $PARAM[$LOWER:$UPPER]
       # Starlette and FastAPI middleware (a BaseHTTPMiddleware's dispatch(), an
       # @app.middleware("http") function) runs for every request and is not a view: the URL of
-      # the request it receives (its path, query, host, the whole URL; not its scheme or port),
-      # its query parameters, path parameters, headers, cookies and body, and a slice of the path
-      # in place. (Flask's before_request hooks read flask.request, a source above.) The
-      # middleware is written as an exclusion, "not outside one", so that this item adds a
-      # single condition to the formula OpenGrep builds its prefilter from.
+      # the request it receives (its path, query, host, the whole URL; not its scheme, port or
+      # is_secure), its query parameters, path parameters, headers, cookies and body, and a
+      # slice of the path in place. (Flask's before_request hooks read flask.request, a source
+      # above.) The middleware is written as an exclusion, "not outside one", so that this item
+      # adds a single condition to the formula OpenGrep builds its prefilter from.
       - patterns:
           - pattern-either:
               - pattern: $REQ.url
@@ -632,6 +632,7 @@ rules:
                       ...
           - pattern-not-inside: $REQ.url.scheme
           - pattern-not-inside: $REQ.url.port
+          - pattern-not-inside: $REQ.url.is_secure
       # (End of the shared Python source block; the items below are this rule's own.)
       # Starlette and FastAPI middleware beyond the shared item above (the path may be
       # "//evil.example/"): the path itself, a slice of a variable assigned it (OpenGrep does not
@@ -655,11 +656,13 @@ rules:
                   def __call__(self, $REQ, $RECEIVE, $SEND):
                     ...
           - pattern-either:
-              # The path itself again: below, the request's URL in a function whose parameter is
-              # annotated Request is this site's URL (a sanitizer), which a middleware function
-              # may be too; the path inside it is still request data.
+              # The path and the query string again: below, the request's own URL in a view or a
+              # middleware is this site's URL (a sanitizer); the path and query inside it are still
+              # request data ("//evil.example" names another host).
               - patterns:
-                  - pattern: $REQ.url.path
+                  - pattern-either:
+                      - pattern: $REQ.url.path
+                      - pattern: $REQ.url.query
                   - pattern-not-inside: |
                       def __call__(self, $REQ, $RECEIVE, $SEND):
                         ...
@@ -1347,6 +1350,8 @@ rules:
           - pattern-not: $REQ.url.replace(..., hostname=$VALUE, ...)
           - pattern-not: $REQ.url.replace(..., username=$VALUE, ...)
           - pattern-not: $REQ.url.replace(..., password=$VALUE, ...)
+      # The request's own URL and base URL (absolute, with this site's host) in a view or a
+      # middleware; in middleware the path is request data again (a source above).
       - patterns:
           - pattern-either:
               - pattern-inside: |
@@ -1354,6 +1359,15 @@ rules:
                     ...
               - pattern-inside: |
                   def $VIEW(..., $REQ: starlette.requests.Request, ...):
+                    ...
+              - pattern-inside: |
+                  class $MW(..., starlette.middleware.base.BaseHTTPMiddleware, ...):
+                    ...
+                    def dispatch(self, $REQ, $CALL_NEXT):
+                      ...
+              - pattern-inside: |
+                  @$APP.middleware("http")
+                  def $VIEW($REQ, $CALL_NEXT):
                     ...
           - pattern-either:
               - pattern: $REQ.url

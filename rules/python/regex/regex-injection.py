@@ -342,6 +342,8 @@ class FilterMiddleware(BaseHTTPMiddleware):
         re.compile(incoming.url.scheme)
         # ok: python.regex-injection
         re.compile(str(incoming.url.port))
+        # ok: python.regex-injection
+        re.compile(str(incoming.url.is_secure))
         return await call_next(incoming)
 
 

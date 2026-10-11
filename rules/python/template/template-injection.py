@@ -394,6 +394,8 @@ class BannerMiddleware(BaseHTTPMiddleware):
         jinja2.Template(incoming.url.scheme)
         # ok: python.template-injection
         jinja2.Template(str(incoming.url.port))
+        # ok: python.template-injection
+        jinja2.Template(str(incoming.url.is_secure))
         return await call_next(incoming)
 
 

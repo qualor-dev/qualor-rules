@@ -673,6 +673,8 @@ class PingMiddleware(BaseHTTPMiddleware):
         os.system("ping -c 1 " + incoming.url.scheme)
         # ok: python.command-injection
         os.system("ping -c 1 " + str(incoming.url.port))
+        # ok: python.command-injection
+        os.system("ping -c 1 " + str(incoming.url.is_secure))
         return await call_next(incoming)
 
 

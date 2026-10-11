@@ -1260,6 +1260,8 @@ class NoticeMiddleware(BaseHTTPMiddleware):
         HTMLResponse("<p>" + incoming.url.scheme + "</p>")
         # ok: python.xss
         HTMLResponse("<p>" + str(incoming.url.port) + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + str(incoming.url.is_secure) + "</p>")
         return await call_next(incoming)
 
 

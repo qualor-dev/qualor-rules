@@ -331,6 +331,8 @@ class CalcMiddleware(BaseHTTPMiddleware):
         eval(incoming.url.scheme)
         # ok: python.code-injection
         eval(str(incoming.url.port))
+        # ok: python.code-injection
+        eval(str(incoming.url.is_secure))
         return await call_next(incoming)
 
 

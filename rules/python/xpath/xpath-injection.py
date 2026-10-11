@@ -449,6 +449,8 @@ class CatalogMiddleware(BaseHTTPMiddleware):
         etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.scheme + "']")
         # ok: python.xpath-injection
         etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + str(incoming.url.port) + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + str(incoming.url.is_secure) + "']")
         return await call_next(incoming)
 
 

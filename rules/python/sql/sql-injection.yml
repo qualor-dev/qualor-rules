@@ -519,11 +519,11 @@ rules:
                       - pattern: $PARAM[$LOWER:$UPPER]
       # Starlette and FastAPI middleware (a BaseHTTPMiddleware's dispatch(), an
       # @app.middleware("http") function) runs for every request and is not a view: the URL of
-      # the request it receives (its path, query, host, the whole URL; not its scheme or port),
-      # its query parameters, path parameters, headers, cookies and body, and a slice of the path
-      # in place. (Flask's before_request hooks read flask.request, a source above.) The
-      # middleware is written as an exclusion, "not outside one", so that this item adds a
-      # single condition to the formula OpenGrep builds its prefilter from.
+      # the request it receives (its path, query, host, the whole URL; not its scheme, port or
+      # is_secure), its query parameters, path parameters, headers, cookies and body, and a
+      # slice of the path in place. (Flask's before_request hooks read flask.request, a source
+      # above.) The middleware is written as an exclusion, "not outside one", so that this item
+      # adds a single condition to the formula OpenGrep builds its prefilter from.
       - patterns:
           - pattern-either:
               - pattern: $REQ.url
@@ -564,6 +564,7 @@ rules:
                       ...
           - pattern-not-inside: $REQ.url.scheme
           - pattern-not-inside: $REQ.url.port
+          - pattern-not-inside: $REQ.url.is_secure
     # dict.get(): the lookup carries the request data of its key and of its default. OpenGrep's
     # --taint-intrafile mode reads get() as a read of the dict and would drop both, so the dict
     # takes them on (a constant allow-list is still cleaned by the sanitizer below).

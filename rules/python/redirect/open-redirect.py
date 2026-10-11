@@ -1350,12 +1350,21 @@ class MovedMiddleware(BaseHTTPMiddleware):
         RedirectResponse(incoming.cookies["value"])
         # ruleid: python.open-redirect
         RedirectResponse(incoming.url.query)
-        # ruleid: python.open-redirect
+        # The request's own URL is this site's URL (also made https, or with a literal host); its
+        # host alone is a relative path.
+        # ok: python.open-redirect
         RedirectResponse(str(incoming.url))
-        # ruleid: python.open-redirect
+        # ok: python.open-redirect
         RedirectResponse(f"{incoming.url}")
-        # ruleid: python.open-redirect
+        # ok: python.open-redirect
+        RedirectResponse(str(incoming.url).replace("http://", "https://", 1))
+        # ok: python.open-redirect
+        RedirectResponse(str(incoming.url.replace(hostname="example.com")))
+        # ok: python.open-redirect
         RedirectResponse(incoming.url.hostname)
+        # A host taken from the request is not.
+        # ruleid: python.open-redirect
+        RedirectResponse(str(incoming.url.replace(hostname=incoming.query_params["host"])))
         # ruleid: python.open-redirect
         RedirectResponse((await incoming.body()).decode())
         # The scheme is http or https; the port is a number.
@@ -1363,6 +1372,8 @@ class MovedMiddleware(BaseHTTPMiddleware):
         RedirectResponse(incoming.url.scheme)
         # ok: python.open-redirect
         RedirectResponse(str(incoming.url.port))
+        # ok: python.open-redirect
+        RedirectResponse(str(incoming.url.is_secure))
         return await call_next(incoming)
 
 
@@ -1387,6 +1398,11 @@ async def moved_middleware(incoming, call_next):
     # missed.
     # todoruleid: python.open-redirect
     RedirectResponse(incoming.query_params["q"][:40])
+    # The request's own URL, also made https, is this site's URL.
+    # ok: python.open-redirect
+    RedirectResponse(str(incoming.url))
+    # ok: python.open-redirect
+    RedirectResponse(incoming.url.replace(scheme="https"))
     # A slice of a variable assigned the path, and of the scope's path, are request data too.
     path = incoming.url.path
     # ruleid: python.open-redirect

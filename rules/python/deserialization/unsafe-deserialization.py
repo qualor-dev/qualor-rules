@@ -418,6 +418,8 @@ class SessionMiddleware(BaseHTTPMiddleware):
         pickle.loads(incoming.url.scheme)
         # ok: python.unsafe-deserialization
         pickle.loads(str(incoming.url.port))
+        # ok: python.unsafe-deserialization
+        pickle.loads(str(incoming.url.is_secure))
         return await call_next(incoming)
 
 
