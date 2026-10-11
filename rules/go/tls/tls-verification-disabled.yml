@@ -110,6 +110,71 @@ rules:
                   $CFG.VerifyPeerCertificate = $VC
                   ...
                   $CFG.InsecureSkipVerify = $V
+              # The config's literal sets the callback (`$CFG = ...` also matches `:=` and `var`),
+              # unless the callback is empty: written in place, or a variable or named function
+              # of the file whose body is only `return nil` (as in the branches below).
+              - pattern-not-inside:
+                  patterns:
+                    - pattern-either:
+                        - pattern: |
+                            $CFG = &tls.Config{..., VerifyConnection: $VC, ...}
+                            ...
+                            $CFG.InsecureSkipVerify = $V
+                        - pattern: |
+                            $CFG = &tls.Config{..., VerifyPeerCertificate: $VC, ...}
+                            ...
+                            $CFG.InsecureSkipVerify = $V
+                        - pattern: |
+                            $CFG = tls.Config{..., VerifyConnection: $VC, ...}
+                            ...
+                            $CFG.InsecureSkipVerify = $V
+                        - pattern: |
+                            $CFG = tls.Config{..., VerifyPeerCertificate: $VC, ...}
+                            ...
+                            $CFG.InsecureSkipVerify = $V
+                    - pattern-not: |
+                        $CFG = &tls.Config{..., VerifyConnection: func(...) error { return nil }, ...}
+                        ...
+                        $CFG.InsecureSkipVerify = $V
+                    - pattern-not: |
+                        $CFG = &tls.Config{..., VerifyPeerCertificate: func(...) error { return nil }, ...}
+                        ...
+                        $CFG.InsecureSkipVerify = $V
+                    - pattern-not: |
+                        $CFG = tls.Config{..., VerifyConnection: func(...) error { return nil }, ...}
+                        ...
+                        $CFG.InsecureSkipVerify = $V
+                    - pattern-not: |
+                        $CFG = tls.Config{..., VerifyPeerCertificate: func(...) error { return nil }, ...}
+                        ...
+                        $CFG.InsecureSkipVerify = $V
+                    - pattern-not-inside:
+                        patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $VC = func(...) error { return nil }
+                                  ...
+                              - pattern-inside: |
+                                  func $VC(...) error { return nil }
+                                  ...
+                              - pattern-inside: |
+                                  func $F(...) { ... }
+                                  ...
+                                  func $VC(...) error { return nil }
+                          - pattern-not-inside: |
+                              func ($RCV $RT) $VC(...) error { return nil }
+                              ...
+                          - pattern-not-inside: |
+                              func $F(...) { ... }
+                              ...
+                              func ($RCV $RT) $VC(...) error { return nil }
+                          - pattern-not-inside: |
+                              func ($RT) $VC(...) error { return nil }
+                              ...
+                          - pattern-not-inside: |
+                              func $F(...) { ... }
+                              ...
+                              func ($RT) $VC(...) error { return nil }
           # A verification callback whose body is only `return nil` verifies nothing: with
           # InsecureSkipVerify its verifiedChains are nil (crypto/tls docs), so it trusts all.
           - patterns:

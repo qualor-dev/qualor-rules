@@ -243,6 +243,103 @@ func Audited(addr string) {
 
 func (auditor) inspectPeer(tls.ConnectionState) error { return nil }
 
+// A callback set in the literal, then InsecureSkipVerify assigned to the same config.
+func LiteralCallbacks(addr string) {
+	pinned := &tls.Config{VerifyConnection: verifyAgainstSystem}
+	// ok: go.tls-verification-disabled
+	pinned.InsecureSkipVerify = true
+	tls.Dial("tcp", addr, pinned)
+	byValue := tls.Config{VerifyPeerCertificate: skipChainCheckStrict}
+	// ok: go.tls-verification-disabled
+	byValue.InsecureSkipVerify = true
+	var declared = &tls.Config{
+		VerifyConnection: func(cs tls.ConnectionState) error {
+			_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{DNSName: cs.ServerName})
+			return err
+		},
+	}
+	// ok: go.tls-verification-disabled
+	declared.InsecureSkipVerify = true
+	var reused *tls.Config
+	reused = &tls.Config{VerifyConnection: checkPeer}
+	// ok: go.tls-verification-disabled
+	reused.InsecureSkipVerify = true
+	// The callback belongs to another config.
+	_ = &tls.Config{VerifyConnection: verifyAgainstSystem}
+	bare := &tls.Config{}
+	// ruleid: go.tls-verification-disabled
+	bare.InsecureSkipVerify = true
+	// Empty callbacks still verify nothing: in the literal, in a variable, as a named function.
+	empty := &tls.Config{VerifyConnection: func(tls.ConnectionState) error { return nil }}
+	// ruleid: go.tls-verification-disabled
+	empty.InsecureSkipVerify = true
+	noop := func(cs tls.ConnectionState) error { return nil }
+	viaVar := &tls.Config{VerifyConnection: noop}
+	// ruleid: go.tls-verification-disabled
+	viaVar.InsecureSkipVerify = true
+	viaPackageVar := tls.Config{VerifyConnection: trustEveryone}
+	// ruleid: go.tls-verification-disabled
+	viaPackageVar.InsecureSkipVerify = true
+	viaFunc := &tls.Config{VerifyPeerCertificate: skipChainCheck}
+	// ruleid: go.tls-verification-disabled
+	viaFunc.InsecureSkipVerify = true
+	viaLaterVar := &tls.Config{VerifyConnection: allowAnyPeer}
+	// ruleid: go.tls-verification-disabled
+	viaLaterVar.InsecureSkipVerify = true
+	emptyPeer := &tls.Config{VerifyPeerCertificate: func([][]byte, [][]*x509.Certificate) error { return nil }}
+	// ruleid: go.tls-verification-disabled
+	emptyPeer.InsecureSkipVerify = true
+	emptyValue := tls.Config{VerifyConnection: func(tls.ConnectionState) error { return nil }}
+	// ruleid: go.tls-verification-disabled
+	emptyValue.InsecureSkipVerify = true
+	emptyPeerValue := tls.Config{VerifyPeerCertificate: func([][]byte, [][]*x509.Certificate) error { return nil }}
+	// ruleid: go.tls-verification-disabled
+	emptyPeerValue.InsecureSkipVerify = true
+	viaLaterFunc := &tls.Config{VerifyConnection: acceptLater}
+	// ruleid: go.tls-verification-disabled
+	viaLaterFunc.InsecureSkipVerify = true
+	// Checking callbacks in the other literal forms, and package functions that share their
+	// name with an empty method of another type.
+	peerChecked := &tls.Config{VerifyPeerCertificate: skipChainCheckStrict}
+	// ok: go.tls-verification-disabled
+	peerChecked.InsecureSkipVerify = true
+	connChecked := tls.Config{VerifyConnection: verifyAgainstSystem}
+	// ok: go.tls-verification-disabled
+	connChecked.InsecureSkipVerify = true
+	audited := &tls.Config{VerifyConnection: inspectPeer}
+	// ok: go.tls-verification-disabled
+	audited.InsecureSkipVerify = true
+	reviewed := &tls.Config{VerifyConnection: reviewPeer}
+	// ok: go.tls-verification-disabled
+	reviewed.InsecureSkipVerify = true
+	screened := &tls.Config{VerifyConnection: screenPeer}
+	// ok: go.tls-verification-disabled
+	screened.InsecureSkipVerify = true
+}
+
+func acceptLater(tls.ConnectionState) error { return nil }
+
+func (a *auditor) reviewPeer(tls.ConnectionState) error { return nil }
+
+func (auditor) screenPeer(tls.ConnectionState) error { return nil }
+
+func reviewPeer(cs tls.ConnectionState) error {
+	_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{DNSName: cs.ServerName})
+	return err
+}
+
+func screenPeer(cs tls.ConnectionState) error {
+	_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{DNSName: cs.ServerName})
+	return err
+}
+
+func skipChainCheckStrict(raw [][]byte, chains [][]*x509.Certificate) error {
+	if len(chains) == 0 {
+		return errors.New("certificate not verified")
+	}
+	return nil
+}
+
 func checkPeer(cs tls.ConnectionState) error {
 	_, err := cs.PeerCertificates[0].Verify(x509.VerifyOptions{DNSName: cs.ServerName})
 	return err

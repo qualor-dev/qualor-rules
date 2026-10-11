@@ -10,7 +10,8 @@
 <!-- begin: what-it-finds -->
 `tls.Config` values with `InsecureSkipVerify: true`, written in a literal or assigned later
 (`cfg.InsecureSkipVerify = true`), including through a constant, unless the same config also sets
-`VerifyConnection` to check the certificates itself. A callback that only returns `nil` checks
+`VerifyConnection` or `VerifyPeerCertificate` to check the certificates itself, in its literal or
+assigned before or after. A callback that only returns `nil` checks
 nothing, so it does not count: written in place, held in a variable, or declared as a function of
 the same file.
 <!-- end: what-it-finds -->
