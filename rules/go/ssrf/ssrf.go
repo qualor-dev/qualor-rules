@@ -332,6 +332,41 @@ func JoinedValue(origin url.URL, w http.ResponseWriter, r *http.Request) {
 	http.Get(origin.JoinPath("items", r.FormValue("id")).String())
 }
 
+// A URL returned by a function or method of this file (OpenGrep does not type call results).
+func catalogURL() *url.URL { return &url.URL{Scheme: "https", Host: catalogName} }
+
+func (p *Proxy) mirrorURL() url.URL { return url.URL{Scheme: "https", Host: catalogName} }
+
+func requestURL(r *http.Request) *url.URL {
+	u, _ := url.Parse(r.FormValue("upstream"))
+	return u
+}
+
+func JoinedResult(p *Proxy, w http.ResponseWriter, r *http.Request) {
+	// ok: go.ssrf
+	http.Get(catalogURL().JoinPath("items", r.FormValue("id")).String())
+	// ok: go.ssrf
+	http.Get(p.mirrorURL().JoinPath(r.FormValue("id")).String())
+	held := catalogURL()
+	// ok: go.ssrf
+	http.Get(held.JoinPath("items", r.FormValue("id")).String())
+	mirror := p.mirrorURL()
+	// ok: go.ssrf
+	http.Get(mirror.JoinPath(r.FormValue("id")).String())
+	// Another receiver in the same function: a JoinPath of another type.
+	site := Endpoint(catalogHost)
+	// ruleid: go.ssrf
+	http.Get(site.JoinPath(r.FormValue("path")))
+	// A function declared later in the file is not recognised.
+	// todook: go.ssrf
+	http.Get(archiveURL().JoinPath(r.FormValue("id")).String())
+	// The base itself from a function that returns request data.
+	// ruleid: go.ssrf
+	http.Get(requestURL(r).JoinPath("status").String())
+}
+
+func archiveURL() *url.URL { return &url.URL{Scheme: "https", Host: "archive.example.com"} }
+
 // A URL parsed in a `var` declaration (here at package level) is not recognised as a net/url
 // receiver.
 var statusBase, _ = url.Parse(catalogAPI)

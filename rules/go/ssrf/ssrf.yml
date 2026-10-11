@@ -61,10 +61,12 @@ rules:
     #   anything after a literal "?" or "#", are clean; a path cut with strings.TrimPrefix or
     #   kept in a variable first is not (`todook:`).
     # - JoinPath elements are path segments only for a net/url receiver: typed (a parameter, or a
-    #   variable made from a url.URL literal) or parsed with url.Parse in the same function; a
-    #   JoinPath method of another type is followed like any code. A URL parsed in a `var`
-    #   declaration (`var base, _ = url.Parse(...)`, at package level too) is not recognised, so
-    #   request data joined to it is reported (`todook:`).
+    #   variable made from a url.URL literal), parsed with url.Parse in the same function, or the
+    #   result of a function or method declared earlier in the file with a *url.URL or url.URL
+    #   result; a JoinPath method of another type is followed like any code. A URL parsed in a
+    #   `var` declaration (`var base, _ = url.Parse(...)`, at package level too), and the result
+    #   of a function declared later in the file, are not recognised, so request data joined to
+    #   them is reported (`todook:`).
     # - A URL assembled in a strings.Builder or bytes.Buffer counts as a whole: a fixed origin
     #   written first does not make it clean, and a builder holding a path after an origin
     #   without a separator is reported (`todook:`). fmt.Fprintf into a builder is not followed
@@ -308,8 +310,10 @@ rules:
           - focus-metavariable: $V
       # Path elements given to JoinPath (net/url: joined, cleaned of ../ and repeated "/", and
       # escaped), but not the base of url.JoinPath. The method's receiver is a net/url URL: typed
-      # (OpenGrep also types a variable made from a url.URL literal), or parsed in the same
-      # function (`$U, $E = ...` also matches `:=`).
+      # (OpenGrep also types a variable made from a url.URL literal), parsed in the same
+      # function (`$U, $E = ...` also matches `:=`), or the result of a function or method
+      # declared earlier in the file with a *url.URL or url.URL result (OpenGrep does not type
+      # call results), called in place or held in a variable first.
       - patterns:
           - pattern-either:
               - pattern-inside: '($U : *url.URL).JoinPath(..., $ELEM, ...)'
@@ -319,6 +323,26 @@ rules:
                       $U, $E = url.Parse(...)
                       ...
                   - pattern-inside: $U.JoinPath(..., $ELEM, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          func $FN(...) *url.URL { ... }
+                          ...
+                      - pattern-inside: |
+                          func $FN(...) url.URL { ... }
+                          ...
+                  - pattern-either:
+                      - pattern-inside: $FN(...).JoinPath(..., $ELEM, ...)
+                      - pattern-inside: $R.$FN(...).JoinPath(..., $ELEM, ...)
+                      - patterns:
+                          - pattern-either:
+                              - pattern-inside: |
+                                  $U = $FN(...)
+                                  ...
+                              - pattern-inside: |
+                                  $U = $R.$FN(...)
+                                  ...
+                          - pattern-inside: $U.JoinPath(..., $ELEM, ...)
           - pattern: $ELEM
       - patterns:
           - pattern-inside: url.JoinPath($BASE, ..., $ELEM, ...)

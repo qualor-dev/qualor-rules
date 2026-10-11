@@ -116,9 +116,10 @@ func Fetch(w http.ResponseWriter, r *http.Request) {
   that starts with `/`; a path cut with `strings.TrimPrefix` or kept in a variable first is
   reported. URLs assembled in a `strings.Builder` or `bytes.Buffer` are judged as a whole, and
   `fmt.Fprintf` into a builder is not followed.
-- `JoinPath` elements count as path segments when the URL is typed as a `net/url` URL or parsed
-  with `url.Parse` in the same function. A URL parsed in a `var` declaration
-  (`var base, _ = url.Parse(...)`) is not recognised, so request data joined to it is reported.
+- `JoinPath` elements count as path segments when the URL is typed as a `net/url` URL, parsed
+  with `url.Parse` in the same function, or returned by a function declared earlier in the file.
+  A URL parsed in a `var` declaration (`var base, _ = url.Parse(...)`) or returned by a function
+  declared further down the file is not recognised, so request data joined to it is reported.
 - A `Director` written as a method or as a function declared elsewhere is not followed (a
   function literal in the proxy, or held in a variable of the same function, is), and a proxy
   that picks its backend from the `Host` header (`req.URL.Host = req.Host`) is missed. HTTP clients
