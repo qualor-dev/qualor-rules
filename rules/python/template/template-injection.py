@@ -1,3 +1,4 @@
+from starlette.middleware.base import BaseHTTPMiddleware
 import json
 import string
 from typing import Annotated
@@ -364,3 +365,82 @@ async def footer(
     # ruleid: python.template-injection
     d = jinja2.Template("<title>" + title + "</title>").render()
     return a + b + c + d
+
+
+# Middleware runs for every request and is not a view: a Starlette BaseHTTPMiddleware's
+# dispatch() and a FastAPI @app.middleware("http") function.
+class BannerMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, incoming, call_next):
+        # ruleid: python.template-injection
+        jinja2.Template(incoming.query_params["q"])
+        # ruleid: python.template-injection
+        jinja2.Template(incoming.path_params["item"])
+        # ruleid: python.template-injection
+        jinja2.Template(incoming.headers["X-Value"])
+        # ruleid: python.template-injection
+        jinja2.Template(incoming.cookies["value"])
+        # ruleid: python.template-injection
+        jinja2.Template(incoming.url.query)
+        # ruleid: python.template-injection
+        jinja2.Template((await incoming.body()).decode())
+        # The scheme is http or https.
+        # ok: python.template-injection
+        jinja2.Template(incoming.url.scheme)
+        return await call_next(incoming)
+
+
+@api.middleware("http")
+async def banner_middleware(incoming, call_next):
+    # ruleid: python.template-injection
+    jinja2.Template(incoming.url.path)
+    # ruleid: python.template-injection
+    jinja2.Template(incoming.url.path[1:])
+    # ruleid: python.template-injection
+    jinja2.Template(incoming.url.path[:64])
+    # ruleid: python.template-injection
+    jinja2.Template(incoming.url.path[1:64])
+    # ruleid: python.template-injection
+    jinja2.Template((await incoming.json())["value"])
+    # ruleid: python.template-injection
+    jinja2.Template((await incoming.form())["value"])
+    # A slice of a middleware value other than the path, in place or through a variable, is
+    # missed.
+    # todoruleid: python.template-injection
+    jinja2.Template(incoming.query_params["q"][:40])
+    return await call_next(incoming)
+
+
+# Not middleware: a dispatch() method of a class that is not a BaseHTTPMiddleware.
+class BannerRouter:
+    async def dispatch(self, incoming, call_next):
+        # ok: python.template-injection
+        jinja2.Template(incoming.query_params["q"])
+        # ok: python.template-injection
+        jinja2.Template(incoming.url.path)
+        # ok: python.template-injection
+        jinja2.Template(incoming.url.query)
+        # ok: python.template-injection
+        jinja2.Template(incoming.path_params["item"])
+        # ok: python.template-injection
+        jinja2.Template(incoming.headers["X-Value"])
+        # ok: python.template-injection
+        jinja2.Template(incoming.cookies["value"])
+        # ok: python.template-injection
+        jinja2.Template((await incoming.json())["value"])
+        # ok: python.template-injection
+        jinja2.Template((await incoming.body()).decode())
+        # ok: python.template-injection
+        jinja2.Template((await incoming.form())["value"])
+        # ok: python.template-injection
+        jinja2.Template(incoming.url.path[1:])
+        # ok: python.template-injection
+        jinja2.Template(incoming.url.path[:64])
+        # ok: python.template-injection
+        jinja2.Template(incoming.url.path[1:64])
+
+
+# A Flask before_request hook reads flask.request.
+@app.before_request
+def banner_hook():
+    # ruleid: python.template-injection
+    jinja2.Template(request.args["q"])

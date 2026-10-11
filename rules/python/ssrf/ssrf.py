@@ -1,3 +1,4 @@
+from starlette.middleware.base import BaseHTTPMiddleware
 import json
 import os
 from typing import Annotated
@@ -494,3 +495,82 @@ async def port_status(port: int, callback: str = "", settings: Settings = Depend
     async with aiohttp.request("GET", callback) as resp:
         await resp.text()
     return {"ok": True}
+
+
+# Middleware runs for every request and is not a view: a Starlette BaseHTTPMiddleware's
+# dispatch() and a FastAPI @app.middleware("http") function.
+class ProxyMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, incoming, call_next):
+        # ruleid: python.ssrf
+        requests.get(incoming.query_params["q"])
+        # ruleid: python.ssrf
+        requests.get(incoming.path_params["item"])
+        # ruleid: python.ssrf
+        requests.get(incoming.headers["X-Value"])
+        # ruleid: python.ssrf
+        requests.get(incoming.cookies["value"])
+        # ruleid: python.ssrf
+        requests.get(incoming.url.query)
+        # ruleid: python.ssrf
+        requests.get((await incoming.body()).decode())
+        # The scheme is http or https.
+        # ok: python.ssrf
+        requests.get(incoming.url.scheme)
+        return await call_next(incoming)
+
+
+@api.middleware("http")
+async def proxy_middleware(incoming, call_next):
+    # ruleid: python.ssrf
+    requests.get(incoming.url.path)
+    # ruleid: python.ssrf
+    requests.get(incoming.url.path[1:])
+    # ruleid: python.ssrf
+    requests.get(incoming.url.path[:64])
+    # ruleid: python.ssrf
+    requests.get(incoming.url.path[1:64])
+    # ruleid: python.ssrf
+    requests.get((await incoming.json())["value"])
+    # ruleid: python.ssrf
+    requests.get((await incoming.form())["value"])
+    # A slice of a middleware value other than the path, in place or through a variable, is
+    # missed.
+    # todoruleid: python.ssrf
+    requests.get(incoming.query_params["q"][:40])
+    return await call_next(incoming)
+
+
+# Not middleware: a dispatch() method of a class that is not a BaseHTTPMiddleware.
+class ProxyRouter:
+    async def dispatch(self, incoming, call_next):
+        # ok: python.ssrf
+        requests.get(incoming.query_params["q"])
+        # ok: python.ssrf
+        requests.get(incoming.url.path)
+        # ok: python.ssrf
+        requests.get(incoming.url.query)
+        # ok: python.ssrf
+        requests.get(incoming.path_params["item"])
+        # ok: python.ssrf
+        requests.get(incoming.headers["X-Value"])
+        # ok: python.ssrf
+        requests.get(incoming.cookies["value"])
+        # ok: python.ssrf
+        requests.get((await incoming.json())["value"])
+        # ok: python.ssrf
+        requests.get((await incoming.body()).decode())
+        # ok: python.ssrf
+        requests.get((await incoming.form())["value"])
+        # ok: python.ssrf
+        requests.get(incoming.url.path[1:])
+        # ok: python.ssrf
+        requests.get(incoming.url.path[:64])
+        # ok: python.ssrf
+        requests.get(incoming.url.path[1:64])
+
+
+# A Flask before_request hook reads flask.request.
+@app.before_request
+def proxy_hook():
+    # ruleid: python.ssrf
+    requests.get(request.args["q"])

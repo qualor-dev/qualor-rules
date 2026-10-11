@@ -1,3 +1,4 @@
+from starlette.middleware.base import BaseHTTPMiddleware
 import json
 import urllib.request
 import logging
@@ -675,3 +676,82 @@ def archive(request, **kwargs):
         # ok: python.sql-injection
         cursor.execute("SELECT * FROM myapp_person WHERE year = %s", [kwargs["year"]])
     return HttpResponse("ok")
+
+
+# Middleware runs for every request and is not a view: a Starlette BaseHTTPMiddleware's
+# dispatch() and a FastAPI @app.middleware("http") function.
+class AuditMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, incoming, call_next):
+        # ruleid: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.query_params["q"] + "')")
+        # ruleid: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.path_params["item"] + "')")
+        # ruleid: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.headers["X-Value"] + "')")
+        # ruleid: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.cookies["value"] + "')")
+        # ruleid: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.query + "')")
+        # ruleid: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + (await incoming.body()).decode() + "')")
+        # The scheme is http or https.
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.scheme + "')")
+        return await call_next(incoming)
+
+
+@api.middleware("http")
+async def audit_middleware(incoming, call_next):
+    # ruleid: python.sql-injection
+    sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.path + "')")
+    # ruleid: python.sql-injection
+    sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.path[1:] + "')")
+    # ruleid: python.sql-injection
+    sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.path[:64] + "')")
+    # ruleid: python.sql-injection
+    sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.path[1:64] + "')")
+    # ruleid: python.sql-injection
+    sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + (await incoming.json())["value"] + "')")
+    # ruleid: python.sql-injection
+    sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + (await incoming.form())["value"] + "')")
+    # A slice of a middleware value other than the path, in place or through a variable, is
+    # missed.
+    # todoruleid: python.sql-injection
+    sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.query_params["q"][:40] + "')")
+    return await call_next(incoming)
+
+
+# Not middleware: a dispatch() method of a class that is not a BaseHTTPMiddleware.
+class AuditRouter:
+    async def dispatch(self, incoming, call_next):
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.query_params["q"] + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.path + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.query + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.path_params["item"] + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.headers["X-Value"] + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.cookies["value"] + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + (await incoming.json())["value"] + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + (await incoming.body()).decode() + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + (await incoming.form())["value"] + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.path[1:] + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.path[:64] + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.path[1:64] + "')")
+
+
+# A Flask before_request hook reads flask.request.
+@app.before_request
+def audit_hook():
+    # ruleid: python.sql-injection
+    sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + request.args["q"] + "')")

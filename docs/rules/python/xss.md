@@ -97,7 +97,8 @@ def hello(request):
   a variable assigned request data, or a view parameter; a slice of a value built from request
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
   (`q = q.strip()`, also `q = q + request.args["b"]` or a fallback `q = request.form["q"]`), is
-  missed.
+  missed. In Starlette and FastAPI middleware only a slice of the request's path written in
+  place is followed.
 - Request sources are recognised by their shape: a Flask `<int:n>` route parameter and a numeric
   Django URL argument still count as request data, and a function whose first parameter is named
   `request` in a Django module is taken for a view.
@@ -139,6 +140,9 @@ def hello(request):
 - <https://docs.djangoproject.com/en/stable/ref/class-based-views/base/>
 - <https://fastapi.tiangolo.com/tutorial/body/>
 - <https://fastapi.tiangolo.com/advanced/using-request-directly/>
+- <https://starlette.dev/middleware/>
+- <https://starlette.dev/requests/>
+- <https://fastapi.tiangolo.com/tutorial/middleware/>
 
 ## Tests
 

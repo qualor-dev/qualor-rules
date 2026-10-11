@@ -1,3 +1,4 @@
+from starlette.middleware.base import BaseHTTPMiddleware
 import dbm
 import dbm.sqlite3
 import io
@@ -434,3 +435,82 @@ async def page(number: int, settings: Settings = Depends(get_settings)):
 async def latest(settings: Settings = Depends(get_settings)):
     # ok: python.path-traversal
     return FileResponse(os.path.join(settings.export_dir, "latest.csv"))
+
+
+# Middleware runs for every request and is not a view: a Starlette BaseHTTPMiddleware's
+# dispatch() and a FastAPI @app.middleware("http") function.
+class UploadMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, incoming, call_next):
+        # ruleid: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.query_params["q"]))
+        # ruleid: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.path_params["item"]))
+        # ruleid: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.headers["X-Value"]))
+        # ruleid: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.cookies["value"]))
+        # ruleid: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.url.query))
+        # ruleid: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, (await incoming.body()).decode()))
+        # The scheme is http or https.
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.url.scheme))
+        return await call_next(incoming)
+
+
+@api.middleware("http")
+async def upload_middleware(incoming, call_next):
+    # ruleid: python.path-traversal
+    open(os.path.join(UPLOAD_FOLDER, incoming.url.path))
+    # ruleid: python.path-traversal
+    open(os.path.join(UPLOAD_FOLDER, incoming.url.path[1:]))
+    # ruleid: python.path-traversal
+    open(os.path.join(UPLOAD_FOLDER, incoming.url.path[:64]))
+    # ruleid: python.path-traversal
+    open(os.path.join(UPLOAD_FOLDER, incoming.url.path[1:64]))
+    # ruleid: python.path-traversal
+    open(os.path.join(UPLOAD_FOLDER, (await incoming.json())["value"]))
+    # ruleid: python.path-traversal
+    open(os.path.join(UPLOAD_FOLDER, (await incoming.form())["value"]))
+    # A slice of a middleware value other than the path, in place or through a variable, is
+    # missed.
+    # todoruleid: python.path-traversal
+    open(os.path.join(UPLOAD_FOLDER, incoming.query_params["q"][:40]))
+    return await call_next(incoming)
+
+
+# Not middleware: a dispatch() method of a class that is not a BaseHTTPMiddleware.
+class UploadRouter:
+    async def dispatch(self, incoming, call_next):
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.query_params["q"]))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.url.path))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.url.query))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.path_params["item"]))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.headers["X-Value"]))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.cookies["value"]))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, (await incoming.json())["value"]))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, (await incoming.body()).decode()))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, (await incoming.form())["value"]))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.url.path[1:]))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.url.path[:64]))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.url.path[1:64]))
+
+
+# A Flask before_request hook reads flask.request.
+@app.before_request
+def upload_hook():
+    # ruleid: python.path-traversal
+    open(os.path.join(UPLOAD_FOLDER, request.args["q"]))

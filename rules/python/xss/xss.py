@@ -1,3 +1,4 @@
+from starlette.middleware.base import BaseHTTPMiddleware
 import html
 import json
 from urllib import parse
@@ -1230,3 +1231,82 @@ router = fastapi.APIRouter()
 def router_echo(q: str):
     # ok: python.xss
     return "<p>" + q + "</p>"
+
+
+# Middleware runs for every request and is not a view: a Starlette BaseHTTPMiddleware's
+# dispatch() and a FastAPI @app.middleware("http") function.
+class NoticeMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, incoming, call_next):
+        # ruleid: python.xss
+        HTMLResponse("<p>" + incoming.query_params["q"] + "</p>")
+        # ruleid: python.xss
+        HTMLResponse("<p>" + incoming.path_params["item"] + "</p>")
+        # ruleid: python.xss
+        HTMLResponse("<p>" + incoming.headers["X-Value"] + "</p>")
+        # ruleid: python.xss
+        HTMLResponse("<p>" + incoming.cookies["value"] + "</p>")
+        # ruleid: python.xss
+        HTMLResponse("<p>" + incoming.url.query + "</p>")
+        # ruleid: python.xss
+        HTMLResponse("<p>" + (await incoming.body()).decode() + "</p>")
+        # The scheme is http or https.
+        # ok: python.xss
+        HTMLResponse("<p>" + incoming.url.scheme + "</p>")
+        return await call_next(incoming)
+
+
+@api.middleware("http")
+async def notice_middleware(incoming, call_next):
+    # ruleid: python.xss
+    HTMLResponse("<p>" + incoming.url.path + "</p>")
+    # ruleid: python.xss
+    HTMLResponse("<p>" + incoming.url.path[1:] + "</p>")
+    # ruleid: python.xss
+    HTMLResponse("<p>" + incoming.url.path[:64] + "</p>")
+    # ruleid: python.xss
+    HTMLResponse("<p>" + incoming.url.path[1:64] + "</p>")
+    # ruleid: python.xss
+    HTMLResponse("<p>" + (await incoming.json())["value"] + "</p>")
+    # ruleid: python.xss
+    HTMLResponse("<p>" + (await incoming.form())["value"] + "</p>")
+    # A slice of a middleware value other than the path, in place or through a variable, is
+    # missed.
+    # todoruleid: python.xss
+    HTMLResponse("<p>" + incoming.query_params["q"][:40] + "</p>")
+    return await call_next(incoming)
+
+
+# Not middleware: a dispatch() method of a class that is not a BaseHTTPMiddleware.
+class NoticeRouter:
+    async def dispatch(self, incoming, call_next):
+        # ok: python.xss
+        HTMLResponse("<p>" + incoming.query_params["q"] + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + incoming.url.path + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + incoming.url.query + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + incoming.path_params["item"] + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + incoming.headers["X-Value"] + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + incoming.cookies["value"] + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + (await incoming.json())["value"] + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + (await incoming.body()).decode() + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + (await incoming.form())["value"] + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + incoming.url.path[1:] + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + incoming.url.path[:64] + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + incoming.url.path[1:64] + "</p>")
+
+
+# A Flask before_request hook reads flask.request.
+@app.before_request
+def notice_hook():
+    # ruleid: python.xss
+    HTMLResponse("<p>" + request.args["q"] + "</p>")

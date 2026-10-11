@@ -1221,3 +1221,111 @@ class LocationRewriteMiddleware(BaseHTTPMiddleware):
             # ruleid: python.open-redirect
             response.headers["location"] = request.url.path.removeprefix("/r")
         return response
+
+
+# Middleware runs for every request and is not a view: a Starlette BaseHTTPMiddleware's
+# dispatch() and a FastAPI @app.middleware("http") function.
+class MovedMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, incoming, call_next):
+        # ruleid: python.open-redirect
+        RedirectResponse(incoming.query_params["q"])
+        # ruleid: python.open-redirect
+        RedirectResponse(incoming.path_params["item"])
+        # ruleid: python.open-redirect
+        RedirectResponse(incoming.headers["X-Value"])
+        # ruleid: python.open-redirect
+        RedirectResponse(incoming.cookies["value"])
+        # ruleid: python.open-redirect
+        RedirectResponse(incoming.url.query)
+        # ruleid: python.open-redirect
+        RedirectResponse((await incoming.body()).decode())
+        # The scheme is http or https.
+        # ok: python.open-redirect
+        RedirectResponse(incoming.url.scheme)
+        return await call_next(incoming)
+
+
+@api.middleware("http")
+async def moved_middleware(incoming, call_next):
+    # ruleid: python.open-redirect
+    RedirectResponse(incoming.url.path)
+    # ruleid: python.open-redirect
+    RedirectResponse(incoming.url.path[1:])
+    # ruleid: python.open-redirect
+    RedirectResponse(incoming.url.path[:64])
+    # ruleid: python.open-redirect
+    RedirectResponse(incoming.url.path[1:64])
+    # ruleid: python.open-redirect
+    RedirectResponse((await incoming.json())["value"])
+    # ruleid: python.open-redirect
+    RedirectResponse((await incoming.form())["value"])
+    # A slice of a middleware value other than the path, in place or through a variable, is
+    # missed.
+    # todoruleid: python.open-redirect
+    RedirectResponse(incoming.query_params["q"][:40])
+    # A slice of a variable assigned the path, and of the scope's path, are request data too.
+    path = incoming.url.path
+    # ruleid: python.open-redirect
+    RedirectResponse(path[1:])
+    # ruleid: python.open-redirect
+    RedirectResponse(path[1:64])
+    # ruleid: python.open-redirect
+    RedirectResponse(incoming["path"][1:64])
+    fixed = incoming.url.path
+    fixed = "/home/"
+    # ok: python.open-redirect
+    RedirectResponse(fixed[1:])
+    prefix = "/static/"
+    # ok: python.open-redirect
+    RedirectResponse(prefix[1:])
+    return await call_next(incoming)
+
+
+# Not middleware: a helper or a callable class given some object with a URL, and a dispatch()
+# method of a class that is not a BaseHTTPMiddleware.
+def moved_target(page):
+    path = page.url.path
+    # ok: python.open-redirect
+    return RedirectResponse(path[1:])
+
+
+class MovedLink:
+    def __call__(self, page, width, height):
+        path = page.url.path
+        # ok: python.open-redirect
+        return RedirectResponse(path[1:])
+
+
+class MovedRouter:
+    async def dispatch(self, incoming, call_next):
+        # ok: python.open-redirect
+        RedirectResponse(incoming.query_params["q"])
+        # ok: python.open-redirect
+        RedirectResponse(incoming.url.path)
+        # ok: python.open-redirect
+        RedirectResponse(incoming.url.query)
+        # ok: python.open-redirect
+        RedirectResponse(incoming.path_params["item"])
+        # ok: python.open-redirect
+        RedirectResponse(incoming.headers["X-Value"])
+        # ok: python.open-redirect
+        RedirectResponse(incoming.cookies["value"])
+        # ok: python.open-redirect
+        RedirectResponse((await incoming.json())["value"])
+        # ok: python.open-redirect
+        RedirectResponse((await incoming.body()).decode())
+        # ok: python.open-redirect
+        RedirectResponse((await incoming.form())["value"])
+        # ok: python.open-redirect
+        RedirectResponse(incoming.url.path[1:])
+        # ok: python.open-redirect
+        RedirectResponse(incoming.url.path[:64])
+        # ok: python.open-redirect
+        RedirectResponse(incoming.url.path[1:64])
+
+
+# A Flask before_request hook reads flask.request.
+@app.before_request
+def moved_hook():
+    # ruleid: python.open-redirect
+    RedirectResponse(request.args["q"])

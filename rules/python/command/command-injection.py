@@ -1,3 +1,4 @@
+from starlette.middleware.base import BaseHTTPMiddleware
 import asyncio
 import json
 import os
@@ -643,3 +644,82 @@ async def api_backup(
     # ruleid: python.command-injection
     subprocess.run(argv)
     return {"ok": True}
+
+
+# Middleware runs for every request and is not a view: a Starlette BaseHTTPMiddleware's
+# dispatch() and a FastAPI @app.middleware("http") function.
+class PingMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, incoming, call_next):
+        # ruleid: python.command-injection
+        os.system("ping -c 1 " + incoming.query_params["q"])
+        # ruleid: python.command-injection
+        os.system("ping -c 1 " + incoming.path_params["item"])
+        # ruleid: python.command-injection
+        os.system("ping -c 1 " + incoming.headers["X-Value"])
+        # ruleid: python.command-injection
+        os.system("ping -c 1 " + incoming.cookies["value"])
+        # ruleid: python.command-injection
+        os.system("ping -c 1 " + incoming.url.query)
+        # ruleid: python.command-injection
+        os.system("ping -c 1 " + (await incoming.body()).decode())
+        # The scheme is http or https.
+        # ok: python.command-injection
+        os.system("ping -c 1 " + incoming.url.scheme)
+        return await call_next(incoming)
+
+
+@api.middleware("http")
+async def ping_middleware(incoming, call_next):
+    # ruleid: python.command-injection
+    os.system("ping -c 1 " + incoming.url.path)
+    # ruleid: python.command-injection
+    os.system("ping -c 1 " + incoming.url.path[1:])
+    # ruleid: python.command-injection
+    os.system("ping -c 1 " + incoming.url.path[:64])
+    # ruleid: python.command-injection
+    os.system("ping -c 1 " + incoming.url.path[1:64])
+    # ruleid: python.command-injection
+    os.system("ping -c 1 " + (await incoming.json())["value"])
+    # ruleid: python.command-injection
+    os.system("ping -c 1 " + (await incoming.form())["value"])
+    # A slice of a middleware value other than the path, in place or through a variable, is
+    # missed.
+    # todoruleid: python.command-injection
+    os.system("ping -c 1 " + incoming.query_params["q"][:40])
+    return await call_next(incoming)
+
+
+# Not middleware: a dispatch() method of a class that is not a BaseHTTPMiddleware.
+class PingRouter:
+    async def dispatch(self, incoming, call_next):
+        # ok: python.command-injection
+        os.system("ping -c 1 " + incoming.query_params["q"])
+        # ok: python.command-injection
+        os.system("ping -c 1 " + incoming.url.path)
+        # ok: python.command-injection
+        os.system("ping -c 1 " + incoming.url.query)
+        # ok: python.command-injection
+        os.system("ping -c 1 " + incoming.path_params["item"])
+        # ok: python.command-injection
+        os.system("ping -c 1 " + incoming.headers["X-Value"])
+        # ok: python.command-injection
+        os.system("ping -c 1 " + incoming.cookies["value"])
+        # ok: python.command-injection
+        os.system("ping -c 1 " + (await incoming.json())["value"])
+        # ok: python.command-injection
+        os.system("ping -c 1 " + (await incoming.body()).decode())
+        # ok: python.command-injection
+        os.system("ping -c 1 " + (await incoming.form())["value"])
+        # ok: python.command-injection
+        os.system("ping -c 1 " + incoming.url.path[1:])
+        # ok: python.command-injection
+        os.system("ping -c 1 " + incoming.url.path[:64])
+        # ok: python.command-injection
+        os.system("ping -c 1 " + incoming.url.path[1:64])
+
+
+# A Flask before_request hook reads flask.request.
+@app.before_request
+def ping_hook():
+    # ruleid: python.command-injection
+    os.system("ping -c 1 " + request.args["q"])

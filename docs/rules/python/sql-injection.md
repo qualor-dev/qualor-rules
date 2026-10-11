@@ -8,7 +8,8 @@
 ## What it finds
 
 <!-- begin: what-it-finds -->
-SQL text built from HTTP request data (Flask and Django, including FastAPI path operations) and
+SQL text built from HTTP request data (Flask and Django, including FastAPI path operations and
+Starlette/FastAPI middleware) and
 run through:
 
 - a DB-API cursor or connection (`sqlite3`, `psycopg`, `pymysql`, `mysql.connector` and other
@@ -85,6 +86,7 @@ def orders():
 - Python DB-API (PEP 249) drivers
 - SQLAlchemy
 - psycopg
+- Starlette
 
 ## Known limits
 
@@ -105,7 +107,8 @@ def orders():
   a variable assigned request data, or a view parameter; a slice of a value built from request
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
   (`q = q.strip()`, also `q = q + request.args["b"]` or a fallback `q = request.form["q"]`), is
-  missed.
+  missed. In Starlette and FastAPI middleware only a slice of the request's path written in
+  place is followed.
 - A function named like a class-based view's handler (`get`, `post`, ..., `dispatch`) that takes
   `(self, request, ...)` in a Django module is taken for one also outside a class: its parameters
   after `request` count as URL arguments.
@@ -139,6 +142,9 @@ def orders():
 - <https://docs.djangoproject.com/en/stable/ref/models/querysets/#extra>
 - <https://docs.djangoproject.com/en/stable/ref/models/expressions/#raw-sql-expressions>
 - <https://docs.djangoproject.com/en/stable/topics/security/#sql-injection-protection>
+- <https://starlette.dev/middleware/>
+- <https://starlette.dev/requests/>
+- <https://fastapi.tiangolo.com/tutorial/middleware/>
 
 ## Tests
 

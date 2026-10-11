@@ -114,7 +114,8 @@ def after_login():
   a variable assigned request data, or a view parameter; a slice of a value built from request
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
   (`q = q.strip()`, also `q = q + request.args["b"]` or a fallback `q = request.form["q"]`), is
-  missed.
+  missed. In Starlette and FastAPI middleware only a slice of the request's path (in place,
+  or of a variable assigned it) is followed.
 - In a view, the current request's own path counts as a path on this site, although a catch-all
   route can receive a path that starts with `//` (or `/\` in Flask), which names another host.
 - A `Location` header counts on a response the code makes or receives (middleware, an

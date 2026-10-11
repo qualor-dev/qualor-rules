@@ -95,6 +95,8 @@ rules:
     #   request.args["b"]`, `if not q: q = request.form["q"]`), is missed. Django request
     #   chains count in a view (first parameter `request`) and `self.request`/`self.kwargs` in a
     #   class.
+    #   In Starlette/FastAPI middleware only a slice of the request's path counts, in place
+    #   (`request.url.path[1:]`) or of a variable assigned it; another slice there is missed.
     # - In a view, the current request's own path or URL is taken for a path on this site; a
     #   path that begins with "//" (`https://site//evil.example/`, reaching a Django catch-all
     #   view or a Starlette `request.url.path`), or a Flask path "/\evil.example" reaching a
@@ -576,16 +578,58 @@ rules:
                       - pattern: $PARAM[$LOWER:]
                       - pattern: $PARAM[:$UPPER]
                       - pattern: $PARAM[$LOWER:$UPPER]
-      # (End of the shared Python source block; the items below are this rule's own.)
       # Starlette and FastAPI middleware (a BaseHTTPMiddleware's dispatch(), an
-      # @app.middleware("http") function) see every request: its query string, path parameters,
-      # headers and cookies, and its path (also "//evil.example/"), in place, sliced (OpenGrep
-      # does not carry taint through a slice) or a slice of a variable assigned it; and the path in
-      # a pure ASGI middleware's scope. (One item for both, so that the prefilter formula stays
-      # small: the ASGI scope is bound as $REQ too. The request attributes do not count in a
-      # `__call__(self, scope, receive, send)`, which any callable class may have; only
-      # scope["path"] does there. A Starlette request is also a mapping of its scope, so
-      # request["path"] in a middleware is its path as well.)
+      # @app.middleware("http") function) runs for every request and is not a view: the path,
+      # query string, path parameters, headers, cookies and body of the request it receives, and
+      # a slice of the path in place. (Flask's before_request hooks read flask.request, a source
+      # above.) The middleware is written as an exclusion, "not outside one", so that this item
+      # adds a single condition to the formula OpenGrep builds its prefilter from.
+      - patterns:
+          - pattern-either:
+              - pattern: $REQ.url.path
+              - pattern: $REQ.url.query
+              - pattern: $REQ.query_params
+              - pattern: $REQ.path_params
+              - pattern: $REQ.headers
+              - pattern: $REQ.cookies
+              - pattern: $REQ.json()
+              - pattern: $REQ.body()
+              - pattern: $REQ.form()
+              - pattern: $REQ.url.path[$LOWER:]
+              - pattern: $REQ.url.path[:$UPPER]
+              - pattern: $REQ.url.path[$LOWER:$UPPER]
+          - pattern-not:
+              patterns:
+                - pattern-either:
+                    - pattern: $REQ.url.path
+                    - pattern: $REQ.url.query
+                    - pattern: $REQ.query_params
+                    - pattern: $REQ.path_params
+                    - pattern: $REQ.headers
+                    - pattern: $REQ.cookies
+                    - pattern: $REQ.json()
+                    - pattern: $REQ.body()
+                    - pattern: $REQ.form()
+                    - pattern: $REQ.url.path[$LOWER:]
+                    - pattern: $REQ.url.path[:$UPPER]
+                    - pattern: $REQ.url.path[$LOWER:$UPPER]
+                - pattern-not-inside: |
+                    class $MW(..., starlette.middleware.base.BaseHTTPMiddleware, ...):
+                      ...
+                      def dispatch(self, $REQ, $CALL_NEXT):
+                        ...
+                - pattern-not-inside: |
+                    @$APP.middleware("http")
+                    def $MW($REQ, $CALL_NEXT):
+                      ...
+      # (End of the shared Python source block; the items below are this rule's own.)
+      # Starlette and FastAPI middleware beyond the shared item above (the path may be
+      # "//evil.example/"): a slice of a variable assigned the request's path (OpenGrep does not
+      # carry taint through a slice), and the path in a pure ASGI middleware's scope. (One item
+      # for both, so that the prefilter formula stays small: the ASGI scope is bound as $REQ too.
+      # The path variable does not count in a `__call__(self, scope, receive, send)`, which any
+      # callable class may have; only scope["path"] does there. A Starlette request is also a
+      # mapping of its scope, so request["path"] in a middleware is its path as well.)
       - patterns:
           - pattern-either:
               - pattern-inside: |
@@ -602,28 +646,18 @@ rules:
                     ...
           - pattern-either:
               - patterns:
+                  - pattern-inside: |
+                      $PATH = $REQ.url.path
+                      ...
+                  - pattern-not-inside: |
+                      $PATH = $REQ.url.path
+                      ...
+                      $PATH = $OTHER
+                      ...
                   - pattern-either:
-                      - pattern: $REQ.url.path
-                      - pattern: $REQ.query_params
-                      - pattern: $REQ.path_params
-                      - pattern: $REQ.headers
-                      - pattern: $REQ.cookies
-                      - pattern: $REQ.url.path[$LOWER:]
-                      - pattern: $REQ.url.path[:$UPPER]
-                      - pattern: $REQ.url.path[$LOWER:$UPPER]
-                      - patterns:
-                          - pattern-inside: |
-                              $PATH = $REQ.url.path
-                              ...
-                          - pattern-not-inside: |
-                              $PATH = $REQ.url.path
-                              ...
-                              $PATH = $OTHER
-                              ...
-                          - pattern-either:
-                              - pattern: $PATH[$LOWER:]
-                              - pattern: $PATH[:$UPPER]
-                              - pattern: $PATH[$LOWER:$UPPER]
+                      - pattern: $PATH[$LOWER:]
+                      - pattern: $PATH[:$UPPER]
+                      - pattern: $PATH[$LOWER:$UPPER]
                   - pattern-not-inside: |
                       def __call__(self, $REQ, $RECEIVE, $SEND):
                         ...

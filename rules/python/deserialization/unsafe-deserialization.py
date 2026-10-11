@@ -1,3 +1,4 @@
+from starlette.middleware.base import BaseHTTPMiddleware
 import base64
 import io
 import json
@@ -388,3 +389,82 @@ async def state(
     # ok: python.unsafe-deserialization
     code = marshal.loads(bytes([slot]))
     return {"value": value}
+
+
+# Middleware runs for every request and is not a view: a Starlette BaseHTTPMiddleware's
+# dispatch() and a FastAPI @app.middleware("http") function.
+class SessionMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, incoming, call_next):
+        # ruleid: python.unsafe-deserialization
+        pickle.loads(incoming.query_params["q"])
+        # ruleid: python.unsafe-deserialization
+        pickle.loads(incoming.path_params["item"])
+        # ruleid: python.unsafe-deserialization
+        pickle.loads(incoming.headers["X-Value"])
+        # ruleid: python.unsafe-deserialization
+        pickle.loads(incoming.cookies["value"])
+        # ruleid: python.unsafe-deserialization
+        pickle.loads(incoming.url.query)
+        # ruleid: python.unsafe-deserialization
+        pickle.loads((await incoming.body()).decode())
+        # The scheme is http or https.
+        # ok: python.unsafe-deserialization
+        pickle.loads(incoming.url.scheme)
+        return await call_next(incoming)
+
+
+@api.middleware("http")
+async def session_middleware(incoming, call_next):
+    # ruleid: python.unsafe-deserialization
+    pickle.loads(incoming.url.path)
+    # ruleid: python.unsafe-deserialization
+    pickle.loads(incoming.url.path[1:])
+    # ruleid: python.unsafe-deserialization
+    pickle.loads(incoming.url.path[:64])
+    # ruleid: python.unsafe-deserialization
+    pickle.loads(incoming.url.path[1:64])
+    # ruleid: python.unsafe-deserialization
+    pickle.loads((await incoming.json())["value"])
+    # ruleid: python.unsafe-deserialization
+    pickle.loads((await incoming.form())["value"])
+    # A slice of a middleware value other than the path, in place or through a variable, is
+    # missed.
+    # todoruleid: python.unsafe-deserialization
+    pickle.loads(incoming.query_params["q"][:40])
+    return await call_next(incoming)
+
+
+# Not middleware: a dispatch() method of a class that is not a BaseHTTPMiddleware.
+class SessionRouter:
+    async def dispatch(self, incoming, call_next):
+        # ok: python.unsafe-deserialization
+        pickle.loads(incoming.query_params["q"])
+        # ok: python.unsafe-deserialization
+        pickle.loads(incoming.url.path)
+        # ok: python.unsafe-deserialization
+        pickle.loads(incoming.url.query)
+        # ok: python.unsafe-deserialization
+        pickle.loads(incoming.path_params["item"])
+        # ok: python.unsafe-deserialization
+        pickle.loads(incoming.headers["X-Value"])
+        # ok: python.unsafe-deserialization
+        pickle.loads(incoming.cookies["value"])
+        # ok: python.unsafe-deserialization
+        pickle.loads((await incoming.json())["value"])
+        # ok: python.unsafe-deserialization
+        pickle.loads((await incoming.body()).decode())
+        # ok: python.unsafe-deserialization
+        pickle.loads((await incoming.form())["value"])
+        # ok: python.unsafe-deserialization
+        pickle.loads(incoming.url.path[1:])
+        # ok: python.unsafe-deserialization
+        pickle.loads(incoming.url.path[:64])
+        # ok: python.unsafe-deserialization
+        pickle.loads(incoming.url.path[1:64])
+
+
+# A Flask before_request hook reads flask.request.
+@app.before_request
+def session_hook():
+    # ruleid: python.unsafe-deserialization
+    pickle.loads(request.args["q"])

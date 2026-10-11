@@ -1,3 +1,4 @@
+from starlette.middleware.base import BaseHTTPMiddleware
 import json
 import re
 import xml.etree.ElementTree as ET
@@ -419,3 +420,82 @@ async def top(
     # ruleid: python.xpath-injection
     d = catalog.xpath("//book[@lang='" + lang + "']")
     return {"n": len(a) + len(b) + len(c) + len(d)}
+
+
+# Middleware runs for every request and is not a view: a Starlette BaseHTTPMiddleware's
+# dispatch() and a FastAPI @app.middleware("http") function.
+class CatalogMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, incoming, call_next):
+        # ruleid: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.query_params["q"] + "']")
+        # ruleid: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.path_params["item"] + "']")
+        # ruleid: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.headers["X-Value"] + "']")
+        # ruleid: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.cookies["value"] + "']")
+        # ruleid: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.query + "']")
+        # ruleid: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + (await incoming.body()).decode() + "']")
+        # The scheme is http or https.
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.scheme + "']")
+        return await call_next(incoming)
+
+
+@api.middleware("http")
+async def catalog_middleware(incoming, call_next):
+    # ruleid: python.xpath-injection
+    etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.path + "']")
+    # ruleid: python.xpath-injection
+    etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.path[1:] + "']")
+    # ruleid: python.xpath-injection
+    etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.path[:64] + "']")
+    # ruleid: python.xpath-injection
+    etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.path[1:64] + "']")
+    # ruleid: python.xpath-injection
+    etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + (await incoming.json())["value"] + "']")
+    # ruleid: python.xpath-injection
+    etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + (await incoming.form())["value"] + "']")
+    # A slice of a middleware value other than the path, in place or through a variable, is
+    # missed.
+    # todoruleid: python.xpath-injection
+    etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.query_params["q"][:40] + "']")
+    return await call_next(incoming)
+
+
+# Not middleware: a dispatch() method of a class that is not a BaseHTTPMiddleware.
+class CatalogRouter:
+    async def dispatch(self, incoming, call_next):
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.query_params["q"] + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.path + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.query + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.path_params["item"] + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.headers["X-Value"] + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.cookies["value"] + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + (await incoming.json())["value"] + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + (await incoming.body()).decode() + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + (await incoming.form())["value"] + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.path[1:] + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.path[:64] + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.path[1:64] + "']")
+
+
+# A Flask before_request hook reads flask.request.
+@app.before_request
+def catalog_hook():
+    # ruleid: python.xpath-injection
+    etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + request.args["q"] + "']")

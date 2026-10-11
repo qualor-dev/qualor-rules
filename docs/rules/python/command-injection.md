@@ -88,6 +88,7 @@ def ping():
 - Flask
 - Django
 - FastAPI
+- Starlette
 - `subprocess`
 - `asyncio`
 
@@ -100,7 +101,8 @@ def ping():
   a variable assigned request data, or a view parameter; a slice of a value built from request
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
   (`q = q.strip()`, also `q = q + request.args["b"]` or a fallback `q = request.form["q"]`), is
-  missed.
+  missed. In Starlette and FastAPI middleware only a slice of the request's path written in
+  place is followed.
 - With `shell=True`, only the first element of an argument list is taken for shell code, as on
   POSIX; on Windows the other elements reach `cmd.exe` too. `shlex.quote()` is accepted as
   escaping also in a `cmd /c` command.
@@ -151,6 +153,9 @@ def ping():
 - <https://fastapi.tiangolo.com/tutorial/body/>
 - <https://fastapi.tiangolo.com/tutorial/query-params-str-validations/>
 - <https://fastapi.tiangolo.com/advanced/using-request-directly/>
+- <https://starlette.dev/middleware/>
+- <https://starlette.dev/requests/>
+- <https://fastapi.tiangolo.com/tutorial/middleware/>
 
 ## Tests
 

@@ -73,6 +73,7 @@ def email():
 - Flask
 - Django
 - FastAPI
+- Starlette
 - lxml
 - `xml.etree.elementtree`
 - defusedxml
@@ -84,7 +85,8 @@ def email():
   a variable assigned request data, or a view parameter; a slice of a value built from request
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
   (`q = q.strip()`, also `q = q + request.args["b"]` or a fallback `q = request.form["q"]`), is
-  missed.
+  missed. In Starlette and FastAPI middleware only a slice of the request's path written in
+  place is followed.
 - `xpath()` is checked on any receiver in a module that imports lxml at the top level; a module
   that imports lxml only inside `try:` or under `if TYPE_CHECKING:` gets no `xpath()` findings.
 - `find()` and its relatives are checked only on a tree or element the rule can see being parsed or
@@ -123,6 +125,9 @@ def email():
 - <https://docs.djangoproject.com/en/stable/ref/class-based-views/base/>
 - <https://fastapi.tiangolo.com/tutorial/body/>
 - <https://fastapi.tiangolo.com/advanced/using-request-directly/>
+- <https://starlette.dev/middleware/>
+- <https://starlette.dev/requests/>
+- <https://fastapi.tiangolo.com/tutorial/middleware/>
 
 ## Tests
 

@@ -91,7 +91,8 @@ def report():
   a variable assigned request data, or a view parameter; a slice of a value built from request
   data (`(request.args["q"] + "x")[:50]`), or of a variable assigned again after the request value
   (`q = q.strip()`, also `q = q + request.args["b"]` or a fallback `q = request.form["q"]`), is
-  missed.
+  missed. In Starlette and FastAPI middleware only a slice of the request's path written in
+  place is followed.
 - A function named like a class-based view's handler (`get`, `post`, ..., `dispatch`) that takes
   `(self, request, ...)` in a Django module is taken for one also outside a class: its parameters
   after `request` count as URL arguments.
@@ -132,6 +133,9 @@ def report():
 - <https://fastapi.tiangolo.com/advanced/using-request-directly/>
 - <https://fastapi.tiangolo.com/advanced/custom-response/#fileresponse>
 - <https://starlette.dev/responses/>
+- <https://starlette.dev/middleware/>
+- <https://starlette.dev/requests/>
+- <https://fastapi.tiangolo.com/tutorial/middleware/>
 
 ## Tests
 
