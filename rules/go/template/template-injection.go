@@ -7,8 +7,11 @@ import (
 	"html/template"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 	texttemplate "text/template"
 
@@ -267,4 +270,111 @@ func LookAlikes(w http.ResponseWriter, r *http.Request) {
 func compile(name, text string) (*template.Template, error) {
 	// ok: go.template-injection
 	return template.New(name).Parse(text)
+}
+
+// Test support: a handler inside a function that takes a *testing.T, *testing.B, *testing.F,
+// *testing.M or testing.TB serves only the requests of its own test (an httptest server, a
+// subtest, TestMain), in a _test.go file or in a helper package.
+func NewFixtureServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.template-injection
+		tmpl, _ := template.New("fixture").Parse(r.URL.Query().Get("tpl"))
+		tmpl.Execute(w, nil)
+	}))
+}
+
+func recordingServer(tb testing.TB) (*httptest.Server, error) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		// ok: go.template-injection
+		texttemplate.New("recorded").Parse(string(body))
+	}))
+	return srv, nil
+}
+
+func TestRender(t *testing.T) {
+	t.Run("renders", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// ok: go.template-injection
+			template.New("x").Parse(r.FormValue("template"))
+		}))
+		defer srv.Close()
+	})
+}
+
+func BenchmarkGinRender(b *testing.B) {
+	router := gin.New()
+	router.GET("/render", func(c *gin.Context) {
+		// ok: go.template-injection
+		template.New("x").Parse(c.Query("tpl"))
+	})
+}
+
+func FuzzEchoRender(f *testing.F) {
+	e := echo.New()
+	e.GET("/render", func(c echo.Context) error {
+		// ok: go.template-injection
+		_, err := template.New("x").Parse(c.QueryParam("tpl"))
+		return err
+	})
+}
+
+var fixtureCase = func(t *testing.T) {
+	http.HandleFunc("/cases/", func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.template-injection
+		template.New("case").Parse("<p>" + r.FormValue("body") + "</p>")
+	})
+}
+
+func TestMain(m *testing.M) {
+	http.HandleFunc("/fixtures/", func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.template-injection
+		template.New("fixture").Parse(r.URL.Query().Get("tpl"))
+	})
+	os.Exit(m.Run())
+}
+
+type fixtureSuite struct{ layout *template.Template }
+
+func (s *fixtureSuite) handler(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.template-injection
+		s.layout.New("body").Parse(r.URL.Query().Get("tpl"))
+		s.layout.Execute(w, nil)
+	}
+}
+
+// The same handlers outside test support are reported: a parameter of another type named T, or
+// a handler whose name starts with Test, is not a test.
+type Theme struct{ T string }
+
+func Preview(t *Theme, w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.template-injection
+	template.New("theme").Parse(r.URL.Query().Get("header") + t.T)
+}
+
+func TestPage(w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.template-injection
+	template.New("page").Parse(r.FormValue("template"))
+}
+
+func ServeFixtures() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ruleid: go.template-injection
+		tmpl, _ := template.New("fixture").Parse(r.URL.Query().Get("tpl"))
+		tmpl.Execute(w, nil)
+	}))
+}
+
+// A handler declared at the top level of a test file, outside any function that takes a testing
+// parameter, is still reported.
+func fixtureHandler(w http.ResponseWriter, r *http.Request) {
+	// todook: go.template-injection
+	template.New("page").Parse(r.FormValue("template"))
+}
+
+func TestFixtureHandler(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(fixtureHandler))
+	defer srv.Close()
 }
