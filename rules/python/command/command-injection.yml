@@ -664,6 +664,12 @@ rules:
       - pattern: shlex.quote(...)
       - pattern: shlex.join(...)
     pattern-sinks:
+      # (Each sink item has one positive term, which holds its words; every other condition is an
+      # exclusion: the subprocess function names, the shell= value, the context a call must sit in
+      # ("not outside it", the condition reversed). OpenGrep builds its prefilter from the product of
+      # the items' positive conditions, and with two to seven of them per item it gave up and
+      # matched every Python file. The exclusions compare the metavariables they share with the
+      # positive term, so each reports what the conditions did.)
       # A command string that a shell runs.
       - patterns:
           - pattern-either:
@@ -672,17 +678,20 @@ rules:
               - pattern: subprocess.getoutput($CMD, ...)
               - pattern: subprocess.getstatusoutput($CMD, ...)
               - pattern: asyncio.create_subprocess_shell($CMD, ...)
-              - pattern: asyncio.get_running_loop().subprocess_shell($FACTORY, $CMD, ...)
-              - pattern: asyncio.get_event_loop().subprocess_shell($FACTORY, $CMD, ...)
-              - patterns:
-                  - pattern-either:
-                      - pattern-inside: |
-                          $LOOP = asyncio.get_running_loop()
-                          ...
-                      - pattern-inside: |
-                          $LOOP = asyncio.get_event_loop()
-                          ...
-                  - pattern: $LOOP.subprocess_shell($FACTORY, $CMD, ...)
+              - pattern: $LOOP.subprocess_shell($FACTORY, $CMD, ...)
+          # subprocess_shell() of asyncio's running or current event loop, in place or assigned in
+          # the function.
+          - pattern-not:
+              patterns:
+                - pattern: $LOOP.subprocess_shell($FACTORY, $CMD, ...)
+                - pattern-not: asyncio.get_running_loop().subprocess_shell(...)
+                - pattern-not: asyncio.get_event_loop().subprocess_shell(...)
+                - pattern-not-inside: |
+                    $LOOP = asyncio.get_running_loop()
+                    ...
+                - pattern-not-inside: |
+                    $LOOP = asyncio.get_event_loop()
+                    ...
           - focus-metavariable: $CMD
       # subprocess with a shell (shell= anything but False, 0 or None): a command string is shell
       # code. Of an argument list only the first element is (the program sink below).
@@ -691,12 +700,16 @@ rules:
               - pattern: subprocess.$FUNC($CMD, ..., shell=$SHELL, ...)
               - pattern: subprocess.$FUNC(..., args=$CMD, ..., shell=$SHELL, ...)
               - pattern: subprocess.$FUNC(..., shell=$SHELL, ..., args=$CMD, ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: &subprocess-functions ^(run|call|check_call|check_output|Popen)$
-          - metavariable-regex:
-              metavariable: $SHELL
-              regex: ^(?!(False|0|None)$)
+          # Only run(), call(), check_call(), check_output() and Popen().
+          - pattern-not: &other-subprocess-function
+              patterns:
+                - pattern: subprocess.$FUNC(...)
+                - metavariable-regex:
+                    metavariable: $FUNC
+                    regex: ^(?!(run|call|check_call|check_output|Popen)$)
+          - pattern-not: subprocess.$FUNC(..., shell=False, ...)
+          - pattern-not: subprocess.$FUNC(..., shell=0, ...)
+          - pattern-not: subprocess.$FUNC(..., shell=None, ...)
           - pattern-not: subprocess.$FUNC([...], ...)
           - pattern-not: subprocess.$FUNC(($ITEM, ...), ...)
           - pattern-not: subprocess.$FUNC(..., args=[...], ...)
@@ -718,24 +731,25 @@ rules:
               - pattern: subprocess.$FUNC(..., args=[$PROGRAM, ...], ...)
               - pattern: subprocess.$FUNC(..., args=($PROGRAM, ...), ...)
               - pattern: subprocess.$FUNC(..., executable=$PROGRAM, ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *subprocess-functions
+          - pattern-not: *other-subprocess-function
           - focus-metavariable: $PROGRAM
       - patterns:
           - pattern-either:
               - pattern: asyncio.create_subprocess_exec($PROGRAM, ...)
-              - pattern: asyncio.get_running_loop().subprocess_exec($FACTORY, $PROGRAM, ...)
-              - pattern: asyncio.get_event_loop().subprocess_exec($FACTORY, $PROGRAM, ...)
-              - patterns:
-                  - pattern-either:
-                      - pattern-inside: |
-                          $LOOP = asyncio.get_running_loop()
-                          ...
-                      - pattern-inside: |
-                          $LOOP = asyncio.get_event_loop()
-                          ...
-                  - pattern: $LOOP.subprocess_exec($FACTORY, $PROGRAM, ...)
+              - pattern: $LOOP.subprocess_exec($FACTORY, $PROGRAM, ...)
+          # subprocess_exec() of asyncio's running or current event loop, in place or assigned in
+          # the function.
+          - pattern-not:
+              patterns:
+                - pattern: $LOOP.subprocess_exec($FACTORY, $PROGRAM, ...)
+                - pattern-not: asyncio.get_running_loop().subprocess_exec(...)
+                - pattern-not: asyncio.get_event_loop().subprocess_exec(...)
+                - pattern-not-inside: |
+                    $LOOP = asyncio.get_running_loop()
+                    ...
+                - pattern-not-inside: |
+                    $LOOP = asyncio.get_event_loop()
+                    ...
           - pattern-not: asyncio.create_subprocess_exec(*$ARGS, ...)
           - pattern-not: $ANY.subprocess_exec($FACTORY, *$ARGS, ...)
           - focus-metavariable: $PROGRAM
@@ -767,106 +781,46 @@ rules:
       # whole (reported where the list is written).
       - patterns:
           - pattern-either:
-              - patterns:
-                  - pattern-inside: |
-                      $VAR = [$PROGRAM, ...]
-                      ...
-                      subprocess.$FUNC($VAR, ...)
-                  - pattern: $VAR = [$PROGRAM, ...]
-              - patterns:
-                  - pattern-inside: |
-                      $VAR = ($PROGRAM, ...)
-                      ...
-                      subprocess.$FUNC($VAR, ...)
-                  - pattern: $VAR = ($PROGRAM, ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *subprocess-functions
+              - pattern: |
+                  $VAR = [$PROGRAM, ...]
+                  ...
+                  subprocess.$FUNC($VAR, ...)
+              - pattern: |
+                  $VAR = ($PROGRAM, ...)
+                  ...
+                  subprocess.$FUNC($VAR, ...)
+          - pattern-not: &other-subprocess-function-after
+              patterns:
+                - pattern: |
+                    $VAR = $LIST
+                    ...
+                    subprocess.$FUNC($VAR, ...)
+                - metavariable-regex:
+                    metavariable: $FUNC
+                    regex: ^(?!(run|call|check_call|check_output|Popen)$)
           - focus-metavariable: $PROGRAM
       # A POSIX shell program in an argument list (also after sudo or env), followed by up to
       # three option words and its -c flag: the element after the flag is shell code; the later
       # ones are the shell's $0, $1, ... A word after a script operand is the script's argument.
       - patterns:
           - pattern-either:
-              - pattern: subprocess.$FUNC([..., $SH, $FLAG, $CMD, ...], ...)
-              - pattern: subprocess.$FUNC((..., $SH, $FLAG, $CMD, ...), ...)
-              - pattern: subprocess.$FUNC(..., args=[..., $SH, $FLAG, $CMD, ...], ...)
-              - pattern: asyncio.$FUNC(..., $SH, $FLAG, $CMD, ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: &shell-functions ^(run|call|check_call|check_output|Popen|create_subprocess_exec)$
-          - metavariable-regex:
-              metavariable: $SH
-              regex: &posix-shell ^[rRbBuU]{0,2}["']((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)["']$
-          - metavariable-regex:
-              metavariable: $FLAG
-              regex: &posix-flag ^[rRbBuU]{0,2}["']-[a-zA-Z]*c[a-zA-Z]*["']$
-          - focus-metavariable: $CMD
-      - patterns:
-          - pattern-either:
-              - pattern: subprocess.$FUNC([..., $SH, $OPT1, $FLAG, $CMD, ...], ...)
-              - pattern: subprocess.$FUNC((..., $SH, $OPT1, $FLAG, $CMD, ...), ...)
-              - pattern: subprocess.$FUNC(..., args=[..., $SH, $OPT1, $FLAG, $CMD, ...], ...)
-              - pattern: asyncio.$FUNC(..., $SH, $OPT1, $FLAG, $CMD, ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *shell-functions
-          - metavariable-regex:
-              metavariable: $SH
-              regex: *posix-shell
-          - metavariable-regex:
-              metavariable: $FLAG
-              regex: *posix-flag
-          - metavariable-regex:
-              metavariable: $OPT1
-              regex: &shell-option ^[rRbBuU]{0,2}["']([-+][^"']*|pipefail|errexit|nounset|xtrace|noglob|posix)["']$
-          - focus-metavariable: $CMD
-      - patterns:
-          - pattern-either:
-              - pattern: subprocess.$FUNC([..., $SH, $OPT1, $OPT2, $FLAG, $CMD, ...], ...)
-              - pattern: subprocess.$FUNC((..., $SH, $OPT1, $OPT2, $FLAG, $CMD, ...), ...)
-              - pattern: subprocess.$FUNC(..., args=[..., $SH, $OPT1, $OPT2, $FLAG, $CMD, ...], ...)
-              - pattern: asyncio.$FUNC(..., $SH, $OPT1, $OPT2, $FLAG, $CMD, ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *shell-functions
-          - metavariable-regex:
-              metavariable: $SH
-              regex: *posix-shell
-          - metavariable-regex:
-              metavariable: $FLAG
-              regex: *posix-flag
-          - metavariable-regex:
-              metavariable: $OPT1
-              regex: *shell-option
-          - metavariable-regex:
-              metavariable: $OPT2
-              regex: *shell-option
-          - focus-metavariable: $CMD
-      - patterns:
-          - pattern-either:
-              - pattern: subprocess.$FUNC([..., $SH, $OPT1, $OPT2, $OPT3, $FLAG, $CMD, ...], ...)
-              - pattern: subprocess.$FUNC((..., $SH, $OPT1, $OPT2, $OPT3, $FLAG, $CMD, ...), ...)
-              - pattern: subprocess.$FUNC(..., args=[..., $SH, $OPT1, $OPT2, $OPT3, $FLAG, $CMD, ...], ...)
-              - pattern: asyncio.$FUNC(..., $SH, $OPT1, $OPT2, $OPT3, $FLAG, $CMD, ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *shell-functions
-          - metavariable-regex:
-              metavariable: $SH
-              regex: *posix-shell
-          - metavariable-regex:
-              metavariable: $FLAG
-              regex: *posix-flag
-          - metavariable-regex:
-              metavariable: $OPT1
-              regex: *shell-option
-          - metavariable-regex:
-              metavariable: $OPT2
-              regex: *shell-option
-          - metavariable-regex:
-              metavariable: $OPT3
-              regex: *shell-option
+              - pattern: 'subprocess.$FUNC([..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...], ...)'
+              - pattern: 'subprocess.$FUNC((..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...), ...)'
+              - pattern: 'subprocess.$FUNC(..., args=[..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...], ...)'
+              - pattern: 'asyncio.create_subprocess_exec(..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...)'
+              - pattern: 'subprocess.$FUNC([..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...], ...)'
+              - pattern: 'subprocess.$FUNC((..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...), ...)'
+              - pattern: 'subprocess.$FUNC(..., args=[..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...], ...)'
+              - pattern: 'asyncio.create_subprocess_exec(..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...)'
+              - pattern: 'subprocess.$FUNC([..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...], ...)'
+              - pattern: 'subprocess.$FUNC((..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...), ...)'
+              - pattern: 'subprocess.$FUNC(..., args=[..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...], ...)'
+              - pattern: 'asyncio.create_subprocess_exec(..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...)'
+              - pattern: 'subprocess.$FUNC([..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...], ...)'
+              - pattern: 'subprocess.$FUNC((..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...), ...)'
+              - pattern: 'subprocess.$FUNC(..., args=[..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...], ...)'
+              - pattern: 'asyncio.create_subprocess_exec(..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...)'
+          - pattern-not: *other-subprocess-function
           - focus-metavariable: $CMD
       # cmd.exe and PowerShell (pwsh, powershell.exe; any path, any case) in an argument list
       # written in the call; the formula on the list is shared with lists assigned before the
@@ -875,9 +829,7 @@ rules:
           - pattern-either:
               - pattern: subprocess.$FUNC($LIST, ...)
               - pattern: subprocess.$FUNC(..., args=$LIST, ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *subprocess-functions
+          - pattern-not: *other-subprocess-function
           - metavariable-pattern:
               metavariable: $LIST
               patterns: &windows-shell-list
@@ -979,77 +931,31 @@ rules:
       # Shell lists assigned to a variable before the call (reported where the list is written):
       # the list is searched only when a subprocess call uses the variable.
       - patterns:
-          - pattern-inside: |
-              $VAR = $LIST
-              ...
-              subprocess.$FUNC($VAR, ...)
-          - pattern: $VAR = $LIST
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *subprocess-functions
-          - metavariable-pattern:
-              metavariable: $LIST
-              pattern-either:
-                - patterns:
-                    - pattern: '[..., $SH, $FLAG, $CMD, ...]'
-                    - metavariable-regex:
-                        metavariable: $SH
-                        regex: *posix-shell
-                    - metavariable-regex:
-                        metavariable: $FLAG
-                        regex: *posix-flag
-                - patterns:
-                    - pattern: '[..., $SH, $OPT1, $FLAG, $CMD, ...]'
-                    - metavariable-regex:
-                        metavariable: $SH
-                        regex: *posix-shell
-                    - metavariable-regex:
-                        metavariable: $FLAG
-                        regex: *posix-flag
-                    - metavariable-regex:
-                        metavariable: $OPT1
-                        regex: *shell-option
-                - patterns:
-                    - pattern: '[..., $SH, $OPT1, $OPT2, $FLAG, $CMD, ...]'
-                    - metavariable-regex:
-                        metavariable: $SH
-                        regex: *posix-shell
-                    - metavariable-regex:
-                        metavariable: $FLAG
-                        regex: *posix-flag
-                    - metavariable-regex:
-                        metavariable: $OPT1
-                        regex: *shell-option
-                    - metavariable-regex:
-                        metavariable: $OPT2
-                        regex: *shell-option
-                - patterns:
-                    - pattern: '[..., $SH, $OPT1, $OPT2, $OPT3, $FLAG, $CMD, ...]'
-                    - metavariable-regex:
-                        metavariable: $SH
-                        regex: *posix-shell
-                    - metavariable-regex:
-                        metavariable: $FLAG
-                        regex: *posix-flag
-                    - metavariable-regex:
-                        metavariable: $OPT1
-                        regex: *shell-option
-                    - metavariable-regex:
-                        metavariable: $OPT2
-                        regex: *shell-option
-                    - metavariable-regex:
-                        metavariable: $OPT3
-                        regex: *shell-option
+          - pattern-either:
+              - pattern: |
+                  $VAR = [..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...]
+                  ...
+                  subprocess.$FUNC($VAR, ...)
+              - pattern: |
+                  $VAR = [..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...]
+                  ...
+                  subprocess.$FUNC($VAR, ...)
+              - pattern: |
+                  $VAR = [..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...]
+                  ...
+                  subprocess.$FUNC($VAR, ...)
+              - pattern: |
+                  $VAR = [..., "=~/^((/usr)?/bin/)?(sh|bash|zsh|dash|ksh|mksh|ash)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^([-+][^\x22\x27]*|pipefail|errexit|nounset|xtrace|noglob|posix)$/", "=~/^-[a-zA-Z]*c[a-zA-Z]*$/", $CMD, ...]
+                  ...
+                  subprocess.$FUNC($VAR, ...)
+          - pattern-not: *other-subprocess-function-after
           - focus-metavariable: $CMD
       - patterns:
-          - pattern-inside: |
+          - pattern: |
               $VAR = $LIST
               ...
               subprocess.$FUNC($VAR, ...)
-          - pattern: $VAR = $LIST
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *subprocess-functions
+          - pattern-not: *other-subprocess-function-after
           - metavariable-pattern:
               metavariable: $LIST
               patterns: *windows-shell-list
@@ -1060,43 +966,43 @@ rules:
       # command line split into words, `"ping -c 1".split() + [host]`), a request value with
       # its subscripts and methods, or shlex.split() of a request value; in place, ...
       - patterns:
-          - pattern-either:
+          - pattern-either: &whole-args
               - pattern: subprocess.$FUNC($ARGS, ...)
               - pattern: subprocess.$FUNC(..., args=$ARGS, ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *subprocess-functions
-          - metavariable-regex:
-              metavariable: $ARGS
-              regex: &visible-value ^((?![\s\S]*\.(r?split|splitlines)\([^()]*\)\s*(\+[\s\S]*)?$)([rRbBuUfF]{0,2}["']|str\(|os\.path\.join\(|.*["']\s*$)|(\(\s*)?(await\s+)?(flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[|shlex\.split\(\s*(\(\s*)?(await\s+)?((flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[))
+          - pattern-not: *other-subprocess-function
           - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - pattern-not:
+              patterns:
+                - pattern-either: *whole-args
+                - pattern-not:
+                    patterns:
+                      - pattern-either: *whole-args
+                      - metavariable-regex:
+                          metavariable: $ARGS
+                          regex: &visible-value ^((?![\s\S]*\.(r?split|splitlines)\([^()]*\)\s*(\+[\s\S]*)?$)([rRbBuUfF]{0,2}["']|str\(|os\.path\.join\(|.*["']\s*$)|(\(\s*)?(await\s+)?(flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[|shlex\.split\(\s*(\(\s*)?(await\s+)?((flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[))
           - focus-metavariable: $ARGS
       # ... or through a variable assigned such a value in the function, ...
       - patterns:
-          - pattern-inside: |
-              $ARGS = $VALUE
-              ...
-          - metavariable-regex:
-              metavariable: $VALUE
-              regex: *visible-value
-          - pattern-either:
-              - pattern: subprocess.$FUNC($ARGS, ...)
-              - pattern: subprocess.$FUNC(..., args=$ARGS, ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *subprocess-functions
+          - pattern-either: *whole-args
+          - pattern-not: *other-subprocess-function
           - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - pattern-not:
+              patterns:
+                - pattern-either: *whole-args
+                - pattern-not:
+                    patterns:
+                      - pattern-inside: |
+                          $ARGS = $VALUE
+                          ...
+                      - metavariable-regex:
+                          metavariable: $VALUE
+                          regex: *visible-value
+                      - pattern-either: *whole-args
           - focus-metavariable: $ARGS
       # ... or a subscript, method or shlex.split() of a variable assigned a request value (a JSON
       # body, request.args, ...), in place or through another variable, ...
       - patterns:
-          - pattern-inside: |
-              $VAR = $VALUE
-              ...
-          - metavariable-regex:
-              metavariable: $VALUE
-              regex: &request-value ^((\(\s*)?(await\s+)?(flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[)
-          - pattern-either:
+          - pattern-either: &request-variable-args
               - pattern: subprocess.$FUNC($VAR[$KEY], ...)
               - pattern: subprocess.$FUNC($VAR[$KEY].$METHOD(...), ...)
               - pattern: subprocess.$FUNC($VAR.$METHOD(...), ...)
@@ -1108,53 +1014,64 @@ rules:
               - pattern: subprocess.$FUNC(..., args=$VAR[$KEY].$METHOD(...), ...)
               - pattern: subprocess.$FUNC(..., args=$VAR.$METHOD(...), ...)
               - pattern: subprocess.$FUNC(..., args=shlex.split($VAR), ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *subprocess-functions
+          - pattern-not: *other-subprocess-function
           - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - pattern-not:
+              patterns:
+                - pattern-either: *request-variable-args
+                - pattern-not:
+                    patterns:
+                      - pattern-inside: |
+                          $VAR = $VALUE
+                          ...
+                      - metavariable-regex:
+                          metavariable: $VALUE
+                          regex: &request-value ^((\(\s*)?(await\s+)?(flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[)
+                      - pattern-either: *request-variable-args
           - focus-metavariable: $VAR
       - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $VAR = $VALUE
-                  ...
-                  $ARGS = $VAR[$KEY]
-                  ...
-              - pattern-inside: |
-                  $VAR = $VALUE
-                  ...
-                  $ARGS = $VAR[$KEY].$METHOD(...)
-                  ...
-              - pattern-inside: |
-                  $VAR = $VALUE
-                  ...
-                  $ARGS = $VAR.$METHOD(...)
-                  ...
-              - pattern-inside: |
-                  $VAR = $VALUE
-                  ...
-                  $ARGS = $VAR.$METHOD(...).$THEN(...)
-                  ...
-          - metavariable-regex:
-              metavariable: $VALUE
-              regex: *request-value
-          - pattern-either:
+          - pattern-either: &request-part-args
               - pattern: subprocess.$FUNC($ARGS, ...)
               - pattern: subprocess.$FUNC($ARGS.$SPLIT(...), ...)
               - pattern: subprocess.$FUNC(shlex.split($ARGS), ...)
               - pattern: subprocess.$FUNC(..., args=$ARGS, ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *subprocess-functions
+          - pattern-not: *other-subprocess-function
           - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - pattern-not:
+              patterns:
+                - pattern-either: *request-part-args
+                - pattern-not:
+                    patterns:
+                      - pattern-either:
+                          - pattern-inside: |
+                              $VAR = $VALUE
+                              ...
+                              $ARGS = $VAR[$KEY]
+                              ...
+                          - pattern-inside: |
+                              $VAR = $VALUE
+                              ...
+                              $ARGS = $VAR[$KEY].$METHOD(...)
+                              ...
+                          - pattern-inside: |
+                              $VAR = $VALUE
+                              ...
+                              $ARGS = $VAR.$METHOD(...)
+                              ...
+                          - pattern-inside: |
+                              $VAR = $VALUE
+                              ...
+                              $ARGS = $VAR.$METHOD(...).$THEN(...)
+                              ...
+                      - metavariable-regex:
+                          metavariable: $VALUE
+                          regex: *request-value
+                      - pattern-either: *request-part-args
           - focus-metavariable: $ARGS
       # ... or a parameter of the view (a route parameter, a FastAPI body model and its fields),
       # in place or through a variable.
       - patterns:
-          - pattern-inside: |
-              def $VIEW(..., $PARAM, ...):
-                ...
-          - pattern-either:
+          - pattern-either: &parameter-args
               - pattern: subprocess.$FUNC($PARAM, ...)
               - pattern: subprocess.$FUNC($PARAM.$ATTR, ...)
               - pattern: subprocess.$FUNC($PARAM[$KEY], ...)
@@ -1163,63 +1080,90 @@ rules:
               - pattern: subprocess.$FUNC(shlex.split($PARAM.$ATTR), ...)
               - pattern: subprocess.$FUNC(..., args=$PARAM, ...)
               - pattern: subprocess.$FUNC(..., args=$PARAM.$ATTR, ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *subprocess-functions
+          - pattern-not: *other-subprocess-function
           - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - pattern-not:
+              patterns:
+                - pattern-either: *parameter-args
+                - pattern-not-inside: |
+                    def $VIEW(..., $PARAM, ...):
+                      ...
           - focus-metavariable: $PARAM
       - patterns:
-          - pattern-inside: |
-              def $VIEW(..., $PARAM, ...):
-                ...
-          - pattern-inside: |
-              $ARGS = $PARAM.$ATTR
-              ...
-          - pattern-either:
-              - pattern: subprocess.$FUNC($ARGS, ...)
-              - pattern: subprocess.$FUNC(..., args=$ARGS, ...)
-          - metavariable-regex:
-              metavariable: $FUNC
-              regex: *subprocess-functions
+          - pattern-either: *whole-args
+          - pattern-not: *other-subprocess-function
           - pattern-not: subprocess.$FUNC(..., shell=True, ...)
+          - pattern-not:
+              patterns:
+                - pattern-either: *whole-args
+                - pattern-not:
+                    patterns:
+                      - pattern-inside: |
+                          def $VIEW(..., $PARAM, ...):
+                            ...
+                      - pattern-inside: |
+                          $ARGS = $PARAM.$ATTR
+                          ...
+                      - pattern-either: *whole-args
           - focus-metavariable: $ARGS
       # The same for the argument vector unpacked into asyncio.create_subprocess_exec(*argv).
       - patterns:
           - pattern: asyncio.create_subprocess_exec(*$ARGS, ...)
-          - metavariable-regex:
-              metavariable: $ARGS
-              regex: &request-vector ^((\(\s*)?(await\s+)?(flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[|shlex\.split\(\s*(\(\s*)?(await\s+)?((flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[))
+          - pattern-not:
+              patterns:
+                - pattern: asyncio.create_subprocess_exec(*$ARGS, ...)
+                - pattern-not:
+                    patterns:
+                      - pattern: asyncio.create_subprocess_exec(*$ARGS, ...)
+                      - metavariable-regex:
+                          metavariable: $ARGS
+                          regex: &request-vector ^((\(\s*)?(await\s+)?(flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[|shlex\.split\(\s*(\(\s*)?(await\s+)?((flask\.)?(self\.)?request\.\w|json\.loads\(|(self\.)?kwargs\[|self\.args\[))
           - focus-metavariable: $ARGS
       - patterns:
-          - pattern-inside: |
-              $ARGS = $VALUE
-              ...
-          - metavariable-regex:
-              metavariable: $VALUE
-              regex: *request-vector
           - pattern: asyncio.create_subprocess_exec(*$ARGS, ...)
+          - pattern-not:
+              patterns:
+                - pattern: asyncio.create_subprocess_exec(*$ARGS, ...)
+                - pattern-not:
+                    patterns:
+                      - pattern-inside: |
+                          $ARGS = $VALUE
+                          ...
+                      - metavariable-regex:
+                          metavariable: $VALUE
+                          regex: *request-vector
+                      - pattern: asyncio.create_subprocess_exec(*$ARGS, ...)
           - focus-metavariable: $ARGS
       - patterns:
-          - pattern-inside: |
-              $VAR = $VALUE
-              ...
-          - metavariable-regex:
-              metavariable: $VALUE
-              regex: *request-value
-          - pattern-either:
+          - pattern-either: &request-variable-vector
               - pattern: asyncio.create_subprocess_exec(*$VAR[$KEY], ...)
               - pattern: asyncio.create_subprocess_exec(*$VAR.$METHOD(...), ...)
               - pattern: asyncio.create_subprocess_exec(*shlex.split($VAR), ...)
               - pattern: asyncio.create_subprocess_exec(*shlex.split($VAR[$KEY]), ...)
+          - pattern-not:
+              patterns:
+                - pattern-either: *request-variable-vector
+                - pattern-not:
+                    patterns:
+                      - pattern-inside: |
+                          $VAR = $VALUE
+                          ...
+                      - metavariable-regex:
+                          metavariable: $VALUE
+                          regex: *request-value
+                      - pattern-either: *request-variable-vector
           - focus-metavariable: $VAR
       - patterns:
-          - pattern-inside: |
-              def $VIEW(..., $PARAM, ...):
-                ...
-          - pattern-either:
+          - pattern-either: &parameter-vector
               - pattern: asyncio.create_subprocess_exec(*$PARAM, ...)
               - pattern: asyncio.create_subprocess_exec(*$PARAM.$ATTR, ...)
               - pattern: asyncio.create_subprocess_exec(*$PARAM.$METHOD(...), ...)
               - pattern: asyncio.create_subprocess_exec(*shlex.split($PARAM), ...)
               - pattern: asyncio.create_subprocess_exec(*shlex.split($PARAM.$ATTR), ...)
+          - pattern-not:
+              patterns:
+                - pattern-either: *parameter-vector
+                - pattern-not-inside: |
+                    def $VIEW(..., $PARAM, ...):
+                      ...
           - focus-metavariable: $PARAM

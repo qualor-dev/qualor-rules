@@ -99,6 +99,13 @@ def shells():
     subprocess.run(["bash", "-l", "-o", "pipefail", "-c", cmd])
     # ruleid: python.command-injection
     subprocess.run(["pwsh", "-NoProfile", "-CommandWithArgs", cmd, "first", "second"])
+    # The shell and its flag in any string form (bytes, raw, triple-quoted).
+    # ruleid: python.command-injection
+    subprocess.run([b"sh", r"-c", cmd])
+    # ruleid: python.command-injection
+    subprocess.run(["""bash""", "-ec", cmd])
+    # ruleid: python.command-injection
+    asyncio.run(asyncio.create_subprocess_exec("sh", "-e", "-o", "-c", cmd))
     # ok: python.command-injection
     subprocess.run(["pwsh", "-CommandWithArgs", '$args | ForEach-Object { "arg: $_" }', cmd])
     # Words after a script operand are the script's own arguments, not the shell's flags.
@@ -1013,3 +1020,242 @@ class PingRouter:
 def ping_hook():
     # ruleid: python.command-injection
     os.system("ping -c 1 " + request.args["q"])
+
+
+# Each sink form once more, in the positions the forms above leave out: asyncio's event loops in
+# place and assigned, a list or tuple through args=, the shell's option words in each container,
+# argument lists assigned before the call, and subprocess.list2cmdline(), which only joins an
+# argument list into a string and runs nothing. A value split over lines is reported where it is.
+@app.route("/sink-forms")
+async def sink_forms():
+    cmd = request.args["cmd"]
+    prog = request.args["prog"]
+    # ruleid: python.command-injection
+    await asyncio.get_running_loop().subprocess_shell(Protocol, cmd)
+    # ruleid: python.command-injection
+    await asyncio.get_event_loop().subprocess_shell(Protocol, cmd)
+    current = asyncio.get_event_loop()
+    # ruleid: python.command-injection
+    await current.subprocess_shell(Protocol, cmd)
+    # A method of the same name on an object that is not asyncio's event loop.
+    # ok: python.command-injection
+    await job_runner.subprocess_shell(Protocol, cmd)
+    # ruleid: python.command-injection
+    await asyncio.get_running_loop().subprocess_exec(Protocol, prog)
+    # ruleid: python.command-injection
+    await asyncio.get_event_loop().subprocess_exec(Protocol, prog, "-l")
+    # ruleid: python.command-injection
+    await current.subprocess_exec(Protocol, prog)
+    # ok: python.command-injection
+    await job_runner.subprocess_exec(Protocol, prog)
+    parts = ["ls", "-l", cmd]
+    # ok: python.command-injection
+    await current.subprocess_exec(Protocol, *parts)
+    os.system(
+        # ruleid: python.command-injection
+        "echo "
+        + cmd
+    )
+    # ruleid: python.command-injection
+    subprocess.run(args="echo " + cmd, shell=True)
+    # ruleid: python.command-injection
+    subprocess.run(shell=True, args="echo " + cmd)
+    # A command the code builds is no visible string, so without a shell it is not reported.
+    # ok: python.command-injection
+    subprocess.run(build_command(cmd), shell=False)
+    # ok: python.command-injection
+    subprocess.run(build_command(cmd), shell=0)
+    # ok: python.command-injection
+    subprocess.run(build_command(cmd), shell=None)
+    subprocess.run(
+        # ruleid: python.command-injection
+        "echo "
+        + cmd,
+        shell=True,
+    )
+    # ruleid: python.command-injection
+    subprocess.run(args=[prog, "-l"])
+    # ruleid: python.command-injection
+    subprocess.run(args=(prog, "-l"))
+    # ok: python.command-injection
+    print(subprocess.list2cmdline([prog, "-l"]))
+    # ruleid: python.command-injection
+    subprocess.run(args=["sh", "-c", cmd])
+    # ruleid: python.command-injection
+    subprocess.run(["bash", "-e", "-c", cmd])
+    # ruleid: python.command-injection
+    subprocess.run(("bash", "-e", "-c", cmd))
+    # ruleid: python.command-injection
+    subprocess.run(args=["bash", "-e", "-c", cmd])
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec("bash", "-e", "-c", cmd)
+    # ruleid: python.command-injection
+    subprocess.run(["bash", "-e", "-u", "-c", cmd])
+    # ruleid: python.command-injection
+    subprocess.run(("bash", "-e", "-u", "-c", cmd))
+    # ruleid: python.command-injection
+    subprocess.run(args=["bash", "-e", "-u", "-c", cmd])
+    # ruleid: python.command-injection
+    subprocess.run(["bash", "-e", "-u", "-o", "-c", cmd])
+    # ruleid: python.command-injection
+    subprocess.run(("bash", "-e", "-u", "-o", "-c", cmd))
+    # ruleid: python.command-injection
+    subprocess.run(args=["bash", "-e", "-u", "-o", "-c", cmd])
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec("bash", "-e", "-u", "-o", "-c", cmd)
+    # ok: python.command-injection
+    print(subprocess.list2cmdline(["sh", "-c", cmd]))
+    # ruleid: python.command-injection
+    subprocess.run(("pwsh", "-Command", cmd))
+    # ok: python.command-injection
+    print(subprocess.list2cmdline(["cmd", "/c", cmd]))
+    # ruleid: python.command-injection
+    program_argv = (prog, "-l")
+    subprocess.run(program_argv)
+    program_list = [prog, "-l"]
+    # ok: python.command-injection
+    print(subprocess.list2cmdline(program_list))
+    # ruleid: python.command-injection
+    opt_argv = ["bash", "-e", "-c", cmd]
+    subprocess.run(opt_argv)
+    # ruleid: python.command-injection
+    opt2_argv = ["bash", "-e", "-u", "-c", cmd]
+    subprocess.run(opt2_argv)
+    # ruleid: python.command-injection
+    opt3_argv = ["bash", "-e", "-u", "-o", "-c", cmd]
+    subprocess.run(opt3_argv)
+    shown_argv = ["sh", "-c", cmd]
+    # ok: python.command-injection
+    print(subprocess.list2cmdline(shown_argv))
+    split_argv = [
+        "sh",
+        "-c",
+        # ruleid: python.command-injection
+        cmd,
+    ]
+    subprocess.run(split_argv)
+    # ruleid: python.command-injection
+    win_tuple = ("cmd", "/c", "type", cmd)
+    subprocess.run(win_tuple)
+    # ruleid: python.command-injection
+    pwsh_argv = ["pwsh", "-Command", cmd]
+    subprocess.run(pwsh_argv)
+    # ruleid: python.command-injection
+    pwsh_tuple = ("pwsh", "-cwa", cmd, "first")
+    subprocess.run(pwsh_tuple)
+    # ruleid: python.command-injection
+    pwsh_script = ["pwsh", cmd]
+    subprocess.run(pwsh_script)
+    # ruleid: python.command-injection
+    pwsh_script_tuple = ("powershell", "-NoProfile", cmd)
+    subprocess.run(pwsh_script_tuple)
+    # ruleid: python.command-injection
+    pwsh_policy = ["pwsh", "-ExecutionPolicy", "Bypass", cmd]
+    subprocess.run(pwsh_policy)
+    # ruleid: python.command-injection
+    pwsh_version = ("powershell", "-Version", "5.1", cmd)
+    subprocess.run(pwsh_version)
+    # ruleid: python.command-injection
+    ps_command = ["powershell", "Get-Item", cmd]
+    subprocess.run(ps_command)
+    # ok: python.command-injection
+    pwsh_file_args = ["pwsh", "-File", "C:\scripts\report.ps1", "-c", cmd]
+    subprocess.run(pwsh_file_args)
+    # ok: python.command-injection
+    pwsh_ps1_args = ("pwsh", "-NoProfile", "C:\scripts\report.ps1", "-c", cmd)
+    subprocess.run(pwsh_ps1_args)
+    # ok: python.command-injection
+    pwsh_named_script = ["pwsh", "./deploy", "-c", cmd]
+    subprocess.run(pwsh_named_script)
+    named_parts = ["C:\scripts\report.ps1", cmd]
+    # ok: python.command-injection
+    pwsh_spread = ["pwsh", "-File", *named_parts]
+    subprocess.run(pwsh_spread)
+    # ok: python.command-injection
+    pwsh_after_script = ("pwsh", "-NoProfile", "C:\scripts\report.ps1", "-l", cmd)
+    subprocess.run(pwsh_after_script)
+    shown_win = ["cmd", "/c", cmd]
+    # ok: python.command-injection
+    print(subprocess.list2cmdline(shown_win))
+    # ruleid: python.command-injection
+    subprocess.run(args="ls " + cmd)
+    # ok: python.command-injection
+    print(subprocess.list2cmdline(shlex.split(request.args["line"])))
+    line = "ls " + cmd
+    # ruleid: python.command-injection
+    subprocess.run(args=line)
+    subprocess.run(
+        # ruleid: python.command-injection
+        line,
+    )
+    return "ok"
+
+
+# The program forms without a shell, each once: a request value's parts, a variable holding one,
+# and a path operation's parameters, in place and through args=.
+@app.route("/program-forms")
+async def program_forms():
+    body = request.get_json()
+    line = request.args["line"]
+    # ruleid: python.command-injection
+    subprocess.run(body["cmd"].strip())
+    # ruleid: python.command-injection
+    subprocess.run(body.get("cmd").split(" "))
+    # ruleid: python.command-injection
+    subprocess.run(shlex.split(body["line"]))
+    # ruleid: python.command-injection
+    subprocess.run(shlex.split(body.get("line")))
+    # ruleid: python.command-injection
+    subprocess.run(args=body["argv"])
+    # ruleid: python.command-injection
+    subprocess.run(args=body["cmd"].strip())
+    # ruleid: python.command-injection
+    subprocess.run(args=shlex.split(line))
+    # ok: python.command-injection
+    print(subprocess.list2cmdline(body["argv"]))
+    picked = body["cmd"]
+    # ruleid: python.command-injection
+    subprocess.run(picked.split())
+    # ruleid: python.command-injection
+    subprocess.run(shlex.split(picked))
+    # ruleid: python.command-injection
+    subprocess.run(args=picked)
+    # ok: python.command-injection
+    print(subprocess.list2cmdline(picked.split()))
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec(*line.split())
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec(*shlex.split(body["line"]))
+    return "ok"
+
+
+@api.post("/program-forms/{tool}")
+async def api_program_forms(tool: str, job: Job, opts: dict, argv: list[str] = Query()):
+    # ruleid: python.command-injection
+    subprocess.run(opts["cmd"])
+    # ruleid: python.command-injection
+    subprocess.run(tool.strip())
+    # ruleid: python.command-injection
+    subprocess.run(shlex.split(tool))
+    # ruleid: python.command-injection
+    subprocess.run(shlex.split(job.script))
+    # ruleid: python.command-injection
+    subprocess.run(args=tool)
+    # ruleid: python.command-injection
+    subprocess.run(args=job.script)
+    # ok: python.command-injection
+    print(subprocess.list2cmdline(job.argv))
+    script = job.script
+    # ruleid: python.command-injection
+    subprocess.run(args=script)
+    # ok: python.command-injection
+    print(subprocess.list2cmdline(script))
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec(*argv)
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec(*job.argv)
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec(*tool.split())
+    # ruleid: python.command-injection
+    await asyncio.create_subprocess_exec(*shlex.split(job.script))
+    return {"ok": True}
