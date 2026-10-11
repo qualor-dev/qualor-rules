@@ -101,10 +101,14 @@ public class PingController {
   the element after `-c` is shell code; for `cmd.exe` and PowerShell every later element is.
 - Lists and arrays the method builds are judged by their first element; a list filled with `add`,
   with the request value first, is missed.
-- A bound list or array parameter, or the list body of an `HttpEntity` or `RequestEntity`, counts
-  as a whole command in place, copied into a new list (`new ArrayList<>(...)`, `List.copyOf`) or
-  held in a variable; a copy of a copy, and a request parameter array copied into a new list in
-  place, are missed. A list class of your own built from it is accepted.
+- A bound list or array parameter (or a field of it read with a getter), or the list body of an
+  `HttpEntity` or `RequestEntity`, counts as a whole command in place or held in a variable, also
+  copied into a new list (`new ArrayList<>(...)`, `List.copyOf`). Missed: a copy of a copy held in
+  a variable, a request parameter array copied into a new list in place, a public field of the
+  body read directly, and a list wrapped first (`Collections.unmodifiableList`). A list class of
+  your own built from it is accepted.
+- `List.of("ls", request.getParameter("dir"))` (or `Arrays.asList`) passed in place is reported
+  as a whole command from the request, although its program is fixed.
 - Request data as a separate argument of a fixed program is accepted, although a value starting
   with `-` may be read as an option (argument injection, CWE-88).
 - Taint is followed through the methods of one file, not into other files: a helper in another

@@ -64,14 +64,17 @@ rules:
     #   positional parameter after a fixed script.
     # - A whole command is a sink only when the request hands it over: a request getter or a split
     #   of request text (in place or through a variable the method assigns), or a bound handler
-    #   parameter or a field of it, or the list or array body of an HttpEntity or RequestEntity
-    #   parameter (in place, copied into a new list of the JDK or with List.copyOf, or through a
-    #   variable the method assigns from one of these). A copy of a copy, and a request getter's
-    #   vector copied into a new list in place, are missed; a list class of another file built
-    #   from the vector is accepted (it may add or drop elements). Lists and arrays the method
-    #   builds (in any form) are checked by their first element where it is visible, and lists
-    #   from helper methods are accepted: a list filled with add, with the request value first,
-    #   is missed.
+    #   parameter or a field of it read with a getter, or the list or array body of an HttpEntity
+    #   or RequestEntity parameter (in place or through a variable the method assigns from one of
+    #   these, also copied into a new list of the JDK or with List.copyOf). Missed: a variable
+    #   assigned from a copy of a copy, a request getter's vector copied into a new list in place,
+    #   a field of a bound body read directly (form.steps), and a vector wrapped first
+    #   (Collections.unmodifiableList); a list class of another file built from the vector is
+    #   accepted (it may add or drop elements). Lists and arrays the method builds (in any form)
+    #   are checked by their first element where it is visible, and lists from helper methods are
+    #   accepted: a list filled with add, with the request value first, is missed.
+    # - A fixed program in List.of or Arrays.asList, in place, with a request getter's value in a
+    #   later position is taken for a whole command from the request and reported.
     # - For POSIX shells only the element right after -c is shell code; for cmd.exe (/c, /k) and
     #   PowerShell (-Command, -c) every later element is.
     # - The environment: an entry is judged by its literal "NAME=" prefix, inline or in a variable
@@ -399,8 +402,9 @@ rules:
                     metavariable: $C
                     regex: *not-a-list-copy
           - focus-metavariable: $P
-      # A variable that the method assigns from such a parameter, a field of it or such a body,
-      # or from a new list copied from one of them, passed whole.
+      # A variable that the method assigns from such a parameter, a field of it read with a
+      # getter or such a body, or from a new list copied from one of them, passed whole (also
+      # copied into a new list in place).
       - patterns:
           - pattern-either: &held-vector-commands
               - pattern: new ProcessBuilder($L)
@@ -409,8 +413,17 @@ rules:
               - pattern: Runtime.getRuntime().exec($L, ...)
               - pattern: (Runtime $RT).exec($L.toArray(...), ...)
               - pattern: Runtime.getRuntime().exec($L.toArray(...), ...)
+              - pattern: new ProcessBuilder(List.copyOf($L))
+              - pattern: (ProcessBuilder $B).command(List.copyOf($L))
+              - &held-vector-copies
+                pattern-either:
+                  - pattern: new ProcessBuilder(new $LC($L))
+                  - pattern: (ProcessBuilder $B).command(new $LC($L))
           # Only such a variable: the others are excluded (exclusions cost OpenGrep's prefilter
           # nothing).
+          # (The annotation and type conditions repeat the source block's, which already makes
+          # only such parameters request data; they keep the item to the parameters it names when
+          # taint reaches a helper's parameter through a call in the same file.)
           - pattern-not:
               patterns:
                 - pattern-either: *held-vector-commands
@@ -482,6 +495,14 @@ rules:
                       - metavariable-regex:
                           metavariable: $C
                           regex: *list-copy
+          # A copy in place is a new list of the JDK (another class may add or drop elements; $LC,
+          # not $C, which the copied variable's own assignment binds).
+          - pattern-not:
+              patterns:
+                - *held-vector-copies
+                - metavariable-regex:
+                    metavariable: $LC
+                    regex: *not-a-list-copy
           - focus-metavariable: $L
       # An annotated String[] handler parameter handed to Runtime.exec(String[], ...) as it is.
       - patterns:

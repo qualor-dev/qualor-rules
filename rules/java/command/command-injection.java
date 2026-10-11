@@ -5,6 +5,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -211,6 +212,12 @@ class BackupServlet extends HttpServlet {
         // A request getter's vector copied into a new list in place is missed.
         // todoruleid: java.command-injection
         new ProcessBuilder(new ArrayList<>(Arrays.asList(request.getParameterValues("argv")))).start();
+        // A fixed program in a list that holds a request getter's value later is taken for a whole
+        // command from the request.
+        // todook: java.command-injection
+        new ProcessBuilder(List.of("ls", request.getParameter("dir"))).start();
+        // todook: java.command-injection
+        new ProcessBuilder(Arrays.asList("ls", request.getParameter("dir"))).start();
 
         // The environment: a fixed name with a request value is accepted, except for variables
         // that decide what runs.
@@ -487,6 +494,30 @@ class ToolController {
         List<String> copiedTwice = new ArrayList<>(copiedArgs);
         // todoruleid: java.command-injection
         new ProcessBuilder(copiedTwice).start();
+        // A held vector copied into a new list in place.
+        // ruleid: java.command-injection
+        new ProcessBuilder(new ArrayList<>(fields)).start();
+        // ruleid: java.command-injection
+        builder.command(new LinkedList<>(copiedBody));
+        // ruleid: java.command-injection
+        new ProcessBuilder(List.copyOf(fields)).start();
+        // ruleid: java.command-injection
+        builder.command(List.copyOf(copiedOfBody));
+        // ... but not into a list class of another file.
+        // ok: java.command-injection
+        new ProcessBuilder(new GuardedCommand(fields)).start();
+        // ok: java.command-injection
+        builder.command(new GuardedCommand(fields));
+        // A field of the bound body read directly, not with a getter, is missed.
+        // todoruleid: java.command-injection
+        new ProcessBuilder(form.steps).start();
+        List<String> fieldHeld = form.steps;
+        // todoruleid: java.command-injection
+        new ProcessBuilder(fieldHeld).start();
+        // A vector wrapped in an unmodifiable view first is missed.
+        List<String> unmodifiable = Collections.unmodifiableList(args);
+        // todoruleid: java.command-injection
+        new ProcessBuilder(unmodifiable).start();
         // A list class of another file may change the elements: not a copy of the vector.
         // ok: java.command-injection
         new ProcessBuilder(new GuardedCommand(args)).start();
@@ -553,6 +584,7 @@ class ToolController {
 class JobForm {
     private String script;
     private List<String> arguments;
+    List<String> steps;
 
     List<String> getArguments() {
         return arguments;
