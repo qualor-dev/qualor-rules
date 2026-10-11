@@ -2101,3 +2101,129 @@ class JdomImports {
         return builder.build(in);
     }
 }
+
+// Each way the same method parses with a DocumentBuilder kept in a variable.
+class BuilderParseForms {
+    private final java.util.List<Document> parsed = new java.util.ArrayList<>();
+
+    void statement(InputStream in) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        // ruleid: java.xxe
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        builder.parse(in);
+    }
+
+    Document returned(InputStream in) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        // ruleid: java.xxe
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        return builder.parse(in);
+    }
+
+    Document assigned(InputStream in) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        // ruleid: java.xxe
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        Document document = builder.parse(in);
+        return document;
+    }
+
+    void argument(InputStream in) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        // ruleid: java.xxe
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        keep(builder.parse(in));
+    }
+
+    void methodArgument(InputStream in) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        // ruleid: java.xxe
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        parsed.add(builder.parse(in));
+    }
+
+    private void keep(Document document) {
+        parsed.add(document);
+    }
+}
+
+// Methods of other classes named like the JAXP factory methods.
+class ParserLookAlikes {
+    private com.acme.xml.ParserPool pool;
+    private com.acme.xml.EventStreams streams;
+
+    Object lookAlikes(InputStream in) throws Exception {
+        // ok: java.xxe
+        pool.newSAXParser();
+        // ok: java.xxe
+        streams.createXMLStreamReader(in);
+        // ok: java.xxe
+        return streams.createXMLEventReader(in);
+    }
+}
+
+// A SAXSource parsed by a transformer, in a variable or in place.
+class TransformerSaxSources {
+    void variable(InputStream in, StringWriter out) throws Exception {
+        TransformerFactory factory = TransformerFactory.newInstance();
+        SAXSource source = new SAXSource(new InputSource(in));
+        // ruleid: java.xxe
+        factory.newTransformer().transform(source, new StreamResult(out));
+    }
+
+    void inPlace(InputStream in, StringWriter out) throws Exception {
+        Transformer transformer = TransformerFactory.newInstance().newTransformer();
+        // ruleid: java.xxe
+        transformer.transform(new SAXSource(new InputSource(in)), new StreamResult(out));
+    }
+}
+
+// dom4j and JDOM readers created with a validation flag, and JDOM 1.
+class ReaderFlags {
+    org.dom4j.Document dom4jValidating(InputStream in) throws Exception {
+        SAXReader reader = new SAXReader(true);
+        // ruleid: java.xxe
+        return reader.read(in);
+    }
+
+    org.dom4j.Document dom4jNonValidating(InputStream in) throws Exception {
+        SAXReader reader = new SAXReader(false);
+        // ruleid: java.xxe
+        return reader.read(in);
+    }
+
+    org.jdom2.Document jdomValidating(InputStream in) throws Exception {
+        SAXBuilder builder = new SAXBuilder(true);
+        // ruleid: java.xxe
+        return builder.build(in);
+    }
+
+    org.jdom2.Document jdomNonValidating(InputStream in) throws Exception {
+        SAXBuilder builder = new SAXBuilder(false);
+        // ruleid: java.xxe
+        return builder.build(in);
+    }
+
+    org.jdom.Document jdom1(InputStream in) throws Exception {
+        org.jdom.input.SAXBuilder builder = new org.jdom.input.SAXBuilder();
+        // ruleid: java.xxe
+        return builder.build(in);
+    }
+
+    org.jdom.Document jdom1Validating(InputStream in) throws Exception {
+        org.jdom.input.SAXBuilder builder = new org.jdom.input.SAXBuilder(true);
+        // ruleid: java.xxe
+        return builder.build(in);
+    }
+
+    org.jdom.Document jdom1NonValidating(InputStream in) throws Exception {
+        org.jdom.input.SAXBuilder builder = new org.jdom.input.SAXBuilder(false);
+        // ruleid: java.xxe
+        return builder.build(in);
+    }
+
+    org.jdom.Document jdom1Chained(InputStream in) throws Exception {
+        // ruleid: java.xxe
+        return new org.jdom.input.SAXBuilder().build(in);
+    }
+}

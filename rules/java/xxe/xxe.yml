@@ -83,166 +83,186 @@ rules:
     pattern-either:
       # Parsers, document builders, readers and transformers.
       - patterns:
+          # Each form keeps one positive condition with a rare word (OpenGrep's prefilter multiplies
+          # the positive conditions of every branch); where the factory, reader or builder was
+          # created, and what it must be used for, are exclusions of the other places ("not outside
+          # these"), which cost the prefilter nothing (rule-procedure.md "Performance").
           - pattern-either:
               # JAXP: a SAXParser or StAX reader made from a factory that was created in the same
               # method or in a field, or in place ($F is then the factory call).
               - patterns:
-                  - pattern-either:
-                      - patterns:
-                          - pattern-either:
-                              - pattern-inside: |
-                                  $F = javax.xml.parsers.SAXParserFactory.$NEW(...);
-                                  ...
-                              - pattern-inside: |
-                                  $F = javax.xml.stream.XMLInputFactory.$NEW(...);
-                                  ...
-                          - pattern: $F.$USE(...)
-                          - metavariable-regex:
-                              metavariable: $NEW
-                              regex: ^new(Default)?(NS)?(Instance|Factory)$
-                      - patterns:
-                          - pattern: $F.$USE(...)
-                          - pattern-either:
-                              - pattern: javax.xml.parsers.SAXParserFactory.$NEW(...).$USE(...)
-                              - pattern: javax.xml.stream.XMLInputFactory.$NEW(...).$USE(...)
-                          - metavariable-regex:
-                              metavariable: $NEW
-                              regex: ^new(Default)?(NS)?(Instance|Factory)$
+                  - pattern: $F.$USE(...)
                   - metavariable-regex:
                       metavariable: $USE
                       regex: ^(newSAXParser|createXMLStreamReader|createXMLEventReader)$
+                  - pattern-not:
+                      patterns:
+                        - pattern-either:
+                            - pattern: $F.newSAXParser(...)
+                            - pattern: $F.createXMLStreamReader(...)
+                            - pattern: $F.createXMLEventReader(...)
+                        - pattern-not-inside:
+                            patterns:
+                              - pattern-either:
+                                  - pattern-inside: |
+                                      $F = javax.xml.parsers.SAXParserFactory.$NEW(...);
+                                      ...
+                                  - pattern-inside: |
+                                      $F = javax.xml.stream.XMLInputFactory.$NEW(...);
+                                      ...
+                              - metavariable-regex: &sax-stax-new
+                                  metavariable: $NEW
+                                  regex: ^new(Default)?(NS)?(Instance|Factory)$
+                        - pattern-not-inside:
+                            patterns:
+                              - pattern-either:
+                                  - pattern: javax.xml.parsers.SAXParserFactory.$NEW(...).$USE(...)
+                                  - pattern: javax.xml.stream.XMLInputFactory.$NEW(...).$USE(...)
+                              - metavariable-regex: *sax-stax-new
               # JAXP DocumentBuilderFactory: the builder, where it is created, when the same method
               # parses with it (newDocument() and getDOMImplementation() parse nothing).
               - patterns:
-                  - pattern-either:
-                      - patterns:
-                          - pattern-inside: |
-                              $F = javax.xml.parsers.DocumentBuilderFactory.$NEW(...);
-                              ...
-                          - pattern: $F.newDocumentBuilder()
-                      - patterns:
-                          - pattern: $F.newDocumentBuilder()
-                          - pattern: javax.xml.parsers.DocumentBuilderFactory.$NEW(...).newDocumentBuilder()
-                  - metavariable-regex:
-                      metavariable: $NEW
-                      regex: ^new(Default)?(NS)?Instance$
-                  - pattern-either:
-                      - pattern-inside: $F.newDocumentBuilder().parse(...)
-                      - pattern-inside: |
-                          $B = $F.newDocumentBuilder();
-                          ...
-                          $B.parse(...);
-                      - pattern-inside: |
-                          $B = $F.newDocumentBuilder();
-                          ...
-                          return <... $B.parse(...) ...>;
-                      - pattern-inside: |
-                          $B = $F.newDocumentBuilder();
-                          ...
-                          $X = <... $B.parse(...) ...>;
-                      - pattern-inside: |
-                          $B = $F.newDocumentBuilder();
-                          ...
-                          $FN(..., <... $B.parse(...) ...>, ...);
-                      - pattern-inside: |
-                          $B = $F.newDocumentBuilder();
-                          ...
-                          $O.$FN(..., <... $B.parse(...) ...>, ...);
-              # JAXP TransformerFactory: a transformer that parses a StreamSource or SAXSource.
-              - patterns:
-                  - pattern-either:
-                      - patterns:
-                          - pattern-either:
-                              - pattern-inside: |
-                                  $F = javax.xml.transform.TransformerFactory.$NEW(...);
-                                  ...
-                              - pattern-inside: |
-                                  $F = ($CAST) javax.xml.transform.TransformerFactory.$NEW(...);
-                                  ...
-                          - pattern-either:
-                              - patterns:
+                  - pattern: $F.newDocumentBuilder()
+                  - pattern-not:
+                      patterns:
+                        - pattern: $F.newDocumentBuilder()
+                        - pattern-not-inside:
+                            patterns:
+                              - pattern-either:
                                   - pattern-inside: |
-                                      $TR = $F.newTransformer(...);
+                                      $F = javax.xml.parsers.DocumentBuilderFactory.$NEW(...);
                                       ...
-                                  - pattern: $TR.transform($SRC, ...)
-                              - pattern: $F.newTransformer(...).transform($SRC, ...)
-                      # A transformer from a factory made in place, kept in a variable.
+                                  - pattern-inside: javax.xml.parsers.DocumentBuilderFactory.$NEW(...).newDocumentBuilder()
+                              - metavariable-regex:
+                                  metavariable: $NEW
+                                  regex: ^new(Default)?(NS)?Instance$
+                  - pattern-not:
+                      patterns:
+                        - pattern: $F.newDocumentBuilder()
+                        - pattern-not-inside: $F.newDocumentBuilder().parse(...)
+                        - pattern-not-inside: |
+                            $B = $F.newDocumentBuilder();
+                            ...
+                            $B.parse(...);
+                        - pattern-not-inside: |
+                            $B = $F.newDocumentBuilder();
+                            ...
+                            return <... $B.parse(...) ...>;
+                        - pattern-not-inside: |
+                            $B = $F.newDocumentBuilder();
+                            ...
+                            $X = <... $B.parse(...) ...>;
+                        - pattern-not-inside: |
+                            $B = $F.newDocumentBuilder();
+                            ...
+                            $FN(..., <... $B.parse(...) ...>, ...);
+                        - pattern-not-inside: |
+                            $B = $F.newDocumentBuilder();
+                            ...
+                            $O.$FN(..., <... $B.parse(...) ...>, ...);
+              # JAXP TransformerFactory: a transformer that parses a StreamSource or SAXSource, from
+              # a factory created in the same method or in a field (also cast), or in place.
+              - patterns:
+                  # (The method name is checked by an exclusion: the newTransformer word is enough.)
+                  - pattern-either: &transforms
                       - patterns:
                           - pattern-inside: |
                               $TR = $F.newTransformer(...);
                               ...
-                          - pattern-inside: |
-                              $TR = javax.xml.transform.TransformerFactory.$NEW(...).newTransformer(...);
-                              ...
-                          - pattern: $TR.transform($SRC, ...)
-                      - patterns:
-                          - pattern: $F.newTransformer(...).transform($SRC, ...)
-                          - pattern: javax.xml.transform.TransformerFactory.$NEW(...).newTransformer(...).transform($SRC, ...)
+                          - pattern: $TR.$TRANSFORM($SRC, ...)
+                      - pattern: $F.newTransformer(...).$TRANSFORM($SRC, ...)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either: *transforms
+                        - metavariable-regex:
+                            metavariable: $TRANSFORM
+                            regex: ^(?!transform$)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either: *transforms
+                        - pattern-not-inside: |
+                            $F = javax.xml.transform.TransformerFactory.$NEW(...);
+                            ...
+                        - pattern-not-inside: |
+                            $F = ($CAST) javax.xml.transform.TransformerFactory.$NEW(...);
+                            ...
+                        # A transformer from a factory made in place, kept in a variable or not.
+                        - pattern-not-inside: |
+                            $TR = javax.xml.transform.TransformerFactory.$NEW(...).newTransformer(...);
+                            ...
+                        - pattern-not-inside: javax.xml.transform.TransformerFactory.$NEW(...).newTransformer(...).$TRANSFORM($SRC, ...)
                   # The source is parsed: a StreamSource or SAXSource, in place or in a variable.
-                  - pattern-either:
-                      - pattern-inside: |
-                          $SRC = new javax.xml.transform.stream.StreamSource(...);
-                          ...
-                      - pattern-inside: |
-                          $SRC = new javax.xml.transform.sax.SAXSource(...);
-                          ...
-                      - pattern: $X.transform(new javax.xml.transform.stream.StreamSource(...), ...)
-                      - pattern: $X.transform(new javax.xml.transform.sax.SAXSource(...), ...)
-              # SAX XMLReaderFactory, dom4j SAXReader and JDOM SAXBuilder with their own defaults.
+                  - pattern-not:
+                      patterns:
+                        - pattern-either: *transforms
+                        - pattern-not-inside: |
+                            $SRC = new javax.xml.transform.stream.StreamSource(...);
+                            ...
+                        - pattern-not-inside: |
+                            $SRC = new javax.xml.transform.sax.SAXSource(...);
+                            ...
+                        - pattern-not-inside: $X.transform(new javax.xml.transform.stream.StreamSource(...), ...)
+                        - pattern-not-inside: $X.transform(new javax.xml.transform.sax.SAXSource(...), ...)
+              # SAX XMLReaderFactory, dom4j SAXReader and JDOM SAXBuilder with their own defaults
+              # (in a file that names one of them).
               - patterns:
-                  - pattern-either:
-                      - patterns:
-                          - pattern-inside: |
-                              $F = org.xml.sax.helpers.XMLReaderFactory.createXMLReader(...);
-                              ...
-                          - pattern: $F.parse(...)
-                      - patterns:
-                          - pattern-either:
+                  - pattern-regex: (?s)\A.*\b(XMLReaderFactory|SAXReader|SAXBuilder)\b.*\z
+                  - pattern-either: &reader-uses
+                      - pattern: $F.parse(...)
+                      - pattern: $F.read(...)
+                      - pattern: $F.build(...)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either: *reader-uses
+                        - pattern-not:
+                            patterns:
                               - pattern-inside: |
-                                  $F = new org.dom4j.io.SAXReader();
+                                  $F = org.xml.sax.helpers.XMLReaderFactory.createXMLReader(...);
                                   ...
-                              - pattern-inside: |
-                                  $F = new org.dom4j.io.SAXReader(true);
-                                  ...
-                              - pattern-inside: |
-                                  $F = new org.dom4j.io.SAXReader(false);
-                                  ...
-                          - pattern: $F.read(...)
-                      - patterns:
-                          - pattern-either:
-                              - pattern-inside: |
-                                  $F = new org.jdom2.input.SAXBuilder();
-                                  ...
-                              - pattern-inside: |
-                                  $F = new org.jdom2.input.SAXBuilder(true);
-                                  ...
-                              - pattern-inside: |
-                                  $F = new org.jdom2.input.SAXBuilder(false);
-                                  ...
-                              - pattern-inside: |
-                                  $F = new org.jdom2.input.SAXBuilder(org.jdom2.input.sax.XMLReaders.$KIND);
-                                  ...
-                              - pattern-inside: |
-                                  $F = new org.jdom.input.SAXBuilder();
-                                  ...
-                              - pattern-inside: |
-                                  $F = new org.jdom.input.SAXBuilder(true);
-                                  ...
-                              - pattern-inside: |
-                                  $F = new org.jdom.input.SAXBuilder(false);
-                                  ...
-                          - pattern: $F.build(...)
-                      # In place: $F is the constructor or factory call itself.
-                      - patterns:
-                          - pattern-either:
                               - pattern: $F.parse(...)
+                        - pattern-not:
+                            patterns:
+                              - pattern-either:
+                                  - pattern-inside: |
+                                      $F = new org.dom4j.io.SAXReader();
+                                      ...
+                                  - pattern-inside: |
+                                      $F = new org.dom4j.io.SAXReader(true);
+                                      ...
+                                  - pattern-inside: |
+                                      $F = new org.dom4j.io.SAXReader(false);
+                                      ...
                               - pattern: $F.read(...)
+                        - pattern-not:
+                            patterns:
+                              - pattern-either:
+                                  - pattern-inside: |
+                                      $F = new org.jdom2.input.SAXBuilder();
+                                      ...
+                                  - pattern-inside: |
+                                      $F = new org.jdom2.input.SAXBuilder(true);
+                                      ...
+                                  - pattern-inside: |
+                                      $F = new org.jdom2.input.SAXBuilder(false);
+                                      ...
+                                  - pattern-inside: |
+                                      $F = new org.jdom2.input.SAXBuilder(org.jdom2.input.sax.XMLReaders.$KIND);
+                                      ...
+                                  - pattern-inside: |
+                                      $F = new org.jdom.input.SAXBuilder();
+                                      ...
+                                  - pattern-inside: |
+                                      $F = new org.jdom.input.SAXBuilder(true);
+                                      ...
+                                  - pattern-inside: |
+                                      $F = new org.jdom.input.SAXBuilder(false);
+                                      ...
                               - pattern: $F.build(...)
-                          - pattern-either:
-                              - pattern: org.xml.sax.helpers.XMLReaderFactory.createXMLReader(...).parse(...)
-                              - pattern: new org.dom4j.io.SAXReader().read(...)
-                              - pattern: new org.jdom2.input.SAXBuilder().build(...)
-                              - pattern: new org.jdom.input.SAXBuilder().build(...)
+                        # In place: $F is the constructor or factory call itself.
+                        - pattern-not-inside: org.xml.sax.helpers.XMLReaderFactory.createXMLReader(...).parse(...)
+                        - pattern-not-inside: new org.dom4j.io.SAXReader().read(...)
+                        - pattern-not-inside: new org.jdom2.input.SAXBuilder().build(...)
+                        - pattern-not-inside: new org.jdom.input.SAXBuilder().build(...)
           # BEGIN generated by tools/xxe-exclusions.mjs from its SETTINGS table; do not edit by hand.
           # Set on the factory, reader or builder: before.
           - pattern-not-inside: |
@@ -1463,19 +1483,22 @@ rules:
       # field, or in place. It reads external schemas (xs:import, xs:include, schemaLocation)
       # under ACCESS_EXTERNAL_SCHEMA and external DTDs under ACCESS_EXTERNAL_DTD, so only both
       # denied, each unconditionally (or secure processing on a built-in factory), make it safe.
+      # (The use $F.newSchema(...) is the positive pattern of each generated branch below; where
+      # the factory was created is an exclusion of the other places.)
       - patterns:
-          - pattern-either:
-              - patterns:
-                  - pattern-inside: |
-                      $F = javax.xml.validation.SchemaFactory.$NEW(...);
-                      ...
-                  - pattern: $F.newSchema(...)
-              - patterns:
-                  - pattern: $F.newSchema(...)
-                  - pattern: javax.xml.validation.SchemaFactory.$NEW(...).newSchema(...)
-          - metavariable-regex:
-              metavariable: $NEW
-              regex: ^new(Default)?Instance$
+          - pattern-not:
+              patterns:
+                - pattern: $F.newSchema(...)
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-either:
+                          - pattern-inside: |
+                              $F = javax.xml.validation.SchemaFactory.$NEW(...);
+                              ...
+                          - pattern-inside: javax.xml.validation.SchemaFactory.$NEW(...).newSchema(...)
+                      - metavariable-regex:
+                          metavariable: $NEW
+                          regex: ^new(Default)?Instance$
           # BEGIN generated by tools/xxe-exclusions.mjs from its SCHEMA_REQUIREMENTS table; do not edit by hand.
           # Secure processing set explicitly on a built-in JDK factory (newDefaultInstance), which
           # then denies external access.
@@ -1821,16 +1844,19 @@ rules:
                   - pattern: $F.validate($SRC, ...)
               # In place: the generated branches bind $F to the newValidator() call.
               - pattern: $S.newValidator().validate($SRC, ...)
-          # The document is parsed: a StreamSource or SAXSource, in place or in a variable.
-          - pattern-either:
-              - pattern-inside: |
-                  $SRC = new javax.xml.transform.stream.StreamSource(...);
-                  ...
-              - pattern-inside: |
-                  $SRC = new javax.xml.transform.sax.SAXSource(...);
-                  ...
-              - pattern: $X.validate(new javax.xml.transform.stream.StreamSource(...), ...)
-              - pattern: $X.validate(new javax.xml.transform.sax.SAXSource(...), ...)
+          # The document is parsed: a StreamSource or SAXSource, in place or in a variable (an
+          # exclusion of the other sources).
+          - pattern-not:
+              patterns:
+                - pattern: $F.validate($SRC, ...)
+                - pattern-not-inside: |
+                    $SRC = new javax.xml.transform.stream.StreamSource(...);
+                    ...
+                - pattern-not-inside: |
+                    $SRC = new javax.xml.transform.sax.SAXSource(...);
+                    ...
+                - pattern-not-inside: $X.validate(new javax.xml.transform.stream.StreamSource(...), ...)
+                - pattern-not-inside: $X.validate(new javax.xml.transform.sax.SAXSource(...), ...)
           # The Schema is made in sight by a SchemaFactory that is also created in sight, which the
           # SchemaFactory branch checks: in the same method or in fields ($SF created, then the
           # Schema made from it, also in a static block or constructor), in place, or in a static
