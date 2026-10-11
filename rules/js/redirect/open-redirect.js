@@ -2,6 +2,7 @@ const express = require('express');
 const http = require('node:http');
 const { pickNext, targetFor: resolveTarget } = require('./next-targets');
 const { beginSignIn, rememberTarget } = require('./sign-in');
+const { siteOrigin } = require('./site');
 
 const app = express();
 app.use(express.json());
@@ -30,6 +31,123 @@ app.post('/logout', (req, res) => {
 app.get('/go/:target', (req, res) => {
   // ruleid: js.open-redirect
   res.redirect(301, req.params.target);
+});
+
+// res.redirect(status, url): the URL is checked as in the one-argument form, so a fixed origin
+// that ends with a path separator keeps the host fixed.
+app.get('/moved/:page', (req, res) => {
+  if (req.query.v === '1') {
+    // ok: js.open-redirect
+    return res.redirect(301, 'https://www.example.com/docs/' + req.params.page);
+  }
+  if (req.query.v === '2') {
+    // ok: js.open-redirect
+    return res.redirect(302, SITE + '/docs/' + req.params.page + '?ref=moved');
+  }
+  if (req.query.v === '3') {
+    // ok: js.open-redirect
+    return res.status(200).redirect(303, '/docs/' + req.query.page);
+  }
+  if (req.query.v === '4') {
+    // ok: js.open-redirect
+    return res.redirect(308, appUrl + '/docs/' + req.params.page);
+  }
+  const origin = siteOrigin();
+  if (req.query.v === '8') {
+    // ok: js.open-redirect
+    return res.redirect(301, origin + '/docs/' + req.params.page);
+  }
+  if (req.query.v === '9') {
+    // ok: js.open-redirect
+    return res.redirect(302, origin + '/docs/' + req.params.page + '?ref=moved');
+  }
+  if (req.query.v === '10') {
+    // ok: js.open-redirect
+    return res.redirect(origin + '/docs/' + req.params.page + '?ref=moved');
+  }
+  if (req.query.v === '5') {
+    // ruleid: js.open-redirect
+    return res.redirect(301, 'https://www.example.com' + req.params.page);
+  }
+  if (req.query.v === '6') {
+    // ruleid: js.open-redirect
+    return res.redirect(302, req.query.next + '/docs');
+  }
+  if (req.query.v === '7') {
+    // ruleid: js.open-redirect
+    return res.redirect(307, 'https://' + req.query.host + '/docs/' + req.params.page);
+  }
+  // ruleid: js.open-redirect
+  return res.redirect(301, SITE + req.query.path);
+});
+
+// The status-first form with templates and longer concatenations.
+app.get('/moved-shapes', (req, res) => {
+  const origin = siteOrigin();
+  const p = req.query.p;
+  switch (req.query.v) {
+    case 'a':
+      // ruleid: js.open-redirect
+      return res.redirect(302, `${req.query.next}/home`);
+    case 'b':
+      // ruleid: js.open-redirect
+      return res.redirect(302, `https://${req.query.host}/home`);
+    case 'c':
+      // ruleid: js.open-redirect
+      return res.redirect(302, `https://${SITE_HOST}${p}`);
+    case 'd':
+      // ruleid: js.open-redirect
+      return res.redirect(302, `${scheme}${p}`);
+    case 'e':
+      // ruleid: js.open-redirect
+      return res.redirect(302, `${scheme}://${p}/home`);
+    case 'f':
+      // ruleid: js.open-redirect
+      return res.redirect(302, `${scheme}//${p}/home`);
+    case 'g':
+      // ruleid: js.open-redirect
+      return res.redirect(302, p + '/a' + '/b');
+    case 'h':
+      // ruleid: js.open-redirect
+      return res.redirect(302, p + '/a' + '/b' + '/c');
+    case 'i':
+      // ruleid: js.open-redirect
+      return res.redirect(302, p + '/a' + '/b' + '/c' + '/d');
+    case 'j':
+      // ruleid: js.open-redirect
+      return res.redirect(302, p + '/a' + '/b' + '/c' + '/d' + '/e');
+    case 'k':
+      // ruleid: js.open-redirect
+      return res.redirect(302, 'https://www.example.com' + p + '/a');
+    case 'l':
+      // ruleid: js.open-redirect
+      return res.redirect(302, 'https://www.example.com' + p + '/a' + '/b' + '/c');
+    case 'm':
+      // ruleid: js.open-redirect
+      return res.redirect(302, 'https://' + 'www.example.com' + p);
+    case 'n':
+      // ruleid: js.open-redirect
+      return res.redirect(302, 'https://' + 'www.example.com' + p + '/a' + '/b');
+    case 'o':
+      // ruleid: js.open-redirect
+      return res.redirect(302, 'https:' + '//' + p);
+    case 'q':
+      // ruleid: js.open-redirect
+      return res.redirect(302, 'https:' + '//' + p + '/a' + '/b');
+    case 'r':
+      // ruleid: js.open-redirect
+      return res.redirect(302, origin + p);
+    case 's':
+      // ruleid: js.open-redirect
+      return res.redirect(302, origin + p + '/a' + '/b');
+    case 't':
+      // ok: js.open-redirect
+      return res.redirect(302, `https://www.example.com/${p}`);
+    default:
+      // A concatenation of more than six parts is not split (Known limits).
+      // ok: js.open-redirect
+      return res.redirect(302, origin + '/docs/' + p + '?a=' + '1' + '&b=' + '2' + '#top');
+  }
 });
 
 // The Referer header is request data like any other header: a link from another site sends the

@@ -944,95 +944,95 @@ rules:
                       # the second argument: the whole value, when it is neither a concatenation nor a template
                       - patterns:
                           - pattern: '$OBJ.redirect($X, $PART, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $Y, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $Y, ...)'
                           - pattern-not: '$OBJ.redirect($X, `...`, ...)'
                       # the second argument: the first part of a concatenation of k parts (not of k + 1)
                       - patterns:
                           - pattern: '$OBJ.redirect($X, $PART + $S1, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, $PART + $S1 + $S2, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, $PART + $S1 + $S2 + $S3, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, $PART + $S1 + $S2 + $S3 + $S4, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, $PART + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
                       # the second argument: the second part, after a constant string that does not end with a path separator after the host
                       - patterns:
                           - pattern: '$OBJ.redirect($X, "$U" + $PART, ...)'
                           - pattern-not: '$OBJ.redirect($X, "=~/^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\\\]+[/?#\\\\]|/[^/\\\\]|[?#]|[\\w.~-]+/)/" + $PART, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, "$U" + $PART + $S2, ...)'
                           - pattern-not: '$OBJ.redirect($X, "=~/^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\\\]+[/?#\\\\]|/[^/\\\\]|[?#]|[\\w.~-]+/)/" + $PART + $S2, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, "$U" + $PART + $S2 + $S3, ...)'
                           - pattern-not: '$OBJ.redirect($X, "=~/^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\\\]+[/?#\\\\]|/[^/\\\\]|[?#]|[\\w.~-]+/)/" + $PART + $S2 + $S3, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, "$U" + $PART + $S2 + $S3 + $S4, ...)'
                           - pattern-not: '$OBJ.redirect($X, "=~/^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\\\]+[/?#\\\\]|/[^/\\\\]|[?#]|[\\w.~-]+/)/" + $PART + $S2 + $S3 + $S4, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, "$U" + $PART + $S2 + $S3 + $S4 + $S5, ...)'
                           - pattern-not: '$OBJ.redirect($X, "=~/^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\\\]+[/?#\\\\]|/[^/\\\\]|[?#]|[\\w.~-]+/)/" + $PART + $S2 + $S3 + $S4 + $S5, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
                       # the second argument: the third part, after a constant string and a constant without a path separator (a scheme, then a constant host name)
                       - patterns:
                           - pattern: '$OBJ.redirect($X, "$U" + "=~/^[^/?#\\\\]*$/" + $PART, ...)'
                           - pattern-not: '$OBJ.redirect($X, "=~/^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\\\]+[/?#\\\\]|/[^/\\\\]|[?#]|[\\w.~-]+/)/" + "$A" + $PART, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, "$U" + "=~/^[^/?#\\\\]*$/" + $PART + $S3, ...)'
                           - pattern-not: '$OBJ.redirect($X, "=~/^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\\\]+[/?#\\\\]|/[^/\\\\]|[?#]|[\\w.~-]+/)/" + "$A" + $PART + $S3, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, "$U" + "=~/^[^/?#\\\\]*$/" + $PART + $S3 + $S4, ...)'
                           - pattern-not: '$OBJ.redirect($X, "=~/^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\\\]+[/?#\\\\]|/[^/\\\\]|[?#]|[\\w.~-]+/)/" + "$A" + $PART + $S3 + $S4, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, "$U" + "=~/^[^/?#\\\\]*$/" + $PART + $S3 + $S4 + $S5, ...)'
                           - pattern-not: '$OBJ.redirect($X, "=~/^(?:(?:[a-zA-Z][a-zA-Z0-9+.-]*:)?//[^/?#\\\\]+[/?#\\\\]|/[^/\\\\]|[?#]|[\\w.~-]+/)/" + "$A" + $PART + $S3 + $S4 + $S5, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
                       # the second argument: the third part, after a scheme alone and slashes (with or without host text)
                       - patterns:
                           - pattern: '$OBJ.redirect($X, "=~/^[a-zA-Z][a-zA-Z0-9+.-]*:$/" + "=~/^[/\\\\]{1,2}[^/?#\\\\]*$/" + $PART, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, "=~/^[a-zA-Z][a-zA-Z0-9+.-]*:$/" + "=~/^[/\\\\]{1,2}[^/?#\\\\]*$/" + $PART + $S3, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, "=~/^[a-zA-Z][a-zA-Z0-9+.-]*:$/" + "=~/^[/\\\\]{1,2}[^/?#\\\\]*$/" + $PART + $S3 + $S4, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, "=~/^[a-zA-Z][a-zA-Z0-9+.-]*:$/" + "=~/^[/\\\\]{1,2}[^/?#\\\\]*$/" + $PART + $S3 + $S4 + $S5, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
                       # the second argument: the second part, after a start that is not a constant string
                       - patterns:
                           - pattern: '$OBJ.redirect($X, $FIRST + $PART, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2, ...)'
                           - pattern-not: '$OBJ.redirect($X, "$U" + $S1, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, $FIRST + $PART + $S2, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3, ...)'
                           - pattern-not: '$OBJ.redirect($X, "$U" + $S1 + $S2, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, $FIRST + $PART + $S2 + $S3, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4, ...)'
                           - pattern-not: '$OBJ.redirect($X, "$U" + $S1 + $S2 + $S3, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, $FIRST + $PART + $S2 + $S3 + $S4, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4 + $O5, ...)'
                           - pattern-not: '$OBJ.redirect($X, "$U" + $S1 + $S2 + $S3 + $S4, ...)'
                       - patterns:
                           - pattern: '$OBJ.redirect($X, $FIRST + $PART + $S2 + $S3 + $S4 + $S5, ...)'
-                          - pattern-not: '$OBJ.redirect($X, $X + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
+                          - pattern-not: '$OBJ.redirect($X, $Z + $O1 + $O2 + $O3 + $O4 + $O5 + $O6, ...)'
                           - pattern-not: '$OBJ.redirect($X, "$U" + $S1 + $S2 + $S3 + $S4 + $S5, ...)'
                       # the second argument: templates. The first interpolation when the template starts with it, or when the text before it does not end the host; the second when two start the template or follow a scheme.
                       - patterns:
