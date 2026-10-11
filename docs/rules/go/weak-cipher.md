@@ -16,6 +16,8 @@ It also finds TLS cipher suites that `crypto/tls` lists in `InsecureCipherSuites
 key exchange, and CBC with SHA-256) enabled in the `CipherSuites` of a `tls.Config`: in the
 literal, assigned to the field (also with `append`), or in a list variable used there. A list
 handed to a function that filters suites out (a deny-list) is not reported.
+
+Test code is skipped: files whose names end in `_test.go`, which Go builds only for `go test`.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -126,6 +128,7 @@ func Encrypt(key, plaintext []byte) ([]byte, error) {
 - <https://pkg.go.dev/crypto/tls#CipherSuites>
 - <https://pkg.go.dev/crypto/tls#Config>
 - <https://go.dev/src/crypto/tls/cipher_suites.go>
+- <https://pkg.go.dev/testing>
 
 ## Tests
 

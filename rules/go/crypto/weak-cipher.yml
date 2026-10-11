@@ -32,7 +32,11 @@ rules:
         - https://pkg.go.dev/crypto/tls#CipherSuites
         - https://pkg.go.dev/crypto/tls#Config
         - https://go.dev/src/crypto/tls/cipher_suites.go
+        - https://pkg.go.dev/testing
       since: 2026.10.1
+    # Test code (*_test.go files, which the Go tool builds only for `go test`) is left out: a
+    # test that uses a broken cipher on purpose (a known-answer test, a legacy format) protects
+    # nothing (rulings F10 and J3).
     # Known limits (each has a `todo` line in the test file):
     # - TLS cipher suites: the twelve suites `tls.InsecureCipherSuites` lists (RC4, 3DES, RSA key
     #   exchange, CBC with SHA-256), named by their tls constant in the CipherSuites list of a
@@ -48,6 +52,8 @@ rules:
     #   (`todook:`).
     # The packages are bound by their import path: an alias is followed, and a package of another
     # path with the same name is not (unless the file also imports the cipher package, above).
+    paths:
+      exclude: ['*_test.go']
     pattern-either:
       - patterns:
           - pattern-inside: |
