@@ -1126,7 +1126,70 @@ class SchemaImports {
         // ok: java.xxe
         return factory.newSchema(new StreamSource(xsd));
     }
+}
 
+// A SchemaFactory in a field, set up in a static block, a constructor or a method.
+class SharedSchemaFactory {
+    private static final SchemaFactory FACTORY = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+
+    static {
+        try {
+            FACTORY.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        } catch (org.xml.sax.SAXException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    Schema load(InputStream xsd) throws Exception {
+        // ruleid: java.xxe
+        return FACTORY.newSchema(new StreamSource(xsd));
+    }
+}
+
+class HardenedSchemaInStaticBlock {
+    private static final SchemaFactory FACTORY = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+
+    static {
+        try {
+            FACTORY.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            FACTORY.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        } catch (org.xml.sax.SAXException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    Schema load(InputStream xsd) throws Exception {
+        // ok: java.xxe
+        return FACTORY.newSchema(new StreamSource(xsd));
+    }
+}
+
+class HardenedSchemaInConstructor {
+    private final SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+
+    HardenedSchemaInConstructor() throws Exception {
+        factory.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        factory.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+    }
+
+    Schema load(InputStream xsd) throws Exception {
+        // ok: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+}
+
+class HardenedSchemaInMethod {
+    private final SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+
+    void configure() throws Exception {
+        factory.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+        factory.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+    }
+
+    Schema load(InputStream xsd) throws Exception {
+        // ok: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
 }
 
 // Validation: a Validator from a Schema parses the document it validates.
@@ -1361,6 +1424,61 @@ class ValidatorImports {
         other.newValidator().validate(new StreamSource(in));
     }
 
+    // The Schema of a factory that is not created in sight (a parameter, a helper's result) is
+    // checked nowhere else: the Validator is reported.
+    void factoryHandedIn(SchemaFactory factory, InputStream xsd, InputStream in) throws Exception {
+        Schema schema = factory.newSchema(new StreamSource(xsd));
+        Validator validator = schema.newValidator();
+        // ruleid: java.xxe
+        validator.validate(new StreamSource(in));
+    }
+
+    void factoryFromHelper(InputStream xsd, InputStream in) throws Exception {
+        SchemaFactory factory = com.acme.imports.xml.Schemas.factory();
+        Schema schema = factory.newSchema(new StreamSource(xsd));
+        // ruleid: java.xxe
+        schema.newValidator().validate(new StreamSource(in));
+    }
+
+    void factoryHandedInInPlace(SchemaFactory factory, InputStream xsd, InputStream in) throws Exception {
+        // ruleid: java.xxe
+        factory.newSchema(new StreamSource(xsd)).newValidator().validate(new StreamSource(in));
+    }
+
+    void factoryHandedInValidatorVariable(SchemaFactory factory, InputStream xsd, InputStream in) throws Exception {
+        Validator validator = factory.newSchema(new StreamSource(xsd)).newValidator();
+        // ruleid: java.xxe
+        validator.validate(new StreamSource(in));
+    }
+
+    // A factory made in place: the SchemaFactory branch reports its newSchema.
+    void factoryInPlace(InputStream xsd, InputStream in) throws Exception {
+        // ruleid: java.xxe
+        Schema schema = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI).newSchema(new StreamSource(xsd));
+        // ok: java.xxe
+        schema.newValidator().validate(new StreamSource(in));
+    }
+
+    void factoryInPlaceValidatorVariable(InputStream xsd, InputStream in) throws Exception {
+        // ruleid: java.xxe
+        Validator validator = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI).newSchema(new StreamSource(xsd)).newValidator();
+        // ok: java.xxe
+        validator.validate(new StreamSource(in));
+    }
+
+    // A Validator that sets a property back to "all" on a Schema of a hardened factory is taken
+    // as getting the factory's properties.
+    void relaxedValidator(InputStream xsd, InputStream in) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        factory.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        factory.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        Schema schema = factory.newSchema(new StreamSource(xsd));
+        Validator validator = schema.newValidator();
+        validator.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "all");
+        // todoruleid: java.xxe
+        validator.validate(new StreamSource(in));
+    }
+
     // A Source handed in may be a StreamSource: it is not followed.
     void sourceHandedIn(Schema schema, javax.xml.transform.Source source) throws Exception {
         Validator validator = schema.newValidator();
@@ -1425,6 +1543,74 @@ class SchemaFromHelper {
     void check(InputStream in) throws Exception {
         // todook: java.xxe
         SCHEMA.newValidator().validate(new StreamSource(in));
+    }
+}
+
+// A Schema made from a factory field, in a field initialiser, a static block or a constructor.
+class SchemaFromFactoryField {
+    private static final SchemaFactory FACTORY = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+    private static final Schema ORDER;
+    private final Schema invoice;
+    private final Schema receipt;
+    // ruleid: java.xxe
+    private final Schema payment = FACTORY.newSchema(SchemaFromFactoryField.class.getResource("/payment.xsd"));
+
+    static {
+        try {
+            // ruleid: java.xxe
+            ORDER = FACTORY.newSchema(SchemaFromFactoryField.class.getResource("/order.xsd"));
+        } catch (org.xml.sax.SAXException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    SchemaFromFactoryField() throws org.xml.sax.SAXException {
+        // ruleid: java.xxe
+        invoice = FACTORY.newSchema(SchemaFromFactoryField.class.getResource("/invoice.xsd"));
+        // ruleid: java.xxe
+        this.receipt = FACTORY.newSchema(SchemaFromFactoryField.class.getResource("/receipt.xsd"));
+    }
+
+    void check(InputStream in) throws Exception {
+        // ok: java.xxe
+        ORDER.newValidator().validate(new StreamSource(in));
+        // ok: java.xxe
+        invoice.newValidator().validate(new StreamSource(in));
+        // ok: java.xxe
+        receipt.newValidator().validate(new StreamSource(in));
+        // ok: java.xxe
+        payment.newValidator().validate(new StreamSource(in));
+    }
+}
+
+// The Schema made in the constructor from a factory handed in is checked nowhere else.
+class SchemaFromFactoryHandedIn {
+    private final Schema schema;
+
+    SchemaFromFactoryHandedIn(SchemaFactory factory, java.net.URL xsd) throws Exception {
+        this.schema = factory.newSchema(xsd);
+    }
+
+    void check(InputStream in) throws Exception {
+        // ruleid: java.xxe
+        schema.newValidator().validate(new StreamSource(in));
+    }
+}
+
+// A parameter named like a field made from a hardened factory is not that field.
+class ParameterNamedLikeField {
+    private final Schema schema;
+
+    ParameterNamedLikeField(java.net.URL xsd) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        factory.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        factory.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        this.schema = factory.newSchema(xsd);
+    }
+
+    void check(Schema schema, InputStream in) throws Exception {
+        // ruleid: java.xxe
+        schema.newValidator().validate(new StreamSource(in));
     }
 }
 

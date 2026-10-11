@@ -81,8 +81,8 @@ public class InvoiceParser {
   for schemas and stylesheets, `ACCESS_EXTERNAL_SCHEMA` / `ACCESS_EXTERNAL_STYLESHEET`) to `""`.
 - A `SchemaFactory` needs both `ACCESS_EXTERNAL_DTD` and `ACCESS_EXTERNAL_SCHEMA` set to `""`:
   refusing DOCTYPEs does not stop `xs:import`, `xs:include` or `schemaLocation` from fetching. Set
-  them on each `Validator` too, unless its `Schema` comes from such a factory: a `Validator` gets
-  the properties of the factory that made its `Schema`.
+  them on each `Validator` too, unless its `Schema` comes from such a factory: implementations
+  should give a `Validator` the properties of the factory that made its `Schema`.
 <!-- end: how-to-fix -->
 
 ## Frameworks and APIs covered
@@ -107,11 +107,13 @@ public class InvoiceParser {
   built-in factory is created, and on a `SAXParser` or its `XMLReader` anywhere after it was
   created, where it is taken as unconditional. A use inside the `try` block that holds a setting
   is taken as made after it.
-- A `Validator` whose `Schema` is made in the same method or class is left to the check of that
-  `SchemaFactory`. A `Schema` made by a helper method, assigned in another method, or named with
-  `this.` only where it is used is not traced back, so its `Validator` is reported even when the
-  factory is hardened. A `Validator` assigned to a field in a constructor is not checked, and one
-  is reported only when it validates a `StreamSource` or `SAXSource`, not a `Source` handed in.
+- A `Validator` whose `Schema` is made in the same method or class, from a `SchemaFactory`
+  created there too, is left to the check of that factory, since implementations should give the
+  `Validator` the factory's properties; one that sets a property back to `"all"` is then missed.
+  A `Schema` made by a helper method, assigned in another method, or named with `this.` only
+  where it is used is not traced back, so its `Validator` is reported even when the factory is
+  hardened. A `Validator` assigned to a field in a constructor is not checked, and one is reported
+  only when it validates a `StreamSource` or `SAXSource`, not a `Source` handed in.
 - A `TransformerFactory` is reported only when its transformer parses a `StreamSource` or
   `SAXSource`; stylesheets parsed by `newTransformer(Source)` are not reported.
 - A dom4j `SAXReader` or JDOM `SAXBuilder` given its own `XMLReader` is not reported.
