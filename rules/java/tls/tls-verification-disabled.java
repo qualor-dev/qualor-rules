@@ -1020,6 +1020,30 @@ class ClientLibraries {
                 .buildClassic();
     }
 
+    Object apache5TlsStrategy(SSLContext context) {
+        // ruleid: java.tls-verification-disabled
+        return new org.apache.hc.client5.http.ssl.DefaultClientTlsStrategy(context, (hostname, session) -> true);
+    }
+
+    Object apache5TlsStrategyBlock(SSLContext context) {
+        return new org.apache.hc.client5.http.ssl.DefaultClientTlsStrategy(context, (hostname, session) -> {
+            // ruleid: java.tls-verification-disabled
+            return true;
+        });
+    }
+
+    Object apache5SocketFactory(SSLContext context) {
+        // ruleid: java.tls-verification-disabled
+        return new org.apache.hc.client5.http.ssl.SSLConnectionSocketFactory(context, (hostname, session) -> true);
+    }
+
+    Object apache5SocketFactoryBlock(SSLContext context) {
+        return new org.apache.hc.client5.http.ssl.SSLConnectionSocketFactory(context, (hostname, session) -> {
+            // ruleid: java.tls-verification-disabled
+            return true;
+        });
+    }
+
     HostnameVerifier apache5NoopNew() {
         // ruleid: java.tls-verification-disabled
         return new org.apache.hc.client5.http.ssl.NoopHostnameVerifier();
@@ -1213,6 +1237,185 @@ class PinnedStrategies implements TrustStrategy {
                 return true;
             }
         };
+    }
+}
+
+// A call given the chain (a strategy) or the host name and the session (a verifier) before
+// `return true` is a check: it throws when the certificate or host is not the expected one.
+class CheckedBeforeTrue {
+    private static final Logger LOG = Logger.getLogger("tls");
+    private final Set<String> pins;
+
+    CheckedBeforeTrue(Set<String> pins) {
+        this.pins = pins;
+    }
+
+    void requirePinned(X509Certificate[] chain) throws CertificateException {
+        if (chain.length == 0 || !pins.contains(HexFormat.of().formatHex(chain[0].getPublicKey().getEncoded()))) {
+            throw new CertificateException("server key not pinned");
+        }
+    }
+
+    static void requireVerified(String hostname, SSLSession session) {
+        if (!HttpsURLConnection.getDefaultHostnameVerifier().verify(hostname, session)) {
+            throw new IllegalStateException("host name mismatch: " + hostname);
+        }
+    }
+
+    SSLContext pinned4() throws GeneralSecurityException {
+        return SSLContexts.custom()
+                .loadTrustMaterial(null, (chain, authType) -> {
+                    requirePinned(chain);
+                    // ok: java.tls-verification-disabled
+                    return true;
+                })
+                .build();
+    }
+
+    SSLContext pinned5() throws GeneralSecurityException {
+        return org.apache.hc.core5.ssl.SSLContexts.custom()
+                .loadTrustMaterial((chain, authType) -> {
+                    this.requirePinned(chain);
+                    // ok: java.tls-verification-disabled
+                    return true;
+                })
+                .build();
+    }
+
+    SSLContext pinnedAnonymous() throws GeneralSecurityException {
+        return SSLContexts.custom()
+                .loadTrustMaterial(new TrustStrategy() {
+                    @Override
+                    public boolean isTrusted(X509Certificate[] chain, String authType) throws CertificateException {
+                        requirePinned(chain);
+                        // ok: java.tls-verification-disabled
+                        return true;
+                    }
+                })
+                .build();
+    }
+
+    // A strategy lambda kept in a variable is not recognised as checking the chain.
+    SSLContext pinnedVariable() throws GeneralSecurityException {
+        TrustStrategy pinned = (chain, authType) -> {
+            requirePinned(chain);
+            // todook: java.tls-verification-disabled
+            return true;
+        };
+        org.apache.hc.core5.ssl.TrustStrategy pinned5 = (chain, authType) -> {
+            requirePinned(chain);
+            // todook: java.tls-verification-disabled
+            return true;
+        };
+        return SSLContexts.custom().loadTrustMaterial(pinned).build();
+    }
+
+    OkHttpClient verified() {
+        return new OkHttpClient.Builder()
+                .hostnameVerifier((hostname, session) -> {
+                    requireVerified(hostname, session);
+                    // ok: java.tls-verification-disabled
+                    return true;
+                })
+                .build();
+    }
+
+    HostnameVerifier verifiedClass() {
+        return new HostnameVerifier() {
+            @Override
+            public boolean verify(String hostname, SSLSession session) {
+                CheckedBeforeTrue.requireVerified(hostname, session);
+                // ok: java.tls-verification-disabled
+                return true;
+            }
+        };
+    }
+
+    // A call given only the host name, or only the authentication type, checks nothing.
+    OkHttpClient logsHost() {
+        return new OkHttpClient.Builder()
+                .hostnameVerifier((hostname, session) -> {
+                    LOG.fine(hostname);
+                    // ruleid: java.tls-verification-disabled
+                    return true;
+                })
+                .build();
+    }
+
+    HostnameVerifier logsHostClass() {
+        return new HostnameVerifier() {
+            @Override
+            public boolean verify(String hostname, SSLSession session) {
+                LOG.fine(hostname);
+                // ruleid: java.tls-verification-disabled
+                return true;
+            }
+        };
+    }
+
+    SSLContext logsAuthTypeClass() throws GeneralSecurityException {
+        return SSLContexts.custom()
+                .loadTrustMaterial(new TrustStrategy() {
+                    @Override
+                    public boolean isTrusted(X509Certificate[] chain, String authType) {
+                        LOG.fine(authType);
+                        // ruleid: java.tls-verification-disabled
+                        return true;
+                    }
+                })
+                .build();
+    }
+
+    // A verifier that returns the result of a check, or true only under a condition.
+    OkHttpClient internalOnly() {
+        return new OkHttpClient.Builder()
+                .hostnameVerifier((hostname, session) -> {
+                    LOG.fine(hostname);
+                    // ok: java.tls-verification-disabled
+                    return INTERNAL.contains(hostname);
+                })
+                .build();
+    }
+
+    OkHttpClient internalOrValid() {
+        return new OkHttpClient.Builder()
+                .hostnameVerifier((hostname, session) -> {
+                    if (INTERNAL.contains(hostname))
+                        // ok: java.tls-verification-disabled
+                        return true;
+                    return session.isValid();
+                })
+                .build();
+    }
+
+    private static final Set<String> INTERNAL = Set.of("api.internal.example");
+
+    // A method of two parameters that is neither a verifier nor a strategy.
+    // ok: java.tls-verification-disabled
+    boolean allowed(String user, String role) {
+        LOG.fine(user);
+        return true;
+    }
+
+    SSLContext logsAuthType() throws GeneralSecurityException {
+        return SSLContexts.custom()
+                .loadTrustMaterial(null, (chain, authType) -> {
+                    LOG.fine(authType);
+                    // ruleid: java.tls-verification-disabled
+                    return true;
+                })
+                .build();
+    }
+
+    // Any call given the chain counts, also a log line.
+    SSLContext logsChain() throws GeneralSecurityException {
+        return SSLContexts.custom()
+                .loadTrustMaterial(null, (chain, authType) -> {
+                    LOG.fine(Arrays.toString(chain));
+                    // todoruleid: java.tls-verification-disabled
+                    return true;
+                })
+                .build();
     }
 }
 

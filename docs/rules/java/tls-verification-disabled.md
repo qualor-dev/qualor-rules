@@ -15,8 +15,8 @@ TLS client checks that accept anything:
   one that checks a certificate's dates or signature but catches the failure;
 - a `HostnameVerifier` that returns `true` whatever the host: a `verify` method or a lambda given
   to `setHostnameVerifier` / `setDefaultHostnameVerifier`, OkHttp's or Jakarta REST's
-  `hostnameVerifier`, Apache HttpClient's `setSSLHostnameVerifier` or `SSLConnectionSocketFactory`,
-  assigned to a `HostnameVerifier` variable or cast to one;
+  `hostnameVerifier`, Apache HttpClient's `setSSLHostnameVerifier`, `SSLConnectionSocketFactory` or
+  `DefaultClientTlsStrategy`, assigned to a `HostnameVerifier` variable or cast to one;
 - an Apache HttpClient `TrustStrategy` that returns `true` whatever the chain (it then trusts the
   chain without the trust manager): an `isTrusted` method or a lambda given to
   `loadTrustMaterial` or assigned to a `TrustStrategy` variable;
@@ -24,8 +24,9 @@ TLS client checks that accept anything:
   `ALLOW_ALL_HOSTNAME_VERIFIER` and `TrustAllStrategy`, which only switch the check off.
 
 A trust manager that throws `CertificateException`, delegates to another trust manager or hands
-the chain (or a certificate of it) to a check of its own, and a verifier or strategy that returns
-`true` only under a condition, are not reported. An empty `checkClientTrusted` is not reported either: a server calls it, and an
+the chain (or a certificate of it) to a check of its own, a verifier or strategy that first hands
+the host name and session, or the chain, to a check, and one that returns `true` only under a
+condition, are not reported. An empty `checkClientTrusted` is not reported either: a server calls it, and an
 empty one only means that clients need no certificate. Test code is skipped: the `src/test/`
 tree (also `src/testFixtures/`, `src/integrationTest/` and `src/intTest/`) and files whose
 names end in `Test`, `Tests`, `TestCase`, `IT` or `ITCase`.
@@ -148,7 +149,10 @@ public class Clients {
   (the setters and `loadTrustMaterial` above, a typed variable, a cast); one returned by a helper
   method is missed.
 - A trust strategy, like a trust manager, that throws anywhere counts as a check, even when it
-  trusts every other chain without the trust manager.
+  trusts every other chain without the trust manager. So does a call given the chain (a strategy)
+  or the host name and the session (a verifier) before `return true`, whatever it does: a strategy
+  that only logs the chain is missed. A strategy lambda kept in a variable is not recognised as
+  checking the chain that way, so a pinning strategy kept in a variable is reported.
 - Apache HttpClient's `TrustSelfSignedStrategy`, which trusts any self-signed certificate, is not
   reported.
 - A trust-all manager given only to a server context (whose `checkServerTrusted` is never called)
@@ -181,6 +185,8 @@ public class Clients {
 - <https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/NoopHostnameVerifier.html>
 - <https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/TrustAllStrategy.html>
 - <https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/ClientTlsStrategyBuilder.html>
+- <https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/DefaultClientTlsStrategy.html>
+- <https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/SSLConnectionSocketFactory.html>
 - <https://hc.apache.org/httpcomponents-core-5.3.x/current/httpcore5/apidocs/org/apache/hc/core5/ssl/SSLContextBuilder.html>
 - <https://hc.apache.org/httpcomponents-core-5.3.x/current/httpcore5/apidocs/org/apache/hc/core5/ssl/TrustStrategy.html>
 - <https://maven.apache.org/guides/introduction/introduction-to-the-standard-directory-layout.html>

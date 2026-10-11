@@ -43,6 +43,8 @@ rules:
         - https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/NoopHostnameVerifier.html
         - https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/TrustAllStrategy.html
         - https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/ClientTlsStrategyBuilder.html
+        - https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/DefaultClientTlsStrategy.html
+        - https://hc.apache.org/httpcomponents-client-5.4.x/current/httpclient5/apidocs/org/apache/hc/client5/http/ssl/SSLConnectionSocketFactory.html
         - https://hc.apache.org/httpcomponents-core-5.3.x/current/httpcore5/apidocs/org/apache/hc/core5/ssl/SSLContextBuilder.html
         - https://hc.apache.org/httpcomponents-core-5.3.x/current/httpcore5/apidocs/org/apache/hc/core5/ssl/TrustStrategy.html
         - https://maven.apache.org/guides/introduction/introduction-to-the-standard-directory-layout.html
@@ -74,11 +76,16 @@ rules:
     #   called) is still reported.
     # - A lambda is a HostnameVerifier only when it is given to setHostnameVerifier,
     #   setDefaultHostnameVerifier, setSSLHostnameVerifier, hostnameVerifier (OkHttp, Jakarta
-    #   REST) or Apache HttpClient 4's SSLConnectionSocketFactory, assigned to a HostnameVerifier
+    #   REST), Apache HttpClient 4's SSLConnectionSocketFactory or HttpClient 5's
+    #   SSLConnectionSocketFactory and DefaultClientTlsStrategy, assigned to a HostnameVerifier
     #   variable or cast to one; and a TrustStrategy only when it is given to loadTrustMaterial or
     #   assigned to a TrustStrategy variable. One returned by a helper method is missed.
     # - A TrustStrategy (like a HostnameVerifier or trust manager) that throws anywhere counts as
-    #   a check, also when it trusts every other chain without the trust manager.
+    #   a check, also when it trusts every other chain without the trust manager. So does a call
+    #   given the chain (a strategy) or the host name and the session (a verifier) before the
+    #   return, whatever it does: a log line of the chain hides a trust-all strategy. A strategy
+    #   lambda kept in a variable is not recognised as checking the chain that way, so a pinning
+    #   strategy kept in a variable is reported.
     # - Apache HttpClient's TrustSelfSignedStrategy, which trusts any self-signed certificate, is
     #   not checked.
     paths:
@@ -176,6 +183,8 @@ rules:
                               metavariable: $SET
                               regex: ^(setHostnameVerifier|setDefaultHostnameVerifier|setSSLHostnameVerifier|hostnameVerifier)$
                       - pattern-inside: new org.apache.http.conn.ssl.SSLConnectionSocketFactory(..., ($H, $S) -> { ... })
+                      - pattern-inside: new org.apache.hc.client5.http.ssl.SSLConnectionSocketFactory(..., ($H, $S) -> { ... })
+                      - pattern-inside: new org.apache.hc.client5.http.ssl.DefaultClientTlsStrategy(..., ($H, $S) -> { ... })
                       - pattern-inside: $X.loadTrustMaterial(..., ($H, $S) -> { ... })
                       - pattern-inside: javax.net.ssl.HostnameVerifier $V = ($H, $S) -> { ... };
                       - pattern-inside: org.apache.http.ssl.TrustStrategy $V = ($H, $S) -> { ... };
@@ -192,6 +201,17 @@ rules:
               boolean isTrusted(...) { ... return false; ... }
           - pattern-not-inside: |
               boolean isTrusted(...) { ... throw $E; ... }
+          # A call given the chain (a trust strategy) or the host name and the session (a host
+          # name verifier) counts as a check, as for trust managers: it may throw. (Not for a
+          # strategy lambda kept in a variable: OpenGrep matches a typed variable of a lambda with
+          # any method of two parameters, so that form would hide verify methods that only log.)
+          - pattern-not-inside: |
+              boolean isTrusted(java.security.cert.X509Certificate[] $H, String $S) { ... $FN(..., $H, ...); ... }
+          - pattern-not-inside: |
+              boolean verify(String $H, javax.net.ssl.SSLSession $S) { ... $FN(..., $H, ..., $S, ...); ... }
+          - pattern-not-inside: |
+              ($H, $S) -> { ... $FN(..., $H, ..., $S, ...); ... }
+          - pattern-not-inside: $X.loadTrustMaterial(..., ($H, $S) -> { ... $FN(..., $H, ...); ... })
           - pattern-not-inside: |
               ($H, $S) -> { ... return false; ... }
           - pattern-not-inside: |
@@ -208,6 +228,8 @@ rules:
                       metavariable: $SET
                       regex: ^(setHostnameVerifier|setDefaultHostnameVerifier|setSSLHostnameVerifier|hostnameVerifier)$
               - pattern: new org.apache.http.conn.ssl.SSLConnectionSocketFactory(..., ($H, $S) -> $TRUE)
+              - pattern: new org.apache.hc.client5.http.ssl.SSLConnectionSocketFactory(..., ($H, $S) -> $TRUE)
+              - pattern: new org.apache.hc.client5.http.ssl.DefaultClientTlsStrategy(..., ($H, $S) -> $TRUE)
               - pattern: $X.loadTrustMaterial(..., ($H, $S) -> $TRUE)
               - pattern: javax.net.ssl.HostnameVerifier $V = ($H, $S) -> $TRUE;
               - pattern: org.apache.http.ssl.TrustStrategy $V = ($H, $S) -> $TRUE;
