@@ -34,6 +34,7 @@ Entry format:
 - js-1 (js.ssrf#prefilter, js.template-injection#prefilter, js.open-redirect#status-arg-patterns, js.open-redirect#next-response-await): APPROVED in round 1; merged a945631..c8edccd
 - go-2 (go.sql-injection#test-support, go.command-injection#test-support, go.ssrf#test-support, go.xss#test-support): APPROVED in round 1; merged 2ea6ff4..417076d
 - java-1 (java.xss#prefilter, java.command-injection#prefilter, java.open-redirect#prefilter, java.sql-injection#builder-insert): APPROVED in round 2 (Important: the intrafile two-argument insert on a MyBatis SqlSession recorded as a Known limit in the 12 Java request rules; java.xss Jakarta REST item rewritten so it is faster than before on files with its words); Benchmark findings identical; merged 9d52b57..588d32f
+- go-3 (go.open-redirect#test-support, go.template-injection#test-support, go.command-injection#bind-in-comparison, go.path-traversal#bind-in-comparison): APPROVED in round 2 (Important: an older gap, a sink called inside a nil comparison is cleared by the number/boolean sanitizer; recorded as todoruleid lines and Known limits, fixed by go.sql-injection#sink-in-comparison in go-6); merged c7b3e2c..e65a0f0
 
 ## 2026-10-11: --taint-intrafile (setup)
 
