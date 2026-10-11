@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { BLOCKS, RULE, SCHEMA_REQUIREMENTS, SETTINGS, generate, regenerate, sequences } from './xxe-exclusions.mjs';
+import { BLOCKS, POSITIONS, RULE, SCHEMA_REQUIREMENTS, SETTINGS, generate, regenerate, sequences } from './xxe-exclusions.mjs';
+
+const P = Object.keys(POSITIONS).length;
 
 test('the generated blocks of xxe.yml match their tables', () => {
   const text = readFileSync(RULE, 'utf8');
@@ -31,8 +33,8 @@ test('each setting of the parsers block appears once per position and order', ()
   assert.equal(sequences(triple, '$F').length, 6);
   const parser = SETTINGS.filter((r) => r.stmts[0].includes('$SET')).length;
   const reader = SETTINGS.filter((r) => !r.stax).reduce((n, r) => n + sequences(r, '$R').length, 0);
-  // 5 positions × the sequences, 2 makes × 2 names × 2 positions of secure processing.
-  assert.equal(count(block), 5 * perPosition(SETTINGS) + 8 + parser + reader);
+  // P positions × the sequences, 2 makes × 2 names of secure processing.
+  assert.equal(count(block), P * perPosition(SETTINGS) + 2 * 2 + parser + reader);
 });
 
 test('a SchemaFactory is safe only with both external DTD and schema access denied, each on its own', () => {
@@ -47,8 +49,8 @@ test('a SchemaFactory is safe only with both external DTD and schema access deni
   assert.equal((text.match(/- pattern: \$F\.newSchema\(\.\.\.\)/g) ?? []).length, SCHEMA_REQUIREMENTS.length);
   // No row of the parsers' table (a refused DOCTYPE, the DTD property alone) reaches this block.
   assert.doesNotMatch(text, /disallow-doctype-decl|supportDTD|SUPPORT_DTD/);
-  // 2 requirements × 2 names × 5 positions, 1 make × 2 names × 2 positions of secure processing.
-  assert.equal(count(block), 2 * 2 * 5 + 4);
+  // 2 requirements × 2 names × P positions, 1 make × 2 names of secure processing.
+  assert.equal(count(block), 2 * 2 * P + 2);
 });
 
 test('a Validator must deny external DTDs and schemas itself, each on its own', () => {
@@ -62,6 +64,16 @@ test('a Validator must deny external DTDs and schemas itself, each on its own', 
   // Secure processing is a factory setting: no newDefaultInstance exclusion on a Validator.
   assert.doesNotMatch(text, /newDefault|secure-processing|FEATURE_SECURE_PROCESSING/);
   assert.match(text, /# Set on the validator: before\./);
-  // 2 requirements × 2 names × 5 positions.
-  assert.equal(count(block), 2 * 2 * 5);
+  // 2 requirements × 2 names × P positions.
+  assert.equal(count(block), 2 * 2 * P);
+});
+
+test('a setting in a try block counts with catch clauses, a finally clause or both', () => {
+  const s = ['$F.setFeature("x", true);'];
+  const tries = Object.values(POSITIONS).map((p) => p(s)).filter((x) => x.startsWith('try {'));
+  // OpenGrep matches a try statement with catch clauses and a finally clause by the template
+  // without catch clauses, so two templates cover the three forms.
+  assert.equal(tries.length, 2);
+  assert.equal(tries.filter((x) => x.includes('} catch ($EX $E) {') && !x.includes('finally')).length, 1);
+  assert.equal(tries.filter((x) => !x.includes('catch') && x.includes('} finally {')).length, 1);
 });

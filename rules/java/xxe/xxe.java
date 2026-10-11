@@ -146,6 +146,38 @@ class DomImports {
         return factory.newDocumentBuilder().parse(in);
     }
 
+    Document externalAccessDeniedInTryFinally(InputStream in) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try {
+            factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        } finally {
+            factory.setNamespaceAware(true);
+        }
+        // ok: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    Document externalAccessDeniedByNameInTryFinally(InputStream in) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try {
+            factory.setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+        } finally {
+            factory.setNamespaceAware(true);
+        }
+        // ok: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    // Secure processing set only under a condition still counts.
+    Document builtInSecureOnlyIfStrict(InputStream in, boolean strict) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newDefaultInstance();
+        if (strict) {
+            factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+        }
+        // todoruleid: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
     // The built-in JDK factory denies external access once secure processing is set explicitly.
     Document builtInSecure(InputStream in) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newDefaultInstance();
@@ -185,7 +217,7 @@ class DomImports {
         }
     }
 
-    // A try block with a finally clause (with or without catch) is not recognised.
+    // A try block with a finally clause, with or without catch clauses.
     Document disallowedInTryFinally(InputStream in) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         try {
@@ -195,7 +227,127 @@ class DomImports {
         } finally {
             factory.setNamespaceAware(true);
         }
-        // todook: java.xxe
+        // ok: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    Document disallowedInTryWithTwoCatchesAndFinally(InputStream in) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try {
+            factory.setNamespaceAware(true);
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+        } catch (ParserConfigurationException e) {
+            throw new IllegalStateException(e);
+        } catch (RuntimeException e) {
+            throw e;
+        } finally {
+            factory.setXIncludeAware(false);
+        }
+        // ok: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    Document externalEntitiesOffInTryFinally(InputStream in) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try {
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        } finally {
+            factory.setNamespaceAware(true);
+        }
+        // ok: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    // The three entity features in the other orders, in a try block with a finally clause.
+    void externalEntitiesOffInOtherOrdersInTryFinally(InputStream in) throws Exception {
+        DocumentBuilderFactory a = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory b = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory c = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory d = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory e = DocumentBuilderFactory.newInstance();
+        try {
+            a.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            a.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            a.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            b.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            b.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            b.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            c.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            c.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            c.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            d.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            d.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            d.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            e.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            e.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            e.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        } finally {
+            in.mark(0);
+        }
+        // ok: java.xxe
+        a.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        b.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        c.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        d.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        e.newDocumentBuilder().parse(in);
+    }
+
+    Document doctypeAllowedInTryFinally(InputStream in) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try {
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", false);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        } finally {
+            factory.setNamespaceAware(true);
+        }
+        // ruleid: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    // A setting made in a try block after the builder was created does not apply to it, but a
+    // use inside the try block that holds a setting is taken as made after it.
+    Document tooLateInTryFinally(InputStream in) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try {
+            // todoruleid: java.xxe
+            DocumentBuilder builder = factory.newDocumentBuilder();
+            factory.setFeature(DISALLOW_DOCTYPE, true);
+            return builder.parse(in);
+        } finally {
+            factory.setNamespaceAware(true);
+        }
+    }
+
+    // A setting made only under a condition inside a try block is taken as unconditional.
+    Document disallowedInTryOnlyIfStrict(InputStream in, boolean strict) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try {
+            if (strict) {
+                factory.setFeature(DISALLOW_DOCTYPE, true);
+            }
+        } catch (ParserConfigurationException e) {
+            throw new IllegalStateException(e);
+        }
+        // todoruleid: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    Document disallowedInTryFinallyOnlyIfStrict(InputStream in, boolean strict) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try {
+            if (strict) {
+                factory.setFeature(DISALLOW_DOCTYPE, true);
+            }
+        } finally {
+            factory.setNamespaceAware(true);
+        }
+        // todoruleid: java.xxe
         return factory.newDocumentBuilder().parse(in);
     }
 
@@ -427,6 +579,30 @@ class SaxImports {
         // ok: java.xxe
         factory.newSAXParser().parse(in, handler);
     }
+
+    void builtInSecureInTryCatchFinally(InputStream in, DefaultHandler handler) throws Exception {
+        SAXParserFactory factory = SAXParserFactory.newDefaultNSInstance();
+        try {
+            factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
+        } catch (ParserConfigurationException e) {
+            throw new IllegalStateException(e);
+        } finally {
+            factory.setValidating(false);
+        }
+        // ok: java.xxe
+        factory.newSAXParser().parse(in, handler);
+    }
+
+    void disallowedInTryFinally(InputStream in, DefaultHandler handler) throws Exception {
+        SAXParserFactory factory = SAXParserFactory.newInstance();
+        try {
+            factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", Boolean.TRUE);
+        } finally {
+            factory.setNamespaceAware(true);
+        }
+        // ok: java.xxe
+        factory.newSAXParser().parse(in, handler);
+    }
 }
 
 // StAX: XMLInputFactory.
@@ -503,6 +679,53 @@ class StaxImports {
         factory.setProperty("javax.xml.stream.isSupportingExternalEntities", Boolean.FALSE);
         // ok: java.xxe
         factory.createXMLStreamReader(in);
+    }
+
+    void noDtdInTryFinally(InputStream in) throws Exception {
+        XMLInputFactory factory = XMLInputFactory.newInstance();
+        try {
+            factory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
+        } finally {
+            factory.setProperty(XMLInputFactory.IS_COALESCING, true);
+        }
+        // ok: java.xxe
+        factory.createXMLStreamReader(in);
+    }
+
+    // Each form of the two StAX properties, in a try block with a finally clause.
+    void propertiesInTryFinally(InputStream in) throws Exception {
+        XMLInputFactory a = XMLInputFactory.newInstance();
+        XMLInputFactory b = XMLInputFactory.newInstance();
+        XMLInputFactory c = XMLInputFactory.newInstance();
+        XMLInputFactory d = XMLInputFactory.newInstance();
+        XMLInputFactory e = XMLInputFactory.newInstance();
+        XMLInputFactory f = XMLInputFactory.newInstance();
+        XMLInputFactory g = XMLInputFactory.newInstance();
+        try {
+            a.setProperty(XMLInputFactory.SUPPORT_DTD, Boolean.FALSE);
+            b.setProperty("javax.xml.stream.supportDTD", false);
+            c.setProperty("javax.xml.stream.supportDTD", Boolean.FALSE);
+            d.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
+            e.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, Boolean.FALSE);
+            f.setProperty("javax.xml.stream.isSupportingExternalEntities", false);
+            g.setProperty("javax.xml.stream.isSupportingExternalEntities", Boolean.FALSE);
+        } finally {
+            in.mark(0);
+        }
+        // ok: java.xxe
+        a.createXMLStreamReader(in);
+        // ok: java.xxe
+        b.createXMLStreamReader(in);
+        // ok: java.xxe
+        c.createXMLStreamReader(in);
+        // ok: java.xxe
+        d.createXMLStreamReader(in);
+        // ok: java.xxe
+        e.createXMLStreamReader(in);
+        // ok: java.xxe
+        f.createXMLStreamReader(in);
+        // ok: java.xxe
+        g.createXMLStreamReader(in);
     }
 }
 
@@ -693,7 +916,7 @@ class SchemaImports {
         return factory.newSchema(new StreamSource(xsd));
     }
 
-    // A try block with a finally clause (with or without catch) is not recognised.
+    // A try block with a finally clause, with or without catch clauses.
     Schema deniedInTryFinally(InputStream xsd) throws Exception {
         SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
         try {
@@ -702,7 +925,32 @@ class SchemaImports {
         } finally {
             factory.setErrorHandler(null);
         }
-        // todook: java.xxe
+        // ok: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    Schema deniedByNameInTryCatchFinally(InputStream xsd) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        try {
+            factory.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+            factory.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+        } catch (org.xml.sax.SAXException e) {
+            throw new IllegalStateException(e);
+        } finally {
+            factory.setErrorHandler(null);
+        }
+        // ok: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
+    Schema builtInSecureInTryFinally(InputStream xsd) throws Exception {
+        SchemaFactory factory = SchemaFactory.newDefaultInstance();
+        try {
+            factory.setFeature("http://javax.xml.XMLConstants/feature/secure-processing", true);
+        } finally {
+            factory.setErrorHandler(null);
+        }
+        // ok: java.xxe
         return factory.newSchema(new StreamSource(xsd));
     }
 
@@ -819,6 +1067,32 @@ class ValidatorImports {
         Validator validator = schema.newValidator();
         validator.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
         validator.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+        // ok: java.xxe
+        validator.validate(new StreamSource(in));
+    }
+
+    void deniedInTryFinally(Schema schema, InputStream in) throws Exception {
+        Validator validator = schema.newValidator();
+        try {
+            validator.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            validator.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+        } finally {
+            validator.setErrorHandler(null);
+        }
+        // ok: java.xxe
+        validator.validate(new StreamSource(in));
+    }
+
+    void deniedInTryCatchFinally(Schema schema, InputStream in) throws Exception {
+        Validator validator = schema.newValidator();
+        try {
+            validator.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+            validator.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+        } catch (org.xml.sax.SAXNotRecognizedException e) {
+            throw new IllegalStateException(e);
+        } finally {
+            validator.setErrorHandler(null);
+        }
         // ok: java.xxe
         validator.validate(new StreamSource(in));
     }

@@ -96,12 +96,13 @@ public class InvoiceParser {
 - A `DocumentBuilder` is reported only when the same method parses with it.
 - A rejecting `EntityResolver` or `XMLResolver` is not recognised as safe, nor is a feature name
   held in a constant of another class.
-- A setting is recognised before the use in the same block, or in a `try` block with `catch`
-  clauses and no `finally`; a setting made in a `try` block that has a `finally` clause is not
-  recognised, so hardened code there is reported. One made only under a condition is not hardening
-  and is reported. Of the three entity features (general entities, parameter entities,
-  external DTD), only the first in the code must be unconditional: a later one made only under a
-  condition is missed.
+- A setting is recognised before the use in the same block, or in a `try` block (with `catch`
+  clauses, a `finally` clause or both) before it. One made only under a condition is not hardening
+  and is reported, except inside a `try` block, or for secure processing anywhere after its
+  built-in factory is created, where it is taken as unconditional; a use inside the `try` block
+  that holds a setting is taken as made after it. Of the three entity features
+  (general entities, parameter entities, external DTD), only the first in the code must be
+  unconditional: a later one made only under a condition is missed.
 - A `Validator` whose `Schema` is made in the same method or class is left to the check of that
   `SchemaFactory`. A `Schema` made by a helper method, assigned in another method, or named with
   `this.` only where it is used is not traced back, so its `Validator` is reported even when the

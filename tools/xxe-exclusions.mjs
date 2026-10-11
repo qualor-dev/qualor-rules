@@ -5,8 +5,9 @@
 //
 // Each settings row is one way to make a parser safe: statements on the factory, reader or
 // builder ($F), in any order when `anyOrder` is set. Each row becomes a `pattern-not-inside`
-// for every POSITION: before the use in the same block, in a try block before it, and, for a
-// field, in a static block, a constructor or a method of the class. The settings are per factory:
+// for every POSITION: before the use in the same block, in a try block before it (with catch
+// clauses, a finally clause or both: the finally template also matches catch clauses), and, for a field, in a static block, a constructor or a
+// method of the class. The settings are per factory:
 // SETTINGS hold for the parsers, builders, readers and transformers. A SchemaFactory, which reads
 // external schemas (xs:import, xs:include, schemaLocation) under ACCESS_EXTERNAL_SCHEMA and
 // external DTDs under ACCESS_EXTERNAL_DTD, must meet every one of the SCHEMA_REQUIREMENTS: each is
@@ -74,10 +75,12 @@ const permutations = (xs) => (xs.length <= 1 ? [xs] : xs.flatMap((x, i) => permu
 export const sequences = (row, r) => (row.anyOrder ? permutations(row.stmts) : [row.stmts]).map((s) => s.map((x) => x.replaceAll('R.', `${r}.`)));
 
 const lines = (stmts, pad) => stmts.map((s) => pad + s).join(`\n${pad}...\n`);
-/** Where a setting on $F is recognised; `body` is the statement sequence. */
+/** Where a setting on $F is recognised; `s` is the statement sequence. */
 export const POSITIONS = Object.freeze({
   before: (s) => `${lines(s, '')}\n...`,
   'try block before': (s) => `try {\n  ...\n${lines(s, '  ')}\n  ...\n} catch ($EX $E) {\n  ...\n}\n...`,
+  // A pattern with a finally clause also matches a try statement with catch clauses before it.
+  'try block with a finally clause before': (s) => `try {\n  ...\n${lines(s, '  ')}\n  ...\n} finally {\n  ...\n}\n...`,
   'field, static block': (s) => `class $C {\n  ...\n  $FT $F = $INIT;\n  ...\n  static {\n    ...\n${lines(s, '    ')}\n    ...\n  }\n  ...\n}`,
   'field, constructor': (s) => `class $C {\n  ...\n  $FT $F = $INIT;\n  ...\n  $C(...) {\n    ...\n${lines(s, '    ')}\n    ...\n  }\n  ...\n}`,
   'field, method': (s) => `class $C {\n  ...\n  $FT $F = $INIT;\n  ...\n  $RT $M(...) {\n    ...\n${lines(s, '    ')}\n    ...\n  }\n  ...\n}`,
@@ -97,8 +100,9 @@ function exclusions(settings, { secureProcessing, parserForms, receiver = 'the f
   for (const make of secureProcessing) {
     for (const fsp of ['javax.xml.XMLConstants.FEATURE_SECURE_PROCESSING', '"http://javax.xml.XMLConstants/feature/secure-processing"']) {
       const set = [`$F.setFeature(${fsp}, true);`];
+      // The creation statement anchors the sequence, and `...` reaches a setting nested after it
+      // (in a try block too), so the before position is the only one needed.
       out += notInside(`$F = $FACT.${make}();\n...\n${POSITIONS.before(set)}`);
-      out += notInside(`$F = $FACT.${make}();\n...\n${POSITIONS['try block before'](set)}`);
     }
   }
   if (parserForms) {
