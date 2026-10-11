@@ -78,56 +78,73 @@ rules:
               $E = $Z.getJarEntry("$NAME");
               ...
       # An entry declared with `var`, from the next-entry method of an archive stream that is
-      # typed or created in the same method.
+      # typed or created in the same method, and the entries of ZipFile.stream() and
+      # JarFile.stream() (the lambda parameter has no declared type; the expression form also
+      # matches a block body). One item: the name call is its only positive condition, and the
+      # places it must be in are exclusions of the others ("not outside these"), which cost
+      # OpenGrep's prefilter nothing (rule-procedure.md "Performance"). Each place names one of
+      # the stream or file types in the file: the anchor gives the prefilter a rare word.
       - patterns:
-          - pattern-either:
-              - pattern-inside: |
-                  $E = (java.util.zip.ZipInputStream $IN).$NEXT();
-                  ...
-              - pattern-inside: |
-                  $E = (java.util.jar.JarInputStream $IN).$NEXT();
-                  ...
-              - pattern-inside: |
-                  $E = (org.apache.commons.compress.archivers.ArchiveInputStream $IN).$NEXT();
-                  ...
-              - pattern-inside: |
-                  $E = (org.apache.commons.compress.archivers.ArchiveInputStream<?> $IN).$NEXT();
-                  ...
-              - pattern-inside: |
-                  $E = (org.apache.commons.compress.archivers.ArchiveInputStream<$T> $IN).$NEXT();
-                  ...
-              - pattern-inside: |
-                  $E = (org.apache.commons.compress.archivers.tar.TarArchiveInputStream $IN).$NEXT();
-                  ...
-              - pattern-inside: |
-                  $E = (org.apache.commons.compress.archivers.zip.ZipArchiveInputStream $IN).$NEXT();
-                  ...
-          - metavariable-regex:
-              metavariable: $NEXT
-              regex: ^getNext(Entry|JarEntry|TarEntry|ZipEntry)$
+          - pattern-regex: (?s)\A.*(ZipInputStream|JarInputStream|ArchiveInputStream|ZipFile|JarFile).*\z
           - pattern-either:
               - pattern: $E.getName()
               - pattern: $E.getLinkName()
-      - patterns:
-          - pattern-inside: |
-              $IN = new $STREAM(...);
-              ...
-              $E = $IN.$NEXT();
-              ...
-          - metavariable-regex:
-              metavariable: $STREAM
-              regex: ^((java\.util\.zip\.)?ZipInputStream|(java\.util\.jar\.)?JarInputStream|(org\.apache\.commons\.compress\.archivers\.\w+\.)?(Zip|Jar|Tar|Ar|Cpio|Arj|Dump)ArchiveInputStream)$
-          - metavariable-regex:
-              metavariable: $NEXT
-              regex: ^getNext(Entry|JarEntry|TarEntry|ZipEntry)$
-          - pattern: $E.getName()
-      # The entries of ZipFile.stream() and JarFile.stream() (the lambda parameter has no declared
-      # type; the expression form also matches a block body).
-      - patterns:
-          - pattern-either:
-              - pattern-inside: (java.util.zip.ZipFile $Z).stream(). ... .forEach(($E) -> $BODY)
-              - pattern-inside: (java.util.jar.JarFile $Z).stream(). ... .forEach(($E) -> $BODY)
-          - pattern: $E.getName()
+          - pattern-not:
+              patterns:
+                - pattern-either:
+                    - pattern: $E.getName()
+                    - pattern: $E.getLinkName()
+                # From the next-entry method of a typed archive stream.
+                - pattern-not:
+                    patterns:
+                      - pattern-either:
+                          - pattern: $E.getName()
+                          - pattern: $E.getLinkName()
+                      - pattern-either:
+                          - pattern-inside: |
+                              $E = (java.util.zip.ZipInputStream $IN).$NEXT();
+                              ...
+                          - pattern-inside: |
+                              $E = (java.util.jar.JarInputStream $IN).$NEXT();
+                              ...
+                          - pattern-inside: |
+                              $E = (org.apache.commons.compress.archivers.ArchiveInputStream $IN).$NEXT();
+                              ...
+                          - pattern-inside: |
+                              $E = (org.apache.commons.compress.archivers.ArchiveInputStream<?> $IN).$NEXT();
+                              ...
+                          - pattern-inside: |
+                              $E = (org.apache.commons.compress.archivers.ArchiveInputStream<$T> $IN).$NEXT();
+                              ...
+                          - pattern-inside: |
+                              $E = (org.apache.commons.compress.archivers.tar.TarArchiveInputStream $IN).$NEXT();
+                              ...
+                          - pattern-inside: |
+                              $E = (org.apache.commons.compress.archivers.zip.ZipArchiveInputStream $IN).$NEXT();
+                              ...
+                      - metavariable-regex: &next-entry
+                          metavariable: $NEXT
+                          regex: ^getNext(Entry|JarEntry|TarEntry|ZipEntry)$
+                # From the next-entry method of an archive stream created in the same method.
+                - pattern-not:
+                    patterns:
+                      - pattern: $E.getName()
+                      - pattern-inside: |
+                          $IN = new $STREAM(...);
+                          ...
+                          $E = $IN.$NEXT();
+                          ...
+                      - metavariable-regex:
+                          metavariable: $STREAM
+                          regex: ^((java\.util\.zip\.)?ZipInputStream|(java\.util\.jar\.)?JarInputStream|(org\.apache\.commons\.compress\.archivers\.\w+\.)?(Zip|Jar|Tar|Ar|Cpio|Arj|Dump)ArchiveInputStream)$
+                      - metavariable-regex: *next-entry
+                # A ZipFile or JarFile stream's entries.
+                - pattern-not:
+                    patterns:
+                      - pattern: $E.getName()
+                      - pattern-either:
+                          - pattern-inside: (java.util.zip.ZipFile $Z).stream(). ... .forEach(($E) -> $BODY)
+                          - pattern-inside: (java.util.jar.JarFile $Z).stream(). ... .forEach(($E) -> $BODY)
     # Paths.get(name): the path carries the entry name. OpenGrep's --taint-intrafile mode reads a
     # one-argument get() as a read of its receiver and would drop it.
     pattern-propagators:
@@ -408,11 +425,16 @@ rules:
           - focus-metavariable: $F
       # java.nio.file.Files: the path written, created or copied or moved to, and both paths of
       # a link (a tar entry's link target may point anywhere).
+      # (The method names are checked by an exclusion of the other names, which costs OpenGrep's
+      # prefilter nothing.)
       - patterns:
           - pattern: java.nio.file.Files.$WRITE($X, ...)
-          - metavariable-regex:
-              metavariable: $WRITE
-              regex: ^(newOutputStream|newBufferedWriter|newByteChannel|write|writeString|createFile|createDirectory|createDirectories)$
+          - pattern-not:
+              patterns:
+                - pattern: java.nio.file.Files.$WRITE($X, ...)
+                - metavariable-regex:
+                    metavariable: $WRITE
+                    regex: ^(?!(newOutputStream|newBufferedWriter|newByteChannel|write|writeString|createFile|createDirectory|createDirectories)$)
           - focus-metavariable: $X
       - patterns:
           - pattern-either:
@@ -437,7 +459,10 @@ rules:
           - focus-metavariable: $X
       - patterns:
           - pattern: org.apache.commons.io.FileUtils.$OPEN($X, ...)
-          - metavariable-regex:
-              metavariable: $OPEN
-              regex: ^(openOutputStream|writeByteArrayToFile|writeStringToFile|write|writeLines|forceMkdir|forceMkdirParent|touch)$
+          - pattern-not:
+              patterns:
+                - pattern: org.apache.commons.io.FileUtils.$OPEN($X, ...)
+                - metavariable-regex:
+                    metavariable: $OPEN
+                    regex: ^(?!(openOutputStream|writeByteArrayToFile|writeStringToFile|write|writeLines|forceMkdir|forceMkdirParent|touch)$)
           - focus-metavariable: $X

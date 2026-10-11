@@ -660,6 +660,24 @@ class CompressExtractor {
         // ok: java.zip-slip
         new FileOutputStream(new File("/var/cache", "index.dat")).close();
     }
+
+    // Look-alikes: a link name and a next-entry method of other classes.
+    void otherLibraries(InputStream in, com.acme.links.Shortcut shortcut, Path dest) throws IOException {
+        // ok: java.zip-slip
+        Files.createDirectories(dest.resolve(shortcut.getLinkName()));
+        var bundle = new com.acme.bundles.BundleReader(in);
+        var item = bundle.getNextEntry();
+        // ok: java.zip-slip
+        Files.createDirectories(dest.resolve(item.getName()));
+    }
+
+    // Files and FileUtils methods that only read or test the path.
+    void readsOnly(ZipEntry entry, Path dest, File root) throws IOException {
+        // ok: java.zip-slip
+        Files.exists(dest.resolve(entry.getName()));
+        // ok: java.zip-slip
+        FileUtils.readFileToString(new File(root, entry.getName()), StandardCharsets.UTF_8);
+    }
 }
 
 // Each source and sink spelling on its own line.
