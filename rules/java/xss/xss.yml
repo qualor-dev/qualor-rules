@@ -53,6 +53,10 @@ rules:
         - https://docs.oracle.com/en/java/javase/25/docs/api/java.sql/java/sql/ResultSet.html
         - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Process.html
         - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Files.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.net.http/java/net/http/HttpClient.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.net.http/java/net/http/HttpRequest.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.net.http/java/net/http/HttpResponse.html
+        - https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/net/URI.html
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A handler parameter without an annotation is not a source (the Jakarta REST entity
@@ -62,12 +66,15 @@ rules:
     #   source, as in java.sql-injection.
     # - Results of calls that other rules check as sinks are not request data (see the sanitizers
     #   below): only the JDBC, Spring JDBC, JPA and Hibernate, Runtime.exec with a command string,
-    #   java.nio.file.Files and java.io file stream, java.net.URL and RestTemplate fetches from a
-    #   literal fixed origin (RestTemplate also from a static final base), JNDI DirContext and
-    #   Spring LdapTemplate, and JAXP XPath (built expression) forms listed there. The result of
-    #   other data access (a Spring Data repository or a MyBatis mapper method of another file, a
-    #   RestClient or WebClient call, an HttpClient fetch, a java.net.URL fetch from a base held in
-    #   a constant) is still taken for request data when a request value is its argument, and so is
+    #   java.nio.file.Files and java.io file stream, java.net.URL, RestTemplate and java.net.http
+    #   HttpClient fetches from a fixed origin (a literal, or a static final base followed by one
+    #   or two terms; for HttpClient a request built in the send call or in a variable, with
+    #   newBuilder(uri) or uri(uri) from URI.create or new URI), JNDI DirContext and Spring
+    #   LdapTemplate, and JAXP XPath (built expression) forms listed there. The result of other
+    #   data access (a Spring Data repository or a MyBatis mapper method of another file, a
+    #   RestClient or WebClient call, an HttpClient fetch whose URI is held in a variable or comes
+    #   from a builder passed around, a fetch from a base followed by three or more terms) is
+    #   still taken for request data when a request value is its argument, and so is
     #   the output of a shell started by ProcessBuilder or an array and the evaluation of a compiled
     #   XPathExpression, which java.command-injection or java.xpath-injection may report as well. An
     #   XPath expression held in a field or a variable that is not a constant, evaluated over a
@@ -413,6 +420,123 @@ rules:
           - metavariable-regex:
               metavariable: $M
               regex: ^(getForObject|getForEntity|postForObject|postForEntity|patchForObject|exchange|execute)$
+      # ... and a java.net.URL from such a base, in place or through a variable.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final String $BASE = "$ORIGIN"; ... }
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"\\@]+(/(?![/\\])|[?#])
+          - pattern-either:
+              - pattern: new java.net.URL($BASE + $X).$M(...)
+              - pattern: new java.net.URL($BASE + $X + $Y).$M(...)
+              - pattern: new java.net.URL($BASE + $X).openConnection().$M(...)
+              - pattern: new java.net.URL($BASE + $X + $Y).openConnection().$M(...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $U = new java.net.URL($BASE + $X);
+                          ...
+                      - pattern-inside: |
+                          $U = new java.net.URL($BASE + $X + $Y);
+                          ...
+                  - pattern-either:
+                      - pattern: $U.$M(...)
+                      - pattern: $U.openConnection().$M(...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(openStream|getContent|getInputStream|getErrorStream)$
+      # The java.net.http HttpClient: the response to a request whose URI (newBuilder(uri) or the
+      # builder's uri(uri), from URI.create or new URI) is such a literal, built in the call or in
+      # a variable. The request type pins the client; a builder whose URI is set again later in
+      # the chain is not counted.
+      - patterns:
+          - pattern-either:
+              - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(java.net.URI.create($URL)). ... .build(), ...)
+              - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(new java.net.URI($URL)). ... .build(), ...)
+              - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(). ... .uri(java.net.URI.create($URL)). ... .build(), ...)
+              - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(). ... .uri(new java.net.URI($URL)). ... .build(), ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $REQ = java.net.http.HttpRequest.newBuilder(java.net.URI.create($URL)). ... .build();
+                          ...
+                      - pattern-inside: |
+                          $REQ = java.net.http.HttpRequest.newBuilder(new java.net.URI($URL)). ... .build();
+                          ...
+                      - pattern-inside: |
+                          $REQ = java.net.http.HttpRequest.newBuilder(). ... .uri(java.net.URI.create($URL)). ... .build();
+                          ...
+                      - pattern-inside: |
+                          $REQ = java.net.http.HttpRequest.newBuilder(). ... .uri(new java.net.URI($URL)). ... .build();
+                          ...
+                  - pattern: $H.$SEND($REQ, ...)
+                  - pattern-not-inside: &http-request-uri-replaced
+                      pattern-either:
+                        - pattern: |
+                            $REQ = java.net.http.HttpRequest.newBuilder($FIRST). ... .uri(...). ... .build();
+                            ...
+                        - pattern: |
+                            $REQ = java.net.http.HttpRequest.newBuilder(). ... .uri(...). ... .uri(...). ... .build();
+                            ...
+          - metavariable-regex:
+              metavariable: $SEND
+              regex: ^(send|sendAsync)$
+          - metavariable-regex:
+              metavariable: $URL
+              regex: ^"[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"\\@]+(/(?![/\\])|[?#])
+          - pattern-not: &http-uri-replaced
+              pattern-either:
+                - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder($FIRST). ... .uri(...). ... .build(), ...)
+                - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(). ... .uri(...). ... .uri(...). ... .build(), ...)
+      # ... and from a base held in a static final String of the class that is such an origin.
+      - patterns:
+          - pattern-inside: |
+              class $C { ... static final String $BASE = "$ORIGIN"; ... }
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"\\@]+(/(?![/\\])|[?#])
+          - pattern-either:
+              - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(java.net.URI.create($BASE + $X)). ... .build(), ...)
+              - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(java.net.URI.create($BASE + $X + $Y)). ... .build(), ...)
+              - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(new java.net.URI($BASE + $X)). ... .build(), ...)
+              - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(new java.net.URI($BASE + $X + $Y)). ... .build(), ...)
+              - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(). ... .uri(java.net.URI.create($BASE + $X)). ... .build(), ...)
+              - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(). ... .uri(java.net.URI.create($BASE + $X + $Y)). ... .build(), ...)
+              - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(). ... .uri(new java.net.URI($BASE + $X)). ... .build(), ...)
+              - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(). ... .uri(new java.net.URI($BASE + $X + $Y)). ... .build(), ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $REQ = java.net.http.HttpRequest.newBuilder(java.net.URI.create($BASE + $X)). ... .build();
+                          ...
+                      - pattern-inside: |
+                          $REQ = java.net.http.HttpRequest.newBuilder(java.net.URI.create($BASE + $X + $Y)). ... .build();
+                          ...
+                      - pattern-inside: |
+                          $REQ = java.net.http.HttpRequest.newBuilder(new java.net.URI($BASE + $X)). ... .build();
+                          ...
+                      - pattern-inside: |
+                          $REQ = java.net.http.HttpRequest.newBuilder(new java.net.URI($BASE + $X + $Y)). ... .build();
+                          ...
+                      - pattern-inside: |
+                          $REQ = java.net.http.HttpRequest.newBuilder(). ... .uri(java.net.URI.create($BASE + $X)). ... .build();
+                          ...
+                      - pattern-inside: |
+                          $REQ = java.net.http.HttpRequest.newBuilder(). ... .uri(java.net.URI.create($BASE + $X + $Y)). ... .build();
+                          ...
+                      - pattern-inside: |
+                          $REQ = java.net.http.HttpRequest.newBuilder(). ... .uri(new java.net.URI($BASE + $X)). ... .build();
+                          ...
+                      - pattern-inside: |
+                          $REQ = java.net.http.HttpRequest.newBuilder(). ... .uri(new java.net.URI($BASE + $X + $Y)). ... .build();
+                          ...
+                  - pattern: $H.$SEND($REQ, ...)
+                  - pattern-not-inside: *http-request-uri-replaced
+          - metavariable-regex:
+              metavariable: $SEND
+              regex: ^(send|sendAsync)$
+          - pattern-not: *http-uri-replaced
       # Directory entries found by JNDI or Spring LDAP.
       - patterns:
           - pattern-either:

@@ -19,8 +19,9 @@ Values the code reads back from another system are not request data, even when r
 what to read: the rows of a database query (JDBC, Spring `JdbcTemplate`, JPA, Hibernate), the output
 of a command string run with `Runtime.exec`, the content of a file, directory entries (JNDI, Spring
 LDAP), what an XPath expression built in the call selects, and the body of a response fetched from a
-fixed origin (a `URL` or `RestTemplate` URL written as a literal with the host and a separator, such
-as `"https://api.example.com/items/" + id`, or, for `RestTemplate`, a `static final` base like it).
+fixed origin (a `URL`, `RestTemplate` or `java.net.http.HttpClient` URL written as a literal with
+the host and a separator, such as `"https://api.example.com/items/" + id`, or a `static final`
+base like it).
 When request data built that query, command, path, filter or expression, the rule for that call
 reports it (`java.sql-injection`, `java.command-injection`, `java.path-traversal`,
 `java.ldap-injection`, `java.xpath-injection`), and this rule does not report the same problem a
@@ -113,9 +114,10 @@ public class HelloServlet extends HttpServlet {
   unencoded is not request data. The OWASP XSS cheat sheet treats data from a database or an
   internal service as untrusted too, so encode all output, whatever its origin.
 - Only the data-access calls listed above count as reading from another system: the result of a
-  Spring Data repository or MyBatis mapper method declared in another file, of a `RestClient`,
-  `WebClient` or `HttpClient` call, or of a `URL` fetch from a base held in a constant, is still
-  taken for request data when a request value is its argument; so is the output of a shell started
+  Spring Data repository or MyBatis mapper method declared in another file, of a `RestClient` or
+  `WebClient` call, of an `HttpClient` request whose `URI` is kept in a variable first, or of a
+  fetch from a constant base followed by three or more parts, is still taken for request data when
+  a request value is its argument; so is the output of a shell started
   with `ProcessBuilder` and the result of a compiled `XPathExpression`, which the command or XPath
   rule may report as well. An XPath expression held in a field that the class sets elsewhere,
   evaluated over a document from the request, is missed.
@@ -170,6 +172,10 @@ public class HelloServlet extends HttpServlet {
 - <https://docs.oracle.com/en/java/javase/25/docs/api/java.sql/java/sql/ResultSet.html>
 - <https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/Process.html>
 - <https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/nio/file/Files.html>
+- <https://docs.oracle.com/en/java/javase/25/docs/api/java.net.http/java/net/http/HttpClient.html>
+- <https://docs.oracle.com/en/java/javase/25/docs/api/java.net.http/java/net/http/HttpRequest.html>
+- <https://docs.oracle.com/en/java/javase/25/docs/api/java.net.http/java/net/http/HttpResponse.html>
+- <https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/net/URI.html>
 
 ## Tests
 

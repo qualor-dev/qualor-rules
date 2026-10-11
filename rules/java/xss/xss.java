@@ -2,6 +2,10 @@ package com.acme.pages;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -1246,9 +1250,32 @@ class SinkResultsServlet extends HttpServlet {
         // A constant without the separator does not fix the host.
         // ruleid: java.xss
         out.println(rest.getForObject(API_HOST + host, String.class));
-        // A java.net.URL from a base held in a constant is not recognised.
-        // todook: java.xss
+        // A java.net.URL from such a base, in place or through a variable.
+        // ok: java.xss
         out.println(new String(new java.net.URL(PROFILES + host).openStream().readAllBytes()));
+        // ok: java.xss
+        out.println(new String(new java.net.URL(PROFILES + host + "/card").openConnection().getInputStream().readAllBytes()));
+        // ok: java.xss
+        out.println(new String(new java.net.URL(PROFILES + host + "/card").openStream().readAllBytes()));
+        // ok: java.xss
+        out.println(new String(new java.net.URL(PROFILES + host).openConnection().getInputStream().readAllBytes()));
+        java.net.URL profileUrl = new java.net.URL(PROFILES + host);
+        // ok: java.xss
+        out.println(new String(profileUrl.openStream().readAllBytes()));
+        java.net.URL cardUrl = new java.net.URL(PROFILES + host + "/card");
+        // ok: java.xss
+        out.println(new String(cardUrl.openConnection().getInputStream().readAllBytes()));
+        // ... not from a constant without the separator.
+        // ruleid: java.xss
+        out.println(new String(new java.net.URL(API_HOST + host).openStream().readAllBytes()));
+        // The URL itself, from a fixed origin too, still holds the request data.
+        // ruleid: java.xss
+        out.println("<p>" + new java.net.URL(PROFILES + host).getPath() + "</p>");
+        // ruleid: java.xss
+        out.println("<p>" + fixedUrl.getQuery() + "</p>");
+        java.net.URL apiUrl = new java.net.URL(API_HOST + host + "/card");
+        // ruleid: java.xss
+        out.println(new String(apiUrl.openConnection().getInputStream().readAllBytes()));
         // ok: java.xss
         out.println(restOps.getForObject("https://api.example.com/profiles/" + host, String.class));
         // ok: java.xss
@@ -1264,8 +1291,8 @@ class SinkResultsServlet extends HttpServlet {
             java.net.http.HttpResponse<String> fixedFetch = http.send(
                     java.net.http.HttpRequest.newBuilder(java.net.URI.create("https://status.example.com/hosts/" + host)).build(),
                     java.net.http.HttpResponse.BodyHandlers.ofString());
-            // An HttpClient fetch from a fixed origin is still taken for request data.
-            // todook: java.xss
+            // An HttpClient fetch from a fixed origin: the request data only reaches the path.
+            // ok: java.xss
             out.println(fixedFetch.body());
             javax.naming.NamingEnumeration<javax.naming.directory.SearchResult> found =
                     directory.search("ou=people,dc=example,dc=com", "(uid=" + host + ")", new javax.naming.directory.SearchControls());
@@ -1706,6 +1733,134 @@ class ResponseFormsConsumesXmlResource {
     public String echo(@QueryParam("q") String q) {
         // ok: java.xss
         return "{\"q\":\"" + q + "\"}";
+    }
+}
+
+// The java.net.http HttpClient: a response from a fixed origin is that origin's content, as
+// for java.net.URL and RestTemplate above; a response from a URL the request chooses is not.
+class FixedOriginFetchServlet extends HttpServlet {
+    private static final String PROFILES = "https://api.example.com/profiles/";
+    private static final String API_HOST = "https://api.example.com";
+    private HttpClient http;
+    private com.acme.audit.RequestLog log;
+
+    @Override
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        PrintWriter out = response.getWriter();
+        String host = request.getParameter("host");
+        try {
+            // A literal fixed origin: newBuilder(uri) or uri(uri), URI.create or new URI, the request
+            // built in the call or in a variable, sent with send or sendAsync.
+            // ok: java.xss
+            out.println(http.send(HttpRequest.newBuilder(URI.create("https://status.example.com/hosts/" + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            HttpRequest fetch2 = HttpRequest.newBuilder(URI.create("https://status.example.com/hosts?name=" + host)).GET().build();
+            // ok: java.xss
+            out.println(http.sendAsync(fetch2, HttpResponse.BodyHandlers.ofString()).join().body());
+            // ok: java.xss
+            out.println(http.send(HttpRequest.newBuilder(new URI("https://status.example.com/hosts/" + host)).header("Accept", "text/html").build(), HttpResponse.BodyHandlers.ofString()).body());
+            HttpRequest fetch4 = HttpRequest.newBuilder(new URI("https://status.example.com/hosts?name=" + host)).timeout(java.time.Duration.ofSeconds(5)).build();
+            // ok: java.xss
+            out.println(http.sendAsync(fetch4, HttpResponse.BodyHandlers.ofString()).join().body());
+            // ok: java.xss
+            out.println(http.send(HttpRequest.newBuilder().uri(URI.create("https://status.example.com/hosts/" + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            HttpRequest fetch6 = HttpRequest.newBuilder().uri(URI.create("https://status.example.com/hosts?name=" + host)).GET().build();
+            // ok: java.xss
+            out.println(http.sendAsync(fetch6, HttpResponse.BodyHandlers.ofString()).join().body());
+            // ok: java.xss
+            out.println(http.send(HttpRequest.newBuilder().uri(new URI("https://status.example.com/hosts/" + host)).header("Accept", "text/html").build(), HttpResponse.BodyHandlers.ofString()).body());
+            HttpRequest fetch8 = HttpRequest.newBuilder().uri(new URI("https://status.example.com/hosts?name=" + host)).timeout(java.time.Duration.ofSeconds(5)).build();
+            // ok: java.xss
+            out.println(http.sendAsync(fetch8, HttpResponse.BodyHandlers.ofString()).join().body());
+            // A base held in a static final String that ends with the separator, followed by one
+            // or two terms.
+            // ok: java.xss
+            out.println(http.send(HttpRequest.newBuilder(URI.create(PROFILES + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // ok: java.xss
+            out.println(http.sendAsync(HttpRequest.newBuilder(URI.create(PROFILES + host + "/card")).GET().build(), HttpResponse.BodyHandlers.ofString()).join().body());
+            HttpRequest fetch11 = HttpRequest.newBuilder(URI.create(PROFILES + host)).header("Accept", "text/html").build();
+            // ok: java.xss
+            out.println(http.send(fetch11, HttpResponse.BodyHandlers.ofString()).body());
+            HttpRequest fetch12 = HttpRequest.newBuilder(URI.create(PROFILES + host + "/card")).timeout(java.time.Duration.ofSeconds(5)).build();
+            // ok: java.xss
+            out.println(http.sendAsync(fetch12, HttpResponse.BodyHandlers.ofString()).join().body());
+            // ok: java.xss
+            out.println(http.send(HttpRequest.newBuilder(new URI(PROFILES + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // ok: java.xss
+            out.println(http.sendAsync(HttpRequest.newBuilder(new URI(PROFILES + host + "/card")).GET().build(), HttpResponse.BodyHandlers.ofString()).join().body());
+            HttpRequest fetch15 = HttpRequest.newBuilder(new URI(PROFILES + host)).header("Accept", "text/html").build();
+            // ok: java.xss
+            out.println(http.send(fetch15, HttpResponse.BodyHandlers.ofString()).body());
+            HttpRequest fetch16 = HttpRequest.newBuilder(new URI(PROFILES + host + "/card")).timeout(java.time.Duration.ofSeconds(5)).build();
+            // ok: java.xss
+            out.println(http.sendAsync(fetch16, HttpResponse.BodyHandlers.ofString()).join().body());
+            // ok: java.xss
+            out.println(http.send(HttpRequest.newBuilder().uri(URI.create(PROFILES + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // ok: java.xss
+            out.println(http.sendAsync(HttpRequest.newBuilder().uri(URI.create(PROFILES + host + "/card")).GET().build(), HttpResponse.BodyHandlers.ofString()).join().body());
+            HttpRequest fetch19 = HttpRequest.newBuilder().uri(URI.create(PROFILES + host)).header("Accept", "text/html").build();
+            // ok: java.xss
+            out.println(http.send(fetch19, HttpResponse.BodyHandlers.ofString()).body());
+            HttpRequest fetch20 = HttpRequest.newBuilder().uri(URI.create(PROFILES + host + "/card")).timeout(java.time.Duration.ofSeconds(5)).build();
+            // ok: java.xss
+            out.println(http.sendAsync(fetch20, HttpResponse.BodyHandlers.ofString()).join().body());
+            // ok: java.xss
+            out.println(http.send(HttpRequest.newBuilder().uri(new URI(PROFILES + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // ok: java.xss
+            out.println(http.sendAsync(HttpRequest.newBuilder().uri(new URI(PROFILES + host + "/card")).GET().build(), HttpResponse.BodyHandlers.ofString()).join().body());
+            HttpRequest fetch23 = HttpRequest.newBuilder().uri(new URI(PROFILES + host)).header("Accept", "text/html").build();
+            // ok: java.xss
+            out.println(http.send(fetch23, HttpResponse.BodyHandlers.ofString()).body());
+            HttpRequest fetch24 = HttpRequest.newBuilder().uri(new URI(PROFILES + host + "/card")).timeout(java.time.Duration.ofSeconds(5)).build();
+            // ok: java.xss
+            out.println(http.sendAsync(fetch24, HttpResponse.BodyHandlers.ofString()).join().body());
+            // ok: java.xss
+            out.println(HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create("https://status.example.com/ping#" + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // Another class's method given the request is not a fetch: what it returns may hold the
+            // request data.
+            // ruleid: java.xss
+            out.println(log.describe(HttpRequest.newBuilder(URI.create("https://status.example.com/hosts/" + host)).build()));
+            HttpRequest logged = HttpRequest.newBuilder().uri(URI.create(PROFILES + host)).build();
+            // ruleid: java.xss
+            out.println(log.describe(logged, "html"));
+            // A URI kept in a variable first, or a base followed by three terms, is not recognised.
+            URI statusUri = URI.create("https://status.example.com/hosts/" + host);
+            // todook: java.xss
+            out.println(http.send(HttpRequest.newBuilder(statusUri).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // todook: java.xss
+            out.println(http.send(HttpRequest.newBuilder(URI.create(PROFILES + host + "/cards/" + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // A host from the request, a base without the separator, "//" after the origin, a URL
+            // the request chooses, or a fixed URI replaced later in the chain: no fixed origin.
+            // ruleid: java.xss
+            out.println(http.send(HttpRequest.newBuilder(URI.create(API_HOST + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // ruleid: java.xss
+            out.println(http.sendAsync(HttpRequest.newBuilder().uri(new URI(API_HOST + host + "/card")).build(), HttpResponse.BodyHandlers.ofString()).join().body());
+            // ruleid: java.xss
+            out.println(http.send(HttpRequest.newBuilder().uri(URI.create("https://status.example.com" + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // ruleid: java.xss
+            out.println(http.send(HttpRequest.newBuilder(new URI("https://status.example.com//" + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // ruleid: java.xss
+            out.println(http.send(HttpRequest.newBuilder(URI.create("https://" + host + "/status")).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // ruleid: java.xss
+            out.println(http.send(HttpRequest.newBuilder(URI.create(host + PROFILES)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // ruleid: java.xss
+            out.println(http.send(HttpRequest.newBuilder(URI.create("https://status.example.com/")).uri(URI.create(request.getParameter("url"))).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // ruleid: java.xss
+            out.println(http.send(HttpRequest.newBuilder().uri(URI.create(PROFILES + host)).GET().uri(URI.create("https://" + host + "/")).build(), HttpResponse.BodyHandlers.ofString()).body());
+            HttpRequest chosenRequest = HttpRequest.newBuilder().uri(URI.create(request.getParameter("url"))).build();
+            // ruleid: java.xss
+            out.println(http.sendAsync(chosenRequest, HttpResponse.BodyHandlers.ofString()).join().body());
+            HttpRequest apiRequest = HttpRequest.newBuilder().uri(URI.create(API_HOST + host)).build();
+            // ruleid: java.xss
+            out.println(http.send(apiRequest, HttpResponse.BodyHandlers.ofString()).body());
+            HttpRequest movedRequest = HttpRequest.newBuilder(URI.create("https://status.example.com/hosts/" + host)).uri(URI.create("https://" + host + "/")).build();
+            // ruleid: java.xss
+            out.println(http.send(movedRequest, HttpResponse.BodyHandlers.ofString()).body());
+            HttpRequest twiceRequest = HttpRequest.newBuilder().uri(new URI(PROFILES + host)).uri(new URI(host)).build();
+            // ruleid: java.xss
+            out.println(http.sendAsync(twiceRequest, HttpResponse.BodyHandlers.ofString()).join().body());
+        } catch (InterruptedException | java.net.URISyntaxException e) {
+            throw new IOException(e);
+        }
     }
 }
 
