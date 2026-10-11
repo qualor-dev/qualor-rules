@@ -11,6 +11,7 @@ import { fastify } from 'fastify';
 import { Pool, PoolConfig } from 'pg';
 import got from 'got';
 import { MongoClient, MongoClientOptions } from 'mongodb';
+import { DataSource, DataSourceOptions } from 'typeorm';
 
 // TypeScript: typed option objects, ES module imports (default, namespace, named and renamed).
 export function typedClient(url: string): https.Agent {
@@ -81,6 +82,17 @@ export async function otherTyped(url: string) {
   // todoruleid: js.tls-verification-disabled
   const ticker = new WSClient('wss://ticker.internal', { rejectUnauthorized: false });
   return [pool, feed, page, mongo, safe, ticker];
+}
+
+// TypeORM options typed and built first (ssl, and extra.ssl handed on to the driver).
+export function typedDataSources() {
+  // ruleid: js.tls-verification-disabled
+  const options: DataSourceOptions = { type: 'postgres', host: 'db.internal', ssl: { rejectUnauthorized: false } };
+  // ruleid: js.tls-verification-disabled
+  const replica: DataSourceOptions = { type: 'mysql', host: 'replica.internal', extra: { ssl: { rejectUnauthorized: false } } };
+  // ok: js.tls-verification-disabled
+  const safe: DataSourceOptions = { type: 'postgres', host: 'db.internal', ssl: { ca: process.env.CA_PEM } };
+  return [new DataSource(options), new DataSource(replica), new DataSource(safe)];
 }
 
 // Fastify's factory imported by name: its https option holds server options.

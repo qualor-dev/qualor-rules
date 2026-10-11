@@ -368,6 +368,53 @@ function otherLibrariesSafe(url) {
   return [pool, pool2, feed, mailer, page, mongo, viaAxios];
 }
 
+// Database clients that take the same TLS options under an ssl key: mysql2 (createConnection,
+// createPool), Sequelize (dialectOptions.ssl, handed on to node-postgres or mysql2) and TypeORM
+// (ssl, and extra.ssl handed on to the driver).
+const mysql = require('mysql2/promise');
+const { Sequelize } = require('sequelize');
+const { DataSource } = require('typeorm');
+async function databaseClients() {
+  // ruleid: js.tls-verification-disabled
+  const conn = await mysql.createConnection({ host: 'db.internal', ssl: { rejectUnauthorized: false } });
+  // ruleid: js.tls-verification-disabled
+  const pool = mysql.createPool({ host: 'db.internal', ssl: { ca: CA, rejectUnauthorized: false } });
+  // ruleid: js.tls-verification-disabled
+  const sequelize = new Sequelize('app', 'app', process.env.DB_PASSWORD, { dialect: 'postgres', dialectOptions: { ssl: { require: true, rejectUnauthorized: false } } });
+  const reporting = new Sequelize(process.env.REPORTING_URL, {
+    dialect: 'mysql',
+    // The finding is on the object that holds the ssl key.
+    // ruleid: js.tls-verification-disabled
+    dialectOptions: {
+      ssl: { rejectUnauthorized: false },
+    },
+  });
+  // ruleid: js.tls-verification-disabled
+  const dataSource = new DataSource({ type: 'postgres', url: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+  // ruleid: js.tls-verification-disabled
+  const mysqlSource = new DataSource({ type: 'mysql', host: 'db.internal', extra: { ssl: { rejectUnauthorized: false } } });
+  return [conn, pool, sequelize, reporting, dataSource, mysqlSource];
+}
+
+function databaseClientsSafe(awsCaBundle) {
+  // ok: js.tls-verification-disabled
+  const conn = mysql.createConnection({ host: 'db.internal', ssl: {} });
+  // ok: js.tls-verification-disabled
+  const pool = mysql.createPool({ host: 'db.internal', ssl: { ca: process.env.DB_SSL_CA } });
+  // ok: js.tls-verification-disabled
+  const rds = mysql.createConnection({ host: 'db.id.eu-north-1.rds.amazonaws.com', ssl: awsCaBundle });
+  // ok: js.tls-verification-disabled
+  const sequelize = new Sequelize(process.env.DATABASE_URL, { dialect: 'postgres', dialectOptions: { ssl: { require: true, rejectUnauthorized: true, ca: CA } } });
+  // ok: js.tls-verification-disabled
+  const dataSource = new DataSource({ type: 'postgres', ssl: true });
+  // ok: js.tls-verification-disabled
+  const mysqlSource = new DataSource({ type: 'mysql', extra: { ssl: { ca: CA } } });
+  // The deployment decides: a value from the environment is not reported.
+  // ok: js.tls-verification-disabled
+  const staging = new DataSource({ type: 'postgres', ssl: { rejectUnauthorized: process.env.DB_SSL_VERIFY !== 'false' } });
+  return [conn, pool, rds, sequelize, dataSource, mysqlSource, staging];
+}
+
 // Server options under such a key are not client settings: with requestCert, rejectUnauthorized:
 // false only makes client certificates optional (as for tls.createServer above), and Fastify's
 // https factory option holds https.createServer options.
@@ -442,4 +489,4 @@ function selfChecked(host) {
   return socket;
 }
 
-module.exports = { api, getStatus, fetchReport, mergedOptions, inlineRequire, builtOptions, patchedOptions, makeAgent, relaxAgent, pinnedButOff, rawTls, configured, allowSelfSigned, undiciClients, fetchWithDispatcher, safeClients, fromConfig, servers, lookAlikes, knownLimits, selfChecked, otherLibraries, otherLibrariesSafe, otherLibrariesLimits, serverOptions };
+module.exports = { api, getStatus, fetchReport, mergedOptions, inlineRequire, builtOptions, patchedOptions, makeAgent, relaxAgent, pinnedButOff, rawTls, configured, allowSelfSigned, undiciClients, fetchWithDispatcher, safeClients, fromConfig, servers, lookAlikes, knownLimits, selfChecked, otherLibraries, otherLibrariesSafe, databaseClients, databaseClientsSafe, otherLibrariesLimits, serverOptions };

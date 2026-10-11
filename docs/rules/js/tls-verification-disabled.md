@@ -13,8 +13,9 @@ Code that turns off TLS certificate verification in Node.js clients:
 - `rejectUnauthorized: false` for an `https` request or `Agent` (also `https.globalAgent`),
   `tls.connect()`, `http2.connect()`, an axios `httpsAgent` or an undici dispatcher;
 - the TLS options of other client libraries: `rejectUnauthorized: false` under an `ssl`, `tls` or
-  `https` key (node-postgres `ssl`, also handed on by knex, and as a branch of a ternary; nodemailer
-  `tls`; got `https`), and in the options of a `ws` client;
+  `https` key (node-postgres `ssl`, also handed on by knex, and as a branch of a ternary; mysql2
+  `ssl`; Sequelize `dialectOptions.ssl`; TypeORM `ssl` and `extra.ssl`; nodemailer `tls`; got
+  `https`), and in the options of a `ws` client;
 - MongoDB's `tlsAllowInvalidCertificates` or `tlsInsecure` set to `true`, as an option of the driver
   or Mongoose, or in a `mongodb://` connection string;
 - `NODE_TLS_REJECT_UNAUTHORIZED` set to `'0'` from the code.
@@ -86,6 +87,9 @@ module.exports = { getStatus };
 - axios
 - undici
 - node-postgres (pg)
+- mysql2
+- Sequelize
+- TypeORM
 - `ws`
 - `nodemailer`
 - Got
@@ -139,6 +143,12 @@ module.exports = { getStatus };
 - <https://github.com/nodejs/undici/blob/main/docs/docs/api/Connector.md>
 - <https://node-postgres.com/features/ssl>
 - <https://knexjs.org/guide/>
+- <https://sidorares.github.io/node-mysql2/docs/documentation/ssl>
+- <https://sidorares.github.io/node-mysql2/docs/examples/connections/create-connection>
+- <https://sequelize.org/docs/v6/other-topics/dialect-specific-things/>
+- <https://typeorm.io/docs/drivers/postgres/>
+- <https://typeorm.io/docs/drivers/mysql/>
+- <https://typeorm.io/docs/data-source/data-source-options/>
 - <https://github.com/websockets/ws/blob/master/doc/ws.md>
 - <https://nodemailer.com/smtp>
 - <https://github.com/sindresorhus/got/blob/main/documentation/2-options.md>

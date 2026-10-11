@@ -19,7 +19,7 @@ rules:
       kind: issue
       severity: high
       confidence: high
-      frameworks: [node-https, node-tls, node-http2, axios, undici, pg, ws, nodemailer, got, mongodb, mongoose]
+      frameworks: [node-https, node-tls, node-http2, axios, undici, pg, mysql2, sequelize, typeorm, ws, nodemailer, got, mongodb, mongoose]
       sources:
         - https://cwe.mitre.org/data/definitions/295.html
         - https://top10.owasp.org/2025/A07_2025-Authentication_Failures/
@@ -43,6 +43,12 @@ rules:
         - https://github.com/nodejs/undici/blob/main/docs/docs/api/Connector.md
         - https://node-postgres.com/features/ssl
         - https://knexjs.org/guide/
+        - https://sidorares.github.io/node-mysql2/docs/documentation/ssl
+        - https://sidorares.github.io/node-mysql2/docs/examples/connections/create-connection
+        - https://sequelize.org/docs/v6/other-topics/dialect-specific-things/
+        - https://typeorm.io/docs/drivers/postgres/
+        - https://typeorm.io/docs/drivers/mysql/
+        - https://typeorm.io/docs/data-source/data-source-options/
         - https://github.com/websockets/ws/blob/master/doc/ws.md
         - https://nodemailer.com/smtp
         - https://github.com/sindresorhus/got/blob/main/documentation/2-options.md
@@ -418,7 +424,9 @@ rules:
                           ...
       # Other libraries. An options object held under an `ssl`, `tls` or `https` key is the TLS
       # configuration that a client library hands to tls.connect() or https.request()
-      # (node-postgres `ssl`, also handed on by knex; nodemailer `tls`; got `https`):
+      # (node-postgres `ssl`, also handed on by knex; mysql2 `ssl`; Sequelize `dialectOptions.ssl`
+      # and TypeORM `ssl` or `extra.ssl`, handed on to node-postgres or mysql2; nodemailer `tls`; got
+      # `https`):
       # rejectUnauthorized: false there is reported wherever the object is written, also as a
       # branch of a ternary (knex's documented `ssl: config.DB_SSL ? { rejectUnauthorized: false }
       # : false`, a literal off switch like the one inside an if). A ws client takes
