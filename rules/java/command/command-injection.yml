@@ -179,11 +179,16 @@ rules:
               - pattern: (Runtime $RT).exec($CMD, ...)
               - pattern: (java.lang.Runtime $RT).exec($CMD, ...)
               - pattern: Runtime.getRuntime().exec($CMD, ...)
+              # A Runtime held in a variable (declared with var): not outside its assignment, an
+              # exclusion that costs OpenGrep's prefilter nothing (rule-procedure.md "Performance").
               - patterns:
-                  - pattern-inside: |
-                      $RT = Runtime.getRuntime();
-                      ...
                   - pattern: $RT.exec($CMD, ...)
+                  - pattern-not:
+                      patterns:
+                        - pattern: $RT.exec($CMD, ...)
+                        - pattern-not-inside: |
+                            $RT = Runtime.getRuntime();
+                            ...
           - pattern-not: $RT.exec((String[] $A), ...)
           - pattern-not: $RT.exec(new String[] {...}, ...)
           - pattern-not: Runtime.getRuntime().exec((String[] $A), ...)
@@ -200,65 +205,63 @@ rules:
       # or a variable holding one of these. Lists and arrays the method builds, and helper calls,
       # are not whole-command sinks; their first element is checked below.
       - patterns:
-          - pattern-either:
+          - pattern-either: &whole-command-calls
               - pattern: new ProcessBuilder($CMD)
               - pattern: (ProcessBuilder $B).command($CMD)
               - pattern: (Runtime $RT).exec($CMD, ...)
               - pattern: Runtime.getRuntime().exec($CMD, ...)
-          - pattern-either:
-              # A request getter or a split, in place or wrapped in toArray/Arrays.asList/List.of.
-              - patterns:
-                  - pattern: $CMD
-                  - metavariable-pattern:
-                      metavariable: $CMD
-                      pattern-either:
-                        - pattern: (javax.servlet.ServletRequest $R).$GET(...)
-                        - pattern: (jakarta.servlet.ServletRequest $R).$GET(...)
-                        - pattern: (javax.servlet.http.HttpServletRequest $R).$GET(...)
-                        - pattern: (jakarta.servlet.http.HttpServletRequest $R).$GET(...)
-                        - pattern: $S.split(...)
-                        - pattern: $S.split(...).$F(...)
-                        - pattern: Arrays.asList($S.split(...))
-                        - pattern: List.of($S.split(...))
-                  - metavariable-regex:
-                      metavariable: $CMD
-                      regex: ^(?!(new\s|"))
-              # A variable that the method assigns from a request getter or a split.
-              - patterns:
-                  - pattern: $CMD
-                  - pattern-either:
-                      - pattern-inside: |
-                          $CMD = (javax.servlet.ServletRequest $R).$GET(...);
-                          ...
-                      - pattern-inside: |
-                          $CMD = (jakarta.servlet.ServletRequest $R).$GET(...);
-                          ...
-                      - pattern-inside: |
-                          $CMD = (javax.servlet.http.HttpServletRequest $R).$GET(...);
-                          ...
-                      - pattern-inside: |
-                          $CMD = (jakarta.servlet.http.HttpServletRequest $R).$GET(...);
-                          ...
-                      - pattern-inside: |
-                          $CMD = $S.split(...);
-                          ...
-                      - pattern-inside: |
-                          $CMD = Arrays.asList($S.split(...));
-                          ...
+          # The argument must be one of the two forms below: the calls whose argument is neither
+          # are excluded (exclusions cost OpenGrep's prefilter nothing; rule-procedure.md
+          # "Performance").
+          - pattern-not:
+              patterns:
+                - pattern-either: *whole-command-calls
+                # A request getter or a split, in place or wrapped in toArray/Arrays.asList/List.of.
+                - pattern-not:
+                    patterns:
+                      - pattern-either: *whole-command-calls
+                      - metavariable-pattern:
+                          metavariable: $CMD
+                          pattern-either:
+                            - pattern: (javax.servlet.ServletRequest $R).$GET(...)
+                            - pattern: (jakarta.servlet.ServletRequest $R).$GET(...)
+                            - pattern: (javax.servlet.http.HttpServletRequest $R).$GET(...)
+                            - pattern: (jakarta.servlet.http.HttpServletRequest $R).$GET(...)
+                            - pattern: $S.split(...)
+                            - pattern: $S.split(...).$F(...)
+                            - pattern: Arrays.asList($S.split(...))
+                            - pattern: List.of($S.split(...))
+                      - metavariable-regex:
+                          metavariable: $CMD
+                          regex: ^(?!(new\s|"))
+                # A variable that the method assigns from a request getter or a split.
+                - pattern-not:
+                    patterns:
+                      - pattern-either: *whole-command-calls
+                      - pattern-either:
+                          - pattern-inside: |
+                              $CMD = (javax.servlet.ServletRequest $R).$GET(...);
+                              ...
+                          - pattern-inside: |
+                              $CMD = (jakarta.servlet.ServletRequest $R).$GET(...);
+                              ...
+                          - pattern-inside: |
+                              $CMD = (javax.servlet.http.HttpServletRequest $R).$GET(...);
+                              ...
+                          - pattern-inside: |
+                              $CMD = (jakarta.servlet.http.HttpServletRequest $R).$GET(...);
+                              ...
+                          - pattern-inside: |
+                              $CMD = $S.split(...);
+                              ...
+                          - pattern-inside: |
+                              $CMD = Arrays.asList($S.split(...));
+                              ...
           - focus-metavariable: $CMD
       # A handler parameter bound from the request (a list, an array, a body object) passed whole,
       # or a field or the array of it.
       - patterns:
-          - pattern-either:
-              - pattern-inside: $RET $M(..., @$ANN $T $P, ...) { ... }
-              - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
-          - metavariable-regex:
-              metavariable: $ANN
-              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|RequestPart|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
-          - metavariable-regex:
-              metavariable: $T
-              regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
-          - pattern-either:
+          - pattern-either: &bound-parameter-commands
               - pattern: new ProcessBuilder($P)
               - pattern: new ProcessBuilder($P.$GET(...))
               - pattern: new ProcessBuilder($P.toArray(...))
@@ -269,29 +272,57 @@ rules:
               - pattern: (Runtime $RT).exec($P.$GET(...).toArray(...), ...)
               - pattern: Runtime.getRuntime().exec($P.toArray(...), ...)
               - pattern: Runtime.getRuntime().exec($P.$GET(...).toArray(...), ...)
+          # Not outside a method with such a parameter: an exclusion, which costs the prefilter
+          # nothing.
+          - pattern-not:
+              patterns:
+                - pattern-either: *bound-parameter-commands
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-either:
+                          - pattern-inside: $RET $M(..., @$ANN $T $P, ...) { ... }
+                          - pattern-inside: $RET $M(..., @$ANN(...) $T $P, ...) { ... }
+                      - metavariable-regex:
+                          metavariable: $ANN
+                          regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|RequestPart|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
+                      - metavariable-regex:
+                          metavariable: $T
+                          regex: ^(?!(\w+\.)*(byte|short|int|long|float|double|boolean|char|Byte|Short|Integer|Long|Float|Double|Boolean|Character|BigInteger|BigDecimal|UUID|LocalDate|LocalDateTime|LocalTime|OffsetDateTime|ZonedDateTime|Instant)$)
           - focus-metavariable: $P
       # The body of a Spring MVC HttpEntity or RequestEntity parameter that is a list or an array of
       # strings, passed whole (an array body given to Runtime.exec is a command-string sink above).
       - patterns:
-          # The source already requires a mapped handler.
-          - pattern-inside: $RET $M(..., $T $P, ...) { ... }
-          - metavariable-regex:
-              metavariable: $T
-              regex: ^(org\.springframework\.http\.)?(HttpEntity|RequestEntity)\s*<\s*((java\.util\.)?(List|Collection)\s*<|String\s*\[)
-          - pattern-either:
+          - pattern-either: &entity-body-commands
               - pattern: new ProcessBuilder($P.getBody())
               - pattern: (ProcessBuilder $B).command($P.getBody())
               - pattern: Runtime.getRuntime().exec($P.getBody().toArray(...), ...)
+          # Not outside a method with such a parameter (the source already requires a mapped
+          # handler): an exclusion, which costs OpenGrep's prefilter nothing.
+          - pattern-not:
+              patterns:
+                - pattern-either: *entity-body-commands
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-inside: $RET $M(..., $T $P, ...) { ... }
+                      - metavariable-regex:
+                          metavariable: $T
+                          regex: ^(org\.springframework\.http\.)?(HttpEntity|RequestEntity)\s*<\s*((java\.util\.)?(List|Collection)\s*<|String\s*\[)
           - focus-metavariable: $P
       # An annotated String[] handler parameter handed to Runtime.exec(String[], ...) as it is.
       - patterns:
-          - pattern-inside: $RET $M(..., @$ANN(...) $T[] $P, ...) { ... }
-          - metavariable-regex:
-              metavariable: $ANN
-              regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|RequestPart|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
-          - pattern-either:
+          - pattern-either: &array-parameter-commands
               - pattern: (Runtime $RT).exec($P, ...)
               - pattern: Runtime.getRuntime().exec($P, ...)
+          # (Not outside such a handler: an exclusion, as above.)
+          - pattern-not:
+              patterns:
+                - pattern-either: *array-parameter-commands
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-inside: $RET $M(..., @$ANN(...) $T[] $P, ...) { ... }
+                      - metavariable-regex:
+                          metavariable: $ANN
+                          regex: ^(\w+\.)*(RequestParam|PathVariable|MatrixVariable|RequestHeader|CookieValue|RequestBody|RequestPart|ModelAttribute|PathParam|QueryParam|MatrixParam|HeaderParam|CookieParam|FormParam)$
           - focus-metavariable: $P
       # The program: the first element of a command array or list.
       - patterns:
@@ -301,11 +332,15 @@ rules:
               - pattern: (Runtime $RT).exec(new String[] {$P, ...}, ...)
               - pattern: (java.lang.Runtime $RT).exec(new String[] {$P, ...}, ...)
               - pattern: Runtime.getRuntime().exec(new String[] {$P, ...}, ...)
+              # (A Runtime in a variable: not outside its assignment, as in the command-string sink.)
               - patterns:
-                  - pattern-inside: |
-                      $RT = Runtime.getRuntime();
-                      ...
                   - pattern: $RT.exec(new String[] {$P, ...}, ...)
+                  - pattern-not:
+                      patterns:
+                        - pattern: $RT.exec(new String[] {$P, ...}, ...)
+                        - pattern-not-inside: |
+                            $RT = Runtime.getRuntime();
+                            ...
               - pattern: new ProcessBuilder(List.of($P, ...))
               - pattern: new ProcessBuilder(Arrays.asList($P, ...))
               - pattern: (ProcessBuilder $B).command(List.of($P, ...))
@@ -331,7 +366,8 @@ rules:
                   $T[] $A = {$P, ...};
                   ...
                   (ProcessBuilder $B).command($A);
-          - pattern: $T[] $A = {$P, ...};
+          # (The contexts alone, focused on the element they bind: a positive pattern of the
+          # declaration as well would cost OpenGrep's prefilter a condition.)
           - focus-metavariable: $P
       - patterns:
           - pattern-either:
@@ -343,7 +379,6 @@ rules:
                   $L = $INIT;
                   ...
                   (ProcessBuilder $B).command($L);
-          - pattern: $L = $INIT;
           - metavariable-pattern:
               metavariable: $INIT
               pattern-either:
@@ -358,93 +393,127 @@ rules:
           - focus-metavariable: $P
       # A shell: the script that follows "sh -c", "cmd /c", "powershell -Command" and the like
       # (with or without options before the flag, "bash -l -c") is shell code. Arguments after the
-      # script are positional parameters ($1 ...) and stay data.
+      # script are positional parameters ($1 ...) and stay data. The four shell forms are one item
+      # under the shell literal, and their conditions are exclusions of the other values: both
+      # keep OpenGrep's prefilter small (rule-procedure.md "Performance").
       - patterns:
+          # The file holds the shell as a string ("sh", "/bin/bash", "C:\\Windows\\cmd.exe"), as
+          # it does whenever $SH matches: a literal OpenGrep's prefilter can use (it gets no word
+          # from a string).
+          - pattern-regex: (?si)\A.*[/\\"](sh|bash|zsh|ksh|dash|ash|csh|tcsh|fish|cmd|cmd\.exe|powershell|powershell\.exe|pwsh|pwsh\.exe)".*\z
           - pattern-either:
-              - pattern: new ProcessBuilder("$SH", ..., "$FLAG", $X, ...)
-              - pattern: (ProcessBuilder $B).command("$SH", ..., "$FLAG", $X, ...)
-              - pattern: new String[] {"$SH", ..., "$FLAG", $X, ...}
-              - pattern: $T[] $A = {"$SH", ..., "$FLAG", $X, ...};
-              - pattern: List.of("$SH", ..., "$FLAG", $X, ...)
-              - pattern: Arrays.asList("$SH", ..., "$FLAG", $X, ...)
-          - metavariable-regex:
-              metavariable: $FLAG
-              regex: (?i)^(-[a-z]*c|/c|/k|-command)$
-          - metavariable-regex:
-              metavariable: $SH
-              regex: (?i)^(.*/)?(sh|bash|zsh|ksh|dash|ash|csh|tcsh|fish|cmd|cmd\.exe|powershell|powershell\.exe|pwsh)$
-          - focus-metavariable: $X
-      # cmd.exe (/c, /k) and PowerShell (-Command, -c) take every argument after the flag as part
-      # of the command they run, not only the first.
-      - patterns:
-          - pattern-either:
-              - pattern: new ProcessBuilder("$SH", ..., "$FLAG", ..., $X, ...)
-              - pattern: (ProcessBuilder $B).command("$SH", ..., "$FLAG", ..., $X, ...)
-              - pattern: new String[] {"$SH", ..., "$FLAG", ..., $X, ...}
-              - pattern: $T[] $A = {"$SH", ..., "$FLAG", ..., $X, ...};
-              - pattern: List.of("$SH", ..., "$FLAG", ..., $X, ...)
-              - pattern: Arrays.asList("$SH", ..., "$FLAG", ..., $X, ...)
-          - metavariable-regex:
-              metavariable: $SH
-              regex: (?i)^(.*[/\\])?(cmd|cmd\.exe|powershell|powershell\.exe|pwsh|pwsh\.exe)$
-          - metavariable-regex:
-              metavariable: $FLAG
-              regex: (?i)^(/c|/k|-command|-c)$
-          - focus-metavariable: $X
-      # A command list that gets a shell somewhere in the method (often in an if/else on the
-      # operating system): any later element.
-      - patterns:
-          - pattern-inside: |
-              $RET $METH(...) {
-                ...
-                $L.add("$SH");
-                ...
-              }
-          - pattern: $L.add($X)
-          - metavariable-regex:
-              metavariable: $SH
-              regex: (?i)^(.*/)?(sh|bash|zsh|ksh|dash|ash|csh|tcsh|fish|cmd|cmd\.exe|powershell|powershell\.exe|pwsh)$
-          - focus-metavariable: $X
-      # A shell assigned to a variable (in an if/else on the operating system, say), then put first
-      # into the command: the third element is the script.
-      - patterns:
-          - pattern-inside: |
-              $RET $METH(...) {
-                ...
-                $V = "$SH";
-                ...
-              }
-          - pattern-either:
-              - pattern: new ProcessBuilder($V, $F, $X, ...)
-              - pattern: (ProcessBuilder $B).command($V, $F, $X, ...)
-              - pattern: new String[] {$V, $F, $X, ...}
-              - pattern: $T[] $A = {$V, $F, $X, ...};
-          - metavariable-regex:
-              metavariable: $SH
-              regex: (?i)^(.*/)?(sh|bash|zsh|ksh|dash|ash|csh|tcsh|fish|cmd|cmd\.exe|powershell|powershell\.exe|pwsh)$
-          - focus-metavariable: $X
+              # The shell literal first, then the flag (with or without options before it): the
+              # element right after the flag.
+              - patterns:
+                  - pattern-either: &shell-flag-forms
+                      - pattern: new ProcessBuilder("$SH", ..., "$FLAG", $X, ...)
+                      - pattern: (ProcessBuilder $B).command("$SH", ..., "$FLAG", $X, ...)
+                      - pattern: new String[] {"$SH", ..., "$FLAG", $X, ...}
+                      - pattern: $T[] $A = {"$SH", ..., "$FLAG", $X, ...};
+                      - pattern: List.of("$SH", ..., "$FLAG", $X, ...)
+                      - pattern: Arrays.asList("$SH", ..., "$FLAG", $X, ...)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either: *shell-flag-forms
+                        - metavariable-regex:
+                            metavariable: $FLAG
+                            regex: ^(?!(?i:-[a-z]*c|/c|/k|-command)$)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either: *shell-flag-forms
+                        - metavariable-regex:
+                            metavariable: $SH
+                            regex: ^(?!(?i:(.*/)?(sh|bash|zsh|ksh|dash|ash|csh|tcsh|fish|cmd|cmd\.exe|powershell|powershell\.exe|pwsh))$)
+                  - focus-metavariable: $X
+              # cmd.exe (/c, /k) and PowerShell (-Command, -c) take every argument after the flag
+              # as part of the command they run, not only the first.
+              - patterns:
+                  - pattern-either: &shell-tail-forms
+                      - pattern: new ProcessBuilder("$SH", ..., "$FLAG", ..., $X, ...)
+                      - pattern: (ProcessBuilder $B).command("$SH", ..., "$FLAG", ..., $X, ...)
+                      - pattern: new String[] {"$SH", ..., "$FLAG", ..., $X, ...}
+                      - pattern: $T[] $A = {"$SH", ..., "$FLAG", ..., $X, ...};
+                      - pattern: List.of("$SH", ..., "$FLAG", ..., $X, ...)
+                      - pattern: Arrays.asList("$SH", ..., "$FLAG", ..., $X, ...)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either: *shell-tail-forms
+                        - metavariable-regex:
+                            metavariable: $SH
+                            regex: ^(?!(?i:(.*[/\\])?(cmd|cmd\.exe|powershell|powershell\.exe|pwsh|pwsh\.exe))$)
+                  - pattern-not:
+                      patterns:
+                        - pattern-either: *shell-tail-forms
+                        - metavariable-regex:
+                            metavariable: $FLAG
+                            regex: ^(?!(?i:/c|/k|-command|-c)$)
+                  - focus-metavariable: $X
+              # A command list that gets a shell somewhere in the method (often in an if/else on
+              # the operating system): any later element.
+              - patterns:
+                  - pattern: $L.add($X)
+                  - pattern-not:
+                      patterns:
+                        - pattern: $L.add($X)
+                        - pattern-not-inside:
+                            patterns:
+                              - pattern-inside: |
+                                  $RET $METH(...) {
+                                    ...
+                                    $L.add("$SH");
+                                    ...
+                                  }
+                              - metavariable-regex:
+                                  metavariable: $SH
+                                  regex: (?i)^(.*/)?(sh|bash|zsh|ksh|dash|ash|csh|tcsh|fish|cmd|cmd\.exe|powershell|powershell\.exe|pwsh)$
+                  - focus-metavariable: $X
+              # A shell assigned to a variable (in an if/else on the operating system, say), then
+              # put first into the command: the third element is the script.
+              - patterns:
+                  - pattern-either: &shell-variable-forms
+                      - pattern: new ProcessBuilder($V, $F, $X, ...)
+                      - pattern: (ProcessBuilder $B).command($V, $F, $X, ...)
+                      - pattern: new String[] {$V, $F, $X, ...}
+                      - pattern: $T[] $A = {$V, $F, $X, ...};
+                  - pattern-not:
+                      patterns:
+                        - pattern-either: *shell-variable-forms
+                        - pattern-not-inside:
+                            patterns:
+                              - pattern-inside: |
+                                  $RET $METH(...) {
+                                    ...
+                                    $V = "$SH";
+                                    ...
+                                  }
+                              - metavariable-regex:
+                                  metavariable: $SH
+                                  regex: (?i)^(.*/)?(sh|bash|zsh|ksh|dash|ash|csh|tcsh|fish|cmd|cmd\.exe|powershell|powershell\.exe|pwsh)$
+                  - focus-metavariable: $X
       # The environment of the new process (CWE-426): an entry whose name the request chooses, or
       # a value for a variable that decides what runs (PATH, LD_PRELOAD, LD_LIBRARY_PATH, BASH_ENV,
       # ENV ...). An entry built as "NAME=" + value or String.format("NAME=%s", value) for another
-      # name is accepted.
+      # name is accepted (an exclusion, which costs OpenGrep's prefilter nothing).
       - patterns:
-          - pattern-either:
+          # (The array contexts alone, focused on the entry below.)
+          - pattern-either: &environment-entries
               - pattern: (Runtime $RT).exec($CMD, new String[] {..., $E, ...}, ...)
               - pattern: Runtime.getRuntime().exec($CMD, new String[] {..., $E, ...}, ...)
-              - patterns:
-                  - pattern-either:
-                      - pattern-inside: |
-                          $T[] $ENV = {..., $E, ...};
-                          ...
-                          (Runtime $RT).exec($CMD, $ENV, ...);
-                      - pattern-inside: |
-                          $T[] $ENV = {..., $E, ...};
-                          ...
-                          Runtime.getRuntime().exec($CMD, $ENV, ...);
-                  - pattern: $T[] $ENV = {..., $E, ...};
-          - metavariable-regex:
-              metavariable: $E
-              regex: ^(?!(String\.format\(\s*)?"(?!(PATH|LD_[A-Z_]+|DYLD_[A-Z_]+|BASH_ENV|ENV|IFS|SHELLOPTS)=)[A-Za-z_][A-Za-z0-9_]*=)
+              - pattern-either:
+                  - pattern-inside: |
+                      $T[] $ENV = {..., $E, ...};
+                      ...
+                      (Runtime $RT).exec($CMD, $ENV, ...);
+                  - pattern-inside: |
+                      $T[] $ENV = {..., $E, ...};
+                      ...
+                      Runtime.getRuntime().exec($CMD, $ENV, ...);
+          - pattern-not:
+              patterns:
+                - pattern-either: *environment-entries
+                - metavariable-regex:
+                    metavariable: $E
+                    regex: ^(?=(String\.format\(\s*)?"(?!(PATH|LD_[A-Z_]+|DYLD_[A-Z_]+|BASH_ENV|ENV|IFS|SHELLOPTS)=)[A-Za-z_][A-Za-z0-9_]*=)
           # An entry assigned in the method: judged by its "NAME=" prefix (below), not here.
           - pattern-not-inside: |
               $E = "$NAME" + $VALUE;
@@ -454,47 +523,70 @@ rules:
               ...
           - focus-metavariable: $E
       # An entry kept in a variable that the method assigns from a literal: reported (at the use)
-      # unless the literal is the "NAME=" prefix of a variable that does not decide what runs.
+      # unless the literal is the "NAME=" prefix of a variable that does not decide what runs
+      # (not outside such an assignment: an exclusion, as above).
       - patterns:
-          - pattern-either:
+          - pattern-either: &environment-entry-calls
               - pattern: (Runtime $RT).exec($CMD, new String[] {..., $E, ...}, ...)
               - pattern: Runtime.getRuntime().exec($CMD, new String[] {..., $E, ...}, ...)
-          - pattern-either:
-              - patterns:
-                  - pattern-inside: |
-                      $E = "$NAME" + $VALUE;
-                      ...
-                  - metavariable-regex:
-                      metavariable: $NAME
-                      regex: ^(?!(?!(PATH|LD_[A-Z_]+|DYLD_[A-Z_]+|BASH_ENV|ENV|IFS|SHELLOPTS)=)[A-Za-z_][A-Za-z0-9_]*=$)
-              - patterns:
-                  - pattern-inside: |
-                      $E = String.format("$FORMAT", ...);
-                      ...
-                  - metavariable-regex:
-                      metavariable: $FORMAT
-                      regex: ^(?!(?!(PATH|LD_[A-Z_]+|DYLD_[A-Z_]+|BASH_ENV|ENV|IFS|SHELLOPTS)=)[A-Za-z_][A-Za-z0-9_]*=)
+          - pattern-not:
+              patterns:
+                - pattern-either: *environment-entry-calls
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-inside: |
+                          $E = "$NAME" + $VALUE;
+                          ...
+                      - metavariable-regex:
+                          metavariable: $NAME
+                          regex: ^(?!(?!(PATH|LD_[A-Z_]+|DYLD_[A-Z_]+|BASH_ENV|ENV|IFS|SHELLOPTS)=)[A-Za-z_][A-Za-z0-9_]*=$)
+                - pattern-not-inside:
+                    patterns:
+                      - pattern-inside: |
+                          $E = String.format("$FORMAT", ...);
+                          ...
+                      - metavariable-regex:
+                          metavariable: $FORMAT
+                          regex: ^(?!(?!(PATH|LD_[A-Z_]+|DYLD_[A-Z_]+|BASH_ENV|ENV|IFS|SHELLOPTS)=)[A-Za-z_][A-Za-z0-9_]*=)
           - focus-metavariable: $E
       # ProcessBuilder's environment map: a variable name chosen by the request, or a value for a
-      # variable that decides what runs.
+      # variable that decides what runs. (A map held in a variable: its method is checked by an
+      # exclusion of the other names, so that only the assignment from environment() gives
+      # OpenGrep's prefilter a word.)
       - patterns:
           - pattern-either:
               - pattern: (ProcessBuilder $B).environment().put($NAME, $VALUE)
               - patterns:
-                  - pattern-inside: |
+                  - pattern-inside: &environment-map |
                       $ENVMAP = (ProcessBuilder $B).environment();
                       ...
-                  - pattern: $ENVMAP.put($NAME, $VALUE)
+                  - pattern: $ENVMAP.$PUT($NAME, $VALUE)
+                  - pattern-not:
+                      patterns:
+                        - pattern-inside: *environment-map
+                        - pattern: $ENVMAP.$PUT($NAME, $VALUE)
+                        - metavariable-regex:
+                            metavariable: $PUT
+                            regex: ^(?!put$)
           - focus-metavariable: $NAME
       - patterns:
-          - pattern-either:
+          - pattern-either: &environment-literal-puts
               - pattern: (ProcessBuilder $B).environment().put("$NAME", $VALUE)
               - patterns:
-                  - pattern-inside: |
-                      $ENVMAP = (ProcessBuilder $B).environment();
-                      ...
-                  - pattern: $ENVMAP.put("$NAME", $VALUE)
-          - metavariable-regex:
-              metavariable: $NAME
-              regex: ^(PATH|LD_[A-Z_]+|DYLD_[A-Z_]+|BASH_ENV|ENV|IFS|SHELLOPTS)$
+                  - pattern-inside: *environment-map
+                  - pattern: $ENVMAP.$PUT("$NAME", $VALUE)
+                  - pattern-not:
+                      patterns:
+                        - pattern-inside: *environment-map
+                        - pattern: $ENVMAP.$PUT("$NAME", $VALUE)
+                        - metavariable-regex:
+                            metavariable: $PUT
+                            regex: ^(?!put$)
+          # (Only those names: the others are excluded, which costs the prefilter nothing.)
+          - pattern-not:
+              patterns:
+                - pattern-either: *environment-literal-puts
+                - metavariable-regex:
+                    metavariable: $NAME
+                    regex: ^(?!(PATH|LD_[A-Z_]+|DYLD_[A-Z_]+|BASH_ENV|ENV|IFS|SHELLOPTS)$)
           - focus-metavariable: $VALUE

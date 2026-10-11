@@ -52,7 +52,6 @@ export const budgetFor = (refMs) => Math.max(BUDGET_MS, Math.round(LOAD_RATIO * 
  */
 export const ALLOWED = Object.freeze({
   'python.xss': { limit: 'none', row: 'python.xss#prefilter' },
-  'java.command-injection': { limit: 'none', row: 'java.command-injection#prefilter' },
   'java.open-redirect': { limit: 'none', row: 'java.open-redirect#prefilter' },
   // Found by this check on 2026-10-07: the 2026-10-06 survey missed the files with anchors.
   'java.xxe': { limit: 'none', row: 'java.xxe#prefilter' },

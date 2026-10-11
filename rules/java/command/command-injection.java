@@ -488,6 +488,9 @@ class ArgumentLists {
 class CommandBus {
     void exec(String command) {
     }
+
+    void exec(String[] argv) {
+    }
 }
 
 // Allow-lists: a constant map in a static final field or in place, and enum constants.
@@ -749,5 +752,268 @@ class PartNote {
 
     String getText() {
         return text;
+    }
+}
+
+// Each form of the command sinks once, with the values that keep it quiet (one line per form of
+// the rule, so that no form goes untested).
+class CommandFormsServlet extends HttpServlet {
+    @Override
+    protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        String name = request.getParameter("name");
+        ProcessBuilder builder = new ProcessBuilder();
+        Runtime runtime = Runtime.getRuntime();
+
+        // A Runtime held in a variable declared with var.
+        var shared = Runtime.getRuntime();
+        // ruleid: java.command-injection
+        shared.exec("ping -c 1 " + name);
+        // ruleid: java.command-injection
+        shared.exec(new String[] {name, "--version"});
+        var bus = new CommandBus();
+        // ok: java.command-injection
+        bus.exec("ping -c 1 " + name);
+        // ok: java.command-injection
+        bus.exec(new String[] {name, "--version"});
+
+        // A whole command from a request getter or a split, in place.
+        // ruleid: java.command-injection
+        builder.command(request.getParameterValues("argv"));
+        // ruleid: java.command-injection
+        runtime.exec(request.getParameterValues("argv"));
+        // ruleid: java.command-injection
+        new ProcessBuilder(name.split(" "));
+        // ruleid: java.command-injection
+        new ProcessBuilder(name.split(" ").clone());
+        // ruleid: java.command-injection
+        new ProcessBuilder(Arrays.asList(name.split(" ")));
+        // ruleid: java.command-injection
+        new ProcessBuilder(List.of(name.split(" ")));
+        // ... or through a variable (the declared list is reported too: its first element, the
+        // program, is request data).
+        // ruleid: java.command-injection
+        List<String> words = Arrays.asList(name.split(" "));
+        // ruleid: java.command-injection
+        new ProcessBuilder(words);
+
+        // The program: the first element of an array or list.
+        // ruleid: java.command-injection
+        builder.command(name, "--help");
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec(new String[] {name, "--version"});
+        // ruleid: java.command-injection
+        new ProcessBuilder(List.of(name, "--version"));
+        // ruleid: java.command-injection
+        new ProcessBuilder(Arrays.asList(name, "--version"));
+        // ruleid: java.command-injection
+        builder.command(List.of(name, "--version"));
+        // ruleid: java.command-injection
+        builder.command(Arrays.asList(name, "--version"));
+        // ruleid: java.command-injection
+        String[] first = {name, "--version"};
+        Runtime.getRuntime().exec(first);
+        // ruleid: java.command-injection
+        String[] second = {name, "--version"};
+        new ProcessBuilder(second);
+        // ruleid: java.command-injection
+        String[] third = {name, "--version"};
+        builder.command(third);
+        // ruleid: java.command-injection
+        List<String> listed = List.of(name, "--version");
+        builder.command(listed);
+        // ruleid: java.command-injection
+        List<String> qualified = java.util.List.of(name, "--version");
+        new ProcessBuilder(qualified);
+        // ruleid: java.command-injection
+        List<String> asList = Arrays.asList(name, "--version");
+        new ProcessBuilder(asList);
+        // ruleid: java.command-injection
+        List<String> qualifiedAsList = java.util.Arrays.asList(name, "--version");
+        new ProcessBuilder(qualifiedAsList);
+        // ruleid: java.command-injection
+        List<String> copied = new ArrayList<>(List.of(name, "--version"));
+        new ProcessBuilder(copied);
+        // ruleid: java.command-injection
+        List<String> copiedAsList = new ArrayList<>(Arrays.asList(name, "--version"));
+        new ProcessBuilder(copiedAsList);
+        // ruleid: java.command-injection
+        List<String> qualifiedCopy = new java.util.ArrayList<>(java.util.List.of(name, "--version"));
+        new ProcessBuilder(qualifiedCopy);
+        // ruleid: java.command-injection
+        List<String> qualifiedCopyAsList = new java.util.ArrayList<>(java.util.Arrays.asList(name, "--version"));
+        new ProcessBuilder(qualifiedCopyAsList);
+
+        // A shell with its flag: the script right after it.
+        // ruleid: java.command-injection
+        builder.command("bash", "-c", "ls " + name);
+        // ruleid: java.command-injection
+        new ProcessBuilder(Arrays.asList("sh", "-c", "ls " + name));
+        // An option that is not the command flag, or a program that is not a shell.
+        // ok: java.command-injection
+        builder.command("sh", "/opt/scripts/report.sh", name);
+        // ok: java.command-injection
+        builder.command("grep", "-c", name);
+        // cmd.exe and PowerShell: every element after the flag.
+        // ruleid: java.command-injection
+        builder.command("cmd.exe", "/c", "type", name);
+        // ruleid: java.command-injection
+        runtime.exec(new String[] {"cmd", "/c", "type", name});
+        // ruleid: java.command-injection
+        String[] typed = {"cmd", "/c", "type", name};
+        runtime.exec(typed);
+        // ruleid: java.command-injection
+        new ProcessBuilder(List.of("cmd", "/c", "type", name));
+        // ruleid: java.command-injection
+        new ProcessBuilder(Arrays.asList("cmd", "/c", "type", name));
+        // A cmd.exe option other than /c or /k runs no command.
+        // ok: java.command-injection
+        new ProcessBuilder("cmd.exe", "/q", "type", name);
+
+        // The environment: an entry in an array variable, an entry in a variable.
+        // ruleid: java.command-injection
+        String[] env = {request.getParameter("entry")};
+        Runtime.getRuntime().exec("printenv", env);
+        String entry = "PATH=" + name;
+        // ruleid: java.command-injection
+        runtime.exec("printenv", new String[] {entry});
+        // ProcessBuilder's environment map held in a variable.
+        Map<String, String> variables = builder.environment();
+        // ruleid: java.command-injection
+        variables.put(name, "1");
+        // ruleid: java.command-injection
+        variables.put("PATH", name);
+        // ok: java.command-injection
+        variables.put("BACKUP_LABEL", name);
+        // Another map is no environment.
+        Map<String, String> labels = new java.util.HashMap<>();
+        // ok: java.command-injection
+        labels.put(name, "1");
+        // Reads of the map change nothing.
+        // ok: java.command-injection
+        variables.getOrDefault(name, "1");
+        // ok: java.command-injection
+        variables.getOrDefault("PATH", name);
+    }
+
+    void shellVariables(HttpServletRequest request, boolean windows) throws IOException {
+        String name = request.getParameter("name");
+        String program;
+        String option;
+        if (windows) {
+            program = "cmd.exe";
+            option = "/c";
+        } else {
+            program = "sh";
+            option = "-c";
+        }
+        // ruleid: java.command-injection
+        new ProcessBuilder().command(program, option, "ls " + name);
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec(new String[] {program, option, "ls " + name});
+    }
+
+    void requestTypes(javax.servlet.ServletRequest plain, jakarta.servlet.ServletRequest jakartaPlain,
+            jakarta.servlet.http.HttpServletRequest jakartaHttp) throws IOException {
+        // ruleid: java.command-injection
+        new ProcessBuilder(plain.getParameterValues("argv"));
+        // ruleid: java.command-injection
+        new ProcessBuilder(jakartaPlain.getParameterValues("argv"));
+        // ruleid: java.command-injection
+        new ProcessBuilder(jakartaHttp.getParameterValues("argv"));
+        String[] fromPlain = plain.getParameterValues("argv");
+        // ruleid: java.command-injection
+        new ProcessBuilder(fromPlain);
+        String[] fromJakartaPlain = jakartaPlain.getParameterValues("argv");
+        // ruleid: java.command-injection
+        new ProcessBuilder(fromJakartaPlain);
+        String[] fromJakartaHttp = jakartaHttp.getParameterValues("argv");
+        // ruleid: java.command-injection
+        new ProcessBuilder(fromJakartaHttp);
+    }
+
+    void variableRequests(javax.servlet.http.HttpServletRequest request) throws IOException {
+        String[] fromRequest = request.getParameterValues("argv");
+        // ruleid: java.command-injection
+        new ProcessBuilder(fromRequest);
+    }
+}
+
+@RestController
+class CommandFormsController {
+    // A bound parameter (or a field of it) passed as the whole command.
+    @PostMapping("/forms/bound")
+    String bound(@RequestParam List<String> argv, @RequestBody JobForm form) throws IOException {
+        ProcessBuilder builder = new ProcessBuilder();
+        Runtime runtime = Runtime.getRuntime();
+        // ruleid: java.command-injection
+        new ProcessBuilder(argv.toArray(new String[0]));
+        // ruleid: java.command-injection
+        new ProcessBuilder(form.getArguments().toArray(new String[0]));
+        // ruleid: java.command-injection
+        builder.command(argv);
+        // ruleid: java.command-injection
+        builder.command(form.getArguments());
+        // ruleid: java.command-injection
+        runtime.exec(argv.toArray(new String[0]));
+        // ruleid: java.command-injection
+        runtime.exec(form.getArguments().toArray(new String[0]));
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec(argv.toArray(new String[0]));
+        // ruleid: java.command-injection
+        Runtime.getRuntime().exec(form.getArguments().toArray(new String[0]));
+        return "ok";
+    }
+
+    // An annotation written without parentheses.
+    @PostMapping("/forms/bare")
+    String bare(@RequestBody JobForm form) throws IOException {
+        // ruleid: java.command-injection
+        new ProcessBuilder(form.getArguments());
+        return "ok";
+    }
+
+    // A String body is no list of words.
+    @PostMapping("/forms/text")
+    String text(HttpEntity<String> entity) throws IOException {
+        // ok: java.command-injection
+        new ProcessBuilder(entity.getBody());
+        return "ok";
+    }
+
+    // Helpers in the same file that get request data: their parameters are no handler
+    // parameters, and an object that merely has a getBody() is no request entity.
+    @PostMapping("/forms/helpers")
+    String helpers(@RequestParam("argv") String[] argv) throws IOException {
+        runList(Arrays.asList(argv));
+        runArray(argv);
+        runHeld(new Held(Arrays.asList(argv)));
+        return "ok";
+    }
+
+    void runList(@org.springframework.lang.Nullable List<String> words) throws IOException {
+        // ok: java.command-injection
+        new ProcessBuilder(words);
+    }
+
+    void runArray(@org.springframework.lang.Nullable String[] words) throws IOException {
+        // ok: java.command-injection
+        Runtime.getRuntime().exec(words);
+    }
+
+    void runHeld(Held held) throws IOException {
+        // ok: java.command-injection
+        new ProcessBuilder(held.getBody());
+    }
+}
+
+class Held {
+    private final List<String> body;
+
+    Held(List<String> body) {
+        this.body = body;
+    }
+
+    List<String> getBody() {
+        return body;
     }
 }
