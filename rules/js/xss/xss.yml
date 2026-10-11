@@ -74,14 +74,17 @@ rules:
     #   the output of execFileSync()/spawnSync() with a request-chosen program is reported again
     #   (`todook:`); the output execFile() hands to a callback written in the call is followed,
     #   but not one passed by name (`execFile('echo', [x], sendOutput)`) nor the output streams of
-    #   spawn() (`child.stdout.on('data', ...)`) (`todoruleid:`); a request-chosen URL held in a variable first (`const
+    #   spawn() (`child.stdout.on('data', ...)`) (`todoruleid:`), and an options object held in
+    #   a variable in place of the argument list (`execFile('ls', opts, cb)`) is taken for
+    #   arguments (`todook:`); a request-chosen URL held in a variable first (`const
     #   target = req.query.url; await axios.get(target)`) is taken for stored data, and so is a
     #   URL whose request value has another name than req, request or a destructured field name
-    #   (`(r, res)`, `({ query: q }, res)`, `({ query: { url } }, res)`) (`todoruleid:`). An
-    #   origin given to fetch(), axios() or got() is a constant or configuration value by its name
-    #   (UPPER_CASE, process.env, this.*, config/settings objects) unless the file binds it to a
-    #   literal, so a request value held in an UPPER_CASE local (`const BASE = req.query.base`,
-    #   then `fetch(BASE + '/pages/' + id)`) is taken for a fixed origin (`todoruleid:`).
+    #   (`(r, res)`, `({ query: q }, res)`, `({ query: { url } }, res)`) (`todoruleid:`). From an
+    #   origin held in a constant or configuration value, only the parts after its separator are
+    #   cleaned: up to four parts of a concatenation and three interpolations of a template
+    #   after it, so a longer URL keeps the page request data (`todook:`); and an origin set from
+    #   the request outside a handler (a constructor given the request, then `this.base`) is not
+    #   request data, so it is taken for a configured origin (`todoruleid:`).
     # - Sources are the JS SQL rule's block: a handler whose second parameter has another name than
     #   res, resp, response, reply, rep, h, ctx, next, _res or _response (`(request, out)`) is not a
     #   source, and a one-parameter callback given to get/post/... after a path literal (also on
@@ -424,6 +427,18 @@ rules:
           - pattern-not: 'execFile($PROG, {...}, ...)'
         from: $ARGS
         to: $OUT
+      - patterns:
+          - pattern-either:
+              - pattern: 'require($M).execFile($PROG, $ARGS, function ($ERR, $OUT, ...) { ... })'
+              - pattern: 'require($M).execFile($PROG, $ARGS, function ($ERR, $STDOUT, $OUT, ...) { ... })'
+              - pattern: 'require($M).execFile($PROG, $ARGS, $OPTS, function ($ERR, $OUT, ...) { ... })'
+              - pattern: 'require($M).execFile($PROG, $ARGS, $OPTS, function ($ERR, $STDOUT, $OUT, ...) { ... })'
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^["'`]?(?:node:)?child_process["'`]?$
+          - pattern-not: 'require($M).execFile($PROG, {...}, ...)'
+        from: $ARGS
+        to: $OUT
     pattern-sanitizers:
       - pattern: Number.parseInt(...)
       - pattern: Number.parseFloat(...)
@@ -745,23 +760,33 @@ rules:
       # The same from an origin held in a constant or a configuration value (UPPER_CASE constants,
       # process.env, this.*, config/settings objects, or a name the file binds to a literal with a
       # host) followed by a string that starts with a path, query or fragment separator
-      # (`fetch(API_BASE + '/pages/' + id)`, `` fetch(`${API_BASE}/pages/${id}`) ``). Without the
-      # separator (`API_BASE + id`: `@evil.example` sets the host), with `//` or `/\` after the
-      # base, or from a name the file binds to a literal without a host (`const SCHEME =
-      # 'https:'`), the page stays request data.
-      - exact: true
-        patterns:
-          - pattern-either:
-              - pattern: $HTTP($FIRST + "$V" + $S1, ...)
-              - pattern: $HTTP($FIRST + "$V" + $S1 + $S2, ...)
-              - pattern: $HTTP($FIRST + "$V" + $S1 + $S2 + $S3, ...)
-          - metavariable-regex:
+      # (`fetch(API_BASE + '/pages/' + id)`, `` fetch(`${API_BASE}/pages/${id}`) ``). Only the
+      # parts after the separator, the options argument and the client (which --taint-intrafile
+      # taints after `axios.get(<request data>)`, see the propagators) are cleaned, not the origin:
+      # an origin that holds request data (`const config = { base: req.query.base }`, then
+      # `config.base + '/pages/' + id`) keeps the page request data. Without the separator
+      # (`API_BASE + id`: `@evil.example` sets the host), with `//` or `/\` after the base, with a
+      # request value between the base and the separator, or from a name the file binds to a
+      # literal without a host (`const SCHEME = 'https:'`), the page stays request data.
+      # The first operand is anchored on its whole text first: a metavariable-regex inside the
+      # metavariable-pattern on a parenthesised operand (`(req.query.base || API_BASE) + '/x/'`)
+      # made OpenGrep 1.30 give up the whole file ("Invalid_argument: String.sub").
+      - patterns:
+          - pattern: $HTTP($FIRST + "$V" + $S1, ...)
+          - &fixed-origin-client
+            metavariable-regex:
               metavariable: $HTTP
               regex: ^(?:fetch|axios|got)$
-          - metavariable-regex:
+          - &fixed-origin-separator
+            metavariable-regex:
               metavariable: $V
               regex: ^(?:/(?![/\\])|[?#])
-          - metavariable-pattern:
+          - &fixed-origin-first
+            metavariable-regex:
+              metavariable: $FIRST
+              regex: ^(?:[A-Za-z_$][\w$]*|process\.env\.\w+|this\.\w+(?:\.\w+)*|\w*(?:[Cc]onfig|[Ss]ettings|[Ee]nv|[Cc]onf|[Cc]fg)\w*(?:\.\w+)+)$
+          - &fixed-origin-guard
+            metavariable-pattern:
               metavariable: $FIRST
               patterns:
                 - pattern-either:
@@ -776,42 +801,97 @@ rules:
                         - metavariable-regex:
                             metavariable: $K
                             regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\]+
-      # Templates on such an origin, in two items: a name that the file does not bind to a literal,
-      # and a name that it binds to a literal with a host. (A metavariable-regex on an interpolated
-      # name inside the metavariable-pattern makes OpenGrep 1.30 give up the whole file:
-      # "Invalid_argument: String.sub" with config.x.)
-      - exact: true
-        patterns:
-          - pattern: $HTTP(`${$FIRST}...`, ...)
+          - focus-metavariable: [$HTTP, $S1]
+      - patterns:
+          - pattern: $HTTP($FIRST + "$V" + $S1 + $S2, ...)
+          - *fixed-origin-client
+          - *fixed-origin-separator
+          - *fixed-origin-first
+          - *fixed-origin-guard
+          - focus-metavariable: [$HTTP, $S1, $S2]
+      - patterns:
+          - pattern: $HTTP($FIRST + "$V" + $S1 + $S2 + $S3, ...)
+          - *fixed-origin-client
+          - *fixed-origin-separator
+          - *fixed-origin-first
+          - *fixed-origin-guard
+          - focus-metavariable: [$HTTP, $S1, $S2, $S3]
+      - patterns:
+          - pattern: $HTTP($FIRST + "$V" + $S1 + $S2 + $S3 + $S4, ...)
+          - *fixed-origin-client
+          - *fixed-origin-separator
+          - *fixed-origin-first
+          - *fixed-origin-guard
+          - focus-metavariable: [$HTTP, $S1, $S2, $S3, $S4]
+      # The options argument of such a call (`{ method: 'POST', body: req.body }`): request data
+      # sent to a fixed origin does not make its answer request data.
+      - patterns:
+          - pattern-either:
+              - pattern: $HTTP($FIRST + "$V" + $S1, $OPTS, ...)
+              - pattern: $HTTP($FIRST + "$V" + $S1 + $S2, $OPTS, ...)
+              - pattern: $HTTP($FIRST + "$V" + $S1 + $S2 + $S3, $OPTS, ...)
+              - pattern: $HTTP($FIRST + "$V" + $S1 + $S2 + $S3 + $S4, $OPTS, ...)
+          - *fixed-origin-client
+          - *fixed-origin-separator
+          - *fixed-origin-first
+          - *fixed-origin-guard
+          - focus-metavariable: [$HTTP, $OPTS]
+      # Templates on such an origin: the interpolations after it (up to three) and the options.
+      # Two kinds of item: a name that the file does not bind to a literal, and a name that it
+      # binds to a literal with a host. (A metavariable-regex on an interpolated name inside the
+      # metavariable-pattern makes OpenGrep 1.30 give up the whole file, as above, with config.x.)
+      - patterns:
+          - pattern-either:
+              - pattern: $HTTP(`${$FIRST}$T1${$S1}...`, ...)
+              - pattern: $HTTP(`${$FIRST}$T1${$S1}$T2${$S2}...`, ...)
+              - pattern: $HTTP(`${$FIRST}$T1${$S1}$T2${$S2}$T3${$S3}...`, ...)
           - pattern: $HTTP($URL, ...)
-          - metavariable-regex:
-              metavariable: $HTTP
-              regex: ^(?:fetch|axios|got)$
-          - metavariable-regex:
+          - *fixed-origin-client
+          - &fixed-origin-template-name
+            metavariable-regex:
               metavariable: $URL
               regex: ^`\$\{\s*(?:[A-Z][A-Z0-9_]*|process\.env\.\w+|this\.\w+(?:\.\w+)*|\w*(?:[Cc]onfig|[Ss]ettings|[Ee]nv|[Cc]onf|[Cc]fg)\w*(?:\.\w+)+)\s*\}(?:/(?![/\\])|[?#])
-          - metavariable-pattern:
+          - &fixed-origin-template-not-literal
+            metavariable-pattern:
               metavariable: $FIRST
               patterns:
                 - pattern: $ANYBASE
                 - pattern-not: '"$K"'
-      - exact: true
-        patterns:
-          - pattern: $HTTP(`${$FIRST}...`, ...)
+          - focus-metavariable: [$HTTP, $S1, $S2, $S3]
+      - patterns:
+          - pattern-either:
+              - pattern: $HTTP(`${$FIRST}$T1${$S1}...`, ...)
+              - pattern: $HTTP(`${$FIRST}$T1${$S1}$T2${$S2}...`, ...)
+              - pattern: $HTTP(`${$FIRST}$T1${$S1}$T2${$S2}$T3${$S3}...`, ...)
           - pattern: $HTTP($URL, ...)
-          - metavariable-regex:
-              metavariable: $HTTP
-              regex: ^(?:fetch|axios|got)$
-          - metavariable-regex:
+          - *fixed-origin-client
+          - &fixed-origin-template-identifier
+            metavariable-regex:
               metavariable: $URL
               regex: ^`\$\{\s*[A-Za-z_$][\w$]*\s*\}(?:/(?![/\\])|[?#])
-          - metavariable-pattern:
+          - &fixed-origin-template-literal
+            metavariable-pattern:
               metavariable: $FIRST
               patterns:
                 - pattern: '"$K"'
                 - metavariable-regex:
                     metavariable: $K
                     regex: ^[a-zA-Z][a-zA-Z0-9+.-]*:[/\\]{2}[^/?#\\]+
+          - focus-metavariable: [$HTTP, $S1, $S2, $S3]
+      - patterns:
+          - pattern: $HTTP(`${$FIRST}...`, $OPTS, ...)
+          - pattern: $HTTP($URL, $OPTS, ...)
+          - *fixed-origin-client
+          - *fixed-origin-template-name
+          - *fixed-origin-template-not-literal
+          - focus-metavariable: [$HTTP, $OPTS]
+      - patterns:
+          - pattern: $HTTP(`${$FIRST}...`, $OPTS, ...)
+          - pattern: $HTTP($URL, $OPTS, ...)
+          - *fixed-origin-client
+          - *fixed-origin-template-identifier
+          - *fixed-origin-template-literal
+          - focus-metavariable: [$HTTP, $OPTS]
       # Comparisons and negations give booleans, which Express sends as JSON.
       - pattern-either:
           - pattern: $A === $B

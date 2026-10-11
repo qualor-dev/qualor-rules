@@ -502,6 +502,24 @@ app.get('/tools/echo', (req, res) => {
   childProcess.execFile('ls', { cwd: path.join(PAGES, req.query.dir) }, (err, stdout) => res.send(stdout));
   // ok: js.xss
   jobs.execFile('echo', [req.query.msg], (err, out) => res.send(out));
+  // ruleid: js.xss
+  require('node:child_process').execFile('echo', [req.query.msg], (err, stdout) => res.send(stdout));
+  require('child_process').execFile('echo', [req.query.msg], (err, stdout, stderr) => {
+    // ruleid: js.xss
+    res.send(stderr);
+  });
+  // ruleid: js.xss
+  require('child_process').execFile('echo', [req.query.msg], { timeout: 500 }, (err, stdout) => res.send(stdout));
+  // ruleid: js.xss
+  require('child_process').execFile('echo', [req.query.msg], { timeout: 500 }, (err, stdout, stderr) => res.send(stderr));
+  // ok: js.xss
+  require('./job-queue').execFile('echo', [req.query.msg], (err, out) => res.send(out));
+  // ok: js.xss
+  require('node:child_process').execFile('ls', { cwd: path.join(PAGES, req.query.dir) }, (err, stdout) => res.send(stdout));
+  // An options object held in a variable in the argument list's place is taken for arguments.
+  const lsOptions = { cwd: path.join(PAGES, req.query.dir) };
+  // todook: js.xss
+  execFile('ls', lsOptions, (err, stdout) => res.send(stdout));
   // A callback passed by name, and the output streams of spawn(), are not followed.
   const sendOutput = (err, out) => res.send(out);
   // todoruleid: js.xss
@@ -613,12 +631,109 @@ app.get('/preview', async (req, res) => {
   const viaChosenTemplate = await fetch(`${chosenBase}/pages/${req.query.id}`);
   // ruleid: js.xss
   res.send(await viaChosenTemplate.text());
-  // A request value held in an UPPER_CASE local is taken for a configured origin.
+  // Only the parts after the separator are cleaned: an origin that holds request data, under
+  // any name, keeps the page request data.
   const BASE = req.query.base;
   const viaUpper = await fetch(BASE + '/pages/' + req.query.id);
-  // todoruleid: js.xss
+  // ruleid: js.xss
   res.send(await viaUpper.text());
+  const pageConfig = { base: req.query.base };
+  const viaRequestConfig = await fetch(pageConfig.base + '/pages/' + req.query.id);
+  // ruleid: js.xss
+  res.send(await viaRequestConfig.text());
+  const pageSettings = req.body;
+  const viaRequestSettings = await fetch(`${pageSettings.base}/pages/${req.query.id}`);
+  // ruleid: js.xss
+  res.send(await viaRequestSettings.text());
+  process.env.CMS_URL = req.query.cms;
+  const viaRequestEnv = await fetch(process.env.CMS_URL + '/pages/' + req.query.id);
+  // ruleid: js.xss
+  res.send(await viaRequestEnv.text());
+  // A request value as a fallback of the origin, or between the origin and the separator.
+  const viaFallback = await fetch((req.query.base || API_BASE) + '/pages/' + req.query.id);
+  // ruleid: js.xss
+  res.send(await viaFallback.text());
+  const viaSegment = await fetch(API_BASE + req.query.seg + '/pages/' + req.query.id);
+  // ruleid: js.xss
+  res.send(await viaSegment.text());
+  const viaSegmentQuery = await fetch(API_BASE + req.query.seg + '?q=' + req.query.q);
+  // ruleid: js.xss
+  res.send(await viaSegmentQuery.text());
+  // Request data sent to a fixed origin in the options does not make its answer request data.
+  const posted = await fetch(API_BASE + '/pages/' + req.query.id, { method: 'POST', body: req.body.text });
+  // ok: js.xss
+  res.send(await posted.text());
+  const postedTemplate = await fetch(`${API_BASE}/pages/${req.query.id}`, { method: 'POST', body: req.body.text });
+  // ok: js.xss
+  res.send(await postedTemplate.text());
+  const postedConfig = await fetch(`${config.pagesBase}/pages/${req.query.id}`, { method: 'POST', body: req.body.text });
+  // ok: js.xss
+  res.send(await postedConfig.text());
+  const longTemplate = await fetch(`${API_BASE}/pages/${req.query.id}?lang=${req.query.lang}&v=${req.query.v}`);
+  // ok: js.xss
+  res.send(await longTemplate.text());
+  // Every length the rule cleans, with the options too, keeps an origin's request data.
+  const upperRaw = await fetch(BASE + '/pages/' + req.query.id + '/raw');
+  // ruleid: js.xss
+  res.send(await upperRaw.text());
+  const configQuery = await fetch(pageConfig.base + '?id=' + req.query.id + '&v=' + req.query.v);
+  // ruleid: js.xss
+  res.send(await configQuery.text());
+  const envLong = await fetch(process.env.CMS_URL + '/p/' + req.query.id + '?v=' + req.query.v + '&raw=1');
+  // ruleid: js.xss
+  res.send(await envLong.text());
+  const upperPosted = await fetch(BASE + '/pages/' + req.query.id, { method: 'POST' });
+  // ruleid: js.xss
+  res.send(await upperPosted.text());
+  const settingsPosted = await fetch(`${pageSettings.base}/pages/${req.query.id}`, { method: 'POST' });
+  // ruleid: js.xss
+  res.send(await settingsPosted.text());
+  // A base that is neither a configured origin by its name nor a literal with a host.
+  const mirror = pickMirror();
+  const viaMirror = await fetch(mirror + '/pages/' + req.query.id);
+  // ruleid: js.xss
+  res.send(await viaMirror.text());
+  const postedRaw = await fetch(API_BASE + '/pages/' + req.query.id + '/raw', { method: 'POST', body: req.body.text });
+  // ok: js.xss
+  res.send(await postedRaw.text());
+  const postedQuery = await fetch(API_BASE + '?id=' + req.query.id + '&v=' + req.query.v, { method: 'POST', body: req.body.text });
+  // ok: js.xss
+  res.send(await postedQuery.text());
+  const postedLong = await fetch(API_BASE + '/p/' + req.query.id + '?v=' + req.query.v + '&raw=1', { method: 'POST', body: req.body.text });
+  // ok: js.xss
+  res.send(await postedLong.text());
+  const configTwo = await fetch(`${config.pagesBase}/pages/${req.query.id}?v=${req.query.v}`);
+  // ok: js.xss
+  res.send(await configTwo.text());
+  const configThree = await fetch(`${config.pagesBase}/pages/${req.query.id}?lang=${req.query.lang}&v=${req.query.v}`);
+  // ok: js.xss
+  res.send(await configThree.text());
+  const literalTwo = await fetch(`${API_BASE}/pages/${req.query.id}?v=${req.query.v}`);
+  // ok: js.xss
+  res.send(await literalTwo.text());
+  // More than three interpolations, or more than four parts, after the origin are not cleaned.
+  const longerTemplate = await fetch(`${API_BASE}/pages/${req.query.id}/${req.query.rev}?lang=${req.query.lang}&v=${req.query.v}`);
+  // todook: js.xss
+  res.send(await longerTemplate.text());
+  const longerConcat = await fetch(API_BASE + '/pages/' + req.query.id + '/' + req.query.rev + '?v=' + req.query.v);
+  // todook: js.xss
+  res.send(await longerConcat.text());
 });
+
+// An origin set from the request outside a handler (a constructor given the request) is not
+// request data there, so it is taken for a configured origin.
+class PageClient {
+  constructor(req) {
+    this.base = req.query.base;
+  }
+
+  async show(req, res) {
+    const page = await fetch(this.base + '/pages/' + req.params.id);
+    // todoruleid: js.xss
+    res.send(await page.text());
+  }
+}
+app.get('/client/:id', (req, res) => new PageClient(req).show(req, res));
 
 // The request-chosen URL is recognised by the names of the request value: under another name
 // (a handler parameter, a renamed or nested destructured field) the page is taken for stored data.

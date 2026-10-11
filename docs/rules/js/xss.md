@@ -109,12 +109,17 @@ app.get('/hello', (req, res) => {
   `const { body: { name } } = req;`), except a field with a default value in the parameter list
   (`({ query = {} }, res)`), which is not checked.
 - Output of a request-chosen program (`execFileSync(req.query.tool)`) is reported here as well as
-  by the command injection rule; output that `execFile()` hands to a callback
-  passed by name, and the output streams of `spawn()`, are not followed; a request-chosen URL given to `axios` or `got` is recognised by the names of the
-  request value (`req`, `request`, a destructured `query`, `params`, `body`, `headers`, `cookies`
-  or `nextUrl`), so one stored in a variable first or reached through another name is missed; and a request
-  value held in an UPPER_CASE variable (`const BASE = req.query.base`) is taken for a configured
-  origin, so a page fetched from `BASE + '/pages/' + id` is not reported.
+  by the command injection rule. Output that `execFile()` hands to a callback passed by name,
+  and the output streams of `spawn()`, are not followed; an options object held in a variable in
+  place of the argument list (`execFile('ls', opts, cb)`) is taken for arguments, so the output is
+  reported.
+- A request-chosen URL given to `axios` or `got` is recognised by the names of the request value
+  (`req`, `request`, a destructured `query`, `params`, `body`, `headers`, `cookies` or `nextUrl`),
+  so one stored in a variable first or reached through another name is missed.
+- A page fetched from a constant or configuration origin is cleaned only up to four parts of a
+  concatenation or three interpolations of a template after the origin; a longer URL is still
+  reported. An origin set from the request outside a handler (a constructor given the request,
+  then `this.base`) is taken for a configured origin, so such a page is not reported.
 <!-- end: known-limits -->
 
 ## References
