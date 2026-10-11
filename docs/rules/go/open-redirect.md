@@ -27,6 +27,10 @@ constant or the server's configuration) with request data only in its path, quer
 `JoinPath` elements, the consent page of an `oauth2.Config` (`AuthCodeURL`), and presigned storage
 URLs (minio, AWS SDK for Go v2) for an object the request names. A host, scheme or bucket that
 comes from the request is still reported.
+
+Code inside a test (a function or method that takes a `*testing.T`, `*testing.B`, `*testing.F`,
+`*testing.M` or `testing.TB`, such as the handler of an `httptest` server a test helper starts) is
+not reported: it only serves the test's own requests.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -129,6 +133,8 @@ enough either: browsers read `/\evil.example` as `//evil.example`.
 - The binder of the Echo instance (`c.Echo().Binder.Bind(&x, c)`) is not a source.
 - Numeric struct fields count as safe only when the struct is declared in the same file; a named
   numeric type (`type Status int`) still counts as request data.
+- Tests are recognised by a testing parameter of the enclosing function only: a handler declared
+  on its own in a test file is still reported.
 <!-- end: known-limits -->
 
 ## References
@@ -172,6 +178,8 @@ enough either: browsers read `/\evil.example` as `//evil.example`.
 - <https://echo.labstack.com/guide/binding/>
 - <https://pkg.go.dev/github.com/go-chi/chi/v5>
 - <https://pkg.go.dev/github.com/gorilla/mux>
+- <https://pkg.go.dev/testing>
+- <https://pkg.go.dev/net/http/httptest>
 
 ## Tests
 

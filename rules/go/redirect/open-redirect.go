@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"example.com/shop/models"
@@ -844,4 +846,109 @@ func LookAlikes(w http.ResponseWriter, r *http.Request) {
 func redirectTo(w http.ResponseWriter, r *http.Request, target string) {
 	// ok: go.open-redirect
 	http.Redirect(w, r, target, http.StatusFound)
+}
+
+// Test support: a handler inside a function that takes a *testing.T, *testing.B, *testing.F,
+// *testing.M or testing.TB serves only the requests of its own test (an httptest server, a
+// subtest, TestMain), in a _test.go file or in a helper package.
+func NewFixtureServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.open-redirect
+		http.Redirect(w, r, r.URL.Query().Get("next"), http.StatusFound)
+	}))
+}
+
+func recordingServer(tb testing.TB) (*httptest.Server, error) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.open-redirect
+		w.Header().Set("Location", r.FormValue("to"))
+		w.WriteHeader(http.StatusFound)
+	}))
+	return srv, nil
+}
+
+func TestLogin(t *testing.T) {
+	t.Run("redirects", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// ok: go.open-redirect
+			http.Redirect(w, r, r.FormValue("return_to"), http.StatusSeeOther)
+		}))
+		defer srv.Close()
+	})
+}
+
+func BenchmarkGinLogin(b *testing.B) {
+	router := gin.New()
+	router.GET("/login", func(c *gin.Context) {
+		// ok: go.open-redirect
+		c.Redirect(http.StatusFound, c.Query("next"))
+	})
+}
+
+func FuzzEchoLogin(f *testing.F) {
+	e := echo.New()
+	e.GET("/login", func(c echo.Context) error {
+		// ok: go.open-redirect
+		return c.Redirect(http.StatusFound, c.QueryParam("next"))
+	})
+}
+
+var fixtureCase = func(t *testing.T) {
+	http.HandleFunc("/cases/", func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.open-redirect
+		http.Redirect(w, r, "https://"+r.FormValue("host")+"/home", http.StatusFound)
+	})
+}
+
+func TestMain(m *testing.M) {
+	http.HandleFunc("/fixtures/", func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.open-redirect
+		w.Header().Add("Location", r.URL.Query().Get("next"))
+		w.WriteHeader(http.StatusFound)
+	})
+	os.Exit(m.Run())
+}
+
+type fixtureSuite struct{ home string }
+
+func (s *fixtureSuite) handler(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// ok: go.open-redirect
+		w.Header()["Location"] = []string{r.URL.Query().Get("next")}
+		w.WriteHeader(http.StatusFound)
+	}
+}
+
+// The same handlers outside test support are reported: a parameter of another type named T, or
+// a handler whose name starts with Test, is not a test.
+type Theme struct{ T string }
+
+func Preview(t *Theme, w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, r.URL.Query().Get("base")+"/themes/"+t.T, http.StatusFound)
+}
+
+func TestPage(w http.ResponseWriter, r *http.Request) {
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, r.FormValue("next"), http.StatusFound)
+}
+
+func ServeFixtures() *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// ruleid: go.open-redirect
+		http.Redirect(w, r, r.URL.Query().Get("next"), http.StatusFound)
+	}))
+}
+
+// A handler declared at the top level of a test file, outside any function that takes a testing
+// parameter, is still reported.
+func fixtureHandler(w http.ResponseWriter, r *http.Request) {
+	// todook: go.open-redirect
+	http.Redirect(w, r, r.FormValue("next"), http.StatusFound)
+}
+
+func TestFixtureHandler(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(fixtureHandler))
+	defer srv.Close()
 }
