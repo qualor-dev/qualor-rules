@@ -130,6 +130,8 @@ enough either: browsers read `/\evil.example` as `//evil.example`.
   not.
   An s3 input field read back as the target (`*in.Key`) counts as clean, and so does a package
   of your own named `oauth2`, `minio` or `s3` imported under an alias next to the real one.
+- The success flag of a bind or decode call (`ok := c.ShouldBindJSON(&x) == nil`) still counts
+  as request data, so formatting it into the target's host is reported.
 - The binder of the Echo instance (`c.Echo().Binder.Bind(&x, c)`) is not a source.
 - Numeric struct fields count as safe only when the struct is declared in the same file; a named
   numeric type (`type Status int`) still counts as request data.

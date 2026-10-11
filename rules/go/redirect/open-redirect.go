@@ -1,8 +1,12 @@
 package auth
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -17,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
 	"github.com/go-chi/chi/v5"
 	"github.com/gorilla/mux"
 	"github.com/labstack/echo/v4"
@@ -791,6 +796,124 @@ func EchoLogin(c echo.Context) error {
 	c.Redirect(http.StatusFound, "/users/"+c.Param("id"))
 	// ruleid: go.open-redirect
 	return c.Redirect(http.StatusFound, form.ReturnTo)
+}
+
+// A bind or decode call inside a condition (`if c.ShouldBindJSON(&in) == nil`) fills the struct
+// with request data like the `err :=` form. A bound value used only in a comparison does not
+// taint what the branch chooses.
+type ReturnInput struct {
+	Next string   `json:"next" query:"next"`
+	Host string   `json:"host" query:"host"`
+	Lang string   `json:"lang" query:"lang"`
+	Tags []string `json:"tags" query:"tags"`
+}
+
+func GinBindInCondition(c *gin.Context) {
+	var in ReturnInput
+	if c.ShouldBindJSON(&in) == nil {
+		// ruleid: go.open-redirect
+		c.Redirect(http.StatusFound, in.Next)
+	}
+	var query ReturnInput
+	if c.ShouldBindQuery(&query) != nil {
+		return
+	}
+	// ruleid: go.open-redirect
+	c.Redirect(http.StatusFound, "https://"+query.Host+"/welcome")
+	target := new(ReturnInput)
+	if c.ShouldBind(target) == nil && target.Next != "" {
+		// ruleid: go.open-redirect
+		c.Header("Location", target.Next)
+	}
+	var strict ReturnInput
+	if errors.Is(c.ShouldBindJSON(&strict), io.EOF) {
+		return
+	}
+	// ruleid: go.open-redirect
+	c.Redirect(http.StatusSeeOther, strict.Next)
+	var empty ReturnInput
+	if c.ShouldBindJSON(&empty) == io.EOF {
+		return
+	}
+	// ruleid: go.open-redirect
+	c.Writer.Header().Set("Location", empty.Next)
+	var forced ReturnInput
+	if c.MustBindWith(&forced, binding.JSON) != nil {
+		return
+	}
+	// ruleid: go.open-redirect
+	c.Redirect(http.StatusFound, fmt.Sprintf("https://%s/welcome", forced.Host))
+	// The bound values only compared: the branches choose constants.
+	home := "https://www.example.com"
+	if query.Lang == "de" {
+		home = "https://www.example.de"
+	}
+	// ok: go.open-redirect
+	c.Redirect(http.StatusFound, home)
+	verbose := in.Lang == "debug" && in.Next != ""
+	// ok: go.open-redirect
+	c.Redirect(http.StatusFound, map[bool]string{true: "https://debug.example.com", false: "https://www.example.com"}[verbose])
+	tagged := in.Tags != nil
+	// ok: go.open-redirect
+	c.Redirect(http.StatusFound, fmt.Sprintf("https://tagged-%t.example.com/", tagged))
+	switch query.Lang {
+	case "de":
+		// ok: go.open-redirect
+		c.Redirect(http.StatusFound, "https://www.example.de")
+	}
+	// Other comparisons with nil, and calls that fill a variable, stay booleans.
+	multi := c.QueryArray("next") != nil
+	// ok: go.open-redirect
+	c.Redirect(http.StatusFound, fmt.Sprintf("https://multi-%t.example.com/", multi))
+	raw, _ := c.GetRawData()
+	var region uint32
+	known := binary.Read(bytes.NewReader(raw), binary.LittleEndian, &region) == nil
+	// ok: go.open-redirect
+	c.Redirect(http.StatusFound, fmt.Sprintf("https://known-%t.example.com/", known))
+	// The success flag of a bind call is reported: the comparison holds the bind call, and
+	// the call's result counts as request data.
+	var draft ReturnInput
+	parsed := c.ShouldBindJSON(&draft) == nil
+	// todook: go.open-redirect
+	c.Redirect(http.StatusFound, fmt.Sprintf("https://valid-%t.example.com/", parsed))
+}
+
+func EchoBindInCondition(c echo.Context) error {
+	var in ReturnInput
+	if c.Bind(&in) != nil {
+		return nil
+	}
+	// ruleid: go.open-redirect
+	c.Redirect(http.StatusFound, in.Next)
+	var filter ReturnInput
+	if echo.BindQueryParams(c, &filter) == nil {
+		// ruleid: go.open-redirect
+		c.Response().Header().Set(echo.HeaderLocation, filter.Next)
+	}
+	home := "https://www.example.com"
+	if filter.Lang == "de" {
+		home = "https://www.example.de"
+	}
+	// ok: go.open-redirect
+	return c.Redirect(http.StatusFound, home)
+}
+
+func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
+	var in ReturnInput
+	if json.NewDecoder(r.Body).Decode(&in) != nil {
+		return
+	}
+	// ruleid: go.open-redirect
+	http.Redirect(w, r, in.Next, http.StatusFound)
+	body, _ := io.ReadAll(r.Body)
+	var sub ReturnInput
+	if json.Unmarshal(body, &sub) == nil {
+		// ruleid: go.open-redirect
+		w.Header().Set("Location", "https://"+sub.Host+"/welcome")
+	}
+	german := in.Lang == "de"
+	// ok: go.open-redirect
+	http.Redirect(w, r, fmt.Sprintf("https://german-%t.example.com/", german), http.StatusFound)
 }
 
 // Limits of the shared request source block (go.sql-injection).

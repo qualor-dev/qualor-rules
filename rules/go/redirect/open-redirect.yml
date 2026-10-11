@@ -107,6 +107,9 @@ rules:
     #   separator; or a base without request data followed by a literal that starts with "/"
     #   (`base + "/items/" + id`, `fmt.Sprintf("%s/items/%s", base, id)`). A base that is itself
     #   a concatenation is checked as a whole.
+    # - A boolean that holds a Gin or Echo bind call or a JSON decode (the success flag
+    #   `ok := c.ShouldBindJSON(&x) == nil`) does not count as clean, so that the struct the call
+    #   fills stays request data; the flag formatted into the target's host is reported (`todook:`).
     # Inherited from the request source block (go.sql-injection):
     # - The Echo instance's binder (`c.Echo().Binder.Bind(&x, c)`) is not a source (`todoruleid:`).
     # - Numeric fields count as clean only when their type is known in the file: a struct declared
@@ -268,6 +271,12 @@ rules:
           - metavariable-type:
               metavariable: $E
               types: [int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool]
+          # A comparison that holds a Gin or Echo bind call or a JSON decode
+          # (`c.ShouldBindJSON(&x) == nil`, `errors.Is(c.Bind(&x), ...)`) is a boolean too, but
+          # sanitizing it would also clear the struct the call fills.
+          - metavariable-regex:
+              metavariable: $E
+              regex: ^(?![\s\S]*(\b(Must|Should)?Bind[A-Za-z]*|\.Decode|\bjson\.Unmarshal)\s*\()
       # The request's own path or request URI (net/http: it starts with "/") after a base: the
       # base decides the scheme and host. A lone "" or "/" in front is not a base.
       - patterns:
