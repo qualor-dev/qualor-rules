@@ -61,6 +61,8 @@ rules:
         - https://flask.palletsprojects.com/en/stable/api/#flask.make_response
         - https://flask.palletsprojects.com/en/stable/api/#flask.Flask.after_request
         - https://fastapi.tiangolo.com/advanced/response-headers/
+        - https://docs.python.org/3/library/stdtypes.html#printf-style-string-formatting
+        - https://docs.python.org/3/library/string.html#format-string-syntax
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
     # - A fixed origin is recognised at the start of the URL text (concatenation, format(),
@@ -83,8 +85,10 @@ rules:
     #   sliced, the query string, path parameters, headers and cookies, and request["path"]: a
     #   Starlette request is a mapping of its scope) or the path of an ASGI
     #   `__call__(self, scope, receive, send)`. A host before it keeps it on that host (a
-    #   literal, `"https://" + request.get_host()`, an f-string, a URL constant); with
-    #   %-formatting it is not recognised (todook). `re.sub(r"/+", "/", path)` is taken for
+    #   literal, `"https://" + request.get_host()`, a URL constant; in concatenation, an
+    #   f-string, %-formatting or str.format()), also when the path is sliced or changed, although
+    #   a slice or `lstrip("/")` that drops its leading "/" extends the host (todoruleid).
+    #   `re.sub(r"/+", "/", path)` is taken for
     #   safe, although Werkzeug keeps a backslash ("/\evil.example") in a Flask path
     #   (todoruleid).
     # - A check of the parsed host (`urlparse(x).netloc`) is not recognised. Django's
@@ -1322,6 +1326,61 @@ rules:
               - pattern: $ORIGIN + $CURRENT + $A
               - pattern: $ORIGIN + $CURRENT + $A + $B
               - pattern: $ORIGIN + $CURRENT + $A + $B + $C
+          - metavariable-regex:
+              metavariable: $CURRENT
+              regex: *current-path
+      # The same with %-formatting and str.format() (`"https://%s%s" % (request.get_host(),
+      # request.path)`, `"{}{}".format(SITE, request.get_full_path())`): the current path fills
+      # the placeholder right after a literal scheme and host, after the request's own host in
+      # the second placeholder after a literal scheme, or after such a constant in the first two
+      # placeholders.
+      - patterns:
+          - pattern-either:
+              - pattern: $FORMAT % $CURRENT
+              - pattern: $FORMAT % ($CURRENT, ...)
+              - pattern: $FORMAT.format($CURRENT, ...)
+          - metavariable-regex:
+              metavariable: $FORMAT
+              regex: ^[rbuRBU]{0,2}("|')[A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s\\]+(%s|\{0?\})
+          - metavariable-regex:
+              metavariable: $CURRENT
+              regex: *current-path
+      - patterns:
+          - pattern-either:
+              - pattern: $FORMAT % ($HOST, $CURRENT, ...)
+              - pattern: $FORMAT.format($HOST, $CURRENT, ...)
+          - metavariable-regex:
+              metavariable: $FORMAT
+              regex: ^[rbuRBU]{0,2}("|')[A-Za-z][A-Za-z0-9+.-]*://(%s%s|\{0?\}\{1?\})
+          - metavariable-regex:
+              metavariable: $HOST
+              regex: ^(self\.)?request\.(get_host\(\)|host)$
+          - metavariable-regex:
+              metavariable: $CURRENT
+              regex: *current-path
+      - patterns:
+          - pattern-inside: |
+              $ORIGIN = $VALUE
+              ...
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: ^[A-Z][A-Z0-9_]*$
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: ^[rbuRBU]{0,2}("|')[A-Za-z][A-Za-z0-9+.-]*://[^/"'?#%{}\s]+
+          # Not assigned again later in the module. (A local of the same name in the function is
+          # another variable to OpenGrep's name resolution, so $ORIGIN does not unify with it.)
+          - pattern-not-inside: |
+              $ORIGIN = $VALUE
+              ...
+              $ORIGIN = $OTHER
+              ...
+          - pattern-either:
+              - pattern: $FORMAT % ($ORIGIN, $CURRENT, ...)
+              - pattern: $FORMAT.format($ORIGIN, $CURRENT, ...)
+          - metavariable-regex:
+              metavariable: $FORMAT
+              regex: ^[rbuRBU]{0,2}("|')(%s%s|\{0?\}\{1?\})
           - metavariable-regex:
               metavariable: $CURRENT
               regex: *current-path

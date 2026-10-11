@@ -79,7 +79,8 @@ def after_login():
   allowed_hosts={request.get_host()})` and redirect only where the check holds; fall back to a
   fixed URL otherwise.
 - In middleware, put the host before the current path (`request.build_absolute_uri()`,
-  `"https://www.example.com" + request.get_full_path()`). In Django and Starlette, collapsing
+  `"https://www.example.com" + request.get_full_path()`, `"https://%s%s" % (request.get_host(),
+  request.path)`). In Django and Starlette, collapsing
   repeated slashes (`re.sub(r"/+", "/", request.path)`) also works; in Flask it does not, because
   a backslash in the path survives it: use `request.url` or `url_for()` there.
 <!-- end: how-to-fix -->
@@ -105,9 +106,11 @@ def after_login():
   of the configuration are reported. A constant holding a path on this site (`"/app"`) counts as
   fixed. A setting or configuration value that the code itself sets from request data is still
   taken for fixed, and so is a redirect written inside such an expression.
-- In middleware, `%`-formatting with a host before the current path (`"https://%s%s" %
-  (request.get_host(), request.path)`) is reported. Collapsing slashes is taken for safe, but a
-  Flask path can still hold a backslash (`/\evil.example`), which browsers read as `//`.
+- In middleware, a host before the current path keeps the redirect on that host, also when the
+  path is sliced or changed; a slice or `lstrip("/")` that drops the path's leading `/` can
+  extend the host (`"https://%s%s" % (request.get_host(), request.path[1:])` with the path
+  `/.evil.example/`) and is not reported. Collapsing slashes is taken for safe, but a Flask path
+  can still hold a backslash (`/\evil.example`), which browsers read as `//`.
 - A check of the parsed host (`urlparse(x).netloc`) is not recognised. Django's
   `url_has_allowed_host_and_scheme()` (`is_safe_url()` before Django 3.0) is recognised in the
   branch where it holds (also an `elif`, and the `else` of a failing check), after a failing
@@ -190,6 +193,8 @@ def after_login():
 - <https://flask.palletsprojects.com/en/stable/api/#flask.make_response>
 - <https://flask.palletsprojects.com/en/stable/api/#flask.Flask.after_request>
 - <https://fastapi.tiangolo.com/advanced/response-headers/>
+- <https://docs.python.org/3/library/stdtypes.html#printf-style-string-formatting>
+- <https://docs.python.org/3/library/string.html#format-string-syntax>
 
 ## Tests
 

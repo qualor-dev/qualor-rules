@@ -518,6 +518,12 @@ def strip_trailing_slash():
     if request.path.startswith("/account/"):
         # ok: python.open-redirect
         return redirect("/login?next=" + request.full_path)
+    if request.scheme == "http":
+        # ok: python.open-redirect
+        return redirect("https://%s%s" % (request.host, request.full_path))
+    if request.host == "old.example.com":
+        # ok: python.open-redirect
+        return redirect("https://{}{}".format(request.host, request.full_path))
     if "//" in request.path:
         # Collapsing slashes leaves the backslash in place.
         # todoruleid: python.open-redirect
@@ -967,9 +973,110 @@ class AppendSlashMiddleware:
             # ruleid: python.open-redirect
             return HttpResponseRedirect("https://" + request.GET["host"] + request.path)
         if request.path.startswith("/m/"):
-            # %-formatting with a host before the current path is not recognised.
-            # todook: python.open-redirect
-            return HttpResponseRedirect("https://%s%s" % (request.get_host(), request.path[2:]))
+            # The same with %-formatting and str.format(): a host (the request's own, a literal
+            # one, or a constant URL with a host) right before the whole current path.
+            # ok: python.open-redirect
+            return HttpResponseRedirect("https://%s%s" % (request.get_host(), request.path))
+        if request.path.startswith("/n/"):
+            # ok: python.open-redirect
+            return HttpResponseRedirect("https://{}{}".format(request.get_host(), request.get_full_path()))
+        if request.path.startswith("/o/"):
+            # ok: python.open-redirect
+            return HttpResponsePermanentRedirect("{}{}".format(SITE, request.get_full_path()))
+        if request.path.startswith("/p/"):
+            # ok: python.open-redirect
+            return HttpResponsePermanentRedirect("%s%s" % (SITE, request.path))
+        if request.path.startswith("/q/"):
+            # ok: python.open-redirect
+            return HttpResponsePermanentRedirect("https://www.example.com%s" % request.get_full_path())
+        if request.path.startswith("/r/"):
+            # ok: python.open-redirect
+            return HttpResponsePermanentRedirect("https://www.example.com%s" % (request.path,))
+        if request.path.startswith("/s/"):
+            # ok: python.open-redirect
+            return HttpResponsePermanentRedirect("https://www.example.com{}".format(request.path))
+        if request.path.startswith("/t/"):
+            # ok: python.open-redirect
+            return HttpResponseRedirect("https://%s%s?ref=%s" % (request.get_host(), request.path, "mail"))
+        if request.path.startswith("/m2/"):
+            # ok: python.open-redirect
+            return HttpResponseRedirect("https://%s%s" % (request.get_host(), request.path[3:]))
+        if request.path.startswith("/z/"):
+            # ok: python.open-redirect
+            return HttpResponseRedirect("https://%s%s" % (request.get_host(), request.path.replace("/z/", "/a/", 1)))
+        if request.path.endswith(".html"):
+            # A slice or a change after the host is taken for a path, in every form, although one
+            # that drops the leading "/" extends the host ("/.evil.example/"[1:]).
+            # todoruleid: python.open-redirect
+            return HttpResponseRedirect("https://%s%s" % (request.get_host(), request.path[1:]))
+        if request.path.endswith(".htm"):
+            # todoruleid: python.open-redirect
+            return HttpResponseRedirect("https://" + request.get_host() + request.path.lstrip("/"))
+        if request.path.startswith("/v/"):
+            # A lone scheme, a value from the environment, or a host from the query string.
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("{}{}".format(SCHEME, request.path))
+        if request.path.startswith("/w/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("%s%s" % (ENV_SITE, request.get_full_path()))
+        if request.path.startswith("/x/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("https://%s%s" % (request.GET["host"], request.path))
+        if request.path.startswith("/y/"):
+            # The path first, or right after the scheme, names the host.
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("{}{}".format(request.get_full_path(), SITE))
+        if request.path.startswith("/y1/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("{1}{0}".format(SITE, request.get_full_path()))
+        if request.path.startswith("/y2/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("https://{1}{0}".format(request.get_host(), request.path))
+        if request.path.startswith("/y3/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("https://%s" % request.get_full_path())
+        return self.get_response(request)
+
+
+MOVED_SITE = "https://moved.example.com"
+MOVED_SITE = os.environ.get("MOVED_SITE", MOVED_SITE)
+
+
+def use_mirror(value):
+    global mirror_site
+    mirror_site = value
+
+
+mirror_site = "https://mirror.example.com"
+
+
+class MovedSiteMiddleware:
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        if request.path.startswith("/moved/"):
+            # A constant assigned again, or a name the function assigns, is no fixed origin.
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("{}{}".format(MOVED_SITE, request.path))
+        if request.path.startswith("/root/"):
+            SITE_ROOT = request.GET["root"]
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("%s%s" % (SITE_ROOT, request.path))
+        if request.path.startswith("/mirror/"):
+            # A lower-case module name is a variable that functions may change, not a constant.
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("{}{}".format(mirror_site, request.path))
+        # Other request data after a host: "@evil.example" turns the host into a user name.
+        if request.path.startswith("/next1/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("https://www.example.com%s" % request.GET["next"])
+        if request.path.startswith("/next2/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("https://%s%s" % (request.get_host(), request.GET["next"]))
+        if request.path.startswith("/next3/"):
+            # ruleid: python.open-redirect
+            return HttpResponseRedirect("%s%s" % (SITE, request.GET["next"]))
         return self.get_response(request)
 
 
