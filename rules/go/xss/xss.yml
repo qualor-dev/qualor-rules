@@ -33,6 +33,11 @@ rules:
         - https://pkg.go.dev/bytes#NewBuffer
         - https://pkg.go.dev/strings#Builder
         - https://pkg.go.dev/io#Copy
+        - https://pkg.go.dev/io#ReadAll
+        - https://pkg.go.dev/os#Open
+        - https://pkg.go.dev/os#OpenFile
+        - https://pkg.go.dev/os#ReadFile
+        - https://pkg.go.dev/io/fs#PathError
         - https://pkg.go.dev/html#EscapeString
         - https://pkg.go.dev/os/exec
         - https://pkg.go.dev/os/exec#Command
@@ -100,6 +105,11 @@ rules:
     #   (sanitizers below): a change to that rule's sinks must be made here as well, or the two
     #   rules drift apart (a command the other rule stops reporting stays silent here, a new sink
     #   there is reported twice).
+    # - The content of a file is not request data, even when the request names the file: the
+    #   result of os.ReadFile or ioutil.ReadFile, and a file opened with os.Open or os.OpenFile
+    #   (and what is read from it). A file opened in a `var` declaration is not recognised
+    #   (`todook:`). The error of os.Open names the file and stays request data; the error of
+    #   os.ReadFile is cleared with the call (`todoruleid:`).
     # - A boolean that holds a Gin or Echo bind call or a JSON decode (the success flag
     #   `ok := c.ShouldBindJSON(&x) == nil`) does not count as clean, so that the struct the call
     #   fills stays request data; the flag written into an HTML response is reported (`todook:`).
@@ -484,6 +494,18 @@ rules:
       # The content of a file is not request data, even when the request names the file.
       - pattern: os.ReadFile(...)
       - pattern: ioutil.ReadFile(...)
+      # The same for a file opened by name: the file and every reader of it are clean, but not the
+      # error, which names the file (*os.PathError). (`$F, $ERR = ...` also matches `:=`, not a `var`
+      # declaration.)
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  $F, $ERR = os.Open(...)
+                  ...
+              - pattern: |
+                  $F, $ERR = os.OpenFile(...)
+                  ...
+          - focus-metavariable: $F
       # The command arguments that go.command-injection reports (the same shapes as its sinks):
       # the program, the script after a POSIX shell's -c, everything after cmd.exe's /C or /K,
       # and PowerShell's command, script or first positional argument. Request data there is that

@@ -116,6 +116,11 @@ func Hello(w http.ResponseWriter, r *http.Request) {
   with `bytes.NewBuffer`, or taken from a `sync.Pool` with a type assertion).
 - Request data written into a buffer directly (`buf.WriteString(...)`, `fmt.Fprintf(&buf, ...)`)
   is not followed when the buffer is written to the response later.
+- The content of a file is not request data, even when the request names the file
+  (`os.ReadFile`, or a file opened with `os.Open` or `os.OpenFile`), but a file opened in a `var`
+  declaration (`var f, err = os.Open(...)`) is not recognised and what it holds is reported. The
+  error of `os.ReadFile`, which names the file, is not reported when written into the page; the
+  error of `os.Open` is.
 - The success flag of a bind or decode call (`ok := c.ShouldBindJSON(&x) == nil`) still counts
   as request data, so writing it into an HTML response is reported.
 - A sink called inside a comparison, such as `if c.HTML(...) != nil`, is not reported.
@@ -142,6 +147,11 @@ func Hello(w http.ResponseWriter, r *http.Request) {
 - <https://pkg.go.dev/bytes#NewBuffer>
 - <https://pkg.go.dev/strings#Builder>
 - <https://pkg.go.dev/io#Copy>
+- <https://pkg.go.dev/io#ReadAll>
+- <https://pkg.go.dev/os#Open>
+- <https://pkg.go.dev/os#OpenFile>
+- <https://pkg.go.dev/os#ReadFile>
+- <https://pkg.go.dev/io/fs#PathError>
 - <https://pkg.go.dev/html#EscapeString>
 - <https://pkg.go.dev/os/exec>
 - <https://pkg.go.dev/os/exec#Command>

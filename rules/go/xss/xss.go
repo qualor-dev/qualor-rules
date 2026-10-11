@@ -363,6 +363,50 @@ func Download(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "<p>saved %s</p>", log.Name())
 }
 
+// A file opened by name (os.Open, os.OpenFile): what it holds is not request data, as with
+// os.ReadFile. The name stays request data, and so does the error, which names the file
+// (*os.PathError).
+func OpenedPage(w http.ResponseWriter, r *http.Request) {
+	name := filepath.Join("/srv/pages", filepath.Base(r.FormValue("page"))+".html")
+	page, err := os.Open(name)
+	if err != nil {
+		// ruleid: go.xss
+		fmt.Fprintf(w, "<p>%v</p>", err)
+		return
+	}
+	defer page.Close()
+	content, _ := io.ReadAll(page)
+	// ok: go.xss
+	w.Write(content)
+	// ruleid: go.xss
+	fmt.Fprintf(w, "<footer>%s</footer>", name)
+	var draft *os.File
+	draft, err = os.OpenFile(filepath.Join("/srv/drafts", filepath.Base(r.FormValue("draft"))), os.O_RDONLY, 0)
+	if err != nil {
+		return
+	}
+	lines := bufio.NewScanner(draft)
+	for lines.Scan() {
+		// ok: go.xss
+		io.WriteString(w, lines.Text())
+	}
+	// The error of os.ReadFile names the file as well, but the call counts as clean as a whole.
+	_, err = os.ReadFile(name)
+	// todoruleid: go.xss
+	fmt.Fprintf(w, "<p>%v</p>", err)
+}
+
+// A file opened in a `var` declaration is not recognised.
+func OpenedVar(w http.ResponseWriter, r *http.Request) {
+	var notes, err = os.Open(filepath.Join("/srv/notes", filepath.Base(r.FormValue("note"))))
+	if err != nil {
+		return
+	}
+	text, _ := io.ReadAll(notes)
+	// todook: go.xss
+	w.Write(text)
+}
+
 // A template built and executed in one expression is not recognised.
 func InlineTemplate(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
