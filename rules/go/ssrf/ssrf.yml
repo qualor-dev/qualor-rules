@@ -60,6 +60,11 @@ rules:
     #   as a whole. The request's own path (`r.URL.Path`, `RequestURI()`) after a base, and
     #   anything after a literal "?" or "#", are clean; a path cut with strings.TrimPrefix or
     #   kept in a variable first is not (`todook:`).
+    # - JoinPath elements are path segments only for a net/url receiver: typed (a parameter, or a
+    #   variable made from a url.URL literal) or parsed with url.Parse in the same function; a
+    #   JoinPath method of another type is followed like any code. A URL parsed in a `var`
+    #   declaration (`var base, _ = url.Parse(...)`, at package level too) is not recognised, so
+    #   request data joined to it is reported (`todook:`).
     # - A URL assembled in a strings.Builder or bytes.Buffer counts as a whole: a fixed origin
     #   written first does not make it clean, and a builder holding a path after an origin
     #   without a separator is reported (`todook:`). fmt.Fprintf into a builder is not followed
@@ -301,11 +306,19 @@ rules:
               metavariable: $FIELD
               regex: ^(Path|RawPath|RawQuery|Fragment|RawFragment|User)$
           - focus-metavariable: $V
-      # Path elements given to JoinPath (net/url: joined to the base's path and cleaned of ./ and
-      # ../), but not the base of url.JoinPath.
+      # Path elements given to JoinPath (net/url: joined, cleaned of ../ and repeated "/", and
+      # escaped), but not the base of url.JoinPath. The method's receiver is a net/url URL: typed
+      # (OpenGrep also types a variable made from a url.URL literal), or parsed in the same
+      # function (`$U, $E = ...` also matches `:=`).
       - patterns:
-          - pattern-not-inside: url.JoinPath(...)
-          - pattern-inside: $U.JoinPath(..., $ELEM, ...)
+          - pattern-either:
+              - pattern-inside: '($U : *url.URL).JoinPath(..., $ELEM, ...)'
+              - pattern-inside: '($U : url.URL).JoinPath(..., $ELEM, ...)'
+              - patterns:
+                  - pattern-inside: |
+                      $U, $E = url.Parse(...)
+                      ...
+                  - pattern-inside: $U.JoinPath(..., $ELEM, ...)
           - pattern: $ELEM
       - patterns:
           - pattern-inside: url.JoinPath($BASE, ..., $ELEM, ...)

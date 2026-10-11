@@ -292,6 +292,55 @@ func Literal(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, "ok")
 }
 
+// JoinPath elements of a net/url URL (typed, parsed or built in the function) are path segments.
+// A JoinPath method of another type is not net/url's: this one puts the elements right after the
+// base, where "@evil.example" sets the host.
+type Endpoint string
+
+func (e Endpoint) JoinPath(elem ...string) string { return string(e) + strings.Join(elem, "/") }
+
+func Joined(base *url.URL, w http.ResponseWriter, r *http.Request) {
+	// ok: go.ssrf
+	http.Get(base.JoinPath("items", r.FormValue("id")).String())
+	var err error
+	mirror := base
+	mirror, err = url.Parse(catalogAPI)
+	if err != nil {
+		return
+	}
+	// ok: go.ssrf
+	http.Get(mirror.JoinPath(r.FormValue("id")).String())
+	built := &url.URL{Scheme: "https", Host: catalogName}
+	// ok: go.ssrf
+	http.Get(built.JoinPath("items", r.FormValue("id")).String())
+	value := url.URL{Scheme: "https", Host: catalogName}
+	// ok: go.ssrf
+	http.Get(value.JoinPath(r.FormValue("id")).String())
+	// ruleid: go.ssrf
+	http.Get(Endpoint(catalogHost).JoinPath(r.FormValue("path")))
+	api := Endpoint(catalogHost)
+	// ruleid: go.ssrf
+	http.Get(api.JoinPath(r.FormValue("path")))
+	// The base itself from the request.
+	target, _ := url.Parse(r.FormValue("target"))
+	// ruleid: go.ssrf
+	http.Get(target.JoinPath("status").String())
+}
+
+func JoinedValue(origin url.URL, w http.ResponseWriter, r *http.Request) {
+	// ok: go.ssrf
+	http.Get(origin.JoinPath("items", r.FormValue("id")).String())
+}
+
+// A URL parsed in a `var` declaration (here at package level) is not recognised as a net/url
+// receiver.
+var statusBase, _ = url.Parse(catalogAPI)
+
+func Status(w http.ResponseWriter, r *http.Request) {
+	// todook: go.ssrf
+	http.Get(statusBase.JoinPath(r.FormValue("service")).String())
+}
+
 // Routers on net/http: chi and gorilla/mux route variables.
 func Avatar(w http.ResponseWriter, r *http.Request) {
 	// ruleid: go.ssrf
