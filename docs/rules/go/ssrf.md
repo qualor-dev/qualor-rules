@@ -120,6 +120,8 @@ func Fetch(w http.ResponseWriter, r *http.Request) {
   other than `net/http` are not checked yet.
 - The success flag of a bind or decode call (`ok := c.ShouldBindJSON(&x) == nil`) still counts
   as request data, so formatting it into a URL is reported.
+- A sink called inside a comparison, such as `if httputil.NewSingleHostReverseProxy(u) == nil`,
+  is not reported.
 - The binder of the Echo instance is not a source, and numeric struct fields count as safe only
   when the struct is declared in the same file.
 - Tests are recognised by a testing parameter of the enclosing function only: a handler declared

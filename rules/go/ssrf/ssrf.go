@@ -489,6 +489,26 @@ func DecodeInCondition(w http.ResponseWriter, r *http.Request) {
 	http.Get(fmt.Sprintf("https://europe-%t.example.com/", europe))
 }
 
+// A sink called inside a comparison (`if httputil.NewSingleHostReverseProxy(...) == nil`) is a
+// boolean expression as a whole: the number/boolean sanitizer clears it, the sink's arguments
+// included. The net/http clients return two values and cannot sit in a comparison.
+func GinSinkInComparison(c *gin.Context) {
+	backend, err := url.Parse(c.Query("backend"))
+	if err != nil {
+		return
+	}
+	// todoruleid: go.ssrf
+	if httputil.NewSingleHostReverseProxy(backend) == nil {
+		c.Status(http.StatusBadGateway)
+		return
+	}
+	// todoruleid: go.ssrf
+	ready := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: c.Param("node")}) != nil
+	if !ready {
+		c.Status(http.StatusBadGateway)
+	}
+}
+
 // Look-alikes: a Get method of another type, httptest-style request builders and a function that
 // is not a handler.
 type Cache struct{}
