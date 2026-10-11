@@ -699,6 +699,180 @@ def safe_checked_exit(archive_path, dest):
         tar.extractall(root)
 
 
+# Safe: a members= generator of this file (defined before the call) that checks each member and
+# leaves (raise, return, sys.exit) or skips it (continue) before it yields it: the same guard
+# forms, on the member or on a path computed from it. A bad member is never extracted.
+def members_checked(tar, root):
+    for member in tar.getmembers():
+        if os.path.commonpath([root, os.path.realpath(os.path.join(root, member.name))]) != root:
+            raise ValueError("outside the destination: " + member.name)
+        yield member
+
+
+def members_skipped(tar, root):
+    for member in tar:
+        target = os.path.realpath(os.path.join(root, member.name))
+        if not target.startswith(root + os.sep):
+            print("skipping", member.name)
+            continue
+        yield member
+
+
+def members_stopped(members, root):
+    for info in members:
+        if os.path.isabs(info.name) or ".." in info.name.split("/"):
+            return
+        yield info
+
+
+def members_exited(tar, root):
+    for member in tar:
+        if os.path.commonpath([root, os.path.realpath(os.path.join(root, member.name))]) != root:
+            sys.exit("outside the destination: " + member.name)
+        yield member
+
+
+def members_logged_refused(tar, root):
+    for member in tar:
+        if os.path.isabs(member.name):
+            print("absolute name", member.name)
+            raise ValueError(member.name)
+        yield member
+
+
+def members_target_checked(tar, root):
+    for member in tar:
+        target = os.path.realpath(os.path.join(root, member.name))
+        if os.path.commonpath([root, target]) != root:
+            return
+        yield member
+
+
+def safe_members_generator(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        # ok: python.tar-extraction
+        tar.extractall(root, members=members_checked(tar, root))
+    with tarfile.open(archive_path) as tar:
+        # ok: python.tar-extraction
+        tar.extractall(path=root, members=members_skipped(tar, root))
+    tar = tarfile.open(archive_path)
+    # ok: python.tar-extraction
+    tar.extractall(root, members=members_stopped(tar.getmembers(), root))
+    # ok: python.tar-extraction
+    tar.extractall(root, members=members_exited(tar, root))
+    # ok: python.tar-extraction
+    tar.extractall(root, members=members_logged_refused(tar, root))
+    # ok: python.tar-extraction
+    tar.extractall(root, members=members_target_checked(tar, root))
+
+
+# A guarded generator does not cover a call that does not use it, nor one whose check only logs,
+# is on a character prefix that a sibling directory passes, or is os.path.commonprefix().
+def members_logged(tar, root):
+    for member in tar:
+        if os.path.isabs(member.name):
+            print("absolute name", member.name)
+        yield member
+
+
+def members_prefixed(tar, root):
+    for member in tar:
+        if not os.path.realpath(os.path.join(root, member.name)).startswith(root):
+            raise ValueError(member.name)
+        yield member
+
+
+def members_common_prefix(tar, root):
+    for member in tar:
+        target = os.path.realpath(os.path.join(root, member.name))
+        if os.path.commonprefix([root, target]) != root:
+            continue
+        yield member
+
+
+def members_prefixed_logged(tar, root):
+    for member in tar:
+        if not os.path.realpath(os.path.join(root, member.name)).startswith(root):
+            print("outside", member.name)
+            return
+        yield member
+
+
+def members_prefixed_exit(tar, root):
+    for member in tar:
+        if not os.path.realpath(os.path.join(root, member.name)).startswith(root):
+            sys.exit(1)
+        yield member
+
+
+def members_prefixed_skip(tar, root):
+    for member in tar:
+        if not os.path.realpath(os.path.join(root, member.name)).startswith(root):
+            continue
+        yield member
+
+
+def members_common_prefix_logged(tar, root):
+    for member in tar:
+        if os.path.commonprefix([root, os.path.realpath(os.path.join(root, member.name))]) != root:
+            print("outside", member.name)
+            raise ValueError(member.name)
+        yield member
+
+
+def members_common_prefix_return(tar, root):
+    for member in tar:
+        if os.path.commonprefix([root, os.path.realpath(os.path.join(root, member.name))]) != root:
+            return
+        yield member
+
+
+def members_common_prefix_exit(tar, root):
+    for member in tar:
+        if os.path.commonprefix([root, os.path.realpath(os.path.join(root, member.name))]) != root:
+            sys.exit(1)
+        yield member
+
+
+def members_nested_check(tar, root, strict):
+    for member in tar:
+        if os.path.isabs(member.name):
+            if strict:
+                raise ValueError(member.name)
+        yield member
+
+
+def unsafe_members_generator(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        # ruleid: python.tar-extraction
+        tar.extractall(root)
+        # ruleid: python.tar-extraction
+        tar.extractall(root, members=members_logged(tar, root))
+        # ruleid: python.tar-extraction
+        tar.extractall(root, members=members_prefixed(tar, root))
+        # ruleid: python.tar-extraction
+        tar.extractall(root, members=members_common_prefix(tar, root))
+        # ruleid: python.tar-extraction
+        tar.extractall(root, members=tar.getmembers())
+    with tarfile.open(archive_path) as tar:
+        # ruleid: python.tar-extraction
+        tar.extractall(root, members=members_prefixed_logged(tar, root))
+        # ruleid: python.tar-extraction
+        tar.extractall(root, members=members_prefixed_exit(tar, root))
+        # ruleid: python.tar-extraction
+        tar.extractall(root, members=members_prefixed_skip(tar, root))
+        # ruleid: python.tar-extraction
+        tar.extractall(root, members=members_common_prefix_logged(tar, root))
+        # ruleid: python.tar-extraction
+        tar.extractall(root, members=members_common_prefix_return(tar, root))
+        # ruleid: python.tar-extraction
+        tar.extractall(root, members=members_common_prefix_exit(tar, root))
+        # ruleid: python.tar-extraction
+        tar.extractall(root, members=members_nested_check(tar, root, False))
+
+
 def safe_checked_exit_logged(archive_path, dest):
     root = os.path.realpath(dest)
     with tarfile.open(archive_path) as tar:
@@ -1002,7 +1176,8 @@ def unpack_conditional_check(archive_path, dest, strict):
         tar.extractall(dest)
 
 
-# A members= generator that checks each member is not read.
+# A members= generator that yields only inside a check (`if inside: yield member`) has the form of
+# the docs' name selection (py_files above), so it is not read as a guard.
 def members_inside(tar, root):
     for member in tar:
         target = os.path.realpath(os.path.join(root, member.name))
@@ -1015,6 +1190,30 @@ def unpack_checked_members(archive_path, dest):
     with tarfile.open(archive_path) as tar:
         # todook: python.tar-extraction
         tar.extractall(root, members=members_inside(tar, root))
+
+
+# A guarded members= generator defined after the call, or used by a loop that calls extract(), is
+# not read.
+def unpack_checked_later(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        # todook: python.tar-extraction
+        tar.extractall(root, members=members_checked_later(tar, root))
+
+
+def members_checked_later(tar, root):
+    for member in tar:
+        if os.path.isabs(member.name):
+            raise ValueError(member.name)
+        yield member
+
+
+def unpack_checked_loop(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        for member in members_checked(tar, root):
+            # todook: python.tar-extraction
+            tar.extract(member, root)
 
 
 # Guards the rule does not read: more than one statement before the exit, and an exit by break.

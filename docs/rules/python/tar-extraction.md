@@ -31,6 +31,9 @@ function or module, in a `with` statement, as a parameter typed `tarfile.TarFile
 `tarfile.tar_filter`, or a filter function of your own. So is a check of each member before
 extracting it: an `if` in a loop over the archive, on the member or a path computed from it, that
 raises, returns or exits (or, for `extract()` inside the loop, skips the member with `continue`).
+The same check in a `members=` generator of the same file, defined before the call, also counts
+when it raises, returns, exits or skips the member before yielding it
+(`tar.extractall(root, members=checked(tar, root))`).
 A check on a character prefix stays reported, since `/srv/data-evil` starts with `/srv/data`:
 `startswith(root)` without a separator at the end, and `os.path.commonprefix()`. Compare with
 `os.path.commonpath()`, or with `root + os.sep`.
@@ -118,8 +121,9 @@ def install_release(archive_path, dest):
 - A prefix that ends in a separator but is kept in a variable (`prefix = root + os.sep`) is
   taken for a character prefix, so its check is reported.
 - Checks the rule does not read are reported: a check in a helper function, a `members=`
-  generator that yields only checked members, an `if` with more than one statement before its
-  exit, and an exit by `break`.
+  generator that yields only inside a check (`if inside: yield member`, which looks like a
+  selection by name), a checking generator defined after the call or looped over to call
+  `extract()`, an `if` with more than one statement before its exit, and an exit by `break`.
 - A default filter set once on the `TarFile` class for the whole program is not seen.
 - `shutil.unpack_archive()` cannot tell a zip from a tar when the file name is a variable, so a
   zip extracted that way is reported.
