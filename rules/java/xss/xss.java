@@ -1234,3 +1234,362 @@ class EchoService {
         return text;
     }
 }
+
+// Each form of the response sinks once, with the values that keep it quiet (one line per form of
+// the rule, so that no form goes untested).
+class ResponseFormsServlet {
+    void javaxHttp(javax.servlet.http.HttpServletRequest request, javax.servlet.http.HttpServletResponse response) throws IOException {
+        String name = request.getParameter("name");
+        // ruleid: java.xss
+        response.getWriter().print(name);
+        // ruleid: java.xss
+        response.getWriter().append("<p>").print(name);
+        java.io.PrintWriter out = response.getWriter();
+        // ruleid: java.xss
+        out.println(name);
+        try (java.io.PrintWriter scoped = response.getWriter()) {
+            // ruleid: java.xss
+            scoped.write(name);
+        }
+        java.io.PrintStream wrapped = new java.io.PrintStream(response.getOutputStream());
+        // ruleid: java.xss
+        wrapped.print(name);
+    }
+
+    void javaxPlain(javax.servlet.ServletRequest request, javax.servlet.ServletResponse response) throws IOException {
+        String name = request.getParameter("name");
+        // ruleid: java.xss
+        response.getWriter().print(name);
+        // ruleid: java.xss
+        response.getWriter().append("<p>").print(name);
+        java.io.PrintWriter out = response.getWriter();
+        // ruleid: java.xss
+        out.println(name);
+        try (java.io.PrintWriter scoped = response.getWriter()) {
+            // ruleid: java.xss
+            scoped.write(name);
+        }
+        java.io.PrintStream wrapped = new java.io.PrintStream(response.getOutputStream());
+        // ruleid: java.xss
+        wrapped.print(name);
+    }
+
+    void jakartaPlain(jakarta.servlet.ServletRequest request, jakarta.servlet.ServletResponse response) throws IOException {
+        String name = request.getParameter("name");
+        // ruleid: java.xss
+        response.getWriter().print(name);
+        // ruleid: java.xss
+        response.getWriter().append("<p>").print(name);
+        java.io.PrintWriter out = response.getWriter();
+        // ruleid: java.xss
+        out.println(name);
+        try (java.io.PrintWriter scoped = response.getWriter()) {
+            // ruleid: java.xss
+            scoped.write(name);
+        }
+        java.io.PrintStream wrapped = new java.io.PrintStream(response.getOutputStream());
+        // ruleid: java.xss
+        wrapped.print(name);
+    }
+}
+
+@RestController
+class ResponseFormsController {
+    // Not a request mapping: what it returns goes to no response.
+    @Deprecated
+    String label(@RequestParam String q) {
+        // ok: java.xss
+        return q;
+    }
+
+    @Deprecated
+    ResponseEntity<String> labelEntity(@RequestParam String q) {
+        // ok: java.xss
+        return ResponseEntity.ok(q);
+    }
+
+    @GetMapping("/forms/created")
+    ResponseEntity<String> created(@RequestParam String q) {
+        // ruleid: java.xss
+        return new ResponseEntity<String>(q, org.springframework.http.HttpStatus.CREATED);
+    }
+
+    // A ResponseEntity<String> handler whose mapping produces JSON.
+    @GetMapping(value = "/forms/json", produces = "application/json")
+    ResponseEntity<String> json(@RequestParam String q) {
+        // ok: java.xss
+        return ResponseEntity.ok(q);
+    }
+
+    // ... and one whose mapping produces HTML.
+    @GetMapping(value = "/forms/page", produces = "text/html")
+    ResponseEntity<String> page(@RequestParam String q) {
+        // ruleid: java.xss
+        return ResponseEntity.ok(q);
+    }
+
+    @GetMapping(value = "/forms/page-json", produces = "text/html")
+    ResponseEntity<String> pageJson(@RequestParam String q) {
+        // ok: java.xss
+        return ResponseEntity.ok().contentType(org.springframework.http.MediaType.APPLICATION_JSON).body(q);
+    }
+}
+
+@Path("/forms")
+class ResponseFormsResource {
+    private final com.fasterxml.jackson.dataformat.xml.XmlMapper xmlMapper = new com.fasterxml.jackson.dataformat.xml.XmlMapper();
+
+    // A number written as HTML carries no markup.
+    @GET
+    @Path("/length")
+    @Produces(MediaType.TEXT_HTML)
+    public int length(@QueryParam("q") String q) {
+        // ok: java.xss
+        return q.length();
+    }
+
+    @GET
+    @Path("/status")
+    @Produces(MediaType.TEXT_HTML)
+    public Response status(@QueryParam("q") String q) {
+        // ruleid: java.xss
+        return Response.status(200).entity("<p>" + q + "</p>").build();
+    }
+
+    @GET
+    @Path("/status-xml")
+    @Produces(MediaType.APPLICATION_XML)
+    public Response statusXml(@QueryParam("q") String q) {
+        // ruleid: java.xss
+        return Response.status(200).entity("<item>" + q + "</item>").build();
+    }
+
+    @GET
+    @Path("/status-formatted")
+    @Produces(MediaType.APPLICATION_XML)
+    public Response statusFormatted(@QueryParam("q") String q) {
+        // ruleid: java.xss
+        return Response.status(200).entity(String.format("<item>%s</item>", q)).build();
+    }
+
+    @GET
+    @Path("/formatted")
+    @Produces(MediaType.APPLICATION_XML)
+    public Response formatted(@QueryParam("q") String q) {
+        // ruleid: java.xss
+        return Response.ok(String.format("<item>%s</item>", q)).build();
+    }
+
+    @GET
+    @Path("/appended")
+    @Produces(MediaType.APPLICATION_XML)
+    public Response appended(@QueryParam("q") String q) {
+        String body = "<item>";
+        body += q;
+        // ruleid: java.xss
+        return Response.ok(body).build();
+    }
+
+    @GET
+    @Path("/concatenated")
+    @Produces(MediaType.APPLICATION_XML)
+    public Response concatenated(@QueryParam("q") String q) {
+        String body = "<item>".concat(q);
+        // ruleid: java.xss
+        return Response.ok(body).build();
+    }
+
+    // An annotation that names HTML or XML but is no @Produces: the response is plain text.
+    @POST
+    @Path("/echo")
+    @jakarta.ws.rs.Consumes(MediaType.TEXT_HTML)
+    @Produces(MediaType.TEXT_PLAIN)
+    public String echo(@QueryParam("q") String q) {
+        // ok: java.xss
+        return q;
+    }
+
+    @POST
+    @Path("/echo-xml")
+    @jakarta.ws.rs.Consumes(MediaType.APPLICATION_XML)
+    @Produces(MediaType.TEXT_PLAIN)
+    public String echoXml(@QueryParam("q") String q) {
+        // ok: java.xss
+        return q;
+    }
+
+    // A response given its type: HTML, or XML and SVG for markup the method builds.
+    @GET
+    @Path("/typed-entity")
+    public Response typedEntity(@QueryParam("q") String q) {
+        // ruleid: java.xss
+        return Response.status(200).entity(q).type("text/html").build();
+    }
+
+    @GET
+    @Path("/typed-first")
+    public Response typedFirst(@QueryParam("q") String q) {
+        // ruleid: java.xss
+        return Response.status(200).type("text/html").entity(q).build();
+    }
+
+    @GET
+    @Path("/xml-in-place")
+    public Response xmlInPlace(@QueryParam("q") String q) {
+        // ruleid: java.xss
+        return Response.ok("<item>" + q + "</item>", "application/xml").build();
+    }
+
+    @GET
+    @Path("/xml-formatted")
+    public Response xmlFormatted(@QueryParam("q") String q) {
+        // ruleid: java.xss
+        return Response.ok(String.format("<item>%s</item>", q)).type("application/xml").build();
+    }
+
+    @GET
+    @Path("/xml-entity")
+    public Response xmlEntity(@QueryParam("q") String q) {
+        // ruleid: java.xss
+        return Response.status(200).entity("<item>" + q + "</item>").type("application/xml").build();
+    }
+
+    @GET
+    @Path("/svg-entity")
+    public Response svgEntity(@QueryParam("q") String q) {
+        // ruleid: java.xss
+        return Response.status(200).type("image/svg+xml").entity(String.format("<svg>%s</svg>", q)).build();
+    }
+
+    @GET
+    @Path("/xml-forms")
+    public Response xmlForms(@QueryParam("q") String q, int kind) {
+        if (kind == 1) {
+            // ruleid: java.xss
+            return Response.ok(String.format("<item>%s</item>", q), "application/xml").build();
+        }
+        if (kind == 2) {
+            // ruleid: java.xss
+            return Response.status(200).entity(String.format("<item>%s</item>", q)).type("application/xml").build();
+        }
+        if (kind == 3) {
+            // ruleid: java.xss
+            return Response.status(200).type("application/xml").entity("<item>" + q + "</item>").build();
+        }
+        // ruleid: java.xss
+        return Response.ok("<item>" + q + "</item>").type("application/xml").build();
+    }
+
+    @GET
+    @Path("/xml-formatted-variable")
+    public Response xmlFormattedVariable(@QueryParam("q") String q) {
+        String body = String.format("<item>%s</item>", q);
+        // ruleid: java.xss
+        return Response.ok(body).type("application/xml").build();
+    }
+
+    @GET
+    @Path("/xml-joined")
+    public Response xmlJoined(@QueryParam("q") String q) {
+        String body = "<item>" + q + "</item>";
+        // ruleid: java.xss
+        return Response.ok(body).type("application/xml").build();
+    }
+
+    @GET
+    @Path("/xml-concatenated")
+    public Response xmlConcatenated(@QueryParam("q") String q) {
+        String body = "<item>".concat(q);
+        // ruleid: java.xss
+        return Response.ok(body).type("application/xml").build();
+    }
+
+    @GET
+    @Path("/xml-appended")
+    public Response xmlAppended(@QueryParam("q") String q) {
+        String body = "<item>";
+        body += q;
+        // ruleid: java.xss
+        return Response.ok(body).type("application/xml").build();
+    }
+
+    // The same markup sent as JSON, and a serialiser's output sent as XML.
+    @GET
+    @Path("/json-in-place")
+    public Response jsonInPlace(@QueryParam("q") String q) {
+        // ok: java.xss
+        return Response.ok("<item>" + q + "</item>", "application/json").build();
+    }
+
+    @GET
+    @Path("/xml-mapped")
+    public Response xmlMapped(@QueryParam("q") String q) throws Exception {
+        String xml = xmlMapper.writeValueAsString(new ItemView(q));
+        // ok: java.xss
+        return Response.ok(xml).type("application/xml").build();
+    }
+
+    @GET
+    @Path("/xml-mapped-entity")
+    public Response xmlMappedEntity(@QueryParam("q") String q) throws Exception {
+        String xml = xmlMapper.writeValueAsString(new ItemView(q));
+        // ok: java.xss
+        return Response.status(200).type("application/xml").entity(xml).build();
+    }
+}
+
+// Classes whose @Produces names HTML or XML, with a method that sets its own type.
+@Path("/forms-html")
+@Produces(MediaType.TEXT_HTML)
+class ResponseFormsHtmlResource {
+    @GET
+    @Path("/json")
+    @javax.ws.rs.Produces("application/json")
+    public String json(@QueryParam("q") String q) {
+        // ok: java.xss
+        return "{\"q\":\"" + q + "\"}";
+    }
+}
+
+@Path("/forms-xml")
+@Produces(MediaType.APPLICATION_XML)
+class ResponseFormsXmlResource {
+    @GET
+    @Path("/json")
+    @Produces(MediaType.APPLICATION_JSON)
+    public String json(@QueryParam("q") String q) {
+        // ok: java.xss
+        return "{\"q\":\"" + q + "\"}";
+    }
+
+    @GET
+    @Path("/json-javax")
+    @javax.ws.rs.Produces("application/json")
+    public String jsonJavax(@QueryParam("q") String q) {
+        // ok: java.xss
+        return "{\"q\":\"" + q + "\"}";
+    }
+}
+
+// A class that consumes HTML or XML and produces plain text or JSON.
+@Path("/forms-consumes")
+@jakarta.ws.rs.Consumes(MediaType.TEXT_HTML)
+@Produces(MediaType.TEXT_PLAIN)
+class ResponseFormsConsumesResource {
+    @POST
+    public String echo(@QueryParam("q") String q) {
+        // ok: java.xss
+        return q;
+    }
+}
+
+@Path("/forms-consumes-xml")
+@jakarta.ws.rs.Consumes(MediaType.APPLICATION_XML)
+@Produces(MediaType.APPLICATION_JSON)
+class ResponseFormsConsumesXmlResource {
+    @POST
+    public String echo(@QueryParam("q") String q) {
+        // ok: java.xss
+        return "{\"q\":\"" + q + "\"}";
+    }
+}
