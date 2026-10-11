@@ -1069,9 +1069,12 @@ rules:
               - pattern: $RES.code($CODE2).send($BODY)
               - pattern: $RES.write($BODY, ...)
               - pattern: $RES.end($BODY, ...)
+              # Not $METHOD: a metavariable in a method-name position anywhere in the rule turns
+              # the Next.js sources' metavariable-regex on $METHOD into prefilter terms, which
+              # multiplied the prefilter fourfold (22 kB).
               - patterns:
                   - pattern: return $BODY;
-                  - pattern-not: return $RES.$METHOD(...);
+                  - pattern-not: return $RES.$RESMETHOD(...);
           - focus-metavariable: $BODY
       # res.write()/res.end() (Node http, Express) without a content type: text that is visibly
       # HTML.
