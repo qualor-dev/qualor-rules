@@ -424,6 +424,30 @@ class SharedLimitsController {
         // A single append, not in a chain.
         // ruleid: java.template-injection
         templateEngine.process(single.toString(), new Context());
+        // Text put in with insert or replace (StringBuilder and StringBuffer), by the declared
+        // type or by a builder created in the method.
+        StringBuilder chosen = Boolean.getBoolean("compact") ? new StringBuilder() : new StringBuilder("a");
+        chosen.insert(0, key, 0, key.length());
+        // ruleid: java.template-injection
+        templateEngine.process(chosen.toString(), new Context());
+        StringBuffer typed = Boolean.getBoolean("compact") ? new StringBuffer() : new StringBuffer("a");
+        typed.replace(0, 1, key);
+        // ruleid: java.template-injection
+        templateEngine.process(typed.toString(), new Context());
+        var spliced = new StringBuilder();
+        spliced.append("a").insert(0, key);
+        // ruleid: java.template-injection
+        templateEngine.process(spliced.toString(), new Context());
+        var swapped = new StringBuffer();
+        swapped.append("a").replace(0, 1, key);
+        // ruleid: java.template-injection
+        templateEngine.process(swapped.toString(), new Context());
+        // Another class's replace (Map.replace) carries nothing into its object (and the map's
+        // size is a number).
+        java.util.Map<String, String> labels = new java.util.HashMap<>();
+        labels.replace("k", "old", key);
+        // ok: java.template-injection
+        templateEngine.process(String.valueOf(labels.size()), new Context());
         StringBuilder chained = new StringBuilder();
         chained.append("<p>").append(key).append("</p>");
         // ruleid: java.template-injection

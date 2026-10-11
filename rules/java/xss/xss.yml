@@ -46,6 +46,7 @@ rules:
         - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html
         - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html
         - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuffer.html
         - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/multipart-forms.html
         - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/bind/annotation/RequestPart.html
         - https://community.owasp.org/attacks/xss
@@ -147,6 +148,21 @@ rules:
         to: $SB
       # ... also later in an append chain.
       - pattern: $SB.append(...). ... .append($X)
+        from: $X
+        to: $SB
+      # ... and text put in with insert or replace (also later in an append chain), when the
+      # receiver is a StringBuilder or StringBuffer (by its type, also for a builder declared
+      # with var and created in place). Other classes' insert and replace (Map.replace, a
+      # MyBatis session's insert) are not followed by this item.
+      - patterns:
+          - pattern-either:
+              - pattern: $SB.insert($I, $X, ...)
+              - pattern: $SB.append(...). ... .insert($I, $X, ...)
+              - pattern: $SB.replace($S, $E, $X)
+              - pattern: $SB.append(...). ... .replace($S, $E, $X)
+          - metavariable-type:
+              metavariable: $SB
+              types: [StringBuilder, StringBuffer]
         from: $X
         to: $SB
     pattern-sanitizers:

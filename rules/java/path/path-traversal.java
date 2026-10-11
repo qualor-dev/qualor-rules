@@ -429,6 +429,30 @@ class SharedFormsController {
         // A single append, not in a chain.
         // ruleid: java.path-traversal
         new File("/srv/files", single.toString()).delete();
+        // Text put in with insert or replace (StringBuilder and StringBuffer), by the declared
+        // type or by a builder created in the method.
+        StringBuilder chosen = Boolean.getBoolean("compact") ? new StringBuilder() : new StringBuilder("a");
+        chosen.insert(0, key, 0, key.length());
+        // ruleid: java.path-traversal
+        new File("/srv/files", chosen.toString()).delete();
+        StringBuffer typed = Boolean.getBoolean("compact") ? new StringBuffer() : new StringBuffer("a");
+        typed.replace(0, 1, key);
+        // ruleid: java.path-traversal
+        new File("/srv/files", typed.toString()).delete();
+        var spliced = new StringBuilder();
+        spliced.append("a").insert(0, key);
+        // ruleid: java.path-traversal
+        new File("/srv/files", spliced.toString()).delete();
+        var swapped = new StringBuffer();
+        swapped.append("a").replace(0, 1, key);
+        // ruleid: java.path-traversal
+        new File("/srv/files", swapped.toString()).delete();
+        // Another class's replace (Map.replace) carries nothing into its object (and the map's
+        // size is a number).
+        java.util.Map<String, String> labels = new java.util.HashMap<>();
+        labels.replace("k", "old", key);
+        // ok: java.path-traversal
+        new File("/srv/files", String.valueOf(labels.size())).delete();
         return "ok";
     }
 

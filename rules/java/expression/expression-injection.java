@@ -423,6 +423,30 @@ class SharedLimitsController {
         // A single append, not in a chain.
         // ruleid: java.expression-injection
         elp.eval(single.toString());
+        // Text put in with insert or replace (StringBuilder and StringBuffer), by the declared
+        // type or by a builder created in the method.
+        StringBuilder chosen = Boolean.getBoolean("compact") ? new StringBuilder() : new StringBuilder("a");
+        chosen.insert(0, key, 0, key.length());
+        // ruleid: java.expression-injection
+        elp.eval(chosen.toString());
+        StringBuffer typed = Boolean.getBoolean("compact") ? new StringBuffer() : new StringBuffer("a");
+        typed.replace(0, 1, key);
+        // ruleid: java.expression-injection
+        elp.eval(typed.toString());
+        var spliced = new StringBuilder();
+        spliced.append("a").insert(0, key);
+        // ruleid: java.expression-injection
+        elp.eval(spliced.toString());
+        var swapped = new StringBuffer();
+        swapped.append("a").replace(0, 1, key);
+        // ruleid: java.expression-injection
+        elp.eval(swapped.toString());
+        // Another class's replace (Map.replace) carries nothing into its object (and the map's
+        // size is a number).
+        java.util.Map<String, String> labels = new java.util.HashMap<>();
+        labels.replace("k", "old", key);
+        // ok: java.expression-injection
+        elp.eval(String.valueOf(labels.size()));
         StringBuilder chained = new StringBuilder();
         chained.append("price * ").append(key);
         // ruleid: java.expression-injection

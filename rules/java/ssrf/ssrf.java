@@ -411,6 +411,30 @@ class SharedFormsController {
         // A single append, not in a chain.
         // ruleid: java.ssrf
         new URL("https://" + single.toString() + "/status").openStream();
+        // Text put in with insert or replace (StringBuilder and StringBuffer), by the declared
+        // type or by a builder created in the method.
+        StringBuilder chosen = Boolean.getBoolean("compact") ? new StringBuilder() : new StringBuilder("a");
+        chosen.insert(0, key, 0, key.length());
+        // ruleid: java.ssrf
+        new URL("https://" + chosen.toString() + "/status").openStream();
+        StringBuffer typed = Boolean.getBoolean("compact") ? new StringBuffer() : new StringBuffer("a");
+        typed.replace(0, 1, key);
+        // ruleid: java.ssrf
+        new URL("https://" + typed.toString() + "/status").openStream();
+        var spliced = new StringBuilder();
+        spliced.append("a").insert(0, key);
+        // ruleid: java.ssrf
+        new URL("https://" + spliced.toString() + "/status").openStream();
+        var swapped = new StringBuffer();
+        swapped.append("a").replace(0, 1, key);
+        // ruleid: java.ssrf
+        new URL("https://" + swapped.toString() + "/status").openStream();
+        // Another class's replace (Map.replace) carries nothing into its object (and the map's
+        // size is a number).
+        java.util.Map<String, String> labels = new java.util.HashMap<>();
+        labels.replace("k", "old", key);
+        // ok: java.ssrf
+        new URL("https://" + String.valueOf(labels.size()) + "/status").openStream();
         return "ok";
     }
 
@@ -632,10 +656,10 @@ class BuilderController {
         spliced.insert(8, host);
         // ruleid: java.ssrf
         new URL(spliced.toString()).openStream();
-        // Request data put in with replace is not followed (replace carries no taint).
+        // ... and so is request data put in with replace.
         StringBuilder swapped = new StringBuilder("https://api.example.com/items/");
         swapped.replace(8, 9, host);
-        // todoruleid: java.ssrf
+        // ruleid: java.ssrf
         new URL(swapped.toString()).openStream();
         // Two builders with fixed starts: an assignment to one does not count for the other.
         StringBuilder first = new StringBuilder("https://api.example.com/items/");

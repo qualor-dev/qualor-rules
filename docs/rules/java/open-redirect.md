@@ -103,8 +103,7 @@ public class AfterLoginServlet extends HttpServlet {
 - A `StringBuilder` or `StringBuffer` counts as fixed only when it is created with such a literal
   (or a `static final` field holding one) or gets one in its first append. A builder given its
   start later, edited afterwards (`setLength`, `delete`, `replace`, `insert`, `setCharAt`) or
-  assigned again after it is created is reported when request data is appended to it. Request data
-  put into a builder with `replace` is not followed.
+  assigned again after it is created is reported when request data is appended to it.
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
   Spring MVC simple-type parameter), except a Spring `HttpEntity` or `RequestEntity` (the
   request body and headers); enum, `List` or `Optional` parameters still count as request data.
@@ -137,6 +136,7 @@ public class AfterLoginServlet extends HttpServlet {
 - <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html>
 - <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html>
 - <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html>
+- <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuffer.html>
 - <https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/multipart-forms.html>
 - <https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/bind/annotation/RequestPart.html>
 

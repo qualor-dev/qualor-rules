@@ -442,6 +442,30 @@ class SharedLimitsController {
         // A single append, not in a chain.
         // ruleid: java.ldap-injection
         ldapTemplate.search("ou=x", "(cn=" + single.toString() + ")", CN);
+        // Text put in with insert or replace (StringBuilder and StringBuffer), by the declared
+        // type or by a builder created in the method.
+        StringBuilder chosen = Boolean.getBoolean("compact") ? new StringBuilder() : new StringBuilder("a");
+        chosen.insert(0, key, 0, key.length());
+        // ruleid: java.ldap-injection
+        ldapTemplate.search("ou=x", "(cn=" + chosen.toString() + ")", CN);
+        StringBuffer typed = Boolean.getBoolean("compact") ? new StringBuffer() : new StringBuffer("a");
+        typed.replace(0, 1, key);
+        // ruleid: java.ldap-injection
+        ldapTemplate.search("ou=x", "(cn=" + typed.toString() + ")", CN);
+        var spliced = new StringBuilder();
+        spliced.append("a").insert(0, key);
+        // ruleid: java.ldap-injection
+        ldapTemplate.search("ou=x", "(cn=" + spliced.toString() + ")", CN);
+        var swapped = new StringBuffer();
+        swapped.append("a").replace(0, 1, key);
+        // ruleid: java.ldap-injection
+        ldapTemplate.search("ou=x", "(cn=" + swapped.toString() + ")", CN);
+        // Another class's replace (Map.replace) carries nothing into its object (and the map's
+        // size is a number).
+        java.util.Map<String, String> labels = new java.util.HashMap<>();
+        labels.replace("k", "old", key);
+        // ok: java.ldap-injection
+        ldapTemplate.search("ou=x", "(cn=" + String.valueOf(labels.size()) + ")", CN);
         return "ok";
     }
 

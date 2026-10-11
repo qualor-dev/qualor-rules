@@ -39,6 +39,7 @@ rules:
         - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/httpentity.html
         - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/RequestEntity.html
         - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuilder.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/lang/StringBuffer.html
         - https://docs.spring.io/spring-framework/reference/web/webmvc/mvc-controller/ann-methods/multipart-forms.html
         - https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/bind/annotation/RequestPart.html
       since: 2026.10.1
@@ -65,8 +66,7 @@ rules:
     # - A StringBuilder or StringBuffer counts as fixed only when it is created with such a
     #   literal, or gets one in the append right after it is created (a builder given its start
     #   later, edited with setLength, delete, replace, insert or setCharAt, or assigned again after
-    #   it is created, is reported when request data is appended to it). Request data put in with
-    #   replace is not followed (replace carries no taint); insert is followed.
+    #   it is created, is reported when request data is appended to it).
     # - Allow-list lookups are recognised only as Map.of(...) of literals and constants (in a
     #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
     #   valueOf of an enum declared in this file (or Enum.valueOf): valueOf of an enum
@@ -116,6 +116,21 @@ rules:
         to: $SB
       # ... also later in an append chain.
       - pattern: $SB.append(...). ... .append($X)
+        from: $X
+        to: $SB
+      # ... and text put in with insert or replace (also later in an append chain), when the
+      # receiver is a StringBuilder or StringBuffer (by its type, also for a builder declared
+      # with var and created in place). Other classes' insert and replace (Map.replace, a
+      # MyBatis session's insert) are not followed by this item.
+      - patterns:
+          - pattern-either:
+              - pattern: $SB.insert($I, $X, ...)
+              - pattern: $SB.append(...). ... .insert($I, $X, ...)
+              - pattern: $SB.replace($S, $E, $X)
+              - pattern: $SB.append(...). ... .replace($S, $E, $X)
+          - metavariable-type:
+              metavariable: $SB
+              types: [StringBuilder, StringBuffer]
         from: $X
         to: $SB
     pattern-sanitizers:
