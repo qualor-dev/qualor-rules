@@ -764,4 +764,37 @@ app.get('/preview/renamed', async ({ query: q, params: { site } }, res) => {
   res.send(home);
 });
 
+// The get() of an HTTP client (axios, got, superagent) and undici.request(): a URL that the request
+// visibly chooses keeps the page request data, also when the call is not awaited in place. One on
+// a fixed origin is that service's data (xss.mjs: a client given only such URLs stays clean).
+const superagent = require('superagent');
+const undici = require('undici');
+app.get('/clients/preview', async (req, res) => {
+  const pending = axios.get(req.query.url);
+  const { data } = await pending;
+  // ruleid: js.xss
+  res.send(data);
+  // ruleid: js.xss
+  res.send(await got.get(req.query.url).text());
+  const page = await superagent.get(req.query.url);
+  // ruleid: js.xss
+  res.send(page.text);
+  const { body } = await undici.request(req.query.url);
+  // ruleid: js.xss
+  res.send(await body.text());
+  const { body: item } = await undici.request('https://api.example.com/items/' + req.query.id);
+  // ok: js.xss
+  res.send(await item.text());
+});
+// After a get() of a request-chosen URL anywhere in the file, the client itself counts as request
+// data (OpenGrep's --taint-intrafile mode reads get() as a read of its receiver, and the client is
+// a module-level name): a later call to a fixed origin that is not awaited in place, also in
+// another handler, is reported. Awaited in place it is cleaned as above.
+app.get('/clients/status', async (req, res) => {
+  const pending = axios.get('https://api.example.com/status');
+  const { data: status } = await pending;
+  // todook: js.xss
+  res.send(status);
+});
+
 module.exports = { app, server, fastify, reply };
