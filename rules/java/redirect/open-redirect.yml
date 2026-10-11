@@ -580,6 +580,9 @@ rules:
       # Spring MVC: a view name with the "redirect:" prefix (returned, or given to a ModelAndView),
       # in place or built with String.format.
       - patterns:
+          # The file holds "redirect:", as it does whenever a view name matches: a literal
+          # OpenGrep's prefilter can use to skip files (the prefix is a string, which gives none).
+          - pattern-regex: (?s)\A.*redirect:.*\z
           - pattern-either:
               - patterns:
                   - pattern: $A + $B
