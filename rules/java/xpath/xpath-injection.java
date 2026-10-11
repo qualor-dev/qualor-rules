@@ -286,6 +286,19 @@ class CatalogController {
         // ok: java.xpath-injection
         return resolving.evaluate("//book[author=$author]/title", catalog);
     }
+
+    // Not a handler (no mapping annotation): the entity is not request data here.
+    String fromEntity(HttpEntity<String> entity) throws XPathExpressionException {
+        // ok: java.xpath-injection
+        return xpath.evaluate(entity.getBody(), catalog);
+    }
+
+    // ... nor with an annotation that is not a request mapping.
+    @Deprecated
+    String fromEntityDeprecated(HttpEntity<String> entity) throws XPathExpressionException {
+        // ok: java.xpath-injection
+        return xpath.evaluate(entity.getBody(), catalog);
+    }
 }
 
 class BookVariables implements XPathVariableResolver {
