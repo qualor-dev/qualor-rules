@@ -126,8 +126,9 @@ func Hello(w http.ResponseWriter, r *http.Request) {
   file opened in a `var` declaration are not recognised, so what they read is reported; the error
   of `os.ReadFile`, which names the file, is not reported when written into the page.
 - The request body copied to the response is recognised when it is written in place
-  (`io.Copy(w, r.Body)`, also wrapped in `io.LimitReader` or `http.MaxBytesReader`); a variable
-  that holds the body itself (`body := r.Body`) is not followed.
+  (`io.Copy(w, r.Body)`) or wrapped in `io.LimitReader` or `http.MaxBytesReader` (in place or
+  held in a variable); a variable that holds the body itself (`body := r.Body`) or the request
+  (`req := c.Request()`) is not followed.
 - The binder of the Echo instance is not a source, and numeric struct fields count as safe only
   when the struct is declared in the same file.
 - Tests are recognised by a testing parameter of the enclosing function only: a handler declared

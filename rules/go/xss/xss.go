@@ -503,6 +503,11 @@ func Download(w http.ResponseWriter, r *http.Request) {
 	io.Copy(w, doc)
 	// ok: go.xss
 	io.CopyN(w, io.LimitReader(doc, 1<<20), 512)
+	// ok: go.xss
+	io.Copy(w, http.MaxBytesReader(w, doc, 1<<20))
+	sized := http.MaxBytesReader(w, doc, 1<<20)
+	// ok: go.xss
+	io.Copy(w, sized)
 	// A text/template executed into a file: the file is not the response.
 	log, err := os.Create("/var/log/shop/greeting.html")
 	if err != nil {
@@ -528,6 +533,9 @@ func EchoBody(w http.ResponseWriter, r *http.Request) {
 	io.CopyN(w, io.LimitReader(r.Body, 1<<20), 512)
 	// ruleid: go.xss
 	io.Copy(w, http.MaxBytesReader(w, r.Body, 1<<16))
+	lr := io.LimitReader(r.Body, 1<<20)
+	// ruleid: go.xss
+	io.Copy(w, lr)
 	// The body discarded, or copied somewhere other than the response.
 	// ok: go.xss
 	io.Copy(io.Discard, r.Body)
@@ -553,19 +561,55 @@ func GinEchoBody(c *gin.Context) {
 	io.CopyN(c.Writer, c.Request.Body, 1024)
 	// ruleid: go.xss
 	io.CopyBuffer(c.Writer, io.LimitReader(c.Request.Body, 1<<20), nil)
+	// ruleid: go.xss
+	io.Copy(c.Writer, http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20))
+	body := http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
+	// ruleid: go.xss
+	io.Copy(c.Writer, body)
+	limited := io.LimitReader(c.Request.Body, 1<<20)
+	// ruleid: go.xss
+	io.CopyN(c.Writer, limited, 512)
 }
 
 func EchoEchoBody(c echo.Context) error {
 	// ruleid: go.xss
+	io.Copy(c.Response().Writer, c.Request().Body)
+	// ruleid: go.xss
+	io.CopyBuffer(c.Response().Writer, http.MaxBytesReader(c.Response(), c.Request().Body, 1<<20), nil)
+	// ruleid: go.xss
+	io.CopyN(c.Response().Writer, c.Request().Body, 512)
+	lr := io.LimitReader(c.Request().Body, 1<<20)
+	// ruleid: go.xss
+	io.Copy(c.Response(), lr)
+	mb := http.MaxBytesReader(c.Response(), c.Request().Body, 1<<20)
+	// ruleid: go.xss
+	io.Copy(c.Response(), mb)
+	// ruleid: go.xss
 	io.CopyN(c.Response(), io.LimitReader(c.Request().Body, 1<<20), 512)
 	// ruleid: go.xss
 	io.CopyBuffer(c.Response(), c.Request().Body, nil)
+	// A variable that holds the request is not followed.
+	req := c.Request()
+	// todoruleid: go.xss
+	io.Copy(c.Response(), req.Body)
 	// ruleid: go.xss
 	_, err := io.Copy(c.Response(), c.Request().Body)
 	return err
 }
 
 func EchoV5EchoBody(c *echo.Context) error {
+	// ruleid: go.xss
+	io.Copy(c.Response().Writer, c.Request().Body)
+	// ruleid: go.xss
+	io.CopyBuffer(c.Response().Writer, http.MaxBytesReader(c.Response(), c.Request().Body, 1<<20), nil)
+	// ruleid: go.xss
+	io.CopyN(c.Response().Writer, c.Request().Body, 512)
+	lr := io.LimitReader(c.Request().Body, 1<<20)
+	// ruleid: go.xss
+	io.Copy(c.Response(), lr)
+	mb := http.MaxBytesReader(c.Response(), c.Request().Body, 1<<20)
+	// ruleid: go.xss
+	io.Copy(c.Response(), mb)
 	// ruleid: go.xss
 	io.CopyN(c.Response(), c.Request().Body, 512)
 	// ruleid: go.xss
