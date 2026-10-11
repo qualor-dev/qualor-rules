@@ -33,7 +33,7 @@ extracting it: an `if` in a loop over the archive, on the member or a path compu
 raises, returns or exits (or, for `extract()` inside the loop, skips the member with `continue`).
 The same check in a `members=` generator of the same file, defined before the call, also counts
 when it raises, returns, exits or skips the member before yielding it
-(`tar.extractall(root, members=checked(tar, root))`), and so does a helper function of the same
+(`tar.extractall(root, members=checked(tar, root))`), and so does a helper function (not a generator) of the same
 file, defined before, that loops over the members with the same check and raises or exits, called
 with the archive before the extraction (`check(tar, root)`, then `tar.extractall(root)`).
 A check on a character prefix stays reported, since `/srv/data-evil` starts with `/srv/data`:
@@ -123,7 +123,7 @@ def install_release(archive_path, dest):
 - A prefix that ends in a separator but is kept in a variable (`prefix = root + os.sep`) is
   taken for a character prefix, so its check is reported.
 - A checking helper is not checked to loop over the archive it is given: one that checks other
-  names counts, and so does a checking generator called on its own, whose body does not run.
+  names counts, and so does one whose check is nested in another condition.
 - Checks the rule does not read are reported: a checking helper defined after the call, a
   checking method called on `self`, a helper whose result decides (`if not inside(tar, root):
   raise ...`), a `members=`

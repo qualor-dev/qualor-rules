@@ -1304,14 +1304,60 @@ def unpack_unrelated_helper(archive_path, dest, names):
         tar.extractall(dest)
 
 
-# A checking generator called on its own is taken for a checking helper, although its body never
-# runs without iteration.
+# A generator is no helper: calling it on its own runs none of its body, and one that yields a
+# member before checking it hands the bad member to extractall() before it raises.
 def unpack_generator_called(archive_path, dest):
     root = os.path.realpath(dest)
     with tarfile.open(archive_path) as tar:
         members_checked(tar, root)
-        # todoruleid: python.tar-extraction
+        # ruleid: python.tar-extraction
         tar.extractall(root)
+
+
+def members_yielded_first(tar, root):
+    for member in tar:
+        yield member
+        if ".." in member.name.split("/"):
+            raise ValueError(member.name)
+
+
+def unpack_yielded_first(archive_path, dest):
+    root = os.path.realpath(dest)
+    with tarfile.open(archive_path) as tar:
+        # ruleid: python.tar-extraction
+        tar.extractall(root, members=members_yielded_first(tar, root))
+    with tarfile.open(archive_path) as tar:
+        # ruleid: python.tar-extraction
+        tar.extractall(root, members=members_yielded_first(tar.getmembers(), root))
+
+
+def refuse_in_steps(tar):
+    for member in tar:
+        if os.path.isabs(member.name):
+            raise ValueError(member.name)
+        yield
+
+
+def unpack_steps_called(archive_path, dest):
+    with tarfile.open(archive_path) as tar:
+        refuse_in_steps(tar)
+        # ruleid: python.tar-extraction
+        tar.extractall(dest)
+
+
+# A helper whose check is nested in another condition counts, as in the loop forms.
+def refuse_when_strict(tar, strict):
+    for member in tar.getmembers():
+        if strict:
+            if ".." in member.name.split("/"):
+                raise ValueError(member.name)
+
+
+def unpack_helper_nested(archive_path, dest):
+    with tarfile.open(archive_path) as tar:
+        refuse_when_strict(tar, False)
+        # todoruleid: python.tar-extraction
+        tar.extractall(dest)
 
 
 # A default filter set on the TarFile class for the whole program (the docs' global default; the
