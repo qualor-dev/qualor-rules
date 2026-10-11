@@ -50,3 +50,18 @@ test('a SchemaFactory is safe only with both external DTD and schema access deni
   // 2 requirements × 2 names × 5 positions, 1 make × 2 names × 2 positions of secure processing.
   assert.equal(count(block), 2 * 2 * 5 + 4);
 });
+
+test('a Validator must deny external DTDs and schemas itself, each on its own', () => {
+  const block = BLOCKS.find((b) => b.name === 'Validator');
+  assert.equal(block.requirements, SCHEMA_REQUIREMENTS);
+  const text = generate(block);
+  assert.ok(text.startsWith(block.begin) && text.trimEnd().endsWith(block.end));
+  // Each block's markers are its own.
+  for (const other of BLOCKS.filter((b) => b !== block)) assert.ok(!other.begin.includes(block.begin) && !block.begin.includes(other.begin));
+  assert.equal((text.match(/- pattern: \$F\.validate\(\.\.\.\)/g) ?? []).length, SCHEMA_REQUIREMENTS.length);
+  // Secure processing is a factory setting: no newDefaultInstance exclusion on a Validator.
+  assert.doesNotMatch(text, /newDefault|secure-processing|FEATURE_SECURE_PROCESSING/);
+  assert.match(text, /# Set on the validator: before\./);
+  // 2 requirements × 2 names × 5 positions.
+  assert.equal(count(block), 2 * 2 * 5);
+});

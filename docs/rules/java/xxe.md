@@ -10,8 +10,8 @@
 <!-- begin: what-it-finds -->
 XML parsers created and used without turning off DTDs or external entities: JAXP's
 `DocumentBuilderFactory`, `SAXParserFactory`, `XMLInputFactory` (StAX), `TransformerFactory`,
-`SchemaFactory` and `XMLReader`, and dom4j's `SAXReader` and JDOM's `SAXBuilder`. The rule looks at
-how the parser is configured, whatever the document; it does not need request data.
+`SchemaFactory`, `Validator` and `XMLReader`, and dom4j's `SAXReader` and JDOM's `SAXBuilder`. The
+rule looks at how the parser is configured, whatever the document; it does not need request data.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -76,7 +76,8 @@ public class InvoiceParser {
   for schemas and stylesheets, `ACCESS_EXTERNAL_SCHEMA` / `ACCESS_EXTERNAL_STYLESHEET`) to `""`.
 - A `SchemaFactory` needs both `ACCESS_EXTERNAL_DTD` and `ACCESS_EXTERNAL_SCHEMA` set to `""`:
   refusing DOCTYPEs does not stop `xs:import`, `xs:include` or `schemaLocation` from fetching. Set
-  them on each `Validator` too.
+  them on each `Validator` too, unless its `Schema` comes from such a factory: a `Validator` gets
+  the properties of the factory that made its `Schema`.
 <!-- end: how-to-fix -->
 
 ## Frameworks and APIs covered
@@ -101,7 +102,11 @@ public class InvoiceParser {
   and is reported. Of the three entity features (general entities, parameter entities,
   external DTD), only the first in the code must be unconditional: a later one made only under a
   condition is missed.
-- A `Validator` made from a `Schema` is not checked, whatever properties it has.
+- A `Validator` whose `Schema` is made in the same method or class is left to the check of that
+  `SchemaFactory`. A `Schema` made by a helper method, assigned in another method, or named with
+  `this.` only where it is used is not traced back, so its `Validator` is reported even when the
+  factory is hardened. A `Validator` assigned to a field in a constructor is not checked, and one
+  is reported only when it validates a `StreamSource` or `SAXSource`, not a `Source` handed in.
 - A `TransformerFactory` is reported only when its transformer parses a `StreamSource` or
   `SAXSource`; stylesheets parsed by `newTransformer(Source)` are not reported.
 - A dom4j `SAXReader` or JDOM `SAXBuilder` given its own `XMLReader` is not reported.
@@ -122,6 +127,7 @@ public class InvoiceParser {
 - <https://docs.oracle.com/en/java/javase/25/docs/api/java.xml/javax/xml/stream/XMLInputFactory.html>
 - <https://docs.oracle.com/en/java/javase/25/docs/api/java.xml/javax/xml/transform/TransformerFactory.html>
 - <https://docs.oracle.com/en/java/javase/25/docs/api/java.xml/javax/xml/validation/SchemaFactory.html>
+- <https://docs.oracle.com/en/java/javase/25/docs/api/java.xml/javax/xml/validation/Schema.html>
 - <https://docs.oracle.com/en/java/javase/25/docs/api/java.xml/javax/xml/validation/Validator.html>
 - <https://docs.oracle.com/en/java/javase/25/docs/api/java.xml/org/xml/sax/helpers/XMLReaderFactory.html>
 - <https://dom4j.github.io/javadoc/2.1.3/org/dom4j/io/SAXReader.html>
