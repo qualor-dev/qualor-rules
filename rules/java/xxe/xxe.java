@@ -298,6 +298,52 @@ class DomImports {
         e.newDocumentBuilder().parse(in);
     }
 
+    // A try-with-resources block of one resource, with or without catch and finally clauses.
+    Document disallowedInTryWithResources(InputStream in, java.nio.file.Path log) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try (java.io.Writer audit = java.nio.file.Files.newBufferedWriter(log)) {
+            factory.setFeature(DISALLOW_DOCTYPE, true);
+            audit.write("parser hardened");
+        }
+        // ok: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    Document entityFeaturesInTryWithResourcesFinally(InputStream in, java.nio.file.Path log) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try (java.io.Writer audit = java.nio.file.Files.newBufferedWriter(log)) {
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        } catch (java.io.IOException e) {
+            throw new IllegalStateException(e);
+        } finally {
+            factory.setNamespaceAware(true);
+        }
+        // ok: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    Document doctypeAllowedInTryWithResources(InputStream in, java.nio.file.Path log) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try (java.io.Writer audit = java.nio.file.Files.newBufferedWriter(log)) {
+            factory.setFeature(DISALLOW_DOCTYPE, false);
+        }
+        // ruleid: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    // A try-with-resources block of two or more resources is not recognised.
+    Document disallowedInTryWithTwoResources(InputStream in, java.nio.file.Path log) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try (java.io.Writer audit = java.nio.file.Files.newBufferedWriter(log);
+                java.io.Writer copy = java.nio.file.Files.newBufferedWriter(log.resolveSibling("copy"))) {
+            factory.setFeature(DISALLOW_DOCTYPE, true);
+        }
+        // todook: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
     Document doctypeAllowedInTryFinally(InputStream in) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         try {
@@ -500,6 +546,233 @@ class DomImports {
 
     private static DocumentBuilderFactory newFactory() {
         return DocumentBuilderFactory.newInstance();
+    }
+}
+
+// Every setting in a try-with-resources block of one resource, with and without a finally clause.
+class TryWithResourcesSettings {
+    void settingsInTryWithResources(InputStream in, InputStream xsd, Schema schema, java.nio.file.Path log) throws Exception {
+        DocumentBuilderFactory f0 = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory f1 = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory f2 = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory f3 = DocumentBuilderFactory.newInstance();
+        XMLInputFactory f4 = XMLInputFactory.newInstance();
+        XMLInputFactory f5 = XMLInputFactory.newInstance();
+        XMLInputFactory f6 = XMLInputFactory.newInstance();
+        XMLInputFactory f7 = XMLInputFactory.newInstance();
+        XMLInputFactory f8 = XMLInputFactory.newInstance();
+        XMLInputFactory f9 = XMLInputFactory.newInstance();
+        XMLInputFactory f10 = XMLInputFactory.newInstance();
+        XMLInputFactory f11 = XMLInputFactory.newInstance();
+        DocumentBuilderFactory f12 = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory f13 = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory f14 = DocumentBuilderFactory.newInstance();
+        SchemaFactory f15 = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        Validator f16 = schema.newValidator();
+        SchemaFactory f17 = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        Validator f18 = schema.newValidator();
+        SchemaFactory f19 = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        Validator f20 = schema.newValidator();
+        SchemaFactory f21 = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        Validator f22 = schema.newValidator();
+        f12.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        f12.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        f13.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        f13.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        f14.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        f14.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        f15.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        f16.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+        f17.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        f18.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+        f19.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        f20.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+        f21.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        f22.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+        try (java.io.Writer audit = java.nio.file.Files.newBufferedWriter(log)) {
+            f0.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            f1.setFeature("http://apache.org/xml/features/disallow-doctype-decl", Boolean.TRUE);
+            f2.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            f3.setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+            f4.setProperty(XMLInputFactory.SUPPORT_DTD, false);
+            f5.setProperty(XMLInputFactory.SUPPORT_DTD, Boolean.FALSE);
+            f6.setProperty("javax.xml.stream.supportDTD", false);
+            f7.setProperty("javax.xml.stream.supportDTD", Boolean.FALSE);
+            f8.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
+            f9.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, Boolean.FALSE);
+            f10.setProperty("javax.xml.stream.isSupportingExternalEntities", false);
+            f11.setProperty("javax.xml.stream.isSupportingExternalEntities", Boolean.FALSE);
+            f12.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            f13.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            f14.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            f15.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            f16.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            f17.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+            f18.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+            f19.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+            f20.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+            f21.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+            f22.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+        }
+        // ok: java.xxe
+        f0.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        f1.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        f2.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        f3.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        f4.createXMLStreamReader(in);
+        // ok: java.xxe
+        f5.createXMLStreamReader(in);
+        // ok: java.xxe
+        f6.createXMLStreamReader(in);
+        // ok: java.xxe
+        f7.createXMLStreamReader(in);
+        // ok: java.xxe
+        f8.createXMLStreamReader(in);
+        // ok: java.xxe
+        f9.createXMLStreamReader(in);
+        // ok: java.xxe
+        f10.createXMLStreamReader(in);
+        // ok: java.xxe
+        f11.createXMLStreamReader(in);
+        // ok: java.xxe
+        f12.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        f13.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        f14.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        f15.newSchema(new StreamSource(xsd));
+        // ok: java.xxe
+        f16.validate(new StreamSource(in));
+        // ok: java.xxe
+        f17.newSchema(new StreamSource(xsd));
+        // ok: java.xxe
+        f18.validate(new StreamSource(in));
+        // ok: java.xxe
+        f19.newSchema(new StreamSource(xsd));
+        // ok: java.xxe
+        f20.validate(new StreamSource(in));
+        // ok: java.xxe
+        f21.newSchema(new StreamSource(xsd));
+        // ok: java.xxe
+        f22.validate(new StreamSource(in));
+    }
+
+    void settingsInTryWithResourcesFinally(InputStream in, InputStream xsd, Schema schema, java.nio.file.Path log) throws Exception {
+        DocumentBuilderFactory f0 = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory f1 = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory f2 = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory f3 = DocumentBuilderFactory.newInstance();
+        XMLInputFactory f4 = XMLInputFactory.newInstance();
+        XMLInputFactory f5 = XMLInputFactory.newInstance();
+        XMLInputFactory f6 = XMLInputFactory.newInstance();
+        XMLInputFactory f7 = XMLInputFactory.newInstance();
+        XMLInputFactory f8 = XMLInputFactory.newInstance();
+        XMLInputFactory f9 = XMLInputFactory.newInstance();
+        XMLInputFactory f10 = XMLInputFactory.newInstance();
+        XMLInputFactory f11 = XMLInputFactory.newInstance();
+        DocumentBuilderFactory f12 = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory f13 = DocumentBuilderFactory.newInstance();
+        DocumentBuilderFactory f14 = DocumentBuilderFactory.newInstance();
+        SchemaFactory f15 = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        Validator f16 = schema.newValidator();
+        SchemaFactory f17 = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        Validator f18 = schema.newValidator();
+        SchemaFactory f19 = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        Validator f20 = schema.newValidator();
+        SchemaFactory f21 = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        Validator f22 = schema.newValidator();
+        f12.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        f12.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        f13.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        f13.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        f14.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        f14.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        f15.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        f16.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+        f17.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        f18.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+        f19.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        f20.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+        f21.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+        f22.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+        try (java.io.Writer audit = java.nio.file.Files.newBufferedWriter(log)) {
+            f0.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+            f1.setFeature("http://apache.org/xml/features/disallow-doctype-decl", Boolean.TRUE);
+            f2.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            f3.setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+            f4.setProperty(XMLInputFactory.SUPPORT_DTD, false);
+            f5.setProperty(XMLInputFactory.SUPPORT_DTD, Boolean.FALSE);
+            f6.setProperty("javax.xml.stream.supportDTD", false);
+            f7.setProperty("javax.xml.stream.supportDTD", Boolean.FALSE);
+            f8.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
+            f9.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, Boolean.FALSE);
+            f10.setProperty("javax.xml.stream.isSupportingExternalEntities", false);
+            f11.setProperty("javax.xml.stream.isSupportingExternalEntities", Boolean.FALSE);
+            f12.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            f13.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            f14.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            f15.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            f16.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            f17.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+            f18.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+            f19.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+            f20.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+            f21.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+            f22.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+        } finally {
+            in.mark(0);
+        }
+        // ok: java.xxe
+        f0.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        f1.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        f2.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        f3.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        f4.createXMLStreamReader(in);
+        // ok: java.xxe
+        f5.createXMLStreamReader(in);
+        // ok: java.xxe
+        f6.createXMLStreamReader(in);
+        // ok: java.xxe
+        f7.createXMLStreamReader(in);
+        // ok: java.xxe
+        f8.createXMLStreamReader(in);
+        // ok: java.xxe
+        f9.createXMLStreamReader(in);
+        // ok: java.xxe
+        f10.createXMLStreamReader(in);
+        // ok: java.xxe
+        f11.createXMLStreamReader(in);
+        // ok: java.xxe
+        f12.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        f13.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        f14.newDocumentBuilder().parse(in);
+        // ok: java.xxe
+        f15.newSchema(new StreamSource(xsd));
+        // ok: java.xxe
+        f16.validate(new StreamSource(in));
+        // ok: java.xxe
+        f17.newSchema(new StreamSource(xsd));
+        // ok: java.xxe
+        f18.validate(new StreamSource(in));
+        // ok: java.xxe
+        f19.newSchema(new StreamSource(xsd));
+        // ok: java.xxe
+        f20.validate(new StreamSource(in));
+        // ok: java.xxe
+        f21.newSchema(new StreamSource(xsd));
+        // ok: java.xxe
+        f22.validate(new StreamSource(in));
     }
 }
 
@@ -1081,6 +1354,16 @@ class SchemaImports {
         return factory.newSchema(new StreamSource(xsd));
     }
 
+    Schema deniedInTryWithResources(InputStream xsd, java.nio.file.Path log) throws Exception {
+        SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
+        try (java.io.Writer audit = java.nio.file.Files.newBufferedWriter(log)) {
+            factory.setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            factory.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+        }
+        // ok: java.xxe
+        return factory.newSchema(new StreamSource(xsd));
+    }
+
     Schema deniedByNameInTryCatchFinally(InputStream xsd) throws Exception {
         SchemaFactory factory = SchemaFactory.newInstance(XMLConstants.W3C_XML_SCHEMA_NS_URI);
         try {
@@ -1282,6 +1565,18 @@ class ValidatorImports {
         Validator validator = schema.newValidator();
         validator.setProperty("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
         validator.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+        // ok: java.xxe
+        validator.validate(new StreamSource(in));
+    }
+
+    void deniedInTryWithResourcesFinally(Schema schema, InputStream in, java.nio.file.Path log) throws Exception {
+        Validator validator = schema.newValidator();
+        try (java.io.Writer audit = java.nio.file.Files.newBufferedWriter(log)) {
+            validator.setProperty("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+            validator.setProperty(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+        } finally {
+            validator.setErrorHandler(null);
+        }
         // ok: java.xxe
         validator.validate(new StreamSource(in));
     }

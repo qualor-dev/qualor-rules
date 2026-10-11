@@ -105,4 +105,8 @@ test('a setting in a try block counts with catch clauses, a finally clause or bo
   assert.equal(tries.length, 2);
   assert.equal(tries.filter((x) => x.includes('} catch ($EX $E) {') && !x.includes('finally')).length, 1);
   assert.equal(tries.filter((x) => !x.includes('catch') && x.includes('} finally {')).length, 1);
+  // A try-with-resources statement of one resource, with and without a finally clause.
+  const resources = Object.values(POSITIONS).map((p) => p(s)).filter((x) => x.startsWith('try ($TT $TV = $TI) {'));
+  assert.equal(resources.length, 2);
+  assert.equal(resources.filter((x) => x.includes('} finally {')).length, 1);
 });

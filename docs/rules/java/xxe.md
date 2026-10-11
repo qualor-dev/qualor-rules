@@ -102,7 +102,9 @@ public class InvoiceParser {
 - A rejecting `EntityResolver` or `XMLResolver` is not recognised as safe, nor is a feature name
   held in a constant of another class.
 - A setting is recognised before the use in the same block, or in a `try` block (with `catch`
-  clauses, a `finally` clause or both) before it. One made only under a condition is not hardening
+  clauses, a `finally` clause or both) or a try-with-resources block of one resource before it; a
+  try-with-resources block of two or more resources is not recognised, so hardened code there is
+  reported. One made only under a condition is not hardening
   and is reported, except inside a `try` block, for secure processing anywhere after its
   built-in factory is created, and on a `SAXParser` or its `XMLReader` anywhere after it was
   created, where it is taken as unconditional. A use inside the `try` block that holds a setting

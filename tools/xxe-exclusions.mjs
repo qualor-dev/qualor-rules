@@ -7,7 +7,8 @@
 // builder ($F), or, for a `together` row, several statements that are each needed. Each statement
 // becomes a `pattern-not-inside` for every POSITION: before the use in the same block, in a try
 // block before it (with catch clauses, a finally clause or both: the finally template also
-// matches catch clauses), and, for a field, in a static block, a constructor or a method of the
+// matches catch clauses), in a try-with-resources block of one resource before it (with or
+// without a finally clause), and, for a field, in a static block, a constructor or a method of the
 // class. A `together` row gets a pattern-either with one branch per statement, so each statement
 // must be unconditional on its own. The settings are per factory: SETTINGS hold for the parsers,
 // builders, readers and transformers. A SchemaFactory, which reads
@@ -85,6 +86,9 @@ export const POSITIONS = Object.freeze({
   'try block before': (s) => `try {\n  ...\n${lines(s, '  ')}\n  ...\n} catch ($EX $E) {\n  ...\n}\n...`,
   // A pattern with a finally clause also matches a try statement with catch clauses before it.
   'try block with a finally clause before': (s) => `try {\n  ...\n${lines(s, '  ')}\n  ...\n} finally {\n  ...\n}\n...`,
+  // A try-with-resources statement of one resource; this template also matches catch clauses.
+  'try-with-resources block before': (s) => `try ($TT $TV = $TI) {\n  ...\n${lines(s, '  ')}\n  ...\n}\n...`,
+  'try-with-resources block with a finally clause before': (s) => `try ($TT $TV = $TI) {\n  ...\n${lines(s, '  ')}\n  ...\n} finally {\n  ...\n}\n...`,
   'field, static block': (s) => `class $C {\n  ...\n  $FT $F = $INIT;\n  ...\n  static {\n    ...\n${lines(s, '    ')}\n    ...\n  }\n  ...\n}`,
   'field, constructor': (s) => `class $C {\n  ...\n  $FT $F = $INIT;\n  ...\n  $C(...) {\n    ...\n${lines(s, '    ')}\n    ...\n  }\n  ...\n}`,
   'field, method': (s) => `class $C {\n  ...\n  $FT $F = $INIT;\n  ...\n  $RT $M(...) {\n    ...\n${lines(s, '    ')}\n    ...\n  }\n  ...\n}`,
