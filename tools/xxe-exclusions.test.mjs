@@ -25,16 +25,45 @@ test('a hand edit inside a block is detected', () => {
 const count = (block) => (generate(block).match(/- pattern-not-inside:/g) ?? []).length;
 const perPosition = (rows) => rows.reduce((n, r) => n + sequences(r, '$F').length, 0);
 
-test('each setting of the parsers block appears once per position and order', () => {
+test('each setting of the parsers block appears once per position', () => {
   const block = BLOCKS.find((b) => b.settings === SETTINGS);
   const text = generate(block);
   assert.ok(text.startsWith(block.begin) && text.trimEnd().endsWith(block.end));
-  const triple = SETTINGS.find((r) => r.anyOrder);
-  assert.equal(sequences(triple, '$F').length, 6);
+  const triple = SETTINGS.find((r) => r.together);
+  assert.equal(sequences(triple, '$F').length, 3);
   const parser = SETTINGS.filter((r) => r.stmts[0].includes('$SET')).length;
   const reader = SETTINGS.filter((r) => !r.stax).reduce((n, r) => n + sequences(r, '$R').length, 0);
   // P positions × the sequences, 2 makes × 2 names of secure processing.
   assert.equal(count(block), P * perPosition(SETTINGS) + 2 * 2 + parser + reader);
+});
+
+test('the three entity features are checked one by one, each in its own branch', () => {
+  const block = BLOCKS.find((b) => b.settings === SETTINGS);
+  const text = generate(block);
+  const together = SETTINGS.filter((r) => r.together);
+  assert.equal(together.length, 1);
+  const [row] = together;
+  assert.equal(row.parts.length, row.stmts.length);
+  const feature = (stmt) => stmt.match(/"[^"]+"/)[0];
+  // Outside the pattern-either no entry names one of the features.
+  const at = text.indexOf(`# Reported unless ${row.name}.`);
+  assert.ok(at > 0);
+  for (const stmt of row.stmts) assert.ok(!text.slice(0, at).includes(feature(stmt)));
+  // One branch per feature: every exclusion in it holds that feature alone, once.
+  // A last branch keeps transformer uses: $F is bound as the transformer's factory there.
+  assert.match(text.slice(at), /# A transformer[^\n]*\n\s+- pattern-inside: \|\n\s+\$TR = \$F\.newTransformer\(\.\.\.\);/);
+  const branches = text.slice(at).split(/\n\s+# Reported unless /).slice(1);
+  assert.equal(branches.length, row.stmts.length);
+  branches.forEach((branch, i) => {
+    assert.ok(branch.startsWith(`${row.parts[i]}.`));
+    assert.match(branch, /- pattern: \$F\.\$CALL\(\.\.\.\)/);
+    const entries = branch.split('- pattern-not-inside: |').slice(1);
+    assert.equal(entries.length, Object.keys(POSITIONS).length + 1);
+    for (const entry of entries) {
+      assert.equal((entry.match(/\.setFeature\(/g) ?? []).length, 1);
+      assert.ok(entry.includes(feature(row.stmts[i])));
+    }
+  });
 });
 
 test('a SchemaFactory is safe only with both external DTD and schema access denied, each on its own', () => {

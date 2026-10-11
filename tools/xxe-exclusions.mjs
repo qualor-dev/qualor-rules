@@ -3,12 +3,14 @@
 //   node tools/xxe-exclusions.mjs           rewrite the blocks between the markers in xxe.yml
 //   node tools/xxe-exclusions.mjs --check   exit 1 when a block differs from its table
 //
-// Each settings row is one way to make a parser safe: statements on the factory, reader or
-// builder ($F), in any order when `anyOrder` is set. Each row becomes a `pattern-not-inside`
-// for every POSITION: before the use in the same block, in a try block before it (with catch
-// clauses, a finally clause or both: the finally template also matches catch clauses), and, for a field, in a static block, a constructor or a
-// method of the class. The settings are per factory:
-// SETTINGS hold for the parsers, builders, readers and transformers. A SchemaFactory, which reads
+// Each settings row is one way to make a parser safe: a statement on the factory, reader or
+// builder ($F), or, for a `together` row, several statements that are each needed. Each statement
+// becomes a `pattern-not-inside` for every POSITION: before the use in the same block, in a try
+// block before it (with catch clauses, a finally clause or both: the finally template also
+// matches catch clauses), and, for a field, in a static block, a constructor or a method of the
+// class. A `together` row gets a pattern-either with one branch per statement, so each statement
+// must be unconditional on its own. The settings are per factory: SETTINGS hold for the parsers,
+// builders, readers and transformers. A SchemaFactory, which reads
 // external schemas (xs:import, xs:include, schemaLocation) under ACCESS_EXTERNAL_SCHEMA and
 // external DTDs under ACCESS_EXTERNAL_DTD, must meet every one of the SCHEMA_REQUIREMENTS: each is
 // one statement, so each must be set unconditionally (a statement inside an if covers only that
@@ -28,16 +30,19 @@ const PARAMETER = '"http://xml.org/sax/features/external-parameter-entities"';
 const LOAD_DTD = '"http://apache.org/xml/features/nonvalidating/load-external-dtd"';
 
 /**
- * Safe settings; R is the receiver. Every row applies to every receiver in the five positions
- * (a setting a factory does not support would not compile). `stax: true` marks the StAX
- * properties, which are only kept out of the SAXParser and XMLReader blocks.
+ * Safe settings; R is the receiver. Every row applies to every receiver in every position (a
+ * setting a factory does not support would not compile). `stax: true` marks the StAX properties,
+ * which are only kept out of the SAXParser and XMLReader blocks. A row with `together: true` is
+ * safe only with all of its statements: each one is checked on its own (`parts` names them), so
+ * each must be unconditional, and they may be in different places and in any order.
  */
 export const SETTINGS = Object.freeze([
   { name: 'DOCTYPE declarations refused', stmts: [`R.setFeature(${DOCTYPE}, true);`] },
   { name: 'DOCTYPE declarations refused (boxed)', stmts: [`R.setFeature(${DOCTYPE}, Boolean.TRUE);`] },
   {
     name: 'external general and parameter entities and the external DTD all off',
-    anyOrder: true,
+    together: true,
+    parts: ['external general entities off', 'external parameter entities off', 'the external DTD not loaded'],
     stmts: [`R.setFeature(${GENERAL}, false);`, `R.setFeature(${PARAMETER}, false);`, `R.setFeature(${LOAD_DTD}, false);`],
   },
   { name: 'external DTD and entity access denied (constant)', stmts: ['R.$SET(javax.xml.XMLConstants.ACCESS_EXTERNAL_DTD, "");'] },
@@ -70,9 +75,8 @@ export const SCHEMA_REQUIREMENTS = Object.freeze([
   },
 ]);
 
-const permutations = (xs) => (xs.length <= 1 ? [xs] : xs.flatMap((x, i) => permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map((p) => [x, ...p])));
-/** The statement sequences of a row on receiver `r`. */
-export const sequences = (row, r) => (row.anyOrder ? permutations(row.stmts) : [row.stmts]).map((s) => s.map((x) => x.replaceAll('R.', `${r}.`)));
+/** The statement sequences of a row on receiver `r`: one per statement of a `together` row. */
+export const sequences = (row, r) => (row.together ? row.stmts.map((s) => [s]) : [row.stmts]).map((s) => s.map((x) => x.replaceAll('R.', `${r}.`)));
 
 const lines = (stmts, pad) => stmts.map((s) => pad + s).join(`\n${pad}...\n`);
 /** Where a setting on $F is recognised; `s` is the statement sequence. */
@@ -86,10 +90,51 @@ export const POSITIONS = Object.freeze({
   'field, method': (s) => `class $C {\n  ...\n  $FT $F = $INIT;\n  ...\n  $RT $M(...) {\n    ...\n${lines(s, '    ')}\n    ...\n  }\n  ...\n}`,
 });
 
+/** Shifts every non-empty line of `text` right by `pad`. */
+const shift = (text, pad) => text.split('\n').map((l) => (l ? pad + l : l)).join('\n');
+
 const notInside = (body) => `- pattern-not-inside: |\n${body.split('\n').map((l) => (l ? `    ${l}` : l)).join('\n')}\n`;
 
+/** The exclusions for the SAXParser ($P, `$SET` rows) and its XMLReader ($R, all but StAX rows). */
+function parserFormExclusions(rows) {
+  let out = '';
+  for (const row of rows.filter((r) => r.stmts[0].includes('$SET'))) {
+    for (const s of sequences(row, '$P')) out += notInside(`$P = $F.$USE(...);\n...\n${POSITIONS.before(s)}`);
+  }
+  for (const row of rows.filter((r) => !r.stax)) {
+    for (const s of sequences(row, '$R')) out += notInside(`$R = $E.getXMLReader();\n...\n${POSITIONS.before(s)}`);
+  }
+  return out;
+}
+
+/**
+ * The entries of a `together` row, unindented: a pattern-either with one branch per statement
+ * that keeps the use when that statement is not set (on $F in every position, and on the
+ * XMLReader of a SAXParser when `parserForms`). In a branch, `$F.$CALL(...)` binds $F as the
+ * receiver of the use (the factory, reader or builder); a larger call on the same $F meets the
+ * same exclusions; OpenGrep also keeps a use whose range holds such a call (a transformer made
+ * and used in place). A transformer kept in a variable is used by a call on the transformer, and
+ * a TransformerFactory has none of these SAX features, so a last branch keeps those uses: it binds
+ * $F as the transformer's factory, so no other use passes through it.
+ */
+function togetherExclusions(row, { parserForms, transformers, receiver }) {
+  let out = `# Reported unless ${row.name}.\n# One branch per setting, each a single statement, so each must be set unconditionally.\n- pattern-either:\n`;
+  row.stmts.forEach((stmt, i) => {
+    const one = { name: row.parts[i], stmts: [stmt] };
+    let branch = `# Reported unless ${row.parts[i]}.\n- patterns:\n    - pattern: $F.$CALL(...)\n`;
+    branch += shift(exclusions([one], { secureProcessing: [], parserForms: false, receiver }), '    ');
+    if (parserForms) branch += shift(`# Set on the XMLReader of a SAXParser after it was created.\n${parserFormExclusions([one])}`, '    ');
+    out += shift(branch, '    ');
+  });
+  if (transformers) {
+    out += shift('# A transformer kept in a variable (a TransformerFactory has none of these features).\n- pattern-inside: |\n    $TR = $F.newTransformer(...);\n    ...\n', '    ');
+  }
+  return out;
+}
+
 /** The `pattern-not-inside` entries of one block, unindented; `receiver` names $F in the comments. */
-function exclusions(settings, { secureProcessing, parserForms, receiver = 'the factory, reader or builder' }) {
+function exclusions(allSettings, { secureProcessing, parserForms, transformers, receiver = 'the factory, reader or builder' }) {
+  const settings = allSettings.filter((r) => !r.together);
   let out = '';
   for (const [where, template] of Object.entries(POSITIONS)) {
     if (settings.length === 0) break;
@@ -107,18 +152,11 @@ function exclusions(settings, { secureProcessing, parserForms, receiver = 'the f
   }
   if (parserForms) {
     out += '# Set on the SAXParser, or on its XMLReader, after it was created and before it is used.\n';
-    for (const row of settings.filter((r) => r.stmts[0].includes('$SET'))) {
-      for (const s of sequences(row, '$P')) out += notInside(`$P = $F.$USE(...);\n...\n${POSITIONS.before(s)}`);
-    }
-    for (const row of settings.filter((r) => !r.stax)) {
-      for (const s of sequences(row, '$R')) out += notInside(`$R = $E.getXMLReader();\n...\n${POSITIONS.before(s)}`);
-    }
+    out += parserFormExclusions(settings);
   }
+  for (const row of allSettings.filter((r) => r.together)) out += togetherExclusions(row, { parserForms, transformers, receiver });
   return out;
 }
-
-/** Shifts every non-empty line of `text` right by `pad`. */
-const shift = (text, pad) => text.split('\n').map((l) => (l ? pad + l : l)).join('\n');
 
 /**
  * The entries of a block with requirements, unindented: secure processing (which meets them all)
@@ -144,7 +182,7 @@ export const BLOCKS = Object.freeze([
     settings: SETTINGS,
     begin: `${PAD}# BEGIN generated by tools/xxe-exclusions.mjs from its SETTINGS table; do not edit by hand.`,
     end: `${PAD}# END generated by tools/xxe-exclusions.mjs from its SETTINGS table`,
-    options: { secureProcessing: ['newDefaultInstance', 'newDefaultNSInstance'], parserForms: true },
+    options: { secureProcessing: ['newDefaultInstance', 'newDefaultNSInstance'], parserForms: true, transformers: true },
   },
   {
     name: 'SchemaFactory',

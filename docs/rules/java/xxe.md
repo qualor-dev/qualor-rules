@@ -71,6 +71,11 @@ public class InvoiceParser {
 <!-- begin: how-to-fix -->
 - Before using the factory, reader or builder, refuse DTDs: set the feature
   `http://apache.org/xml/features/disallow-doctype-decl` to `true`.
+- Or turn off all three of external general entities, external parameter entities and loading
+  the external DTD (`http://xml.org/sax/features/external-general-entities`,
+  `http://xml.org/sax/features/external-parameter-entities` and
+  `http://apache.org/xml/features/nonvalidating/load-external-dtd` set to `false`), each one
+  unconditionally.
 - For StAX, set `XMLInputFactory.SUPPORT_DTD` to `false`.
 - Where DTDs are needed, deny external access instead: set `XMLConstants.ACCESS_EXTERNAL_DTD` (and,
   for schemas and stylesheets, `ACCESS_EXTERNAL_SCHEMA` / `ACCESS_EXTERNAL_STYLESHEET`) to `""`.
@@ -98,11 +103,10 @@ public class InvoiceParser {
   held in a constant of another class.
 - A setting is recognised before the use in the same block, or in a `try` block (with `catch`
   clauses, a `finally` clause or both) before it. One made only under a condition is not hardening
-  and is reported, except inside a `try` block, or for secure processing anywhere after its
-  built-in factory is created, where it is taken as unconditional; a use inside the `try` block
-  that holds a setting is taken as made after it. Of the three entity features
-  (general entities, parameter entities, external DTD), only the first in the code must be
-  unconditional: a later one made only under a condition is missed.
+  and is reported, except inside a `try` block, for secure processing anywhere after its
+  built-in factory is created, and on a `SAXParser` or its `XMLReader` anywhere after it was
+  created, where it is taken as unconditional. A use inside the `try` block that holds a setting
+  is taken as made after it.
 - A `Validator` whose `Schema` is made in the same method or class is left to the check of that
   `SchemaFactory`. A `Schema` made by a helper method, assigned in another method, or named with
   `this.` only where it is used is not traced back, so its `Validator` is reported even when the

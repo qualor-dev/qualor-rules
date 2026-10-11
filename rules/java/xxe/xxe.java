@@ -361,8 +361,7 @@ class DomImports {
         return factory.newDocumentBuilder().parse(in);
     }
 
-    // Of a row of several settings (the three features), only the first must be set
-    // unconditionally: a later one made only under a condition still counts.
+    // Each of the three features must be set unconditionally.
     Document thirdFeatureOnlyIfStrict(InputStream in, boolean strict) throws Exception {
         DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
         factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
@@ -370,7 +369,72 @@ class DomImports {
         if (strict) {
             factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
         }
-        // todoruleid: java.xxe
+        // ruleid: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    Document secondFeatureOnlyIfStrict(InputStream in, boolean strict) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        if (strict) {
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        }
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        // ruleid: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    Document firstFeatureOnlyIfStrict(InputStream in, boolean strict) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        if (strict) {
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        }
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        // ruleid: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    // The three features may be set in different places: one in a try block, two after it.
+    Document featuresInTwoPlaces(InputStream in) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try {
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        } catch (ParserConfigurationException e) {
+            throw new IllegalStateException(e);
+        }
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        // ok: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    Document entityFeaturesInTry(InputStream in) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try {
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        } catch (ParserConfigurationException e) {
+            throw new IllegalStateException(e);
+        }
+        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        // ok: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+
+    // The external DTD is not loaded only if strict, the entities are off either way.
+    Document dtdOnlyIfStrictInTry(InputStream in, boolean strict) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        try {
+            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        } finally {
+            factory.setNamespaceAware(true);
+        }
+        if (strict) {
+            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        }
+        // ruleid: java.xxe
         return factory.newDocumentBuilder().parse(in);
     }
 
@@ -492,6 +556,56 @@ class HardenedInMethod {
     }
 }
 
+// The three entity features on a field, set in a static block, a constructor or a method.
+class FeaturesInStaticBlock {
+    private static final DocumentBuilderFactory FACTORY = DocumentBuilderFactory.newInstance();
+
+    static {
+        try {
+            FACTORY.setFeature("http://xml.org/sax/features/external-general-entities", false);
+            FACTORY.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+            FACTORY.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        } catch (ParserConfigurationException e) {
+            throw new ExceptionInInitializerError(e);
+        }
+    }
+
+    Document parse(InputStream in) throws Exception {
+        // ok: java.xxe
+        return FACTORY.newDocumentBuilder().parse(in);
+    }
+}
+
+class FeaturesInConstructor {
+    private final SAXParserFactory factory = SAXParserFactory.newInstance();
+
+    FeaturesInConstructor() throws Exception {
+        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+    }
+
+    void parse(InputStream in, DefaultHandler handler) throws Exception {
+        // ok: java.xxe
+        factory.newSAXParser().parse(in, handler);
+    }
+}
+
+class FeaturesInMethod {
+    private final DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+
+    void configure() throws Exception {
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+    }
+
+    Document parse(InputStream in) throws Exception {
+        // ok: java.xxe
+        return factory.newDocumentBuilder().parse(in);
+    }
+}
+
 // A field assigned in a constructor rather than where it is declared.
 class AssignedInConstructor {
     private final DocumentBuilderFactory factory;
@@ -554,6 +668,38 @@ class SaxImports {
         reader.setFeature("http://xml.org/sax/features/external-general-entities", false);
         reader.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
         // ok: java.xxe
+        reader.parse(new InputSource(in));
+    }
+
+    void parserReaderFeatures(InputStream in) throws Exception {
+        // ok: java.xxe
+        XMLReader reader = SAXParserFactory.newInstance().newSAXParser().getXMLReader();
+        reader.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        reader.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        reader.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        reader.parse(new InputSource(in));
+    }
+
+    // On the XMLReader of a SAXParser, a feature set only under a condition still counts.
+    void parserReaderFeaturesOnlyIfStrict(InputStream in, boolean strict) throws Exception {
+        // todoruleid: java.xxe
+        XMLReader reader = SAXParserFactory.newInstance().newSAXParser().getXMLReader();
+        reader.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        reader.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        if (strict) {
+            reader.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        }
+        reader.parse(new InputSource(in));
+    }
+
+    void readerFactoryFeaturesOnlyIfStrict(InputStream in, boolean strict) throws Exception {
+        XMLReader reader = XMLReaderFactory.createXMLReader();
+        reader.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        if (strict) {
+            reader.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        }
+        reader.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+        // ruleid: java.xxe
         reader.parse(new InputSource(in));
     }
 
