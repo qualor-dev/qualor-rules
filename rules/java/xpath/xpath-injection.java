@@ -52,7 +52,11 @@ class NestedEnumController {
     }
 
     enum Column {
-        NAME, PRICE
+        NAME, PRICE;
+
+        static String valueOf(String text, boolean lenient) {
+            return lenient ? text.toUpperCase() : text;
+        }
     }
 
     @GetMapping("/shared/nested-enum")
@@ -61,10 +65,28 @@ class NestedEnumController {
         xpath.evaluate("//book[@level='" + Column.valueOf(key).name() + "']", catalog);
         // ok: java.xpath-injection
         xpath.evaluate("//book[@level='" + NestedEnumController.Column.valueOf(key).name() + "']", catalog);
+        // An overload of valueOf that the enum declares itself may hand the text back.
+        // ruleid: java.xpath-injection
+        xpath.evaluate("//book[@level='" + Column.valueOf(key, true) + "']", catalog);
+        // A class of another package with the same simple name is not this file's enum.
+        // ruleid: java.xpath-injection
+        xpath.evaluate("//book[@level='" + com.acme.other.Column.valueOf(key).name() + "']", catalog);
+        // An enum nested in a class or an interface declared later in the file, qualified.
+        // ok: java.xpath-injection
+        xpath.evaluate("//book[@level='" + SharedLimitsController.Level.valueOf(key).name() + "']", catalog);
+        // ok: java.xpath-injection
+        xpath.evaluate("//book[@level='" + LateKinds.Kind.valueOf(key).name() + "']", catalog);
         // An enum nested in a nested class, named from outside that class, is not recognised.
         // todook: java.xpath-injection
         xpath.evaluate("//book[@level='" + Sizes.Size.valueOf(key).name() + "']", catalog);
         return "ok";
+    }
+}
+
+// Enums nested in interfaces, before and after the classes that use them.
+interface EarlyKinds {
+    enum Kind {
+        SMALL, LARGE
     }
 }
 
@@ -404,6 +426,11 @@ class SharedLimitsController {
         // An enum declared inside the class.
         // ok: java.xpath-injection
         xpath.evaluate("//book[@level='" + Level.valueOf(key).name() + "']", catalog);
+        // An enum nested in the first class, or in an interface declared before this class, qualified.
+        // ok: java.xpath-injection
+        xpath.evaluate("//book[@level='" + NestedEnumController.Column.valueOf(key).name() + "']", catalog);
+        // ok: java.xpath-injection
+        xpath.evaluate("//book[@level='" + EarlyKinds.Kind.valueOf(key).name() + "']", catalog);
         // An enum declared before the class.
         // ok: java.xpath-injection
         xpath.evaluate("//book[@kind='" + EarlierKind.valueOf(key).name() + "']", catalog);
@@ -526,5 +553,11 @@ class PartNote {
 class MyBatisSessions {
     static org.apache.ibatis.session.SqlSession open() {
         return null;
+    }
+}
+
+interface LateKinds {
+    enum Kind {
+        SMALL, LARGE
     }
 }

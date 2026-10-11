@@ -48,7 +48,11 @@ class NestedEnumController {
     }
 
     enum Column {
-        NAME, PRICE
+        NAME, PRICE;
+
+        static String valueOf(String text, boolean lenient) {
+            return lenient ? text.toUpperCase() : text;
+        }
     }
 
     @GetMapping("/shared/nested-enum")
@@ -57,10 +61,28 @@ class NestedEnumController {
         new File("/srv/files", Column.valueOf(key).name()).delete();
         // ok: java.path-traversal
         new File("/srv/files", NestedEnumController.Column.valueOf(key).name()).delete();
+        // An overload of valueOf that the enum declares itself may hand the text back.
+        // ruleid: java.path-traversal
+        new File("/srv/files", Column.valueOf(key, true)).delete();
+        // A class of another package with the same simple name is not this file's enum.
+        // ruleid: java.path-traversal
+        new File("/srv/files", com.acme.other.Column.valueOf(key).name()).delete();
+        // An enum nested in a class or an interface declared later in the file, qualified.
+        // ok: java.path-traversal
+        new File("/srv/files", SharedFormsController.Level.valueOf(key).name()).delete();
+        // ok: java.path-traversal
+        new File("/srv/files", LateKinds.Kind.valueOf(key).name()).delete();
         // An enum nested in a nested class, named from outside that class, is not recognised.
         // todook: java.path-traversal
         new File("/srv/files", Sizes.Size.valueOf(key).name()).delete();
         return "ok";
+    }
+}
+
+// Enums nested in interfaces, before and after the classes that use them.
+interface EarlyKinds {
+    enum Kind {
+        SMALL, LARGE
     }
 }
 
@@ -445,6 +467,11 @@ class SharedFormsController {
         // An enum declared inside the class.
         // ok: java.path-traversal
         new File("/srv/files", Level.valueOf(key).name()).delete();
+        // An enum nested in the first class, or in an interface declared before this class, qualified.
+        // ok: java.path-traversal
+        new File("/srv/files", NestedEnumController.Column.valueOf(key).name()).delete();
+        // ok: java.path-traversal
+        new File("/srv/files", EarlyKinds.Kind.valueOf(key).name()).delete();
         // An enum declared before the first class of the file.
         // ok: java.path-traversal
         new File("/srv/files", EarlierKind.valueOf(key).name()).delete();
@@ -546,5 +573,11 @@ class PartNote {
 class MyBatisSessions {
     static org.apache.ibatis.session.SqlSession open() {
         return null;
+    }
+}
+
+interface LateKinds {
+    enum Kind {
+        SMALL, LARGE
     }
 }

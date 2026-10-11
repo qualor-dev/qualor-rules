@@ -55,8 +55,10 @@ rules:
     #   static final field or in place) read with get(key) or getOrDefault(key, a constant), and as
     #   valueOf of an enum declared in this file (or Enum.valueOf): valueOf of an enum
     #   from another file still passes the request data on (a lookup in any other map, a literal
-    #   Map.ofEntries table too, yields the map's values), and valueOf of an enum nested in a
-    #   nested class, named from outside that class (Inner.Kind.valueOf), may too.
+    #   Map.ofEntries table too, yields the map's values), and so may valueOf of an enum nested
+    #   in a nested class and named from outside that class (Inner.Kind.valueOf). An enum of this
+    #   file counts by its simple name or qualified by its class or interface, and only valueOf
+    #   with one argument does (an overload the enum declares may hand the text back).
     # - A pattern first checked against a constant pattern (`if (!q.matches("[\\w ]+")) return;`)
     #   is still reported.
     # - The String methods are sinks only on a receiver whose type is visible as String (a typed
@@ -166,9 +168,10 @@ rules:
               regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
       - pattern: Enum.valueOf(...)
       - pattern: java.lang.Enum.valueOf(...)
+      # valueOf(String) of an enum declared in this file (one argument: an overload the enum
+      # declares itself may hand the text back). An enum declared before or after a class of the
+      # file (also nested in a later class), by its simple name.
       - patterns:
-          # An enum declared before or after a class of the file (also nested in a later class),
-          # or nested in a class and used in it, by its simple name or qualified by its class.
           - pattern-either:
               - pattern-inside: |
                   class $X { ... }
@@ -178,11 +181,35 @@ rules:
                   enum $E { ... }
                   ...
                   class $X { ... }
+          - pattern: $E.valueOf($K)
+      # An enum nested in a class of the file: by its simple name or qualified by the class
+      # inside it (also in a file's only class), and qualified by its class or interface in the
+      # file's other classes.
+      - patterns:
+          - pattern-inside: |
+              class $X { ... enum $E { ... } ... }
+          - pattern-either:
+              - pattern: $E.valueOf($K)
+              - pattern: $X.$E.valueOf($K)
+      - patterns:
+          - pattern-either:
               - pattern-inside: |
                   class $X { ... enum $E { ... } ... }
-          - pattern-either:
-              - pattern: $E.valueOf(...)
-              - pattern: $O.$E.valueOf(...)
+                  ...
+                  class $Y { ... }
+              - pattern-inside: |
+                  class $Y { ... }
+                  ...
+                  class $X { ... enum $E { ... } ... }
+              - pattern-inside: |
+                  interface $X { ... enum $E { ... } ... }
+                  ...
+                  class $Y { ... }
+              - pattern-inside: |
+                  class $Y { ... }
+                  ...
+                  interface $X { ... enum $E { ... } ... }
+          - pattern: $X.$E.valueOf($K)
       # Pattern.quote makes the text a literal pattern.
       - pattern: java.util.regex.Pattern.quote(...)
     pattern-sinks:

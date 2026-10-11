@@ -42,7 +42,11 @@ class NestedEnumController {
     }
 
     enum Column {
-        NAME, PRICE
+        NAME, PRICE;
+
+        static String valueOf(String text, boolean lenient) {
+            return lenient ? text.toUpperCase() : text;
+        }
     }
 
     @GetMapping("/shared/nested-enum")
@@ -51,10 +55,28 @@ class NestedEnumController {
         response.sendRedirect("https://" + Column.valueOf(key).name() + "/");
         // ok: java.open-redirect
         response.sendRedirect("https://" + NestedEnumController.Column.valueOf(key).name() + "/");
+        // An overload of valueOf that the enum declares itself may hand the text back.
+        // ruleid: java.open-redirect
+        response.sendRedirect("https://" + Column.valueOf(key, true) + "/");
+        // A class of another package with the same simple name is not this file's enum.
+        // ruleid: java.open-redirect
+        response.sendRedirect("https://" + com.acme.other.Column.valueOf(key).name() + "/");
+        // An enum nested in a class or an interface declared later in the file, qualified.
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + SharedFormsController.Level.valueOf(key).name() + "/");
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + LateKinds.Kind.valueOf(key).name() + "/");
         // An enum nested in a nested class, named from outside that class, is not recognised.
         // todook: java.open-redirect
         response.sendRedirect("https://" + Sizes.Size.valueOf(key).name() + "/");
         return "ok";
+    }
+}
+
+// Enums nested in interfaces, before and after the classes that use them.
+interface EarlyKinds {
+    enum Kind {
+        SMALL, LARGE
     }
 }
 
@@ -611,6 +633,11 @@ class SharedFormsController {
         // An enum declared inside the class.
         // ok: java.open-redirect
         response.sendRedirect("https://" + Level.valueOf(key).name() + "/");
+        // An enum nested in the first class, or in an interface declared before this class, qualified.
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + NestedEnumController.Column.valueOf(key).name() + "/");
+        // ok: java.open-redirect
+        response.sendRedirect("https://" + EarlyKinds.Kind.valueOf(key).name() + "/");
         // An enum declared before the first class of the file.
         // ok: java.open-redirect
         response.sendRedirect("https://" + EarlierKind.valueOf(key).name() + "/");
@@ -847,5 +874,11 @@ class BuilderLoginController {
 class MyBatisSessions {
     static org.apache.ibatis.session.SqlSession open() {
         return null;
+    }
+}
+
+interface LateKinds {
+    enum Kind {
+        SMALL, LARGE
     }
 }

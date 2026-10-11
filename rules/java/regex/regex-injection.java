@@ -39,7 +39,11 @@ class NestedEnumController {
     }
 
     enum Column {
-        NAME, PRICE
+        NAME, PRICE;
+
+        static String valueOf(String text, boolean lenient) {
+            return lenient ? text.toUpperCase() : text;
+        }
     }
 
     @GetMapping("/shared/nested-enum")
@@ -48,10 +52,28 @@ class NestedEnumController {
         Pattern.compile(Column.valueOf(key).name());
         // ok: java.regex-injection
         Pattern.compile(NestedEnumController.Column.valueOf(key).name());
+        // An overload of valueOf that the enum declares itself may hand the text back.
+        // ruleid: java.regex-injection
+        Pattern.compile(Column.valueOf(key, true));
+        // A class of another package with the same simple name is not this file's enum.
+        // ruleid: java.regex-injection
+        Pattern.compile(com.acme.other.Column.valueOf(key).name());
+        // An enum nested in a class or an interface declared later in the file, qualified.
+        // ok: java.regex-injection
+        Pattern.compile(SharedLimitsController.Level.valueOf(key).name());
+        // ok: java.regex-injection
+        Pattern.compile(LateKinds.Kind.valueOf(key).name());
         // An enum nested in a nested class, named from outside that class, is not recognised.
         // todook: java.regex-injection
         Pattern.compile(Sizes.Size.valueOf(key).name());
         return "ok";
+    }
+}
+
+// Enums nested in interfaces, before and after the classes that use them.
+interface EarlyKinds {
+    enum Kind {
+        SMALL, LARGE
     }
 }
 
@@ -372,6 +394,11 @@ class SharedLimitsController {
         // An enum declared inside the class.
         // ok: java.regex-injection
         Pattern.compile(Level.valueOf(key).name());
+        // An enum nested in the first class, or in an interface declared before this class, qualified.
+        // ok: java.regex-injection
+        Pattern.compile(NestedEnumController.Column.valueOf(key).name());
+        // ok: java.regex-injection
+        Pattern.compile(EarlyKinds.Kind.valueOf(key).name());
         // An enum declared before the class.
         // ok: java.regex-injection
         Pattern.compile(EarlierKind.valueOf(key).name());
@@ -514,4 +541,10 @@ class MyBatisSessions {
 
 enum FormKind {
     SMALL, LARGE
+}
+
+interface LateKinds {
+    enum Kind {
+        SMALL, LARGE
+    }
 }

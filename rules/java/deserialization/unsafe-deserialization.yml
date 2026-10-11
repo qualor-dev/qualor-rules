@@ -171,9 +171,10 @@ rules:
               regex: ^(java\.util\.)?Map\.of\(\s*(("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*)(\s*,\s*("([^"\\]|\\.)*"|-?\d+|[A-Z][A-Za-z0-9_]*\.[A-Z][A-Z0-9_]*|[A-Z][A-Z0-9_]*))*)?\s*\)$
       - pattern: Enum.valueOf(...)
       - pattern: java.lang.Enum.valueOf(...)
+      # valueOf(String) of an enum declared in this file (one argument: an overload the enum
+      # declares itself may hand the text back). An enum declared before or after a class of the
+      # file (also nested in a later class), by its simple name.
       - patterns:
-          # An enum declared before or after a class of the file (also nested in a later class),
-          # or nested in a class and used in it, by its simple name or qualified by its class.
           - pattern-either:
               - pattern-inside: |
                   class $X { ... }
@@ -183,11 +184,35 @@ rules:
                   enum $E { ... }
                   ...
                   class $X { ... }
+          - pattern: $E.valueOf($K)
+      # An enum nested in a class of the file: by its simple name or qualified by the class
+      # inside it (also in a file's only class), and qualified by its class or interface in the
+      # file's other classes.
+      - patterns:
+          - pattern-inside: |
+              class $X { ... enum $E { ... } ... }
+          - pattern-either:
+              - pattern: $E.valueOf($K)
+              - pattern: $X.$E.valueOf($K)
+      - patterns:
+          - pattern-either:
               - pattern-inside: |
                   class $X { ... enum $E { ... } ... }
-          - pattern-either:
-              - pattern: $E.valueOf(...)
-              - pattern: $O.$E.valueOf(...)
+                  ...
+                  class $Y { ... }
+              - pattern-inside: |
+                  class $Y { ... }
+                  ...
+                  class $X { ... enum $E { ... } ... }
+              - pattern-inside: |
+                  interface $X { ... enum $E { ... } ... }
+                  ...
+                  class $Y { ... }
+              - pattern-inside: |
+                  class $Y { ... }
+                  ...
+                  interface $X { ... enum $E { ... } ... }
+          - pattern: $X.$E.valueOf($K)
     pattern-sinks:
       # ObjectInputStream and XMLDecoder created over request data in the same method: the read.
       # A filter set with setObjectInputFilter before the read restricts the classes.

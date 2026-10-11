@@ -57,7 +57,11 @@ class NestedEnumController {
     }
 
     enum Column {
-        NAME, PRICE
+        NAME, PRICE;
+
+        static String valueOf(String text, boolean lenient) {
+            return lenient ? text.toUpperCase() : text;
+        }
     }
 
     @GetMapping("/shared/nested-enum")
@@ -66,10 +70,28 @@ class NestedEnumController {
         templateEngine.process("<p>" + Column.valueOf(key).name() + "</p>", new Context());
         // ok: java.template-injection
         templateEngine.process("<p>" + NestedEnumController.Column.valueOf(key).name() + "</p>", new Context());
+        // An overload of valueOf that the enum declares itself may hand the text back.
+        // ruleid: java.template-injection
+        templateEngine.process("<p>" + Column.valueOf(key, true) + "</p>", new Context());
+        // A class of another package with the same simple name is not this file's enum.
+        // ruleid: java.template-injection
+        templateEngine.process("<p>" + com.acme.other.Column.valueOf(key).name() + "</p>", new Context());
+        // An enum nested in a class or an interface declared later in the file, qualified.
+        // ok: java.template-injection
+        templateEngine.process("<p>" + SharedLimitsController.Level.valueOf(key).name() + "</p>", new Context());
+        // ok: java.template-injection
+        templateEngine.process("<p>" + LateKinds.Kind.valueOf(key).name() + "</p>", new Context());
         // An enum nested in a nested class, named from outside that class, is not recognised.
         // todook: java.template-injection
         templateEngine.process("<p>" + Sizes.Size.valueOf(key).name() + "</p>", new Context());
         return "ok";
+    }
+}
+
+// Enums nested in interfaces, before and after the classes that use them.
+interface EarlyKinds {
+    enum Kind {
+        SMALL, LARGE
     }
 }
 
@@ -445,6 +467,11 @@ class SharedLimitsController {
         // An enum declared inside the class.
         // ok: java.template-injection
         templateEngine.process("<p>" + Level.valueOf(key).name() + "</p>", new Context());
+        // An enum nested in the first class, or in an interface declared before this class, qualified.
+        // ok: java.template-injection
+        templateEngine.process("<p>" + NestedEnumController.Column.valueOf(key).name() + "</p>", new Context());
+        // ok: java.template-injection
+        templateEngine.process("<p>" + EarlyKinds.Kind.valueOf(key).name() + "</p>", new Context());
         // An enum declared before the class.
         // ok: java.template-injection
         templateEngine.process("<p>" + EarlierKind.valueOf(key).name() + "</p>", new Context());
@@ -575,5 +602,11 @@ class PartNote {
 class MyBatisSessions {
     static org.apache.ibatis.session.SqlSession open() {
         return null;
+    }
+}
+
+interface LateKinds {
+    enum Kind {
+        SMALL, LARGE
     }
 }

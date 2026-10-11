@@ -51,7 +51,11 @@ class NestedEnumController {
     }
 
     enum Column {
-        NAME, PRICE
+        NAME, PRICE;
+
+        static String valueOf(String text, boolean lenient) {
+            return lenient ? text.toUpperCase() : text;
+        }
     }
 
     @GetMapping("/shared/nested-enum")
@@ -60,10 +64,28 @@ class NestedEnumController {
         connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + Column.valueOf(key).name() + "'");
         // ok: java.sql-injection
         connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + NestedEnumController.Column.valueOf(key).name() + "'");
+        // An overload of valueOf that the enum declares itself may hand the text back.
+        // ruleid: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + Column.valueOf(key, true) + "'");
+        // A class of another package with the same simple name is not this file's enum.
+        // ruleid: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + com.acme.other.Column.valueOf(key).name() + "'");
+        // An enum nested in a class or an interface declared later in the file, qualified.
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + SharedFormsController.Level.valueOf(key).name() + "'");
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + LateKinds.Kind.valueOf(key).name() + "'");
         // An enum nested in a nested class, named from outside that class, is not recognised.
         // todook: java.sql-injection
         connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + Sizes.Size.valueOf(key).name() + "'");
         return "ok";
+    }
+}
+
+// Enums nested in interfaces, before and after the classes that use them.
+interface EarlyKinds {
+    enum Kind {
+        SMALL, LARGE
     }
 }
 
@@ -625,6 +647,11 @@ class SharedFormsController {
         // An enum declared inside the class.
         // ok: java.sql-injection
         connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + Level.valueOf(key).name() + "'");
+        // An enum nested in the first class, or in an interface declared before this class, qualified.
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + NestedEnumController.Column.valueOf(key).name() + "'");
+        // ok: java.sql-injection
+        connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + EarlyKinds.Kind.valueOf(key).name() + "'");
         // An enum declared before the first class of the file.
         // ok: java.sql-injection
         connection.createStatement().executeQuery("SELECT * FROM items WHERE name = '" + EarlierKind.valueOf(key).name() + "'");
@@ -726,5 +753,11 @@ class PartNote {
 class MyBatisSessions {
     static org.apache.ibatis.session.SqlSession open() {
         return null;
+    }
+}
+
+interface LateKinds {
+    enum Kind {
+        SMALL, LARGE
     }
 }

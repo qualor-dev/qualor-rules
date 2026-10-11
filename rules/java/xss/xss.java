@@ -48,7 +48,11 @@ class NestedEnumController {
     }
 
     enum Column {
-        NAME, PRICE
+        NAME, PRICE;
+
+        static String valueOf(String text, boolean lenient) {
+            return lenient ? text.toUpperCase() : text;
+        }
     }
 
     @GetMapping("/shared/nested-enum")
@@ -58,10 +62,28 @@ class NestedEnumController {
         out.println("<p>" + Column.valueOf(key).name() + "</p>");
         // ok: java.xss
         out.println("<p>" + NestedEnumController.Column.valueOf(key).name() + "</p>");
+        // An overload of valueOf that the enum declares itself may hand the text back.
+        // ruleid: java.xss
+        out.println("<p>" + Column.valueOf(key, true) + "</p>");
+        // A class of another package with the same simple name is not this file's enum.
+        // ruleid: java.xss
+        out.println("<p>" + com.acme.other.Column.valueOf(key).name() + "</p>");
+        // An enum nested in a class or an interface declared later in the file, qualified.
+        // ok: java.xss
+        out.println("<p>" + SharedFormsController.Level.valueOf(key).name() + "</p>");
+        // ok: java.xss
+        out.println("<p>" + LateKinds.Kind.valueOf(key).name() + "</p>");
         // An enum nested in a nested class, named from outside that class, is not recognised.
         // todook: java.xss
         out.println("<p>" + Sizes.Size.valueOf(key).name() + "</p>");
         return "ok";
+    }
+}
+
+// Enums nested in interfaces, before and after the classes that use them.
+interface EarlyKinds {
+    enum Kind {
+        SMALL, LARGE
     }
 }
 
@@ -920,6 +942,11 @@ class SharedFormsController {
         // An enum declared inside the class.
         // ok: java.xss
         out.println("<p>" + Level.valueOf(key).name() + "</p>");
+        // An enum nested in the first class, or in an interface declared before this class, qualified.
+        // ok: java.xss
+        out.println("<p>" + NestedEnumController.Column.valueOf(key).name() + "</p>");
+        // ok: java.xss
+        out.println("<p>" + EarlyKinds.Kind.valueOf(key).name() + "</p>");
         // An enum declared before the first class of the file.
         // ok: java.xss
         out.println("<p>" + EarlierKind.valueOf(key).name() + "</p>");
@@ -1685,5 +1712,11 @@ class ResponseFormsConsumesXmlResource {
 class MyBatisSessions {
     static org.apache.ibatis.session.SqlSession open() {
         return null;
+    }
+}
+
+interface LateKinds {
+    enum Kind {
+        SMALL, LARGE
     }
 }
