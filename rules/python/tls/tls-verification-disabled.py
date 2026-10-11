@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import http.client
 import os
@@ -267,6 +268,44 @@ async def aiohttp_connectors(url):
     async with ClientSession(connector=TCPConnector(ssl=False), raise_for_status=True) as s:
         await s.get(url)
     return connector, legacy
+
+
+# A ClientSession opened by an `async with` statement with several items: the session is any of
+# the first four items, after items with or without `as`.
+async def aiohttp_multi_item(url, lock, tracer):
+    async with tracer.start() as span, aiohttp.ClientSession() as session:
+        # ruleid: python.tls-verification-disabled
+        await session.get(url, verify_ssl=False)
+        # ok: python.tls-verification-disabled
+        await session.get(url)
+        # ok: python.tls-verification-disabled
+        await span.get(url, ssl=False)
+    async with lock, aiohttp.ClientSession(raise_for_status=True) as session:
+        # ruleid: python.tls-verification-disabled
+        await session.post(url, ssl=False)
+    async with aiohttp.ClientSession() as first, aiohttp.ClientSession() as second:
+        # ruleid: python.tls-verification-disabled
+        await first.get(url, ssl=False)
+        # ruleid: python.tls-verification-disabled
+        await second.get(url, ssl=False)
+    async with lock, tracer.start() as span, aiohttp.ClientSession() as session, asyncio.timeout(10):
+        # ruleid: python.tls-verification-disabled
+        await session.put(url, ssl=False)
+    async with lock, tracer.start() as span, asyncio.timeout(10), aiohttp.ClientSession() as session:
+        # ruleid: python.tls-verification-disabled
+        async with session.ws_connect(url, ssl=False) as ws:
+            await ws.close()
+    # The sessions' other spellings in a with block or assigned.
+    with requests.sessions.Session() as legacy:
+        # ruleid: python.tls-verification-disabled
+        legacy.get(url, verify=False)
+    core = botocore.session.Session()
+    # ruleid: python.tls-verification-disabled
+    core.create_client("s3", verify=False)
+    # The fifth item and later are not followed.
+    async with lock, tracer.start() as span, asyncio.timeout(10), tracer.start() as other, aiohttp.ClientSession() as session:
+        # todoruleid: python.tls-verification-disabled
+        await session.get(url, ssl=False)
 
 
 async def typed_aiohttp_session(session: aiohttp.ClientSession, url):

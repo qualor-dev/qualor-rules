@@ -122,7 +122,8 @@ def fetch_status():
 - A `requests.Session` or aiohttp `ClientSession` that comes from a factory function, another
   module or a parameter without a type annotation is not followed. Sessions made in the same
   function or module, in a `with` block, annotated parameters and `self` attributes set in
-  `__init__` are.
+  `__init__` are. In an `async with` statement with several items, a `ClientSession` is followed as any
+  of the first four items, not later.
 - Options passed as a dict (`requests.get(url, **{"verify": False})`) are not seen.
 - `httpx.HTTPTransport(verify=False)` and `AsyncHTTPTransport(verify=False)` (the httpx
   documentation does not describe a transport's `verify`),

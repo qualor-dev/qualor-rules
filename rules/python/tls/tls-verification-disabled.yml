@@ -146,7 +146,9 @@ rules:
     #   does not describe verify (it says only that aioboto3 wraps boto3 and aiobotocore).
     # - An aiohttp ClientSession is followed as a requests Session is (assigned earlier, `async
     #   with`, a typed parameter, a self attribute set by __init__); one from a factory function
-    #   is not, nor are options passed as a dict (`todoruleid:`).
+    #   is not, nor are options passed as a dict (`todoruleid:`). In an `async with` of several
+    #   items the session is followed as any of the first four items; a later one is not
+    #   (`todoruleid:`).
     # - A function parameter whose default is False (`def f(url, verify=False)`).
     # - A generic context (PROTOCOL_TLS) with check_hostname = False and CERT_NONE that the code
     #   hands to a server API instead of wrapping it (`asyncio.start_server(..., ssl=ctx)`,
@@ -236,6 +238,17 @@ rules:
                       ...
                   - pattern-inside: |
                       async with aiohttp.ClientSession(...) as $S:
+                          ...
+                  # ... also as the second, third or fourth item of an `async with` (an item
+                  # before it, with or without `as`, is $W1; the first item is the form above).
+                  - pattern-inside: |
+                      async with $W1, aiohttp.ClientSession(...) as $S:
+                          ...
+                  - pattern-inside: |
+                      async with $W1, $W2, aiohttp.ClientSession(...) as $S:
+                          ...
+                  - pattern-inside: |
+                      async with $W1, $W2, $W3, aiohttp.ClientSession(...) as $S:
                           ...
                   - pattern-inside: |
                       def $F(..., $S: aiohttp.ClientSession, ...):
