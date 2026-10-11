@@ -505,15 +505,15 @@ rules:
                       - pattern: $PARAM[:$UPPER]
                       - pattern: $PARAM[$LOWER:$UPPER]
       # Starlette and FastAPI middleware (a BaseHTTPMiddleware's dispatch(), an
-      # @app.middleware("http") function) runs for every request and is not a view: the path,
-      # query string, path parameters, headers, cookies and body of the request it receives, and
-      # a slice of the path in place. (Flask's before_request hooks read flask.request, a source
-      # above.) The middleware is written as an exclusion, "not outside one", so that this item
-      # adds a single condition to the formula OpenGrep builds its prefilter from.
+      # @app.middleware("http") function) runs for every request and is not a view: the URL of
+      # the request it receives (its path, query, host, the whole URL; not its scheme or port),
+      # its query parameters, path parameters, headers, cookies and body, and a slice of the path
+      # in place. (Flask's before_request hooks read flask.request, a source above.) The
+      # middleware is written as an exclusion, "not outside one", so that this item adds a
+      # single condition to the formula OpenGrep builds its prefilter from.
       - patterns:
           - pattern-either:
-              - pattern: $REQ.url.path
-              - pattern: $REQ.url.query
+              - pattern: $REQ.url
               - pattern: $REQ.query_params
               - pattern: $REQ.path_params
               - pattern: $REQ.headers
@@ -521,14 +521,14 @@ rules:
               - pattern: $REQ.json()
               - pattern: $REQ.body()
               - pattern: $REQ.form()
+              - pattern: $REQ.stream()
               - pattern: $REQ.url.path[$LOWER:]
               - pattern: $REQ.url.path[:$UPPER]
               - pattern: $REQ.url.path[$LOWER:$UPPER]
           - pattern-not:
               patterns:
                 - pattern-either:
-                    - pattern: $REQ.url.path
-                    - pattern: $REQ.url.query
+                    - pattern: $REQ.url
                     - pattern: $REQ.query_params
                     - pattern: $REQ.path_params
                     - pattern: $REQ.headers
@@ -536,6 +536,7 @@ rules:
                     - pattern: $REQ.json()
                     - pattern: $REQ.body()
                     - pattern: $REQ.form()
+                    - pattern: $REQ.stream()
                     - pattern: $REQ.url.path[$LOWER:]
                     - pattern: $REQ.url.path[:$UPPER]
                     - pattern: $REQ.url.path[$LOWER:$UPPER]
@@ -548,6 +549,8 @@ rules:
                     @$APP.middleware("http")
                     def $MW($REQ, $CALL_NEXT):
                       ...
+          - pattern-not-inside: $REQ.url.scheme
+          - pattern-not-inside: $REQ.url.port
     # dict.get(): the lookup carries the request data of its key and of its default. OpenGrep's
     # --taint-intrafile mode reads get() as a read of the dict and would drop both, so the dict
     # takes them on (a constant allow-list is still cleaned by the sanitizer below).

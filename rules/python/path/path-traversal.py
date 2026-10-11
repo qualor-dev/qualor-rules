@@ -452,10 +452,18 @@ class UploadMiddleware(BaseHTTPMiddleware):
         # ruleid: python.path-traversal
         open(os.path.join(UPLOAD_FOLDER, incoming.url.query))
         # ruleid: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, str(incoming.url)))
+        # ruleid: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, f"{incoming.url}"))
+        # ruleid: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.url.hostname))
+        # ruleid: python.path-traversal
         open(os.path.join(UPLOAD_FOLDER, (await incoming.body()).decode()))
-        # The scheme is http or https.
+        # The scheme is http or https; the port is a number.
         # ok: python.path-traversal
         open(os.path.join(UPLOAD_FOLDER, incoming.url.scheme))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, str(incoming.url.port)))
         return await call_next(incoming)
 
 
@@ -473,6 +481,9 @@ async def upload_middleware(incoming, call_next):
     open(os.path.join(UPLOAD_FOLDER, (await incoming.json())["value"]))
     # ruleid: python.path-traversal
     open(os.path.join(UPLOAD_FOLDER, (await incoming.form())["value"]))
+    async for chunk in incoming.stream():
+        # ruleid: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, chunk.decode()))
     # A slice of a middleware value other than the path, in place or through a variable, is
     # missed.
     # todoruleid: python.path-traversal
@@ -489,6 +500,13 @@ class UploadRouter:
         open(os.path.join(UPLOAD_FOLDER, incoming.url.path))
         # ok: python.path-traversal
         open(os.path.join(UPLOAD_FOLDER, incoming.url.query))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, str(incoming.url)))
+        # ok: python.path-traversal
+        open(os.path.join(UPLOAD_FOLDER, incoming.url.hostname))
+        async for chunk in incoming.stream():
+            # ok: python.path-traversal
+            open(os.path.join(UPLOAD_FOLDER, chunk.decode()))
         # ok: python.path-traversal
         open(os.path.join(UPLOAD_FOLDER, incoming.path_params["item"]))
         # ok: python.path-traversal

@@ -437,10 +437,18 @@ class CatalogMiddleware(BaseHTTPMiddleware):
         # ruleid: python.xpath-injection
         etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.query + "']")
         # ruleid: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + str(incoming.url) + "']")
+        # ruleid: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + f"{incoming.url}" + "']")
+        # ruleid: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.hostname + "']")
+        # ruleid: python.xpath-injection
         etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + (await incoming.body()).decode() + "']")
-        # The scheme is http or https.
+        # The scheme is http or https; the port is a number.
         # ok: python.xpath-injection
         etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.scheme + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + str(incoming.url.port) + "']")
         return await call_next(incoming)
 
 
@@ -458,6 +466,9 @@ async def catalog_middleware(incoming, call_next):
     etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + (await incoming.json())["value"] + "']")
     # ruleid: python.xpath-injection
     etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + (await incoming.form())["value"] + "']")
+    async for chunk in incoming.stream():
+        # ruleid: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + chunk.decode() + "']")
     # A slice of a middleware value other than the path, in place or through a variable, is
     # missed.
     # todoruleid: python.xpath-injection
@@ -474,6 +485,13 @@ class CatalogRouter:
         etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.path + "']")
         # ok: python.xpath-injection
         etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.query + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + str(incoming.url) + "']")
+        # ok: python.xpath-injection
+        etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.url.hostname + "']")
+        async for chunk in incoming.stream():
+            # ok: python.xpath-injection
+            etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + chunk.decode() + "']")
         # ok: python.xpath-injection
         etree.fromstring(open("catalog.xml", "rb").read()).xpath("//book[@id='" + incoming.path_params["item"] + "']")
         # ok: python.xpath-injection

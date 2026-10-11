@@ -693,10 +693,18 @@ class AuditMiddleware(BaseHTTPMiddleware):
         # ruleid: python.sql-injection
         sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.query + "')")
         # ruleid: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + str(incoming.url) + "')")
+        # ruleid: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + f"{incoming.url}" + "')")
+        # ruleid: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.hostname + "')")
+        # ruleid: python.sql-injection
         sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + (await incoming.body()).decode() + "')")
-        # The scheme is http or https.
+        # The scheme is http or https; the port is a number.
         # ok: python.sql-injection
         sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.scheme + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + str(incoming.url.port) + "')")
         return await call_next(incoming)
 
 
@@ -714,6 +722,9 @@ async def audit_middleware(incoming, call_next):
     sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + (await incoming.json())["value"] + "')")
     # ruleid: python.sql-injection
     sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + (await incoming.form())["value"] + "')")
+    async for chunk in incoming.stream():
+        # ruleid: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + chunk.decode() + "')")
     # A slice of a middleware value other than the path, in place or through a variable, is
     # missed.
     # todoruleid: python.sql-injection
@@ -730,6 +741,13 @@ class AuditRouter:
         sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.path + "')")
         # ok: python.sql-injection
         sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.query + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + str(incoming.url) + "')")
+        # ok: python.sql-injection
+        sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.url.hostname + "')")
+        async for chunk in incoming.stream():
+            # ok: python.sql-injection
+            sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + chunk.decode() + "')")
         # ok: python.sql-injection
         sqlite3.connect("audit.db").execute("INSERT INTO hits VALUES ('" + incoming.path_params["item"] + "')")
         # ok: python.sql-injection

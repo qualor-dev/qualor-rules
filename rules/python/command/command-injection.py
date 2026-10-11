@@ -661,10 +661,18 @@ class PingMiddleware(BaseHTTPMiddleware):
         # ruleid: python.command-injection
         os.system("ping -c 1 " + incoming.url.query)
         # ruleid: python.command-injection
+        os.system("ping -c 1 " + str(incoming.url))
+        # ruleid: python.command-injection
+        os.system("ping -c 1 " + f"{incoming.url}")
+        # ruleid: python.command-injection
+        os.system("ping -c 1 " + incoming.url.hostname)
+        # ruleid: python.command-injection
         os.system("ping -c 1 " + (await incoming.body()).decode())
-        # The scheme is http or https.
+        # The scheme is http or https; the port is a number.
         # ok: python.command-injection
         os.system("ping -c 1 " + incoming.url.scheme)
+        # ok: python.command-injection
+        os.system("ping -c 1 " + str(incoming.url.port))
         return await call_next(incoming)
 
 
@@ -682,6 +690,9 @@ async def ping_middleware(incoming, call_next):
     os.system("ping -c 1 " + (await incoming.json())["value"])
     # ruleid: python.command-injection
     os.system("ping -c 1 " + (await incoming.form())["value"])
+    async for chunk in incoming.stream():
+        # ruleid: python.command-injection
+        os.system("ping -c 1 " + chunk.decode())
     # A slice of a middleware value other than the path, in place or through a variable, is
     # missed.
     # todoruleid: python.command-injection
@@ -698,6 +709,13 @@ class PingRouter:
         os.system("ping -c 1 " + incoming.url.path)
         # ok: python.command-injection
         os.system("ping -c 1 " + incoming.url.query)
+        # ok: python.command-injection
+        os.system("ping -c 1 " + str(incoming.url))
+        # ok: python.command-injection
+        os.system("ping -c 1 " + incoming.url.hostname)
+        async for chunk in incoming.stream():
+            # ok: python.command-injection
+            os.system("ping -c 1 " + chunk.decode())
         # ok: python.command-injection
         os.system("ping -c 1 " + incoming.path_params["item"])
         # ok: python.command-injection

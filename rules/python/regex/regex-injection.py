@@ -330,10 +330,18 @@ class FilterMiddleware(BaseHTTPMiddleware):
         # ruleid: python.regex-injection
         re.compile(incoming.url.query)
         # ruleid: python.regex-injection
+        re.compile(str(incoming.url))
+        # ruleid: python.regex-injection
+        re.compile(f"{incoming.url}")
+        # ruleid: python.regex-injection
+        re.compile(incoming.url.hostname)
+        # ruleid: python.regex-injection
         re.compile((await incoming.body()).decode())
-        # The scheme is http or https.
+        # The scheme is http or https; the port is a number.
         # ok: python.regex-injection
         re.compile(incoming.url.scheme)
+        # ok: python.regex-injection
+        re.compile(str(incoming.url.port))
         return await call_next(incoming)
 
 
@@ -351,6 +359,9 @@ async def filter_middleware(incoming, call_next):
     re.compile((await incoming.json())["value"])
     # ruleid: python.regex-injection
     re.compile((await incoming.form())["value"])
+    async for chunk in incoming.stream():
+        # ruleid: python.regex-injection
+        re.compile(chunk.decode())
     # A slice of a middleware value other than the path, in place or through a variable, is
     # missed.
     # todoruleid: python.regex-injection
@@ -367,6 +378,13 @@ class FilterRouter:
         re.compile(incoming.url.path)
         # ok: python.regex-injection
         re.compile(incoming.url.query)
+        # ok: python.regex-injection
+        re.compile(str(incoming.url))
+        # ok: python.regex-injection
+        re.compile(incoming.url.hostname)
+        async for chunk in incoming.stream():
+            # ok: python.regex-injection
+            re.compile(chunk.decode())
         # ok: python.regex-injection
         re.compile(incoming.path_params["item"])
         # ok: python.regex-injection

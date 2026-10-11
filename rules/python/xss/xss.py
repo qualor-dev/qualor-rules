@@ -1248,10 +1248,18 @@ class NoticeMiddleware(BaseHTTPMiddleware):
         # ruleid: python.xss
         HTMLResponse("<p>" + incoming.url.query + "</p>")
         # ruleid: python.xss
+        HTMLResponse("<p>" + str(incoming.url) + "</p>")
+        # ruleid: python.xss
+        HTMLResponse("<p>" + f"{incoming.url}" + "</p>")
+        # ruleid: python.xss
+        HTMLResponse("<p>" + incoming.url.hostname + "</p>")
+        # ruleid: python.xss
         HTMLResponse("<p>" + (await incoming.body()).decode() + "</p>")
-        # The scheme is http or https.
+        # The scheme is http or https; the port is a number.
         # ok: python.xss
         HTMLResponse("<p>" + incoming.url.scheme + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + str(incoming.url.port) + "</p>")
         return await call_next(incoming)
 
 
@@ -1269,6 +1277,9 @@ async def notice_middleware(incoming, call_next):
     HTMLResponse("<p>" + (await incoming.json())["value"] + "</p>")
     # ruleid: python.xss
     HTMLResponse("<p>" + (await incoming.form())["value"] + "</p>")
+    async for chunk in incoming.stream():
+        # ruleid: python.xss
+        HTMLResponse("<p>" + chunk.decode() + "</p>")
     # A slice of a middleware value other than the path, in place or through a variable, is
     # missed.
     # todoruleid: python.xss
@@ -1285,6 +1296,13 @@ class NoticeRouter:
         HTMLResponse("<p>" + incoming.url.path + "</p>")
         # ok: python.xss
         HTMLResponse("<p>" + incoming.url.query + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + str(incoming.url) + "</p>")
+        # ok: python.xss
+        HTMLResponse("<p>" + incoming.url.hostname + "</p>")
+        async for chunk in incoming.stream():
+            # ok: python.xss
+            HTMLResponse("<p>" + chunk.decode() + "</p>")
         # ok: python.xss
         HTMLResponse("<p>" + incoming.path_params["item"] + "</p>")
         # ok: python.xss

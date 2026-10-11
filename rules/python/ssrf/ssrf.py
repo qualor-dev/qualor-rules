@@ -512,10 +512,18 @@ class ProxyMiddleware(BaseHTTPMiddleware):
         # ruleid: python.ssrf
         requests.get(incoming.url.query)
         # ruleid: python.ssrf
+        requests.get(str(incoming.url))
+        # ruleid: python.ssrf
+        requests.get(f"{incoming.url}")
+        # ruleid: python.ssrf
+        requests.get(incoming.url.hostname)
+        # ruleid: python.ssrf
         requests.get((await incoming.body()).decode())
-        # The scheme is http or https.
+        # The scheme is http or https; the port is a number.
         # ok: python.ssrf
         requests.get(incoming.url.scheme)
+        # ok: python.ssrf
+        requests.get(str(incoming.url.port))
         return await call_next(incoming)
 
 
@@ -533,6 +541,9 @@ async def proxy_middleware(incoming, call_next):
     requests.get((await incoming.json())["value"])
     # ruleid: python.ssrf
     requests.get((await incoming.form())["value"])
+    async for chunk in incoming.stream():
+        # ruleid: python.ssrf
+        requests.get(chunk.decode())
     # A slice of a middleware value other than the path, in place or through a variable, is
     # missed.
     # todoruleid: python.ssrf
@@ -549,6 +560,13 @@ class ProxyRouter:
         requests.get(incoming.url.path)
         # ok: python.ssrf
         requests.get(incoming.url.query)
+        # ok: python.ssrf
+        requests.get(str(incoming.url))
+        # ok: python.ssrf
+        requests.get(incoming.url.hostname)
+        async for chunk in incoming.stream():
+            # ok: python.ssrf
+            requests.get(chunk.decode())
         # ok: python.ssrf
         requests.get(incoming.path_params["item"])
         # ok: python.ssrf

@@ -382,10 +382,18 @@ class BannerMiddleware(BaseHTTPMiddleware):
         # ruleid: python.template-injection
         jinja2.Template(incoming.url.query)
         # ruleid: python.template-injection
+        jinja2.Template(str(incoming.url))
+        # ruleid: python.template-injection
+        jinja2.Template(f"{incoming.url}")
+        # ruleid: python.template-injection
+        jinja2.Template(incoming.url.hostname)
+        # ruleid: python.template-injection
         jinja2.Template((await incoming.body()).decode())
-        # The scheme is http or https.
+        # The scheme is http or https; the port is a number.
         # ok: python.template-injection
         jinja2.Template(incoming.url.scheme)
+        # ok: python.template-injection
+        jinja2.Template(str(incoming.url.port))
         return await call_next(incoming)
 
 
@@ -403,6 +411,9 @@ async def banner_middleware(incoming, call_next):
     jinja2.Template((await incoming.json())["value"])
     # ruleid: python.template-injection
     jinja2.Template((await incoming.form())["value"])
+    async for chunk in incoming.stream():
+        # ruleid: python.template-injection
+        jinja2.Template(chunk.decode())
     # A slice of a middleware value other than the path, in place or through a variable, is
     # missed.
     # todoruleid: python.template-injection
@@ -419,6 +430,13 @@ class BannerRouter:
         jinja2.Template(incoming.url.path)
         # ok: python.template-injection
         jinja2.Template(incoming.url.query)
+        # ok: python.template-injection
+        jinja2.Template(str(incoming.url))
+        # ok: python.template-injection
+        jinja2.Template(incoming.url.hostname)
+        async for chunk in incoming.stream():
+            # ok: python.template-injection
+            jinja2.Template(chunk.decode())
         # ok: python.template-injection
         jinja2.Template(incoming.path_params["item"])
         # ok: python.template-injection

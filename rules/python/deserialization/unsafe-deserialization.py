@@ -406,10 +406,18 @@ class SessionMiddleware(BaseHTTPMiddleware):
         # ruleid: python.unsafe-deserialization
         pickle.loads(incoming.url.query)
         # ruleid: python.unsafe-deserialization
+        pickle.loads(str(incoming.url))
+        # ruleid: python.unsafe-deserialization
+        pickle.loads(f"{incoming.url}")
+        # ruleid: python.unsafe-deserialization
+        pickle.loads(incoming.url.hostname)
+        # ruleid: python.unsafe-deserialization
         pickle.loads((await incoming.body()).decode())
-        # The scheme is http or https.
+        # The scheme is http or https; the port is a number.
         # ok: python.unsafe-deserialization
         pickle.loads(incoming.url.scheme)
+        # ok: python.unsafe-deserialization
+        pickle.loads(str(incoming.url.port))
         return await call_next(incoming)
 
 
@@ -427,6 +435,9 @@ async def session_middleware(incoming, call_next):
     pickle.loads((await incoming.json())["value"])
     # ruleid: python.unsafe-deserialization
     pickle.loads((await incoming.form())["value"])
+    async for chunk in incoming.stream():
+        # ruleid: python.unsafe-deserialization
+        pickle.loads(chunk.decode())
     # A slice of a middleware value other than the path, in place or through a variable, is
     # missed.
     # todoruleid: python.unsafe-deserialization
@@ -443,6 +454,13 @@ class SessionRouter:
         pickle.loads(incoming.url.path)
         # ok: python.unsafe-deserialization
         pickle.loads(incoming.url.query)
+        # ok: python.unsafe-deserialization
+        pickle.loads(str(incoming.url))
+        # ok: python.unsafe-deserialization
+        pickle.loads(incoming.url.hostname)
+        async for chunk in incoming.stream():
+            # ok: python.unsafe-deserialization
+            pickle.loads(chunk.decode())
         # ok: python.unsafe-deserialization
         pickle.loads(incoming.path_params["item"])
         # ok: python.unsafe-deserialization

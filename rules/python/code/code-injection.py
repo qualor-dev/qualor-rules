@@ -319,10 +319,18 @@ class CalcMiddleware(BaseHTTPMiddleware):
         # ruleid: python.code-injection
         eval(incoming.url.query)
         # ruleid: python.code-injection
+        eval(str(incoming.url))
+        # ruleid: python.code-injection
+        eval(f"{incoming.url}")
+        # ruleid: python.code-injection
+        eval(incoming.url.hostname)
+        # ruleid: python.code-injection
         eval((await incoming.body()).decode())
-        # The scheme is http or https.
+        # The scheme is http or https; the port is a number.
         # ok: python.code-injection
         eval(incoming.url.scheme)
+        # ok: python.code-injection
+        eval(str(incoming.url.port))
         return await call_next(incoming)
 
 
@@ -340,6 +348,9 @@ async def calc_middleware(incoming, call_next):
     eval((await incoming.json())["value"])
     # ruleid: python.code-injection
     eval((await incoming.form())["value"])
+    async for chunk in incoming.stream():
+        # ruleid: python.code-injection
+        eval(chunk.decode())
     # A slice of a middleware value other than the path, in place or through a variable, is
     # missed.
     # todoruleid: python.code-injection
@@ -356,6 +367,13 @@ class CalcRouter:
         eval(incoming.url.path)
         # ok: python.code-injection
         eval(incoming.url.query)
+        # ok: python.code-injection
+        eval(str(incoming.url))
+        # ok: python.code-injection
+        eval(incoming.url.hostname)
+        async for chunk in incoming.stream():
+            # ok: python.code-injection
+            eval(chunk.decode())
         # ok: python.code-injection
         eval(incoming.path_params["item"])
         # ok: python.code-injection

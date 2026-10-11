@@ -1312,10 +1312,18 @@ class MovedMiddleware(BaseHTTPMiddleware):
         # ruleid: python.open-redirect
         RedirectResponse(incoming.url.query)
         # ruleid: python.open-redirect
+        RedirectResponse(str(incoming.url))
+        # ruleid: python.open-redirect
+        RedirectResponse(f"{incoming.url}")
+        # ruleid: python.open-redirect
+        RedirectResponse(incoming.url.hostname)
+        # ruleid: python.open-redirect
         RedirectResponse((await incoming.body()).decode())
-        # The scheme is http or https.
+        # The scheme is http or https; the port is a number.
         # ok: python.open-redirect
         RedirectResponse(incoming.url.scheme)
+        # ok: python.open-redirect
+        RedirectResponse(str(incoming.url.port))
         return await call_next(incoming)
 
 
@@ -1333,6 +1341,9 @@ async def moved_middleware(incoming, call_next):
     RedirectResponse((await incoming.json())["value"])
     # ruleid: python.open-redirect
     RedirectResponse((await incoming.form())["value"])
+    async for chunk in incoming.stream():
+        # ruleid: python.open-redirect
+        RedirectResponse(chunk.decode())
     # A slice of a middleware value other than the path, in place or through a variable, is
     # missed.
     # todoruleid: python.open-redirect
@@ -1365,6 +1376,8 @@ def moved_target(page):
 
 class MovedLink:
     def __call__(self, page, width, height):
+        # ok: python.open-redirect
+        RedirectResponse(page.url.path)
         path = page.url.path
         # ok: python.open-redirect
         return RedirectResponse(path[1:])
@@ -1378,6 +1391,13 @@ class MovedRouter:
         RedirectResponse(incoming.url.path)
         # ok: python.open-redirect
         RedirectResponse(incoming.url.query)
+        # ok: python.open-redirect
+        RedirectResponse(str(incoming.url))
+        # ok: python.open-redirect
+        RedirectResponse(incoming.url.hostname)
+        async for chunk in incoming.stream():
+            # ok: python.open-redirect
+            RedirectResponse(chunk.decode())
         # ok: python.open-redirect
         RedirectResponse(incoming.path_params["item"])
         # ok: python.open-redirect
