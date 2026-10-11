@@ -6,6 +6,7 @@ import ssl
 import urllib.request
 from ssl import CERT_NONE, _create_unverified_context, wrap_socket
 
+import aioboto3
 import aiohttp
 import asyncpg
 import boto3
@@ -14,7 +15,15 @@ import certifi
 import httpx
 import hvac
 import jwt
+import motor.motor_asyncio
+import motor.motor_tornado
+import opensearchpy
 import pymongo
+import redis
+import redis.asyncio
+import redis.asyncio.client
+import redis.asyncio.cluster
+import redis.cluster
 import requests
 import urllib3
 from aiohttp import ClientSession, TCPConnector
@@ -22,8 +31,11 @@ from django.conf import settings
 from elasticsearch import AsyncElasticsearch, Elasticsearch
 from flask import Flask, current_app
 from httpx import AsyncClient
-from opensearchpy import OpenSearch
+from motor.motor_asyncio import AsyncIOMotorClient
+from motor.motor_tornado import MotorClient
+from opensearchpy import AsyncOpenSearch, OpenSearch
 from pymongo import AsyncMongoClient, MongoClient
+from redis import Redis
 from requests import Session
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
@@ -455,6 +467,136 @@ def sdk_limits(url, region):
     # todoruleid: python.tls-verification-disabled
     mixed = Elasticsearch(["http://es1:9200", "https://es2.example.com:9200"], verify_certs=False)
     return s3, es, mongo, mixed
+
+
+# More SDK switches: OpenSearch ssl_assert_hostname=False ("use hostname verification if not
+# False"), redis-py ssl_cert_reqs "none" (or CERT_NONE) on its clients, pools and connections and
+# in a rediss:// URL, Motor's clients (PyMongo's options), and aioboto3 (boto3's verify=False).
+async def more_sdk_clients(url, endpoint, host):
+    # ruleid: python.tls-verification-disabled
+    search = OpenSearch(hosts=[{"host": endpoint, "port": 9200}], use_ssl=True, ssl_assert_hostname=False)
+    # ruleid: python.tls-verification-disabled
+    search_mod = opensearchpy.OpenSearch([endpoint], use_ssl=True, verify_certs=True, ssl_assert_hostname=False)
+    # ruleid: python.tls-verification-disabled
+    cache = redis.Redis(host=host, port=6380, ssl=True, ssl_cert_reqs="none")
+    # ruleid: python.tls-verification-disabled
+    strict = redis.StrictRedis(host=host, ssl=True, ssl_cert_reqs=ssl.CERT_NONE)
+    # ruleid: python.tls-verification-disabled
+    imported = Redis(host=host, ssl=True, ssl_cert_reqs=CERT_NONE)
+    # ruleid: python.tls-verification-disabled
+    acache = redis.asyncio.Redis(host=host, ssl=True, ssl_cert_reqs="none")
+    # ruleid: python.tls-verification-disabled
+    cluster = redis.cluster.RedisCluster(host=host, ssl=True, ssl_cert_reqs=ssl.VerifyMode.CERT_NONE)
+    # ruleid: python.tls-verification-disabled
+    pool = redis.ConnectionPool(host=host, connection_class=redis.SSLConnection, ssl_cert_reqs="none")
+    # ruleid: python.tls-verification-disabled
+    mode = redis.RedisCluster(host=host, ssl=True, ssl_cert_reqs=ssl.VerifyMode.CERT_NONE)
+    # ruleid: python.tls-verification-disabled
+    amode = redis.asyncio.Redis(host=host, ssl=True, ssl_cert_reqs=ssl.CERT_NONE)
+    # ruleid: python.tls-verification-disabled
+    acluster = redis.asyncio.cluster.RedisCluster(host=host, ssl=True, ssl_cert_reqs="none")
+    # ruleid: python.tls-verification-disabled
+    aclient = redis.asyncio.client.Redis(host=host, ssl=True, ssl_cert_reqs=ssl.CERT_NONE)
+    # ruleid: python.tls-verification-disabled
+    acluster_mode = redis.asyncio.cluster.RedisCluster(host=host, ssl=True, ssl_cert_reqs=ssl.VerifyMode.CERT_NONE)
+    # ruleid: python.tls-verification-disabled
+    by_url = redis.from_url("rediss://cache.example.com:6380/0?ssl_cert_reqs=none")
+    # ruleid: python.tls-verification-disabled
+    by_cls_url = redis.Redis.from_url("rediss://cache.example.com:6380?ssl_cert_reqs=none&decode_responses=True")
+    # ruleid: python.tls-verification-disabled
+    by_async_url = redis.asyncio.Redis.from_url(url="rediss://cache.example.com:6380?ssl_cert_reqs=none")
+    # ruleid: python.tls-verification-disabled
+    by_async_pos = redis.asyncio.Redis.from_url("rediss://cache.example.com:6380?ssl_cert_reqs=none")
+    # ruleid: python.tls-verification-disabled
+    by_url_kw = redis.from_url(url="rediss://cache.example.com:6380?db=1&ssl_cert_reqs=none")
+    # ruleid: python.tls-verification-disabled
+    by_cls_kw = redis.Redis.from_url(url="rediss://cache.example.com:6380?ssl_cert_reqs=none")
+    # ruleid: python.tls-verification-disabled
+    docs = AsyncIOMotorClient(url, tls=True, tlsInsecure=True)
+    # ruleid: python.tls-verification-disabled
+    docs_certs = motor.motor_asyncio.AsyncIOMotorClient(url, tls=True, tlsAllowInvalidCertificates=True)
+    # ruleid: python.tls-verification-disabled
+    docs_names = AsyncIOMotorClient(url, tls=True, tlsAllowInvalidHostnames=True)
+    # ruleid: python.tls-verification-disabled
+    docs_hosts = MotorClient(url, tls=True, tlsAllowInvalidHostnames=True)
+    # ruleid: python.tls-verification-disabled
+    docs_insecure = MotorClient(url, tls=True, tlsInsecure=True)
+    # ruleid: python.tls-verification-disabled
+    docs_any = motor.motor_tornado.MotorClient(url, tls=True, tlsAllowInvalidCertificates=True)
+    # ruleid: python.tls-verification-disabled
+    docs_uri = AsyncIOMotorClient("mongodb://db.example.com:27017/?tls=true&tlsInsecure=true")
+    # ruleid: python.tls-verification-disabled
+    docs_tornado_uri = motor.motor_tornado.MotorClient("mongodb+srv://cluster.example.com/?tlsAllowInvalidHostnames=true")
+    # ruleid: python.tls-verification-disabled
+    s3 = aioboto3.Session().client("s3", verify=False)
+    # ruleid: python.tls-verification-disabled
+    s3_res = aioboto3.Session().resource("s3", verify=False)
+    aws = aioboto3.Session()
+    # ruleid: python.tls-verification-disabled
+    async with aws.client("sqs", region_name="eu-central-1", verify=False) as sqs:
+        await sqs.list_queues()
+    # ruleid: python.tls-verification-disabled
+    async with aws.resource("dynamodb", verify=False) as dynamo:
+        await dynamo.Table("items")
+    return (search, search_mod, cache, strict, imported, acache, cluster, pool, by_url, by_cls_url,
+            by_async_url, docs, docs_certs, docs_hosts, docs_uri, docs_tornado_uri, s3)
+
+
+async def more_safe_sdk_clients(url, endpoint, host, fingerprint, make_cache):
+    # A host name to check instead of the connection's, a pinned certificate, or plain HTTP.
+    # ok: python.tls-verification-disabled
+    named = OpenSearch([endpoint], use_ssl=True, ssl_assert_hostname="search.internal.example.com")
+    # ok: python.tls-verification-disabled
+    pinned = OpenSearch([endpoint], use_ssl=True, ssl_assert_hostname=False, ssl_assert_fingerprint=fingerprint)
+    # ok: python.tls-verification-disabled
+    plain = OpenSearch(hosts=[{"host": endpoint, "port": 9200}], use_ssl=False, ssl_assert_hostname=False)
+    # ok: python.tls-verification-disabled
+    plain_url = OpenSearch("http://localhost:9200", ssl_assert_hostname=False)
+    # redis-py: "required" is the default; on a client, "optional" (CERT_OPTIONAL) verifies as
+    # "required" does. Without ssl, or with a redis:// URL, there is no TLS.
+    # ok: python.tls-verification-disabled
+    cache = redis.Redis(host=host, ssl=True, ssl_cert_reqs="required", ssl_ca_certs=CA_BUNDLE)
+    # ok: python.tls-verification-disabled
+    optional = redis.Redis(host=host, ssl=True, ssl_cert_reqs="optional")
+    # ok: python.tls-verification-disabled
+    no_tls = redis.Redis(host=host, ssl=False, ssl_cert_reqs="none")
+    # ok: python.tls-verification-disabled
+    plain_cache = redis.from_url("redis://cache.example.com:6379/0?ssl_cert_reqs=none")
+    # ok: python.tls-verification-disabled
+    verified_cache = redis.from_url("rediss://cache.example.com:6380/0")
+    # ok: python.tls-verification-disabled
+    docs = AsyncIOMotorClient(url, tls=True, tlsCAFile=CA_BUNDLE)
+    # ok: python.tls-verification-disabled
+    docs_off = MotorClient(url, tlsInsecure=False)
+    aws = aioboto3.Session()
+    # ok: python.tls-verification-disabled
+    async with aws.client("s3", verify=CA_BUNDLE) as s3:
+        await s3.list_buckets()
+    # ok: python.tls-verification-disabled
+    async with aws.client("s3", endpoint_url="http://localhost:4566", verify=False) as local:
+        await local.list_buckets()
+    # Look-alikes: the same keywords on another library's functions.
+    # ok: python.tls-verification-disabled
+    other_cache = make_cache(host, ssl_cert_reqs="none")
+    # ok: python.tls-verification-disabled
+    other_search = make_cache(endpoint, ssl_assert_hostname=False)
+    return (named, pinned, plain, plain_url, cache, optional, no_tls, plain_cache, verified_cache,
+            docs, docs_off, other_cache, other_search)
+
+
+def more_sdk_limits(url, host):
+    # Switches whose documentation names them without saying what they do: redis-py's
+    # ssl_check_hostname=False and ssl_cert_reqs=None, Elasticsearch's ssl_assert_hostname.
+    # todoruleid: python.tls-verification-disabled
+    cache = redis.Redis(host=host, ssl=True, ssl_check_hostname=False)
+    # todoruleid: python.tls-verification-disabled
+    unset = redis.Redis(host=host, ssl=True, ssl_cert_reqs=None)
+    # todoruleid: python.tls-verification-disabled
+    es = Elasticsearch(url, ssl_assert_hostname=False)
+    # AsyncOpenSearch is not in the opensearch-py API reference.
+    # todoruleid: python.tls-verification-disabled
+    search = AsyncOpenSearch([url], use_ssl=True, verify_certs=False)
+    return cache, unset, es, search
 
 # ssl: the unverified context (PEP 476), used directly, passed to urllib and http.client, or
 # installed as the default for every HTTPS connection of the process.

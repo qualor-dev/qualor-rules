@@ -20,12 +20,15 @@ client:
 - `check_hostname = False` on a client context (`ssl.create_default_context()`,
   `ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)`), even when the certificate chain is still checked;
 - urllib3's `cert_reqs="CERT_NONE"` and `assert_hostname=False`;
-- SDK switches their documentation describes: `verify=False` for boto3 and botocore clients and
-  hvac's Vault client, `verify_certs=False` for Elasticsearch and OpenSearch, and the
-  `tlsInsecure`, `tlsAllowInvalidCertificates` and `tlsAllowInvalidHostnames` options of PyMongo's
-  `MongoClient` and `AsyncMongoClient` (as arguments or in the connection string). Plain HTTP
-  (`use_ssl=False`, an `http://` endpoint or host, also first in a list of hosts) and a
-  certificate pinned with `ssl_assert_fingerprint` are not reported;
+- SDK switches their documentation describes: `verify=False` for boto3, botocore and aioboto3
+  clients and hvac's Vault client, `verify_certs=False` for Elasticsearch and OpenSearch,
+  OpenSearch's `ssl_assert_hostname=False`, redis-py's `ssl_cert_reqs="none"` (or
+  `ssl.CERT_NONE`, also in a `rediss://` URL given to `from_url()`), and the `tlsInsecure`,
+  `tlsAllowInvalidCertificates` and `tlsAllowInvalidHostnames` options of PyMongo's
+  `MongoClient` and `AsyncMongoClient` and of Motor's clients (as arguments or in the connection
+  string). Plain HTTP (`use_ssl=False`, redis `ssl=False`, an `http://` or `redis://` endpoint or
+  host, also first in a list of hosts) and a certificate pinned with `ssl_assert_fingerprint` are
+  not reported;
 - the legacy `ssl.wrap_socket()` on the client side, which never checks the host name and accepts
   any certificate unless `cert_reqs` asks for one (a socket wrapped with `server_side=True` is not
   reported).
@@ -106,9 +109,12 @@ def fetch_status():
 - urllib3
 - `boto3`
 - `botocore`
+- `aioboto3`
 - `elasticsearch`
 - `opensearch-py`
 - `pymongo`
+- `motor`
+- `redis-py`
 - `hvac`
 
 ## Known limits
@@ -124,10 +130,11 @@ def fetch_status():
   `getattr(ssl, "_create_unverified_context")` and a parameter whose default is `False`
   (`def f(url, verify=False)`) are not reported.
 - SDK switches are seen only as keyword arguments written in the call: boto3's `verify` given by
-  position, options in a dict and a MongoDB connection string built at run time are missed, and so
-  are other SDKs' switches (OpenSearch `ssl_assert_hostname`, redis `ssl_cert_reqs`). A list of
-  hosts that starts with an `http://` host is taken for plain HTTP, even when `https://` hosts
-  follow.
+  position, options in a dict and a MongoDB connection string built at run time are missed. So are
+  switches whose documentation names them without saying what they do (redis-py's
+  `ssl_check_hostname=False` and `ssl_cert_reqs=None`, Elasticsearch's `ssl_assert_hostname`),
+  and `AsyncOpenSearch`, which the opensearch-py API reference does not list. A list of hosts
+  that starts with an `http://` host is taken for plain HTTP, even when `https://` hosts follow.
 - A bare `ssl.SSLContext()` (without `PROTOCOL_TLS_CLIENT`) verifies nothing by default, and its use
   as a client cannot be seen where it is made: it is not reported, nor is `check_hostname = False`
   on it, on a urllib3 `create_urllib3_context()`, or on a context made in another function or
@@ -170,6 +177,12 @@ def fetch_status():
 - <https://opensearch-project.github.io/opensearch-py/api-ref/connection.html>
 - <https://www.mongodb.com/docs/languages/python/pymongo-driver/current/security/tls/>
 - <https://python-hvac.org/en/stable/source/hvac_v1.html>
+- <https://redis.readthedocs.io/en/stable/connections.html>
+- <https://redis.readthedocs.io/en/stable/examples/ssl_connection_examples.html>
+- <https://motor.readthedocs.io/en/stable/api-asyncio/asyncio_motor_client.html>
+- <https://motor.readthedocs.io/en/stable/api-tornado/motor_client.html>
+- <https://aioboto3.readthedocs.io/en/latest/readme.html>
+- <https://aioboto3.readthedocs.io/en/latest/usage.html>
 - <https://docs.python.org/3/library/ssl.html#ssl.SSLContext.check_hostname>
 - <https://docs.python.org/3/library/ssl.html#ssl.SSLContext.verify_mode>
 - <https://docs.python.org/3/library/ssl.html#ssl.CERT_NONE>
