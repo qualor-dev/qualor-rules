@@ -46,6 +46,7 @@ Entry format:
 - python-3 (python.xss#sink-results, python.tar-extraction#members-generator, python.tar-extraction#helper-check, python.tls-verification-disabled#async-with-multi): APPROVED in round 2 (Important: a %-formatted host is no fixed origin; a generator is never taken for a checking helper; controller accepted 16 to 40 s on a synthetic module of 300 checking generators); merged 4e08c5d..09c42f6
 - python-4 (python.command-injection#prefilter, python.sql-injection#intrafile-container-writes): APPROVED in round 1 (prefilter None to Some with identical findings except shell names in odd string forms; dict item writes, pop() and setdefault() carry request data in the shared block of the 11 rules); merged 830d65e..fcfed55
 - java-4 (java.xss#fetch-origins, java.xpath-injection#non-handler-entity, java.xxe#prefilter, java.zip-slip#prefilter-size): APPROVED in round 2 (Important: a fetch variable reassigned to a request-chosen URL; fetch sanitizers exact, bound to HttpClient clients; java.xxe prefilter None to Some 2.7 kB and java.zip-slip 20.8 to 3.4 kB with identical findings); Benchmark identical; merged d35dd37..3e98179
+- java-5 (java.zip-slip#paths-get-wildcard, java.ldap-injection#attributes-third-arg): APPROVED in round 3 (a same-class Attributes helper exclusion decided by name only and hid real filters: removed, the helper shapes recorded as todook; the own-Paths exclusion matches a declaration line only); Benchmark ldap 31 identical; merged 55e55ac..4cfca7f
 
 ## 2026-10-11: --taint-intrafile (setup)
 
