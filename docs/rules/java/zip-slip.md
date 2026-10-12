@@ -109,6 +109,8 @@ public class Unzipper {
   a separator. `Path.startsWith` without `normalize()`, and `String.startsWith` without a separator,
   are reported, since `dest/../x` and `dest-evil/x` pass them.
 - An entry name obtained through a helper method or class is not followed.
+- In a file that declares its own class named `Paths`, `Paths.get(name)` is not followed: a write
+  through such a method that keeps the whole entry name is missed.
 <!-- end: known-limits -->
 
 ## References

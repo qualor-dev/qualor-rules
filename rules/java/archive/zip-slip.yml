@@ -55,6 +55,10 @@ rules:
     #   File.separatorChar or "/". Path.startsWith without normalize() and String.startsWith
     #   without a separator are reported, since "dest/../x" and "dest-evil/x" pass them.
     # - An entry name obtained through a helper method or class is not a source (`todoruleid:`).
+    # - In a file that declares a class of its own named Paths, Paths.get(name) is that class's
+    #   method and is not followed (OpenGrep's --taint-intrafile mode reads a get() as a read of
+    #   its receiver): a write through such a get that keeps the whole name is missed
+    #   (`todoruleid:`, zip-slip.own-paths.java).
     pattern-sources:
       # The entry name (and a tar link target) of the JDK and Commons Compress archive entries,
       # by type.
@@ -151,13 +155,15 @@ rules:
     # one-argument get() as a read of its receiver and would drop it. The name is bare: inside
     # metavariable-pattern the qualified java.nio.file.Paths.get does not match `Paths.get` under
     # `import java.nio.file.*;`, and a call written out as java.nio.file.Paths.get(name) keeps
-    # its taint without a propagator.
+    # its taint without a propagator. A file that declares a class of its own named Paths gets no
+    # propagator: there Paths.get is the project's method.
     pattern-propagators:
       - patterns:
           - pattern: $TO
           - metavariable-pattern:
               metavariable: $TO
               pattern: Paths.get($FROM)
+          - pattern-not-regex: (?s)\A.*\b(class|interface|enum|record)\s+Paths\b.*\z
         from: $FROM
         to: $TO
     pattern-sanitizers:
