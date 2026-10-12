@@ -35,7 +35,7 @@ Exception (6B-C# ruling C6): the C# sink inventory may read a finding's call cha
 | csharp | eshop-on-web | https://github.com/dotnet-architecture/eShopOnWeb | 4da8212117e87d808d4bbc7da6286fd2147ce606 | MIT | asp.net core 8 mvc, razor pages, web api, ef core (archived, last commit 2025-01-13) | noise |
 | csharp | orchardcore | https://github.com/OrchardCMS/OrchardCore | 8970bfce61bee5b3b07efdac26ae8a039d05dc26 | BSD-3-Clause | asp.net core mvc, razor pages, minimal apis (large) | noise |
 | csharp | jellyfin | https://github.com/jellyfin/jellyfin | 61f9a9df23a46175de2b8bac0a6da47f807cafd0 | GPL-2.0 | asp.net core web api controllers, ef core, .net 10 | noise |
-| csharp | nopcommerce | https://github.com/nopSolutions/nopCommerce | b82cabdcd1f57ea1d97592b639150ecafbecb46f | NPL-4.0 (AGPL-3.0 plus attribution terms) | asp.net core mvc, razor views, linq2db (large) | noise |
+| csharp | nopcommerce | https://github.com/nopSolutions/nopCommerce | b82cabdcd1f57ea1d97592b639150ecafbecb46f | nopCommerce Public License 4.0 | asp.net core mvc, razor views, linq2db (large) | noise |
 | js | juice-shop | https://github.com/juice-shop/juice-shop | 1618a611b173b4bf114028e6e02549950606e29d | MIT | express, sequelize, angular (deliberately vulnerable) | recall |
 | js | nodegoat | https://github.com/OWASP/NodeGoat | c5cb68a7084e4ae7dcc60e6a98768720a81841e8 | Apache-2.0 | express, mongodb (deliberately vulnerable) | recall |
 | python | pygoat | https://github.com/adeyosemanputra/pygoat | 19d17cc8874861142b330636d068bbde54e86b85 | MIT | django (deliberately vulnerable) | recall |
@@ -43,6 +43,9 @@ Exception (6B-C# ruling C6): the C# sink inventory may read a finding's call cha
 | go | govwa | https://github.com/0c34/govwa | 4058f79f31eeb4a36d8f1e64bba1f0c899646e6f | none | net/http, database/sql (deliberately vulnerable) | recall |
 | csharp | aspgoat | https://github.com/Soham7-dev/AspGoat | db3153f5dae036a9d67e12be22548299855c6b40 | MIT | asp.net core mvc (deliberately vulnerable) | recall |
 | csharp | murayama-vulnerable-api | https://github.com/AlexandreMurayama/Murayama.VulnerableApi | 465adefe3742d8806368d30a3e7ad1ab42deaa9d | MIT | asp.net core web api, ef core, postgresql (deliberately vulnerable, OWASP API Top 10; vulnerable and fixed variants) | recall |
+| csharp | vulnerablelightapp | https://github.com/Aif4thah/VulnerableLightApp | 8998b55caab6a4a5bb2d725ad054c797c7d101f4 | GPL-3.0 | asp.net core rest api (.net), deliberately vulnerable (CWE table in the README) | recall |
+| csharp | dvcsharp-api | https://github.com/appsecco/dvcsharp-api | 76c1de3c9d8d9c2e8ec0b50abe3b198a4330d7fc | MIT | asp.net core 2.x rest api, ef core (deliberately vulnerable; runtime out of support, source read only) | recall |
+| csharp | vulnerablecoreapp | https://github.com/zsusac/VulnerableCoreApp | 1ae87f8648c71ae2dcf0eee3bd6cf3c7114e9e15 | none | asp.net core 2.0 mvc (deliberately vulnerable; runtime out of support, source read only) | recall |
 
 **qualor-cc** (`E:\Personal\qualor\qualor-cc`, TypeScript, also JS/Python/Java/Go test data) is
 probed on every run too, at its local `main`, without the paths its own `qualor.yml` excludes from
