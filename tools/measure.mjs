@@ -1,4 +1,4 @@
-// `npm run measure -- [js|python|java|go]...`: the committed rules of those languages (default: all)
+// `npm run measure -- [js|python|java|go|csharp]...`: the committed rules of those languages (default: all)
 // on the REFERENCE.md recall sets of the same languages, in the qualor/scanner image. The OWASP
 // Benchmark (Java) is scored per category (tools/score.mjs, design spec §8.4); the other sets get
 // finding counts per rule. The result is printed and inserted as the newest entry of

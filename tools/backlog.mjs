@@ -7,7 +7,7 @@ import { LANGS, readRule, ruleFiles } from './rules.mjs';
 
 const NAME = '[a-z0-9]+(?:-[a-z0-9]+)*';
 /** `<lang>.<name>` for a rule, `<lang>.<name>#<topic>` for a maintenance item on that rule. */
-const ID = new RegExp(`^(js|python|java|go)\\.(${NAME})(?:#(${NAME}))?$`);
+const ID = new RegExp(`^(${Object.keys(LANGS).join('|')})\\.(${NAME})(?:#(${NAME}))?$`);
 export const STATUSES = Object.freeze(['todo', 'in-progress', 'done', 'blocked']);
 export const BACKLOG_HEADER = Object.freeze(['id', 'lang', 'category', 'cwe', 'kind', 'frameworks and apis', 'status', 'notes']);
 export const REFERENCE_HEADER = Object.freeze(['lang', 'project', 'repository', 'commit', 'licence', 'frameworks', 'use']);

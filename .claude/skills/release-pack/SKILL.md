@@ -25,7 +25,7 @@ images), `task-7-report.md` (fixture, real-tool tests) and `task-11-report.md` (
 - Never merge into qualor-cc `main`, never switch the branch of qualor-cc's main tree (other
   sessions use it): work in the new worktree only.
 - **No pin without a current measurement:** `npm run measure -- --check` must pass (the newest
-  `MEASUREMENTS.md` entry covers all four languages at the last commit that changed `rules/`).
+  `MEASUREMENTS.md` entry covers all five languages at the last commit that changed `rules/`).
 - `git commit -s`, conventional messages, stage by path, no attribution trailers, in both
   repositories.
 - Docker: containers `qr-*` with `--rm`, volumes `qr-*` removed afterwards; never prune, never

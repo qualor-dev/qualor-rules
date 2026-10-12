@@ -26,7 +26,7 @@ finding to its rule's page, `docs/rules/<lang>/<name>.md`.
 ## Layout
 
 - `rules/<lang>/<category>/<name>.yml`: one OpenGrep rule per file. `<lang>` is `js` (JavaScript
-  and TypeScript, `languages: [javascript, typescript]`), `python`, `java` or `go`.
+  and TypeScript, `languages: [javascript, typescript]`), `python`, `java`, `go` or `csharp` (C#, `languages: [csharp]`).
 - The rule's `id` is `<lang>.<name>` (OpenGrep allows no `/` in an id). Qualor reports it as
   `qualor:<lang>/<name>`, for example `qualor:java/sql-injection`.
 - Next to each rule, its test file `<name>.<ext>` with `ruleid: <id>` and `ok: <id>` comments on

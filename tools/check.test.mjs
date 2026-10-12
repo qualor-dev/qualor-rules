@@ -135,3 +135,16 @@ test('pins the same OpenGrep in package.json and tools/install-opengrep.sh', () 
   assert.equal(/^OPENGREP_VERSION=(\S+)$/m.exec(script)?.[1], pkg.opengrep);
   assert.match(script, /^OPENGREP_SHA256_X64=[0-9a-f]{64}$/m);
 });
+
+test('accepts a csharp rule with its test file and refuses another spelling of the language', () => {
+  const rule = (langs) =>
+    `rules:\n  - id: csharp.demo\n    languages: [${langs}]\n    severity: ERROR\n    message: demo\n    pattern: Demo()\n`;
+  const withCsharp = (langs) =>
+    withTree((dir) => {
+      mkdirSync(path.join(dir, 'rules/csharp/sql'), { recursive: true });
+      writeFileSync(path.join(dir, 'rules/csharp/sql/demo.yml'), rule(langs));
+      writeFileSync(path.join(dir, 'rules/csharp/sql/demo.cs'), '// ruleid: csharp.demo\nDemo();\n// ok: csharp.demo\nOther();\n');
+    }).filter((p) => p.includes('csharp/sql/demo'));
+  assert.match(withCsharp('c#').join('\n'), /languages must be \[csharp\]/);
+  assert.doesNotMatch(withCsharp('csharp').join('\n'), /languages|must be rules|no test file|lang must/);
+});

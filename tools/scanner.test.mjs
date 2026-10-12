@@ -20,7 +20,7 @@ test('takes rules under rules/ and scratch rule files under .tmp/, nothing else'
   const one = configs(['rules/go/sql/sql-injection.yml'], dir);
   assert.deepEqual(one.args, ['--config', '/src/rules/go/sql/sql-injection.yml']);
   assert.deepEqual([...one.langs], ['go']);
-  assert.deepEqual([...configs(['rules'], dir).langs].sort(), ['go', 'java', 'js', 'python']);
+  assert.deepEqual([...configs(['rules'], dir).langs].sort(), ['csharp', 'go', 'java', 'js', 'python']);
   assert.deepEqual(configs(['.tmp/review/mutant.yml'], dir).args, ['--config', '/src/.tmp/review/mutant.yml']);
   for (const bad of ['.tmp', '.tmp/review', '.tmp/review/fp.go', 'tools', 'rules/go/sql/nothing.yml', '../x.yml']) {
     assert.throws(() => configs([bad], dir), /is not a rule file or directory/, bad);

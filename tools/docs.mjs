@@ -29,7 +29,7 @@ export const SECTIONS = Object.freeze([
 ]);
 export const TODO = 'TODO: write this section (see .claude/skills/write-rules/rule-procedure.md, step 7).';
 
-export const LANG_NAMES = Object.freeze({ js: 'JavaScript and TypeScript', python: 'Python', java: 'Java', go: 'Go' });
+export const LANG_NAMES = Object.freeze({ js: 'JavaScript and TypeScript', python: 'Python', java: 'Java', go: 'Go', csharp: 'C#' });
 
 /** Fence languages of the examples and the file extension OpenGrep needs to parse them. */
 export const FENCES = Object.freeze({
@@ -37,6 +37,7 @@ export const FENCES = Object.freeze({
   python: { python: '.py' },
   java: { java: '.java' },
   go: { go: '.go' },
+  csharp: { csharp: '.cs' },
 });
 
 /** OWASP Top 10 categories that rules name (metadata.owasp), with their pages. */
@@ -68,13 +69,18 @@ export const OWASP = Object.freeze({
  * `net/http` or `java.util.zip`) is shown as code.
  */
 export const FRAMEWORKS = Object.freeze({
+  'ado-net': 'ADO.NET',
   aiohttp: 'aiohttp',
+  aspnetcore: 'ASP.NET Core',
+  'aspnetcore-mvc': 'ASP.NET Core MVC and Web API',
   axios: 'axios',
+  binaryformatter: 'BinaryFormatter and other .NET formatters',
   bleach: 'bleach',
   bluemonday: 'bluemonday',
   chi: 'chi',
   'commons-compress': 'Apache Commons Compress',
   'commons-io': 'Apache Commons IO',
+  dapper: 'Dapper',
   dbapi: 'Python DB-API (PEP 249) drivers',
   defusedxml: 'defusedxml',
   dill: 'dill',
@@ -82,6 +88,7 @@ export const FRAMEWORKS = Object.freeze({
   'django-hosts': 'django-hosts',
   dom4j: 'dom4j',
   echo: 'Echo',
+  'ef-core': 'Entity Framework Core',
   ejs: 'EJS',
   'escape-string-regexp': 'escape-string-regexp',
   express: 'Express',
@@ -95,6 +102,7 @@ export const FRAMEWORKS = Object.freeze({
   gorm: 'GORM',
   got: 'Got',
   handlebars: 'Handlebars',
+  httpclient: 'HttpClient (System.Net.Http)',
   httpx: 'HTTPX',
   'jakarta-el': 'Jakarta Expression Language',
   'java-net': 'java.net (URL, URLConnection)',
@@ -107,15 +115,19 @@ export const FRAMEWORKS = Object.freeze({
   jinja2: 'Jinja',
   jndi: 'JNDI (javax.naming.directory)',
   jpa: 'Jakarta Persistence (JPA)',
+  'json-net': 'Json.NET (Newtonsoft.Json)',
   jsonpickle: 'jsonpickle',
   knex: 'Knex.js',
   lodash: 'Lodash',
   lxml: 'lxml',
   markupsafe: 'MarkupSafe',
+  'microsoft-data-sqlite': 'Microsoft.Data.Sqlite',
+  'minimal-apis': 'ASP.NET Core Minimal APIs',
   mongodb: 'MongoDB Node.js driver',
   mongoose: 'Mongoose',
   mvel: 'MVEL',
   mysql2: 'mysql2',
+  mysqlconnector: 'MySqlConnector',
   nextjs: 'Next.js',
   nh3: 'nh3',
   'node-child-process': 'Node.js child_process',
@@ -125,6 +137,7 @@ export const FRAMEWORKS = Object.freeze({
   'node-https': 'Node.js https',
   'node-tls': 'Node.js tls',
   'node-vm': 'Node.js vm',
+  npgsql: 'Npgsql',
   nunjucks: 'Nunjucks',
   ognl: 'OGNL',
   pg: 'node-postgres (pg)',
@@ -132,6 +145,7 @@ export const FRAMEWORKS = Object.freeze({
   psycopg: 'psycopg',
   pug: 'Pug',
   pyyaml: 'PyYAML',
+  'razor-pages': 'ASP.NET Core Razor Pages',
   react: 'React',
   requests: 'Requests',
   sequelize: 'Sequelize',
@@ -142,7 +156,13 @@ export const FRAMEWORKS = Object.freeze({
   'spring-mvc': 'Spring MVC',
   'spring-web-client': 'Spring RestTemplate, RestClient and WebClient',
   sqlalchemy: 'SQLAlchemy',
+  sslstream: 'SslStream',
   starlette: 'Starlette',
+  'system-diagnostics-process': 'System.Diagnostics.Process',
+  'system-directoryservices': 'System.DirectoryServices',
+  'system-io': 'System.IO',
+  'system-text-regularexpressions': 'System.Text.RegularExpressions',
+  'system-xml': 'System.Xml',
   thymeleaf: 'Thymeleaf',
   typeorm: 'TypeORM',
   undici: 'undici',

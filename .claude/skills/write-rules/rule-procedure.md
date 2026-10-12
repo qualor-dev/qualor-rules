@@ -39,7 +39,7 @@ Find and read the official documentation (allowed sources only, `CLEAN-ROOM.md`)
 - the CWE page and the OWASP cheat sheet of the category.
 
 Search hygiene: fetch pages only from the allowed hosts (cwe.mitre.org, owasp.org and
-cheatsheetseries.owasp.org, the project's own documentation site or repository docs, pkg.go.dev,
+cheatsheetseries.owasp.org, the project's own documentation site or repository docs, pkg.go.dev, learn.microsoft.com,
 docs.oracle.com, docs.python.org, nodejs.org, developer.mozilla.org, docs.spring.io, jakarta.ee and
 the like). When you search, restrict it with `site:` to such a host; never open a result on a
 forbidden host (CLEAN-ROOM.md) or a blog post that reproduces rules.
@@ -51,7 +51,7 @@ docs for stays out of the rule. If the row's core API is undocumented, stop: the
 ## 2. Fixture first
 
 `rules/<lang>/<category>/<name>.<ext>` (`js`: `.js`, plus `.ts` when typed handlers change the
-shapes, `.jsx`/`.tsx` for React; `python`: `.py`; `java`: `.java`; `go`: `.go`). Every line is your
+shapes, `.jsx`/`.tsx` for React; `python`: `.py`; `java`: `.java`; `go`: `.go`; `csharp`: `.cs`). Every line is your
 own, written from the docs' examples: **never paste code from a reference or recall project**,
 whatever its licence. The annotation is a comment on the line before each line it is about:
 `// ruleid: <id>`, `# ok: <id>`, `// todoruleid: <id>`, `// todook: <id>`.

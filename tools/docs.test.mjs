@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { docRules, docsState, examples, handWritten, OWASP, renderIndex, renderPage, SECTIONS, TODO } from './docs.mjs';
+import { docRules, docsState, examples, FENCES, handWritten, LANG_NAMES, OWASP, renderIndex, renderPage, SECTIONS, TODO } from './docs.mjs';
 import { exampleCases, exampleProblems } from './test-examples.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -129,4 +129,9 @@ test("judges the examples from OpenGrep's JSON", () => {
     /compliant\.go: OpenGrep could not analyse it/,
   );
   assert.match(exampleProblems({ results: [] }, [], dir).join('\n'), /no example was tested/);
+});
+
+test('names the csharp language and its example fence', () => {
+  assert.equal(LANG_NAMES.csharp, 'C#');
+  assert.deepEqual(FENCES.csharp, { csharp: '.cs' });
 });

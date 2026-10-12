@@ -11,6 +11,7 @@ export const LANGS = Object.freeze({
   python: { languages: ['python'], tests: ['.py'] },
   java: { languages: ['java'], tests: ['.java'] },
   go: { languages: ['go'], tests: ['.go'] },
+  csharp: { languages: ['csharp'], tests: ['.cs'] },
 });
 
 /** Calendar versions YYYY.M.patch, month without a leading zero (npm semver forbids one). */
@@ -74,7 +75,7 @@ export function readRule(root, file) {
   const parts = file.split('/');
   const [, lang, category, base] = parts;
   if (parts.length !== 4 || !Object.hasOwn(LANGS, lang) || !NAME.test(category ?? '')) {
-    return { problems: [`${file}: must be rules/<js|python|java|go>/<category>/<name>.yml`] };
+    return { problems: [`${file}: must be rules/<${Object.keys(LANGS).join('|')}>/<category>/<name>.yml`] };
   }
   const name = base.replace(/\.yml$/, '');
   if (!base.endsWith('.yml') || !NAME.test(name)) {

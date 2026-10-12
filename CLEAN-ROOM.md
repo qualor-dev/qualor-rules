@@ -17,7 +17,8 @@ the pull request and do not write a rule for that topic yourself.
 - CWE (cwe.mitre.org);
 - OWASP: the Top 10, the Cheat Sheet Series, ASVS;
 - the official documentation of frameworks, drivers and standard libraries (which APIs read
-  untrusted input, which are dangerous sinks, which make data safe);
+  untrusted input, which are dangerous sinks, which make data safe), for .NET learn.microsoft.com
+  and the libraries' own docs;
 - our own fixtures.
 
 ## Order of work

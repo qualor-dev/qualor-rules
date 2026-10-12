@@ -1,7 +1,7 @@
 ---
 name: write-rules
 description: Use when the maintainer runs /write-rules [N] [language] in the qualor-rules repository, or asks to write, continue, resume or extend Qualor's security rules from the backlog.
-argument-hint: "[N] [js|python|java|go]"
+argument-hint: "[N] [js|python|java|go|csharp]"
 ---
 
 # Write rules
@@ -46,8 +46,8 @@ numbers, and every known limit written into the repository (a `todoruleid:`/`tod
 
 ## Arguments
 
-`/write-rules [N] [language]`: N defaults to 10. The language is `js`, `python`, `java` or `go`
-(`javascript`, `typescript`, `ts` → `js`; `py` → `python`; `golang` → `go`). No language: all four.
+`/write-rules [N] [language]`: N defaults to 10. The language is `js`, `python`, `java`, `go` or `csharp`
+(`javascript`, `typescript`, `ts` → `js`; `py` → `python`; `golang` → `go`; `cs`, `c#`, `dotnet` → `csharp`). No language: all five.
 
 ## 1. Start
 

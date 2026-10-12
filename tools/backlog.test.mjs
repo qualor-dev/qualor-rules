@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cpSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -103,4 +103,17 @@ test('refuses reference projects without a full commit, a GitHub URL, a licence 
   assert.match(reference([ok, ok]), /project gin-app twice/);
   assert.match(reference([ok.replace('| MIT |', '| |')]), /licence is empty/);
   assert.match(reference([]), /no project/);
+});
+
+test('accepts csharp rows', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'qualor-rules-backlog-cs-'));
+  mkdirSync(path.join(dir, 'rules'));
+  writeFileSync(
+    path.join(dir, 'BACKLOG.md'),
+    `# Backlog\n\n${HEAD}| csharp.sql-injection | csharp | sql | CWE-89 | issue | aspnetcore; ado-net | todo | |\n| csharp.sql-injection#dapper | csharp | sql | CWE-89 | issue | dapper | todo | |\n\nAfter.\n`,
+  );
+  // Both ids parse; the only complaint is that the maintenance row has no written rule yet.
+  assert.deepEqual(backlogProblems(dir), [
+    'BACKLOG.md:6: maintenance item csharp.sql-injection#dapper names no existing rule csharp.sql-injection',
+  ]);
 });
