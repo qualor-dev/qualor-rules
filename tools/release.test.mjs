@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import { buildRelease, tarGz } from './release.mjs';
+import { LANGS } from './rules.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -58,8 +59,9 @@ test('the manifest names every rule with its own SHA-256, the pinned OpenGrep an
   assert.deepEqual(Object.keys(manifest), ['version', 'opengrep', 'taintIntrafile', 'rules']);
   assert.ok(manifest.rules.length > 0);
   for (const r of manifest.rules) {
-    assert.match(r.id, /^(js|python|java|go)\/[a-z0-9-]+$/);
-    assert.match(r.path, /^rules\/(js|python|java|go)\/[a-z0-9-]+\/[a-z0-9-]+\.yml$/);
+    const langs = Object.keys(LANGS).join('|');
+    assert.match(r.id, new RegExp(`^(${langs})/[a-z0-9-]+$`));
+    assert.match(r.path, new RegExp(`^rules/(${langs})/[a-z0-9-]+/[a-z0-9-]+\\.yml$`));
     assert.match(r.sha256, /^[0-9a-f]{64}$/);
     assert.ok(r.title.length > 0 && ['issue', 'hotspot'].includes(r.kind));
   }
