@@ -203,25 +203,32 @@ public class PeopleServlet extends HttpServlet {
             ctx.search(BASE, "(&(uid=" + uid + ")(objectClass=person))", null);
             // ok: java.ldap-injection
             ctx.search(BASE, com.acme.directory.Matching.uid(uid), (String[]) null);
-            // Attributes from a helper method of this class that returns Attributes, whatever
-            // the third argument (null asks for all attributes).
-            // ok: java.ldap-injection
-            ctx.search(BASE, matchingUid(uid), returnedAttributes());
-            // ok: java.ldap-injection
-            ctx.search(BASE, matchingUid(uid), null);
-            // ok: java.ldap-injection
-            ctx.search(BASE, matchingUid(uid), RETURNED.clone());
-            // ok: java.ldap-injection
-            ctx.search(BASE, matchingUid(uid), java.util.Arrays.copyOf(RETURNED, 1));
+            // A helper declared to return BasicAttributes has that type.
             // ok: java.ldap-injection
             ctx.search(BASE, matchingMail(request.getParameter("mail")), null);
-            // A helper method of this class that returns filter text gives a filter.
+            // A helper method that returns filter text gives a filter, also an overload of a
+            // helper that returns Attributes.
             // ruleid: java.ldap-injection
             ctx.search(BASE, uidFilter(uid), controls);
             // ruleid: java.ldap-injection
             ctx.search(BASE, uidFilter(uid), null);
-            // Attributes from a method of another class, with a third argument that is not a
-            // declared, created or toArray String[], are taken for a filter.
+            // ruleid: java.ldap-injection
+            ctx.search(BASE, matchingUid(uid, 2), controls);
+            // ruleid: java.ldap-injection
+            ctx.search(BASE, matchingUid(uid, 2), null);
+            new Lookup().byName(uid);
+            // Attributes from a helper method (of this class or another one), with a third
+            // argument that is not a declared, created, cast or toArray String[], are taken for
+            // a filter: a helper's name says nothing of its return type (overloads, inner
+            // classes).
+            // todook: java.ldap-injection
+            ctx.search(BASE, matchingUid(uid), returnedAttributes());
+            // todook: java.ldap-injection
+            ctx.search(BASE, matchingUid(uid), null);
+            // todook: java.ldap-injection
+            ctx.search(BASE, matchingUid(uid), RETURNED.clone());
+            // todook: java.ldap-injection
+            ctx.search(BASE, matchingUid(uid), java.util.Arrays.copyOf(RETURNED, 1));
             // todook: java.ldap-injection
             ctx.search(BASE, com.acme.directory.Matching.uid(uid), returnedAttributes());
             // todook: java.ldap-injection
@@ -311,6 +318,25 @@ public class PeopleServlet extends HttpServlet {
 
     private static BasicAttributes matchingMail(String value) {
         return new BasicAttributes("mail", value);
+    }
+
+    // An overload that returns filter text.
+    private static String matchingUid(String value, int depth) {
+        return "(&(uid=" + value + ")(depth=" + depth + "))";
+    }
+
+    // An inner class whose matchingUid returns filter text.
+    class Lookup {
+        String matchingUid(String value) {
+            return "(uid=" + value + ")";
+        }
+
+        void byName(String value) throws NamingException {
+            // ruleid: java.ldap-injection
+            ctx.search(BASE, matchingUid(value), new SearchControls());
+            // ruleid: java.ldap-injection
+            ctx.search(BASE, matchingUid(value), null);
+        }
     }
 
     private static String uidFilter(String value) {
