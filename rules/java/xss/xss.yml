@@ -69,12 +69,16 @@ rules:
     #   java.nio.file.Files and java.io file stream, java.net.URL, RestTemplate and java.net.http
     #   HttpClient fetches from a fixed origin (a literal, or a static final base followed by one
     #   or two terms; for HttpClient a request built in the send call or in a variable, with
-    #   newBuilder(uri) or uri(uri) from URI.create or new URI), JNDI DirContext and Spring
-    #   LdapTemplate, and JAXP XPath (built expression) forms listed there. The result of other
-    #   data access (a Spring Data repository or a MyBatis mapper method of another file, a
-    #   RestClient or WebClient call, an HttpClient fetch whose URI is held in a variable or comes
-    #   from a builder passed around, a fetch from a base followed by three or more terms) is
-    #   still taken for request data when a request value is its argument, and so is
+    #   newBuilder(uri) or uri(uri) from URI.create or new URI, sent by a client of the
+    #   HttpClient type or created in the same method or in place), JNDI DirContext and Spring
+    #   LdapTemplate, and JAXP XPath (built expression) forms listed there. Only the value of a
+    #   RestTemplate or HttpClient call is clean: a sink in a callback passed to it is reported.
+    #   The result of other data access (a Spring Data repository or a MyBatis mapper method of
+    #   another file, a RestClient or WebClient call, an HttpClient fetch whose URI is held in a
+    #   variable or comes from a builder passed around, a fetch from a base followed by three or
+    #   more terms, a fetch through a request or URL variable that is assigned again, even to
+    #   another fixed origin) is still taken for request data when a request value is its
+    #   argument, and so is
     #   the output of a shell started by ProcessBuilder or an array and the evaluation of a compiled
     #   XPathExpression, which java.command-injection or java.xpath-injection may report as well. An
     #   XPath expression held in a field or a variable that is not a constant, evaluated over a
@@ -388,13 +392,23 @@ rules:
                   - pattern-either:
                       - pattern: $U.$M(...)
                       - pattern: $U.openConnection().$M(...)
+                  # Not once the variable is assigned again (a URL the request chooses, say).
+                  - pattern-not-inside: &url-reassigned |
+                      $U = new java.net.URL(...);
+                      ...
+                      $U = $Z;
+                      ...
           - metavariable-regex:
               metavariable: $M
               regex: ^(openStream|getContent|getInputStream|getErrorStream)$
           - metavariable-regex:
               metavariable: $URL
               regex: ^"[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"\\@]+(/(?![/\\])|[?#])
-      - patterns:
+      # (Exact here and below: only the value of the call is clean, not what is inside it, so a
+      # sink written in a callback passed to the call, a response extractor or a body handler, is
+      # still reported.)
+      - exact: true
+        patterns:
           - pattern-either:
               - pattern: (org.springframework.web.client.RestTemplate $T).$M($URL, ...)
               - pattern: (org.springframework.web.client.RestOperations $T).$M($URL, ...)
@@ -406,7 +420,8 @@ rules:
               regex: ^"[A-Za-z][A-Za-z0-9+.-]*://[^/?#\s"\\@]+(/(?![/\\])|[?#])
       # ... and from a base held in a static final String of the class that is such an origin
       # (ending with the separator), followed by one or two more terms.
-      - patterns:
+      - exact: true
+        patterns:
           - pattern-inside: |
               class $C { ... static final String $BASE = "$ORIGIN"; ... }
           - metavariable-regex:
@@ -443,14 +458,18 @@ rules:
                   - pattern-either:
                       - pattern: $U.$M(...)
                       - pattern: $U.openConnection().$M(...)
+                  - pattern-not-inside: *url-reassigned
           - metavariable-regex:
               metavariable: $M
               regex: ^(openStream|getContent|getInputStream|getErrorStream)$
       # The java.net.http HttpClient: the response to a request whose URI (newBuilder(uri) or the
       # builder's uri(uri), from URI.create or new URI) is such a literal, built in the call or in
-      # a variable. The request type pins the client; a builder whose URI is set again later in
-      # the chain is not counted.
-      - patterns:
+      # a variable. A builder whose URI is set again later in the chain, or a request variable
+      # assigned again, is not counted. The client is bound by its type, or created in the same
+      # method or in place (newHttpClient, or newBuilder()...build()): another class's send
+      # method given such a request may return its other arguments.
+      - exact: true
+        patterns:
           - pattern-either:
               - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(java.net.URI.create($URL)). ... .build(), ...)
               - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(new java.net.URI($URL)). ... .build(), ...)
@@ -471,6 +490,7 @@ rules:
                           $REQ = java.net.http.HttpRequest.newBuilder(). ... .uri(new java.net.URI($URL)). ... .build();
                           ...
                   - pattern: $H.$SEND($REQ, ...)
+                  # Not when the URI is set again in the chain, or the variable is assigned again.
                   - pattern-not-inside: &http-request-uri-replaced
                       pattern-either:
                         - pattern: |
@@ -478,6 +498,11 @@ rules:
                             ...
                         - pattern: |
                             $REQ = java.net.http.HttpRequest.newBuilder(). ... .uri(...). ... .uri(...). ... .build();
+                            ...
+                        - pattern: |
+                            $REQ = java.net.http.HttpRequest.newBuilder(...). ... .build();
+                            ...
+                            $REQ = $Z;
                             ...
           - metavariable-regex:
               metavariable: $SEND
@@ -489,8 +514,21 @@ rules:
               pattern-either:
                 - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder($FIRST). ... .uri(...). ... .build(), ...)
                 - pattern: $H.$SEND(java.net.http.HttpRequest.newBuilder(). ... .uri(...). ... .uri(...). ... .build(), ...)
+          - pattern-not: &http-client-unbound
+              patterns:
+                - pattern: $H.$SEND(...)
+                - pattern-not: (java.net.http.HttpClient $H).$SEND(...)
+                - pattern-not: java.net.http.HttpClient.newHttpClient().$SEND(...)
+                - pattern-not: java.net.http.HttpClient.newBuilder(). ... .build().$SEND(...)
+                - pattern-not-inside: |
+                    $H = java.net.http.HttpClient.newHttpClient();
+                    ...
+                - pattern-not-inside: |
+                    $H = java.net.http.HttpClient.newBuilder(). ... .build();
+                    ...
       # ... and from a base held in a static final String of the class that is such an origin.
-      - patterns:
+      - exact: true
+        patterns:
           - pattern-inside: |
               class $C { ... static final String $BASE = "$ORIGIN"; ... }
           - metavariable-regex:
@@ -537,6 +575,7 @@ rules:
               metavariable: $SEND
               regex: ^(send|sendAsync)$
           - pattern-not: *http-uri-replaced
+          - pattern-not: *http-client-unbound
       # Directory entries found by JNDI or Spring LDAP.
       - patterns:
           - pattern-either:

@@ -115,9 +115,10 @@ public class HelloServlet extends HttpServlet {
   internal service as untrusted too, so encode all output, whatever its origin.
 - Only the data-access calls listed above count as reading from another system: the result of a
   Spring Data repository or MyBatis mapper method declared in another file, of a `RestClient` or
-  `WebClient` call, of an `HttpClient` request whose `URI` is kept in a variable first, or of a
-  fetch from a constant base followed by three or more parts, is still taken for request data when
-  a request value is its argument; so is the output of a shell started
+  `WebClient` call, of an `HttpClient` request whose `URI` is kept in a variable first, of a
+  fetch from a constant base followed by three or more parts, or of a fetch through a request or
+  `URL` variable that is assigned again (even to another fixed origin), is still taken for request
+  data when a request value is its argument; so is the output of a shell started
   with `ProcessBuilder` and the result of a compiled `XPathExpression`, which the command or XPath
   rule may report as well. An XPath expression held in a field that the class sets elsewhere,
   evaluated over a document from the request, is missed.

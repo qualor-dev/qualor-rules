@@ -1265,6 +1265,26 @@ class SinkResultsServlet extends HttpServlet {
         java.net.URL cardUrl = new java.net.URL(PROFILES + host + "/card");
         // ok: java.xss
         out.println(new String(cardUrl.openConnection().getInputStream().readAllBytes()));
+        // A URL variable assigned again (here to a URL the request chooses) is no fixed origin.
+        java.net.URL movedUrl = new java.net.URL("https://status.example.com/hosts/" + host);
+        movedUrl = new java.net.URL(request.getParameter("next"));
+        // ruleid: java.xss
+        out.println(new String(movedUrl.openStream().readAllBytes()));
+        java.net.URL movedCardUrl = new java.net.URL(PROFILES + host);
+        movedCardUrl = new java.net.URL(request.getParameter("next"));
+        // ruleid: java.xss
+        out.println(new String(movedCardUrl.openConnection().getInputStream().readAllBytes()));
+        // A response extractor passed to a fixed-origin call writes request data itself.
+        rest.execute("https://api.example.com/profiles/" + host, org.springframework.http.HttpMethod.GET, null, reply -> {
+            // ruleid: java.xss
+            out.println("<p>" + host + "</p>");
+            return null;
+        });
+        restOps.execute(PROFILES + host, org.springframework.http.HttpMethod.GET, null, reply -> {
+            // ruleid: java.xss
+            out.println("<p>" + host + "</p>");
+            return null;
+        });
         // ... not from a constant without the separator.
         // ruleid: java.xss
         out.println(new String(new java.net.URL(API_HOST + host).openStream().readAllBytes()));
@@ -1743,6 +1763,7 @@ class FixedOriginFetchServlet extends HttpServlet {
     private static final String API_HOST = "https://api.example.com";
     private HttpClient http;
     private com.acme.audit.RequestLog log;
+    private com.acme.relay.StatusRelay relay;
 
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response) throws IOException {
@@ -1815,6 +1836,25 @@ class FixedOriginFetchServlet extends HttpServlet {
             out.println(http.sendAsync(fetch24, HttpResponse.BodyHandlers.ofString()).join().body());
             // ok: java.xss
             out.println(HttpClient.newHttpClient().send(HttpRequest.newBuilder(URI.create("https://status.example.com/ping#" + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // Clients created in the same method or in place.
+            var client = HttpClient.newBuilder().build();
+            // ok: java.xss
+            out.println(client.send(HttpRequest.newBuilder(URI.create("https://status.example.com/hosts/" + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            var plain = HttpClient.newHttpClient();
+            // ok: java.xss
+            out.println(plain.send(HttpRequest.newBuilder(URI.create("https://status.example.com/hosts/" + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // ok: java.xss
+            out.println(plain.sendAsync(HttpRequest.newBuilder(new URI(PROFILES + host)).build(), HttpResponse.BodyHandlers.ofString()).join().body());
+            HttpClient pinned = HttpClient.newHttpClient();
+            // ok: java.xss
+            out.println(pinned.send(HttpRequest.newBuilder().uri(URI.create(PROFILES + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // ok: java.xss
+            out.println(HttpClient.newBuilder().followRedirects(HttpClient.Redirect.NEVER).build().send(HttpRequest.newBuilder(URI.create(PROFILES + host)).build(), HttpResponse.BodyHandlers.ofString()).body());
+            // A send method of another class given such a request may return its other arguments.
+            // ruleid: java.xss
+            out.println(relay.send(HttpRequest.newBuilder(URI.create("https://status.example.com/hosts/")).build(), host));
+            // ruleid: java.xss
+            out.println(relay.send(HttpRequest.newBuilder().uri(URI.create(PROFILES + "status")).build(), host));
             // Another class's method given the request is not a fetch: what it returns may hold the
             // request data.
             // ruleid: java.xss
@@ -1822,6 +1862,32 @@ class FixedOriginFetchServlet extends HttpServlet {
             HttpRequest logged = HttpRequest.newBuilder().uri(URI.create(PROFILES + host)).build();
             // ruleid: java.xss
             out.println(log.describe(logged, "html"));
+            // A request variable assigned again (here to a URL the request chooses) is no fixed
+            // origin.
+            HttpRequest movedFetch = HttpRequest.newBuilder(URI.create("https://status.example.com/hosts/" + host)).build();
+            movedFetch = HttpRequest.newBuilder(URI.create(request.getParameter("next"))).build();
+            // ruleid: java.xss
+            out.println(http.send(movedFetch, HttpResponse.BodyHandlers.ofString()).body());
+            HttpRequest movedProfile = HttpRequest.newBuilder().uri(URI.create(PROFILES + host)).build();
+            movedProfile = HttpRequest.newBuilder().uri(URI.create(request.getParameter("next"))).build();
+            // ruleid: java.xss
+            out.println(http.sendAsync(movedProfile, HttpResponse.BodyHandlers.ofString()).join().body());
+            // ... also when it is assigned another fixed origin: the rule does not compare them.
+            HttpRequest twice = HttpRequest.newBuilder(URI.create("https://status.example.com/hosts/" + host)).build();
+            twice = HttpRequest.newBuilder(URI.create("https://status.example.com/archive/" + host)).build();
+            // todook: java.xss
+            out.println(http.send(twice, HttpResponse.BodyHandlers.ofString()).body());
+            // A body handler passed to a fixed-origin send writes request data itself.
+            http.send(HttpRequest.newBuilder(URI.create("https://status.example.com/hosts/" + host)).build(), info -> {
+                // ruleid: java.xss
+                out.println("<p>" + host + "</p>");
+                return HttpResponse.BodySubscribers.ofString(java.nio.charset.StandardCharsets.UTF_8);
+            });
+            http.sendAsync(HttpRequest.newBuilder().uri(URI.create(PROFILES + host)).build(), info -> {
+                // ruleid: java.xss
+                out.println("<p>" + host + "</p>");
+                return HttpResponse.BodySubscribers.ofString(java.nio.charset.StandardCharsets.UTF_8);
+            });
             // A URI kept in a variable first, or a base followed by three terms, is not recognised.
             URI statusUri = URI.create("https://status.example.com/hosts/" + host);
             // todook: java.xss
