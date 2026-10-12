@@ -51,7 +51,6 @@ export const budgetFor = (refMs) => Math.max(BUDGET_MS, Math.round(LOAD_RATIO * 
  * the list shrinks as the rows are done: remove the entry in the commit that does the row.
  */
 export const ALLOWED = Object.freeze({
-  'js.xss': { limit: 'size', row: 'js.xss#prefilter-size' },
 });
 
 /** A rule file's text with its YAML anchors and aliases expanded (opengrep-core ignores them). */
