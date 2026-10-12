@@ -111,6 +111,7 @@ enum EarlierKind {
 public class PeopleServlet extends HttpServlet {
     private static final String BASE = "ou=people,dc=example,dc=com";
     private static final Map<String, String> CLASSES = Map.of("person", "inetOrgPerson", "group", "groupOfNames");
+    private static final String[] RETURNED = { "cn", "mail" };
     private DirContext ctx;
     private LdapContext ldapCtx;
     private InitialLdapContext initialLdapCtx;
@@ -177,6 +178,31 @@ public class PeopleServlet extends HttpServlet {
             byMail.put("mail", request.getParameter("mail"));
             // ok: java.ldap-injection
             ctx.search(BASE, byMail, new String[] { "cn" });
+            // A three-argument search whose third argument is a String[] is attribute matching,
+            // whatever builds the Attributes.
+            // ok: java.ldap-injection
+            ctx.search(BASE, matchingUid(request.getParameter("uid")), new String[] { "cn" });
+            String[] returned = { "cn", "mail" };
+            // ok: java.ldap-injection
+            ctx.search(BASE, matchingUid(uid), returned);
+            // ok: java.ldap-injection
+            ctx.search(BASE, matchingUid(uid), RETURNED);
+            // ok: java.ldap-injection
+            ctx.search(BASE, matchingUid(uid), new java.lang.String[] { "cn" });
+            // ok: java.ldap-injection
+            ctx.search(BASE, matchingUid(uid), List.of("cn", "mail").toArray(new String[0]));
+            // Declared Attributes, whatever the third argument.
+            // ok: java.ldap-injection
+            ctx.search(BASE, matching, returnedAttributes());
+            // ok: java.ldap-injection
+            ctx.search(BASE, byMail, returnedAttributes());
+            // A filter with null search controls is still a filter.
+            // ruleid: java.ldap-injection
+            ctx.search(BASE, "(&(uid=" + uid + ")(objectClass=person))", null);
+            // Attributes from a helper with a third argument of no known type are taken for a
+            // filter.
+            // todook: java.ldap-injection
+            ctx.search(BASE, matchingUid(uid), returnedAttributes());
         } catch (NamingException e) {
             throw new IOException(e);
         }
@@ -248,6 +274,16 @@ public class PeopleServlet extends HttpServlet {
 
     private static String defaultFilter(String requested) {
         return "(objectClass=person)";
+    }
+
+    private static javax.naming.directory.Attributes matchingUid(String value) {
+        BasicAttributes attributes = new BasicAttributes(true);
+        attributes.put("uid", value);
+        return attributes;
+    }
+
+    private static String[] returnedAttributes() {
+        return new String[] { "cn", "mail" };
     }
 
     // Not a handler: the parameter is not request data.

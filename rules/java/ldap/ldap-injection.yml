@@ -68,6 +68,10 @@ rules:
     # - Only the search filter is a sink: a distinguished name built from request data (the search
     #   base, a lookup or bind name), which needs DN escaping (LdapEncoder.nameEncode, ESAPI
     #   encodeForDN, Spring LdapNameBuilder), is not reported.
+    # - JNDI attribute matching, search(name, Attributes, String[]), is told from a filter search
+    #   by a declared Attributes or BasicAttributes second argument or a String[] third argument
+    #   (declared, created in place or from toArray): Attributes from a helper method together
+    #   with attributes to return from a helper method (`todook:`) are taken for a filter.
     # - The filter classes of Spring LDAP (EqualsFilter, LikeFilter, ...) count as encoding their
     #   value only when the attribute name is a literal; LikeFilter keeps `*` as a wildcard by
     #   design. The attribute name given to LdapQueryBuilder where(...) is not a sink.
@@ -245,9 +249,14 @@ rules:
                       ...
                   - pattern: $C.search($N, $F, $X, ...)
           # search(name, matchingAttributes, attributesToReturn) matches attribute values: the
-          # Attributes argument is no filter.
+          # Attributes argument is no filter. It is the only three-argument search whose third
+          # argument is a String[] (the filter forms take SearchControls), so either a declared
+          # Attributes or a String[] third argument (declared, created or from toArray) tells it.
           - pattern-not: $C.search($N, (javax.naming.directory.Attributes $A), $X)
           - pattern-not: $C.search($N, (javax.naming.directory.BasicAttributes $A), $X)
+          - pattern-not: $C.search($N, $F, (String[] $X))
+          - pattern-not: $C.search($N, $F, (java.lang.String[] $X))
+          - pattern-not: $C.search($N, $F, $L.toArray(...))
           - focus-metavariable: $F
       # Spring LDAP: the String filter of LdapTemplate (base, filter, ...). The LdapQuery forms
       # take a query built by LdapQueryBuilder (below), and the password of authenticate is a
