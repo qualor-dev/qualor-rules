@@ -6,7 +6,7 @@ the in-scope frameworks; their findings should be few and mostly true. The **rec
 deliberately vulnerable applications: `npm run measure` scores the OWASP Benchmark per category
 and counts findings on the others (design spec §8.4, `MEASUREMENTS.md`).
 
-Each project is pinned to a full commit SHA (checked with `git ls-remote` on 2026-10-04) and its
+Each project is pinned to a full commit SHA (checked with `git ls-remote` on 2026-10-04; the csharp rows on 2026-10-13) and its
 licence is the one its licence file states ("none": no licence file, so all rights are reserved).
 
 **Never copy code from these projects into this repository**, whatever their licence: not into a
@@ -14,6 +14,7 @@ fixture, a rule, a comment or a commit message. A shape you saw in a probe is de
 and written anew, minimal, from the framework's documentation (`CLEAN-ROOM.md` "Order of work").
 Read only the file and lines of a finding; never open a project's tool configurations, scripts or
 result directories (owasp-benchmark ships other tools' runner scripts and score cards).
+Exception (6B-C# ruling C6): the C# sink inventory may read a finding's call chain in other files of a noise project, to class the flow as in-file, cross-file or none. Nothing read that way is quoted anywhere, in the repository or outside it.
 
 | lang | project | repository | commit | licence | frameworks | use |
 |---|---|---|---|---|---|---|
@@ -30,11 +31,18 @@ result directories (owasp-benchmark ships other tools' runner scripts and score 
 | go | gin-realworld | https://github.com/gothinkster/golang-gin-realworld-example-app | 626c372d259472148d93303f74aa9b9a1cdcef24 | MIT | gin 1.10, gorm 1.25 | noise |
 | go | echo-realworld | https://github.com/xesina/golang-echo-realworld-example-app | e578590b51e93440c5bdfdb5a98578679c0ee383 | MIT | echo v4, jinzhu/gorm v1 | noise |
 | go | gitea | https://github.com/go-gitea/gitea | a9ac8c0afdb82068f7f242826bbe28c8e921df99 | MIT | net/http, chi v5, xorm (large) | noise |
+| csharp | eshop | https://github.com/dotnet/eShop | dc7ea499cd356924fb6689b3702964a5869dbae9 | MIT | asp.net core minimal apis, ef core, .net 10 | noise |
+| csharp | eshop-on-web | https://github.com/dotnet-architecture/eShopOnWeb | 4da8212117e87d808d4bbc7da6286fd2147ce606 | MIT | asp.net core 8 mvc, razor pages, web api, ef core (archived, last commit 2025-01-13) | noise |
+| csharp | orchardcore | https://github.com/OrchardCMS/OrchardCore | 8970bfce61bee5b3b07efdac26ae8a039d05dc26 | BSD-3-Clause | asp.net core mvc, razor pages, minimal apis (large) | noise |
+| csharp | jellyfin | https://github.com/jellyfin/jellyfin | 61f9a9df23a46175de2b8bac0a6da47f807cafd0 | GPL-2.0 | asp.net core web api controllers, ef core, .net 10 | noise |
+| csharp | nopcommerce | https://github.com/nopSolutions/nopCommerce | b82cabdcd1f57ea1d97592b639150ecafbecb46f | NPL-4.0 (AGPL-3.0 plus attribution terms) | asp.net core mvc, razor views, linq2db (large) | noise |
 | js | juice-shop | https://github.com/juice-shop/juice-shop | 1618a611b173b4bf114028e6e02549950606e29d | MIT | express, sequelize, angular (deliberately vulnerable) | recall |
 | js | nodegoat | https://github.com/OWASP/NodeGoat | c5cb68a7084e4ae7dcc60e6a98768720a81841e8 | Apache-2.0 | express, mongodb (deliberately vulnerable) | recall |
 | python | pygoat | https://github.com/adeyosemanputra/pygoat | 19d17cc8874861142b330636d068bbde54e86b85 | MIT | django (deliberately vulnerable) | recall |
 | java | owasp-benchmark | https://github.com/OWASP-Benchmark/BenchmarkJava | 8b67a88d73b2594570fc21150705283de884620b | GPL-2.0 | servlet; scored with expectedresults-1.2.csv | recall |
 | go | govwa | https://github.com/0c34/govwa | 4058f79f31eeb4a36d8f1e64bba1f0c899646e6f | none | net/http, database/sql (deliberately vulnerable) | recall |
+| csharp | aspgoat | https://github.com/Soham7-dev/AspGoat | db3153f5dae036a9d67e12be22548299855c6b40 | MIT | asp.net core mvc (deliberately vulnerable) | recall |
+| csharp | murayama-vulnerable-api | https://github.com/AlexandreMurayama/Murayama.VulnerableApi | 465adefe3742d8806368d30a3e7ad1ab42deaa9d | MIT | asp.net core web api, ef core, postgresql (deliberately vulnerable, OWASP API Top 10; vulnerable and fixed variants) | recall |
 
 **qualor-cc** (`E:\Personal\qualor\qualor-cc`, TypeScript, also JS/Python/Java/Go test data) is
 probed on every run too, at its local `main`, without the paths its own `qualor.yml` excludes from
