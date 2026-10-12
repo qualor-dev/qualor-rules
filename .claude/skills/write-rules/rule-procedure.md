@@ -179,6 +179,18 @@ says. Layout as the SQL rule: `message` (what is wrong and how to fix it), `meta
     call.** Exclude function arguments (`pattern-not: 'await $F(..., <... function (...) { ... }
     ...>, ...)'` and the object-method form; it matches arrows too) and add an `exact: true` twin
     for the calls with function arguments: it cleans the call's value only;
+  - (2026-10-11 run) a `metavariable-regex` inside a `metavariable-pattern` on a metavariable
+    bound to a template interpolation or a parenthesised expression can make OpenGrep give up the
+    whole file ("Invalid_argument: String.sub"), which drops every rule's findings there: anchor
+    the metavariable first with a top-level `metavariable-regex` on its whole text, and grep scan
+    output for "String.sub"; a typed lambda-variable pattern (`TrustStrategy $V = ($A, $B) ->
+    {...}`) also matches any method with the same number of parameters; in Go patterns `$X = E`
+    also matches `$X := E` and `var $X = E`, and `func $F(...) { ... }` also matches methods
+    and functions with results; a top-level `pattern-not` is applied after the positives
+    intersect, so a "Q minus forms" exclusion needs its own branch; in a nested `pattern-not` a
+    form left with only `pattern-inside` acts as not-inside; an `exact: true` sanitizer cleans a
+    value without cleaning a sink or a source inside it (the Go number/boolean sanitizer);
+    under `--taint-intrafile` a method declared on an interface in the same file returns clean;
   - `--test` ignores annotations in JSX children (`{/* ruleid */}`); OpenGrep's own file selection
     skips `tests/` (the probe passes `--x-ignore-semgrepignore-files`); Git Bash heredocs turn `\\`
     into `\`: write rules and scripts with backslashes through the editor and check them.
@@ -186,6 +198,13 @@ says. Layout as the SQL rule: `message` (what is wrong and how to fix it), `meta
   conditions). Run `opengrep scan` once in the scanner container; `opengrep-core` is then at
   `/home/node/.cache/opengrep/v1.30.0/semgrep/bin/opengrep-core` (expand YAML anchors first: it
   does not read them).
+  - **Prefilter facts** (OpenGrep 1.30 src/optimizing/Analyze_rule.ml, 2026-10-11 run): the
+    step-0 CNF counts every positive leaf and metavariable condition, including ones that later give
+    no word; a final clause survives only if every one of its disjuncts has a word; a
+    `metavariable-regex` gives a word only for an identifier-position metavariable, and a
+    metavariable in a method-name or callee position **anywhere** in the rule (a `pattern-not`
+    too) turns every `metavariable-regex` on that name into a prefilter term (js.xss: 22 → 6.5 kB
+    by renaming one): use distinct names; more than about 10,000 final clauses also gives None.
   - **Prefilter:** `opengrep-core -prefilter_of_rules <rule>` must give `Some` **and a small
     size** (a few kB; 283 kB already cost 0.4 s per large file, 31 MB cost 20–110 s per module).
     OpenGrep multiplies the conditions of the top-level branches into a CNF and gives up past
@@ -249,6 +268,9 @@ says. Layout as the SQL rule: `message` (what is wrong and how to fix it), `meta
     word anchor `pattern-regex: (?s)\A.*\bword\b.*\z` on an item whose words are all string
     literals; with `(?si)` when the word may be written in another case, as an HTTP header name;
     the prefilter keeps the flag).
+  - **Timing method** (2026-10-11 run): on a loaded host take OpenGrep's per-target `run_time`
+    (`--time --timeout 0 -j 1`) plus CPU time (bash `time`), old and new rule alternated, best of
+    three; wall time with the default jobs swings up to 2x.
   - **Time** on a large real or minified file that **contains** the rule's words (three.js or a
     900 kB bundle for JS, gitea's largest files for Go, a 100–200 kB Django module for Python),
     with `--timeout 0` (OpenGrep's 5 s default times out on a loaded host and drops findings), and
