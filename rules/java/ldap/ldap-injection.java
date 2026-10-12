@@ -179,18 +179,20 @@ public class PeopleServlet extends HttpServlet {
             // ok: java.ldap-injection
             ctx.search(BASE, byMail, new String[] { "cn" });
             // A three-argument search whose third argument is a String[] is attribute matching,
-            // whatever builds the Attributes.
+            // whatever builds the Attributes (a method of this class or of another one).
             // ok: java.ldap-injection
             ctx.search(BASE, matchingUid(request.getParameter("uid")), new String[] { "cn" });
             String[] returned = { "cn", "mail" };
             // ok: java.ldap-injection
-            ctx.search(BASE, matchingUid(uid), returned);
+            ctx.search(BASE, com.acme.directory.Matching.uid(uid), returned);
             // ok: java.ldap-injection
-            ctx.search(BASE, matchingUid(uid), RETURNED);
+            ctx.search(BASE, com.acme.directory.Matching.uid(uid), RETURNED);
             // ok: java.ldap-injection
-            ctx.search(BASE, matchingUid(uid), new java.lang.String[] { "cn" });
+            ctx.search(BASE, com.acme.directory.Matching.uid(uid), new java.lang.String[] { "cn" });
             // ok: java.ldap-injection
-            ctx.search(BASE, matchingUid(uid), List.of("cn", "mail").toArray(new String[0]));
+            ctx.search(BASE, com.acme.directory.Matching.uid(uid), List.of("cn", "mail").toArray(new String[0]));
+            // ok: java.ldap-injection
+            ctx.search(BASE, com.acme.directory.Matching.uid(uid), new String[] { "cn" });
             // Declared Attributes, whatever the third argument.
             // ok: java.ldap-injection
             ctx.search(BASE, matching, returnedAttributes());
@@ -199,10 +201,35 @@ public class PeopleServlet extends HttpServlet {
             // A filter with null search controls is still a filter.
             // ruleid: java.ldap-injection
             ctx.search(BASE, "(&(uid=" + uid + ")(objectClass=person))", null);
-            // Attributes from a helper with a third argument of no known type are taken for a
-            // filter.
-            // todook: java.ldap-injection
+            // ok: java.ldap-injection
+            ctx.search(BASE, com.acme.directory.Matching.uid(uid), (String[]) null);
+            // Attributes from a helper method of this class that returns Attributes, whatever
+            // the third argument (null asks for all attributes).
+            // ok: java.ldap-injection
             ctx.search(BASE, matchingUid(uid), returnedAttributes());
+            // ok: java.ldap-injection
+            ctx.search(BASE, matchingUid(uid), null);
+            // ok: java.ldap-injection
+            ctx.search(BASE, matchingUid(uid), RETURNED.clone());
+            // ok: java.ldap-injection
+            ctx.search(BASE, matchingUid(uid), java.util.Arrays.copyOf(RETURNED, 1));
+            // ok: java.ldap-injection
+            ctx.search(BASE, matchingMail(request.getParameter("mail")), null);
+            // A helper method of this class that returns filter text gives a filter.
+            // ruleid: java.ldap-injection
+            ctx.search(BASE, uidFilter(uid), controls);
+            // ruleid: java.ldap-injection
+            ctx.search(BASE, uidFilter(uid), null);
+            // Attributes from a method of another class, with a third argument that is not a
+            // declared, created or toArray String[], are taken for a filter.
+            // todook: java.ldap-injection
+            ctx.search(BASE, com.acme.directory.Matching.uid(uid), returnedAttributes());
+            // todook: java.ldap-injection
+            ctx.search(BASE, com.acme.directory.Matching.uid(uid), null);
+            // todook: java.ldap-injection
+            ctx.search(BASE, com.acme.directory.Matching.uid(uid), RETURNED.clone());
+            // todook: java.ldap-injection
+            ctx.search(BASE, com.acme.directory.Matching.uid(uid), java.util.Arrays.copyOf(RETURNED, 1));
         } catch (NamingException e) {
             throw new IOException(e);
         }
@@ -280,6 +307,14 @@ public class PeopleServlet extends HttpServlet {
         BasicAttributes attributes = new BasicAttributes(true);
         attributes.put("uid", value);
         return attributes;
+    }
+
+    private static BasicAttributes matchingMail(String value) {
+        return new BasicAttributes("mail", value);
+    }
+
+    private static String uidFilter(String value) {
+        return "(uid=" + value + ")";
     }
 
     private static String[] returnedAttributes() {

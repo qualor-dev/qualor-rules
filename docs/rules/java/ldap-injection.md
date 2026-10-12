@@ -118,9 +118,11 @@ public class UserController {
 - Only the search filter is checked: a distinguished name built from request data (the search
   base, a lookup or bind name) is not reported, although it needs DN escaping.
 - JNDI attribute matching (`search(name, attributes, attributesToReturn)`) is told apart from a
-  filter search by the declared type of the attributes or by a `String[]` of attributes to return.
-  When both come from helper methods (`search(base, matching(uid), returned())`), the call is
-  taken for a filter search and reported.
+  filter search by the declared type of the attributes (also the return type of a method of the
+  same class) or by a `String[]` of attributes to return that is declared, created, cast or
+  built with `toArray`. Attributes from a method of another class, with `null`, `clone()`,
+  `Arrays.copyOf(...)` or a method's result as the attributes to return, are taken for a filter
+  search and reported.
 - Spring LDAP filter classes (`EqualsFilter`, `LikeFilter`, ...) count as encoding their value only
   when the attribute name is a literal; `LikeFilter` keeps `*` as a wildcard by design.
 - A handler parameter without an annotation is not a source (the Jakarta REST entity parameter, a
