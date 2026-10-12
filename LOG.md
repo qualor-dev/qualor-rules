@@ -24,6 +24,12 @@ Entry format:
   branches left behind.
 ```
 
+## 2026-10-12: release 2026.10.4 (`/release-pack`)
+
+- **Request:** the maintainer asked for a new rules release after closing the 6B tails ("делай новый релиз правил", 2026-10-10).
+- **Done:** qualor-rules-2026.10.4.tar.gz, sha256 8b00f11c4ccf4af7acbfb0e6c0125c42f2e689147fadc4cc2168b3c323059849, OpenGrep 1.30.0, manifest `taintIntrafile: true` (the rules are tested and meant to run with `--taint-intrafile`; Qualor runs the pack that way from the qualor-cc change of phase-6b-6, older Qualor ignores the field); 57 rules (51 issues, 6 hotspots), none new. Changed since 2026.10.3: the --taint-intrafile switch and its rule fixes (2026-10-11 setup entry) and the 63 maintenance rows of the 2026-10-11 run (that entry). Not in the pack: js.xss#prefilter-size and js.xss#client-get-url (branch rules/js-20261011-3, see the run entry). Reproducible: host twice and Linux, identical.
+- **Measurement:** MEASUREMENTS.md 2026-10-12 (rules 4cfca7f): OWASP Benchmark mean of covered categories TPR 88.6 % / FPR 19.1 % (2026.10.3: 86.6 / 45.1); §8.4 met in all six injection categories for the first time (cmdi 24.0, ldapi 21.9, pathtraver 32.6, sqli 25.9, xpathi 15.0, xss 14.4 % FPR). Probe: qualor-cc 0; noise projects 0 except the known findings (djangoproject-com and microblog python.open-redirect 1 each; gitea 28: 25 go.weak-hash hotspots, go.tls-verification-disabled internal.go:77 TP, go.open-redirect redirect.go:25 and base.go:76 known limits; gitea routers/api/packages/api.go timed out under host load as before).
+
 ## 2026-10-11: rules run (`/write-rules 60`)
 
 - **Request:** the maintainer asked to close the 6B tails and release a new pack ("Доделывай все до конца и делай новый релиз правил", 2026-10-10): every `todo` row of the backlog (60 maintenance rows). The auto-mode classifier refused a fast-forward of `main`, so this run integrates on branch `run-20261011` (worktree `E:Personalqualorworktreesqualor-rules-run-20261011`, on top of `intrafile`) in place of `main`; the maintainer fast-forwards `main` to it.
