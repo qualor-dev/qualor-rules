@@ -9,6 +9,10 @@ import java.nio.file.*;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+/**
+ * Extracts with the class Paths of java.nio.file (a comment that names "class Paths" declares
+ * nothing).
+ */
 class WildcardImportExtractor {
 
     void unzip(InputStream in, Path dest) throws IOException {

@@ -155,15 +155,17 @@ rules:
     # one-argument get() as a read of its receiver and would drop it. The name is bare: inside
     # metavariable-pattern the qualified java.nio.file.Paths.get does not match `Paths.get` under
     # `import java.nio.file.*;`, and a call written out as java.nio.file.Paths.get(name) keeps
-    # its taint without a propagator. A file that declares a class of its own named Paths gets no
-    # propagator: there Paths.get is the project's method.
+    # its taint without a propagator. A file that declares a class of its own named Paths (a line
+    # that starts with the declaration, so not a comment or string that names one) gets no
+    # propagator: there Paths.get is the project's method. The regex spans the whole file, so
+    # the exclusion covers every Paths.get in it.
     pattern-propagators:
       - patterns:
           - pattern: $TO
           - metavariable-pattern:
               metavariable: $TO
               pattern: Paths.get($FROM)
-          - pattern-not-regex: (?s)\A.*\b(class|interface|enum|record)\s+Paths\b.*\z
+          - pattern-not-regex: (?sm)\A.*^[ \t]*(?:(?:public|protected|private|static|final|abstract|sealed|non-sealed|strictfp)[ \t]+)*(?:class|interface|enum|record)[ \t]+Paths\b.*\z
         from: $FROM
         to: $TO
     pattern-sanitizers:
