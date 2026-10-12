@@ -28,6 +28,8 @@ rules:
         - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/jar/JarFile.html
         - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Path.html
         - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Files.html
+        - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Paths.html
+        - https://docs.oracle.com/javase/specs/jls/se17/html/jls-7.html
         - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/io/File.html
         - https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/io/FileOutputStream.html
         - https://commons.apache.org/proper/commons-compress/examples.html
@@ -146,13 +148,16 @@ rules:
                           - pattern-inside: (java.util.zip.ZipFile $Z).stream(). ... .forEach(($E) -> $BODY)
                           - pattern-inside: (java.util.jar.JarFile $Z).stream(). ... .forEach(($E) -> $BODY)
     # Paths.get(name): the path carries the entry name. OpenGrep's --taint-intrafile mode reads a
-    # one-argument get() as a read of its receiver and would drop it.
+    # one-argument get() as a read of its receiver and would drop it. The name is bare: inside
+    # metavariable-pattern the qualified java.nio.file.Paths.get does not match `Paths.get` under
+    # `import java.nio.file.*;`, and a call written out as java.nio.file.Paths.get(name) keeps
+    # its taint without a propagator.
     pattern-propagators:
       - patterns:
           - pattern: $TO
           - metavariable-pattern:
               metavariable: $TO
-              pattern: java.nio.file.Paths.get($FROM)
+              pattern: Paths.get($FROM)
         from: $FROM
         to: $TO
     pattern-sanitizers:

@@ -775,4 +775,25 @@ class SourceAndSinkForms {
         // ruleid: java.zip-slip
         Files.createLink(dest.resolve("links").resolve("copy"), dest.resolve(entry.getName()));
     }
+
+    // Paths.get with one argument carries the entry name, in place and through variables (the
+    // same under `import java.nio.file.*;`: zip-slip.wildcard.java).
+    void pathsGetOneArgument(ZipInputStream zis, Path dest) throws IOException {
+        ZipEntry entry;
+        while ((entry = zis.getNextEntry()) != null) {
+            Path relative = Paths.get(entry.getName());
+            // ruleid: java.zip-slip
+            Files.copy(zis, dest.resolve(relative));
+            String name = entry.getName();
+            // ruleid: java.zip-slip
+            Files.createDirectories(Paths.get(name));
+            // ruleid: java.zip-slip
+            Files.write(Paths.get(dest + "/" + entry.getName()), new byte[0]);
+            Path qualified = java.nio.file.Paths.get(entry.getName());
+            // ruleid: java.zip-slip
+            Files.copy(zis, dest.resolve(qualified));
+            // ok: java.zip-slip
+            Files.copy(zis, Paths.get("/var/lib/app/state.bin"));
+        }
+    }
 }

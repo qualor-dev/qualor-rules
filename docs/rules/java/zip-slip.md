@@ -121,6 +121,8 @@ public class Unzipper {
 - <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/jar/JarFile.html>
 - <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Path.html>
 - <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Files.html>
+- <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/nio/file/Paths.html>
+- <https://docs.oracle.com/javase/specs/jls/se17/html/jls-7.html>
 - <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/io/File.html>
 - <https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/io/FileOutputStream.html>
 - <https://commons.apache.org/proper/commons-compress/examples.html>
