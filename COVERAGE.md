@@ -133,7 +133,7 @@ client's `get`) needs a propagator of its own.
   belong to one rule only follow the shared ones (Python marks the end with the comment
   `# (End of the shared Python source block; the items below are this rule's own.)`).
 
-What each language's block holds today (2026-10-06 run):
+What each language's block holds today (2026-10-11 run):
 
 - **js** (11 rules: sql, nosql, command, path, ssrf, xss, open-redirect, code, template,
   prototype-pollution, regex). Express-style handlers, Next.js pages and App Router handlers,
@@ -150,9 +150,18 @@ What each language's block holds today (2026-10-06 run):
   code, template, xpath, regex). Flask `request`, route-decorated views (FastAPI too), and Django
   views in a module that imports Django. **Slices** are sources themselves (OpenGrep carries no
   taint through a slice): of a request chain, of a variable assigned one, of a view parameter;
-  a variable assigned again after the request value is not. **Allow-lists**: a lookup in a dict
+  a variable assigned again after the request value is not. **Middleware** (python-1): in a
+  Starlette `BaseHTTPMiddleware.dispatch()` or an `@app.middleware("http")` function, the request's
+  URL (not its scheme, port or `is_secure`), query and path params, headers, cookies, `json()`,
+  `body()`, `form()` and `stream()`, the middleware context written as an exclusion (one
+  prefilter condition); python.open-redirect takes the request's own URL there for this site's URL
+  and its path and query as its own sources. **Containers** (intrafile, python-4): `dict.get`
+  key and default, an item write `$D[$K] = $X`, and `pop()`/`setdefault()` key and default carry
+  request data into the receiver (receiver form only: a `to:` on the call costs 2–3×).
+  **Allow-lists**: a lookup in a dict
   (or list or tuple) literal of literals, with r/b/u prefixes and comments, assigned to an
-  upper-case name the module never changes, with no default or a literal default; or a ternary of
+  upper-case name the module never changes (the "assigned again" exclusions start at a
+  `$ALLOWED = {...}` assignment), with no default or a literal default; or a ternary of
   constants. **The Django module check is `pattern-inside: import django` + `...`**, a literal that
   binds no metavariable and also matches `from django.x import y`. The old form
   (`from $DJ import $NAME` plus a regex) counted every finding once per imported name toward
@@ -162,20 +171,27 @@ What each language's block holds today (2026-10-06 run):
 - **java** (12 rules: sql, command, path, ssrf, xss, open-redirect, ldap, template, expression,
   unsafe-deserialization, xpath, regex). Three shared sources (servlet getters; annotated
   controller parameters except scalar types, `@RequestPart` included; `HttpEntity`/`RequestEntity`
-  bodies), two propagators (`append` and an append chain), nine shared sanitizers (four number
-  conversions, two `Map.of` allow-lists, `Enum.valueOf` twice, an enum declared in the file).
+  bodies), three propagators (`append`, an append chain, and `insert`/`replace` on a typed
+  `StringBuilder`/`StringBuffer`), shared sanitizers (four number conversions, two `Map.of`
+  allow-lists, `Enum.valueOf` twice, and an enum declared in the file: before or after a class, or
+  nested in a class or interface and named by it from any class of the file, one-argument
+  `valueOf` only). In intrafile mode a two-argument `insert` on a class without a body in the file
+  (a MyBatis `SqlSession`) counts as a container write (a Known limit in all 12 rules).
   java.ssrf and java.open-redirect add the **builder fixed-origin model**: a `StringBuilder` or
   `StringBuffer` created with a fixed origin or local path, or given it by its first append, is
   clean unless edited (`setLength`, `delete`, `replace`, `insert`, `setCharAt`) or assigned again.
-  `insert` and `replace` carry no taint yet (java.sql-injection#builder-insert).
+  `insert` and `replace` carry taint since java.sql-injection#builder-insert (2026-10-11).
 - **go** (7 rules: sql, command, path, ssrf, xss, open-redirect, template). Request fields and
   methods, Gin and Echo getters, binders by side effect, encoding/json propagators, and the
-  number/boolean type sanitizer. **Bind in a condition** (`if c.ShouldBindJSON(&in) == nil`):
-  the type sanitizer leaves out a boolean whose text holds a bind, `.Decode(` or `json.Unmarshal(`
-  call (one `metavariable-regex` on `$E`), so the bound struct stays a source; in go.sql-injection
-  so far. **Test support**: findings inside a function with a `*testing.T`, `B`, `F`, `M` or
-  `testing.TB` parameter are skipped (ruling F6); in go.path-traversal so far. The `#test-support`
-  and `#bind-in-comparison` rows carry both to the other rules.
+  number/boolean type sanitizer, which is `exact: true` (go.sql-injection#sink-in-comparison,
+  2026-10-11): only the number's or boolean's own value is clean, so a sink called inside a
+  comparison, nested in a compared call or inside a callback of one is still checked, and the
+  struct a bind fills inside a condition stays a source (the earlier bind-call `metavariable-regex`
+  is gone). **Test support**: findings inside a function with a `*testing.T`, `B`, `F`, `M` or
+  `testing.TB` parameter are skipped (ruling F6), in all 7 rules. Both items are byte-identical in
+  the 7 rules. go.xss carries a verbatim copy of go.command-injection's sinks as sanitizers;
+  python.xss carries one of python.command-injection's sinks (python-3): a sink change there must
+  be copied in the same commit.
 
 ### Test code
 
@@ -193,9 +209,9 @@ see above). The globs in use, the same in every rule of a language:
   also hit production names (`TestimonialService`, `ITunesClient`).
 
 A new misuse or hotspot rule copies its language's list; the page says that test code is skipped.
-Rules that skip it today: the four TLS rules, java.weak-cipher, go.weak-hash, go.insecure-cookie,
-js.insecure-cookie, python.xxe-dtd-options and python.tar-extraction. Not yet: go.weak-cipher
-(row go.weak-cipher#test-code), java.xxe, python.xxe and js.react-dangerous-html (decide when the
+Rules that skip it today: the four TLS rules, java.weak-cipher, go.weak-cipher, go.weak-hash,
+go.insecure-cookie, js.insecure-cookie, python.xxe-dtd-options and python.tar-extraction. Not
+yet: java.xxe, python.xxe and js.react-dangerous-html (decide when the
 rule is next changed).
 
 ## Growing the map
@@ -216,6 +232,11 @@ rule is next changed).
   `.tmp/`); `--timeout 0` in `npm run probe` and `npm run measure` (OpenGrep's 5 s default times
   out on a loaded host and drops findings); generators for the shared source blocks of JS, Java
   and Python, as tools/xxe-exclusions.mjs does for java.xxe, so the copies stay byte-identical.
+  Added by the 2026-10-11 run: a check that go.xss's and python.xss's copied command sinks equal
+  their command-injection rules' sinks; `.mjs` and `.cjs` in the js test-file extensions of
+  tools/rules.mjs (check and the pages' Tests links skip them today); a generated 400–800-view
+  Python module and a large minified JS file in `npm run measure`; the sweep with conjunct
+  removal (written again in `.tmp/sweep.mjs` by go-1, java-1, java-2 and python-1).
 
 ## Kind and severity (ruling M1 of 6A)
 
