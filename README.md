@@ -2,7 +2,7 @@
 
 The security rules of [Qualor](https://qualor.dev)'s `qualor` engine: [OpenGrep](https://github.com/opengrep/opengrep)
 rules, mostly taint rules, that follow data from an HTTP request to a dangerous call in JavaScript
-and TypeScript, Python, Java and Go. Once the pack is published, the `qualor/scanner` image will
+and TypeScript, Python, Java, Go and C#. Once the pack is published, the `qualor/scanner` image will
 run them on every scan.
 
 ## Licence

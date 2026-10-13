@@ -4,7 +4,7 @@
 // finding counts per rule. The result is printed and inserted as the newest entry of
 // MEASUREMENTS.md, headed with the last commit that changed rules/.
 //
-// `npm run measure -- --check`: exit 1 unless the newest entry measured all four languages at the
+// `npm run measure -- --check`: exit 1 unless the newest entry measured all five languages at the
 // last commit that changed rules/, in package.json's taint mode (what /release-pack requires before
 // it pins a pack).
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';

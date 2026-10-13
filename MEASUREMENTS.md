@@ -4,7 +4,7 @@ Recall of the rules on the deliberately vulnerable sets of `REFERENCE.md` (desig
 **newest first**, written by `npm run measure -- [lang]...` (`tools/measure.mjs`). Each entry is
 headed with the last commit that changed `rules/`, so it says exactly which rules were measured.
 `/write-rules` measures the languages it touched at the end of a run; `/release-pack` pins a pack
-only when `npm run measure -- --check` passes (the newest entry covers all four languages at the
+only when `npm run measure -- --check` passes (the newest entry covers all five languages at the
 current rules).
 
 - **OWASP Benchmark (Java)** is scored per category with the Benchmark method (TPR = TP/(TP+FN),

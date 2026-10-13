@@ -94,6 +94,7 @@ public class SearchController : ControllerBase
 - ASP.NET Core MVC and Web API
 - ASP.NET Core Minimal APIs
 - ASP.NET Core Razor Pages
+- System.Text.RegularExpressions
 
 ## Known limits
 

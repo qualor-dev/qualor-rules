@@ -73,7 +73,7 @@ public record Message(string Text);
 
 - BinaryFormatter and other .NET formatters
 - Json.NET (Newtonsoft.Json)
-- `javascriptserializer`
+- JavaScriptSerializer (System.Web.Script.Serialization)
 
 ## Known limits
 

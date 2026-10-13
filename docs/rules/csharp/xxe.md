@@ -14,7 +14,7 @@ XML parsers from System.Xml that are set up to read what a document's DTD points
 - an `XmlDocument` given a `new XmlUrlResolver()`;
 - an `XmlTextReader` given a `new XmlUrlResolver()`, unless its `DtdProcessing` is set to `Prohibit` or `Ignore` (it parses DTDs by default).
 
-The rule looks at how the parser is configured, whatever the document; it does not need request data. The defaults are safe and are not reported: `XmlReaderSettings` prohibits DTDs, and with no resolver set (the default since .NET Framework 4.5.2, and in .NET Core and .NET 5 and later) external references are not fetched. Test code is skipped.
+The rule looks at how the parser is configured, whatever the document; it does not need request data. The defaults are safe and are not reported: `XmlReaderSettings` prohibits DTDs, and with no resolver set (the default of `XmlReaderSettings`) external references are not fetched. Test code is skipped.
 <!-- end: what-it-finds -->
 
 ## Why it matters

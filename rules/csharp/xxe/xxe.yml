@@ -34,8 +34,7 @@ rules:
     # Test code is skipped (COVERAGE.md "Test code").
     # Defaults (learn.microsoft.com and the OWASP XXE cheat sheet): XmlReaderSettings has
     # DtdProcessing.Prohibit and, from .NET Framework 4.5.2 and in .NET Core and .NET 5+, a null
-    # XmlResolver (before 4.5.2 the default resolver was an XmlUrlResolver). XmlDocument and
-    # XmlTextReader have a null resolver from 4.5.2 on; XmlTextReader's DtdProcessing default is
+    # XmlResolver (before 4.5.2 the default resolver was an XmlUrlResolver). XmlTextReader's DtdProcessing default is
     # Parse, XmlDocument loads through a reader that parses DTDs. So the rule reports a resolver
     # that is set explicitly, together with DTD processing that is on.
     # Known limits (each has a `todo` line in the test file unless it says otherwise):

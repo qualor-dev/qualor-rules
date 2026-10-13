@@ -17,7 +17,7 @@ rules:
       kind: issue
       severity: medium
       confidence: high
-      frameworks: [aspnetcore-mvc, minimal-apis, razor-pages]
+      frameworks: [aspnetcore-mvc, minimal-apis, razor-pages, system-text-regularexpressions]
       sources:
         - https://cwe.mitre.org/data/definitions/1333.html
         - https://cwe.mitre.org/data/definitions/400.html

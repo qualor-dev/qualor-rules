@@ -84,8 +84,8 @@ Hints in cells are leads for the doc gate, not facts.
 | Regex injection (ReDoS) | regex | CWE-1333, CWE-400 | issue | js.regex-injection | python.regex-injection; candidate: python.regex-injection#regex-module — the third-party `regex` module (re's API); candidate: python.regex-injection#django-lookups — Django ORM `__regex`/`__iregex` lookups with request data | java.regex-injection | n/a: the regexp package (RE2) runs in linear time | csharp.regex-injection |
 | Log injection | log | CWE-117 | hotspot | candidate: js.log-injection — request data into `console.log` or a logger without encoding | candidate: python.log-injection — request data into `logging` calls | candidate: java.log-injection — request data into SLF4J/Log4j calls | candidate: go.log-injection — request data into `log`/`slog` calls | candidate: csharp.log-injection — request data in `ILogger` messages (check whether message templates make it n/a) |
 | TLS verification disabled | tls | CWE-295 | issue | js.tls-verification-disabled | python.tls-verification-disabled | java.tls-verification-disabled | go.tls-verification-disabled | csharp.tls-verification-disabled |
-| Weak cipher or mode | crypto | CWE-327 | issue | candidate: js.weak-cipher — `createCipheriv` with des, rc4 or ecb names | candidate: python.weak-cipher — cryptography's TripleDES/ECB, PyCryptodome DES/ARC4/MODE_ECB | java.weak-cipher; candidate: java.weak-cipher#bouncycastle — Bouncy Castle lightweight engines (`DESEngine`, `ECBBlockCipher`) | go.weak-cipher | candidate: csharp.weak-cipher — DES, TripleDES, RC2, `CipherMode.ECB` (CA5351 overlaps under dotnet end: check) |
-| Weak hash | crypto | CWE-328 | hotspot | candidate: js.weak-hash — `createHash('md5' / 'sha1')` | candidate: python.weak-hash — hashlib md5/sha1 without `usedforsecurity=False` | candidate: java.weak-hash — `MessageDigest.getInstance("MD5" / "SHA-1")` | go.weak-hash | candidate: csharp.weak-hash — MD5, SHA1 (CA5350/CA5351 overlap under dotnet end: check) |
+| Weak cipher or mode | crypto | CWE-327 | issue | candidate: js.weak-cipher — `createCipheriv` with des, rc4 or ecb names | candidate: python.weak-cipher — cryptography's TripleDES/ECB, PyCryptodome DES/ARC4/MODE_ECB | java.weak-cipher; candidate: java.weak-cipher#bouncycastle — Bouncy Castle lightweight engines (`DESEngine`, `ECBBlockCipher`) | go.weak-cipher | candidate: csharp.weak-cipher — DES, TripleDES, RC2, `CipherMode.ECB` (overlaps the .NET SDK's weak-crypto analyzers under dotnet end: check) |
+| Weak hash | crypto | CWE-328 | hotspot | candidate: js.weak-hash — `createHash('md5' / 'sha1')` | candidate: python.weak-hash — hashlib md5/sha1 without `usedforsecurity=False` | candidate: java.weak-hash — `MessageDigest.getInstance("MD5" / "SHA-1")` | go.weak-hash | candidate: csharp.weak-hash — MD5, SHA1 (overlaps the .NET SDK's weak-crypto analyzers under dotnet end: check) |
 | Insecure randomness | random | CWE-330, CWE-338 | hotspot | candidate: js.insecure-random — `Math.random()` for tokens | candidate: python.insecure-random — `random` for tokens (docs point to `secrets`) | candidate: java.insecure-random — `java.util.Random` for tokens | candidate: go.insecure-random — `math/rand` for tokens | candidate: csharp.insecure-random — `System.Random` for tokens (`RandomNumberGenerator` is the safe form) |
 | JWT signature not verified | jwt | CWE-347 | issue | candidate: js.jwt-unverified — jsonwebtoken `algorithms: ['none']`, `decode` for auth | candidate: python.jwt-unverified — PyJWT `options={"verify_signature": False}` | candidate: java.jwt-unverified — jjwt unsigned parsing | candidate: go.jwt-unverified — golang-jwt `ParseUnverified` | candidate: csharp.jwt-unverified — `TokenValidationParameters` with `ValidateIssuerSigningKey = false` or `RequireSignedTokens = false` |
 | Insecure cookie flags | cookie | CWE-614, CWE-1004 | hotspot | js.insecure-cookie | candidate: python.insecure-cookie — `set_cookie` without secure/httponly, Django `SESSION_COOKIE_SECURE = False` | candidate: java.insecure-cookie — `new Cookie` without setSecure/setHttpOnly | go.insecure-cookie; candidate: go.insecure-cookie#gorilla-sessions — gorilla/sessions `Options{Secure, HttpOnly}`, `NewCookieStore` defaults; candidate: go.insecure-cookie#gin-sessions — gin-contrib/sessions `Options` | candidate: csharp.insecure-cookie — `CookieOptions` with `Secure`/`HttpOnly` false, `CookiePolicyOptions` |
@@ -193,8 +193,9 @@ What each language's block holds today (2026-10-11 run):
   the 7 rules. go.xss carries a verbatim copy of go.command-injection's sinks as sanitizers;
   python.xss carries one of python.command-injection's sinks (python-3): a sink change there must
   be copied in the same commit.
-- **csharp** (1 of 12 planned rules: csharp.sql-injection, the seed, 2026-10-13; spec 2026-10-13
-  §5.1). **Three shared regions**, each copied byte for byte and each ended by its own comment:
+- **csharp** (12 rules: sql, command, path, ssrf, xss, open-redirect, ldap, xpath and regex carry
+  the block; unsafe-deserialization, xxe and tls-verification-disabled are misuse rules and carry
+  none; 2026-10-13; spec 2026-10-13 §5.1). **Three shared regions**, each copied byte for byte and each ended by its own comment:
   `pattern-sources` up to `# (End of the shared C# source block; the items below are this rule's
   own.)`, `pattern-propagators` up to `# (End of the shared C# propagators; the items below are
   this rule's own.)`, and `pattern-sanitizers` up to `# (End of the shared C# sanitizers; the
@@ -282,7 +283,7 @@ see above). The globs in use, the same in every rule of a language:
 - **csharp:** `test/`, `tests/`, `*.Tests/`, `*.UnitTests/`, `*.IntegrationTests/`, `*.Test/`, `*.Specs/`, `*Tests.cs`, `*Test.cs`.
 
 A new misuse or hotspot rule copies its language's list; the page says that test code is skipped.
-Rules that skip it today: the four TLS rules, java.weak-cipher, go.weak-cipher, go.weak-hash,
+Rules that skip it today: the five TLS rules, csharp.xxe, csharp.unsafe-deserialization, java.weak-cipher, go.weak-cipher, go.weak-hash,
 go.insecure-cookie, js.insecure-cookie, python.xxe-dtd-options and python.tar-extraction. Not
 yet: java.xxe, python.xxe and js.react-dangerous-html (decide when the
 rule is next changed).

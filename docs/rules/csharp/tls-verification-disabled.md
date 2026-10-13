@@ -70,7 +70,7 @@ public class ApiClient
 
 - HttpClient (System.Net.Http)
 - SslStream
-- `servicepointmanager`
+- ServicePointManager
 
 ## Known limits
 
