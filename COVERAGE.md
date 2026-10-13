@@ -200,7 +200,7 @@ What each language's block holds today (2026-10-11 run):
   this rule's own.)`, and `pattern-sanitizers` up to `# (End of the shared C# sanitizers; the
   items below are this rule's own.)`; a rule's own items follow each marker. Sources:
   (1) **controller actions**: the parameters of public methods of a class whose (first) base
-  class's name ends in `Controller` or `ControllerBase`, of a class without a base list whose own
+  class's name ends in `Controller` or `ControllerBase` (generic bases too: `CrudController<T>`), of a class without a base list whose own
   name ends in `Controller`, or of a class marked `[ApiController]`/`[Controller]` (the documented
   controller conditions; `[NonController]` excepted; a `*Controller` class with another base, such
   as a game engine's script, is not one), except `[FromServices]`/`[FromKeyedServices]`
@@ -232,12 +232,14 @@ What each language's block holds today (2026-10-11 run):
   later in an `Append` chain), `AppendLine`, `AppendFormat`, and the out value of `TryGetValue` on
   a request collection (`Insert(i, x)` needs none: intrafile mode takes it for a container write).
   **Sanitizers**: `int`/`long`/`Guid`/`DateTime.Parse`, `Convert.ToInt32/64`,
-  `Enum.Parse<T>`/`Enum.Parse`, and **allow-lists**: a `static readonly` `Dictionary`, `HashSet`
-  or array of string/number literals (target-typed or not, a `StringComparer` argument allowed)
-  that no method after it in the class changes (indexer write, `Add`, `TryAdd`); clean are its
-  indexer lookups, `GetValueOrDefault(k, <literal>)`, `T.Contains(x) ? x : <literal>`
-  (`ContainsKey` too), and `x` after `if (!T.Contains(x))` whose body returns or throws (block or
-  single statement). `TryParse` out values, ternaries and switch expressions of constants need
+  `Enum.Parse<T>`/`Enum.Parse`, and **allow-lists**: a `static readonly` `Dictionary`, `HashSet`,
+  list or array of string/number literals (target-typed or not, a `StringComparer` argument
+  allowed) that no method after it in the class changes (indexer write, `Add`, `TryAdd`,
+  `AddRange`, `Insert`, `InsertRange`, `UnionWith`, `SymmetricExceptWith`); clean are its indexer
+  lookups, `GetValueOrDefault(k, <literal>)`, `T.Contains(x) ? x : <literal>` (`ContainsKey` too),
+  and `x` after `if (!T.Contains(x))` whose body always leaves the method: a single `return`/`throw`,
+  or one ending in it after at most two other top-level statements (`{ ... return ...; }` would
+  also take a conditional return, one in a loop or in a lambda). `TryParse` out values, ternaries and switch expressions of constants need
   none. (C# has no `const` collections, so spec §5.1's "or a const" has no form.) **OpenGrep
   facts** (2026-10-13): a method-name metavariable binds the generic arguments too
   (`Query<User>`), so name regexes end in `(<.*>)?`, and a literal method name does not match a

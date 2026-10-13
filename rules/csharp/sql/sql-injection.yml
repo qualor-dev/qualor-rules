@@ -71,7 +71,7 @@ rules:
     #   No test line: the test file must parse.
     pattern-sources:
       # MVC and Web API controllers: the parameters of public methods (actions) of a class whose
-      # base class's name ends in Controller (ControllerBase too), of a class without a base list
+      # base class's name ends in Controller (ControllerBase too; generic bases as well), of a class without a base list
       # whose own name ends in Controller, and of a class marked [ApiController] or [Controller]
       # ([NonController] excepted). Numbers, booleans, GUIDs, dates and times (also nullable,
       # arrays and lists of them), enums declared earlier in the file, CancellationToken and
@@ -91,7 +91,7 @@ rules:
                   class $CTRL { ... }
           - metavariable-regex:
               metavariable: $CTRLBASE
-              regex: ^(\w+\.)*\w*(Controller|ControllerBase)$
+              regex: ^(\w+\.)*\w*(Controller|ControllerBase)(<.*>)?$
           - pattern-not-inside: |
               [NonController]
               class $NOTCTRL { ... }
@@ -269,11 +269,12 @@ rules:
           - pattern: Convert.ToInt64(...)
           - pattern: Enum.Parse<$ENUM>(...)
           - pattern: Enum.Parse(...)
-      # An allow-list: a static readonly Dictionary, HashSet or array of literals that no method
-      # after it in its class changes (indexer write, Add, TryAdd). Its lookups (an indexer, or
+      # An allow-list: a static readonly Dictionary, HashSet, list or array of literals that no
+      # method after it in its class changes (indexer write, Add, TryAdd, AddRange, Insert,
+      # InsertRange, UnionWith, SymmetricExceptWith). Its lookups (an indexer, or
       # GetValueOrDefault with a literal default) are clean, and so is the checked value in
-      # `T.Contains(x) ? x : <literal>` and after a guard that leaves the method when the value
-      # is not in the table (`if (!T.Contains(x)) return/throw ...;`, ContainsKey too).
+      # `T.Contains(x) ? x : <literal>` and after a guard that always leaves the method when the
+      # value is not in the table (`if (!T.Contains(x)) return/throw ...;`, ContainsKey too).
       - patterns:
           - pattern-inside: |
               class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... }
@@ -286,6 +287,16 @@ rules:
               class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.Add(...); ... } ... }
           - pattern-not-inside: |
               class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.TryAdd(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.AddRange(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.Insert(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.InsertRange(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.UnionWith(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.SymmetricExceptWith(...); ... } ... }
           - pattern-either:
               - pattern: $TABLE[$K]
               - patterns:
@@ -303,17 +314,25 @@ rules:
                       regex: ^("([^"\\]|\\.)*"|-?\d+|null)$
               - patterns:
                   - pattern-either:
-                      - pattern-inside: |
-                          if (!$TABLE.$CONTAINS($X)) { ... return ...; }
-                          ...
-                      - pattern-inside: |
-                          if (!$TABLE.$CONTAINS($X)) { ... throw $EX; }
-                          ...
+                      # The body leaves the method: its last top-level statement (after at most
+                      # two others) is a return or a throw (a single one also in braces).
                       - pattern-inside: |
                           if (!$TABLE.$CONTAINS($X)) return ...;
                           ...
                       - pattern-inside: |
                           if (!$TABLE.$CONTAINS($X)) throw $EX;
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; return ...; }
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; throw $EX; }
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; $S2; return ...; }
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; $S2; throw $EX; }
                           ...
                   - metavariable-regex:
                       metavariable: $CONTAINS

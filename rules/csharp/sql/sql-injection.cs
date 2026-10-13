@@ -259,6 +259,16 @@ public class ProductsController : ControllerBase
 
     private static readonly HashSet<string> Tags = new HashSet<string> { "new", "sale" };
 
+    private static readonly List<string> Brands = new() { "acme", "globex" };
+
+    private static readonly List<string> Suppliers = new() { "north", "south" };
+
+    private static readonly List<string> Carriers = new() { "post", "courier" };
+
+    private static readonly HashSet<string> Labels = new() { "eco", "local" };
+
+    private static readonly HashSet<string> Badges = new() { "gold", "silver" };
+
     private readonly SqlConnection _conn;
     private readonly ShopContext _db;
     private readonly NpgsqlDataSource _dataSource;
@@ -570,6 +580,105 @@ public class ProductsController : ControllerBase
         return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY name " + dir));
     }
 
+    [HttpGet("direction3")]
+    public IActionResult Direction3(string dir)
+    {
+        if (!Directions.Contains(dir))
+        {
+            return BadRequest();
+        }
+        // ok: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY name " + dir));
+    }
+
+    [HttpGet("direction4")]
+    public IActionResult Direction4(string dir)
+    {
+        if (!Directions.Contains(dir))
+        {
+            _log.Warn("unexpected direction");
+            Response.Headers["X-Reason"] = "direction";
+            return BadRequest();
+        }
+        // ok: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY name " + dir));
+    }
+
+    [HttpGet("region3")]
+    public IActionResult InRegion3(string region)
+    {
+        if (!Regions.Contains(region))
+        {
+            _log.Warn("unexpected region");
+            _metrics.Count("bad-region");
+            throw new ArgumentOutOfRangeException(nameof(region));
+        }
+        // ok: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM history_" + region));
+    }
+
+    // Guards that do not always leave the method.
+    [HttpGet("strict")]
+    public IActionResult Strict(string dir, bool strict)
+    {
+        if (!Directions.Contains(dir))
+        {
+            if (strict) return BadRequest();
+            _log.Warn("unexpected direction");
+        }
+        // ruleid: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY name " + dir));
+    }
+
+    [HttpGet("looped")]
+    public IActionResult Looped(string dir, string[] fallbacks)
+    {
+        if (!Directions.Contains(dir))
+        {
+            foreach (var f in fallbacks)
+            {
+                return BadRequest(f);
+            }
+            _log.Warn("unexpected direction");
+        }
+        // ruleid: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY name " + dir));
+    }
+
+    [HttpGet("deferred")]
+    public IActionResult Deferred(string dir)
+    {
+        if (!Directions.Contains(dir))
+        {
+            Func<IActionResult> reject = () => { return BadRequest(); };
+            _log.Warn("unexpected direction");
+        }
+        // ruleid: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY name " + dir));
+    }
+
+    // Tables that a method grows.
+    [HttpGet("grown")]
+    public IActionResult Grown(string brand, string supplier, string carrier, string label, string badge)
+    {
+        if (!Brands.Contains(brand)) return BadRequest();
+        if (!Suppliers.Contains(supplier)) return BadRequest();
+        if (!Carriers.Contains(carrier)) return BadRequest();
+        if (!Labels.Contains(label)) return BadRequest();
+        if (!Badges.Contains(badge)) return BadRequest();
+        // ruleid: csharp.sql-injection
+        _conn.Query<User>("SELECT * FROM products WHERE brand = '" + brand + "'");
+        // ruleid: csharp.sql-injection
+        _conn.Query<User>("SELECT * FROM products WHERE supplier = '" + supplier + "'");
+        // ruleid: csharp.sql-injection
+        _conn.Query<User>("SELECT * FROM products WHERE carrier = '" + carrier + "'");
+        // ruleid: csharp.sql-injection
+        _conn.Query<User>("SELECT * FROM products WHERE label = '" + label + "'");
+        // ruleid: csharp.sql-injection
+        _conn.Query<User>("SELECT * FROM products WHERE badge = '" + badge + "'");
+        return Ok();
+    }
+
     // Another method of the table is not a membership check.
     [HttpGet("equals")]
     public IActionResult EqualsCheck(string dir, string sort)
@@ -657,6 +766,11 @@ public class ProductsController : ControllerBase
         Views.Add(key, table);
         Schemas.TryAdd(key, table);
         Tags.Add(key);
+        Brands.AddRange(new[] { table });
+        Suppliers.Insert(0, table);
+        Carriers.InsertRange(0, new[] { table });
+        Labels.UnionWith(new[] { table });
+        Badges.SymmetricExceptWith(new[] { table });
         Zones[0] = table;
         return Ok();
     }
@@ -777,6 +891,41 @@ public class ProductsController : ControllerBase
 // A controller found by its base class, and a controller found by its name.
 public abstract class BaseApiController : ControllerBase
 {
+}
+
+// Generic base classes.
+public abstract class CrudController<T> : Controller
+{
+}
+
+public abstract class ApiControllerBase<T> : ControllerBase
+{
+}
+
+public class CatalogController : CrudController<Product>
+{
+    private readonly SqlConnection _conn;
+
+    public CatalogController(SqlConnection conn) => _conn = conn;
+
+    public IActionResult Find(string code)
+    {
+        // ruleid: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM catalog WHERE code = '" + code + "'"));
+    }
+}
+
+public class ShipmentsApi : ApiControllerBase<Shipment>
+{
+    private readonly SqlConnection _conn;
+
+    public ShipmentsApi(SqlConnection conn) => _conn = conn;
+
+    public IActionResult Track(string tracking)
+    {
+        // ruleid: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM shipments WHERE tracking = '" + tracking + "'"));
+    }
 }
 
 public class Inventory : BaseApiController

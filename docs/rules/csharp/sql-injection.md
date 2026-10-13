@@ -141,7 +141,9 @@ public record Product(int Id, string Name);
 - An enum parameter is reported when the enum is declared after its use or in another file,
   although it cannot carry SQL.
 - Allow-lists are recognised as lookups in, and `Contains`/`ContainsKey` checks against, a
-  `static readonly` dictionary, set or array of literals that the class does not change. Other
+  `static readonly` dictionary, set, list or array of literals that the class does not change; a
+  guard counts when its body always leaves the method (its last statement, after at most two
+  others, is a `return` or a `throw`). Other
   checks are not: an equality guard (`if (dir != "ASC" && dir != "DESC") return ...;`) or
   `Enumerable.Contains` called as a static method is still reported, and a variable assigned again
   after a `Contains` guard still counts as checked. `GetValueOrDefault(key)` on a dictionary that
