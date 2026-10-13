@@ -16,7 +16,7 @@ rules:
       owasp: ['A05:2025', 'A03:2021']
       kind: issue
       severity: high
-      confidence: high
+      confidence: medium
       frameworks: [aspnetcore-mvc, minimal-apis, razor-pages, system-xml]
       sources:
         - https://cwe.mitre.org/data/definitions/643.html
@@ -49,12 +49,16 @@ rules:
     # - An enum declared after its use (or in another file) is still a source; an equality guard,
     #   Enumerable.Contains called as a static method or a table in another file is no allow-list; a
     #   variable assigned again after a Contains guard still counts as checked.
-    # - SelectNodes and SelectSingleNode are checked on any receiver in a file that names
-    #   System.Xml (HtmlAgilityPack's HtmlNode methods of the same names, which also take XPath,
-    #   are reported there and missed elsewhere: no test line). XPathNavigator's Select, Evaluate,
-    #   Compile and Matches are checked on a navigator declared as XPathNavigator, one assigned
-    #   from CreateNavigator() with var in the method, or CreateNavigator() itself; a navigator
-    #   reached otherwise is missed (no test line).
+    # - Every sink needs the file to name System.Xml (using System.Xml or System.Xml.XPath): a file
+    #   that gets the namespace from a global using in another file is missed (no test line:
+    #   OpenGrep 1.30 --test fails a test file in which the rule reports nothing, and such a file
+    #   cannot hold a sink the rule reports).
+    # - SelectNodes and SelectSingleNode are checked on any receiver in such a file, so the rule's
+    #   confidence is medium (HtmlAgilityPack's HtmlNode methods of the same names, which also take
+    #   XPath, are reported there and missed elsewhere: no test line). XPathNavigator's Select,
+    #   Evaluate, Compile and Matches are checked on a navigator declared as XPathNavigator, one
+    #   assigned from CreateNavigator() with var in the method, or CreateNavigator() itself; a
+    #   navigator reached otherwise is missed (no test line).
     # - The expression a Compile call returns is not followed into Select or Evaluate: the Compile
     #   call is the finding. An expression compiled in another method from request data and
     #   evaluated here is missed (no test line).

@@ -121,6 +121,8 @@ public class BooksController : ControllerBase
   allow-lists written as `static readonly` tables of literals count; an equality check or
   `Enumerable.Contains(...)` called as a static method does not, and a variable assigned again
   after a check still counts as checked.
+- Only files that name System.Xml (`using System.Xml;` or `using System.Xml.XPath;`) are checked:
+  a file that gets the namespace from a `global using` elsewhere in the project is missed.
 - `SelectNodes` and `SelectSingleNode` are checked on any object in a file that uses System.Xml, so
   the HtmlAgilityPack methods of the same names (which also take XPath) are reported there and
   missed elsewhere. `XPathNavigator` methods are checked on a navigator declared as such or taken
