@@ -2,7 +2,7 @@
 
 # Qualor security rules
 
-The security rules of Qualor's `qualor` engine, 58 in all. Each page says what the rule finds, why
+The security rules of Qualor's `qualor` engine, 59 in all. Each page says what the rule finds, why
 it matters, how to fix it, what the rule misses or may wrongly report, and shows a short example.
 Qualor links every finding to its page.
 
@@ -96,3 +96,4 @@ The key `qualor:<lang>/<name>` is how Qualor names a rule; the rule itself is
 | Rule | Title | Kind | Severity | CWE |
 |---|---|---|---|---|
 | [`qualor:csharp/sql-injection`](csharp/sql-injection.md) | SQL statement built from HTTP request data (C#) | Issue | High | [CWE-89](https://cwe.mitre.org/data/definitions/89.html) |
+| [`qualor:csharp/unsafe-deserialization`](csharp/unsafe-deserialization.md) | Deserialization that lets the data choose the types (C#) | Issue | High | [CWE-502](https://cwe.mitre.org/data/definitions/502.html) |

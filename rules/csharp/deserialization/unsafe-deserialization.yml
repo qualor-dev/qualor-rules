@@ -1,0 +1,87 @@
+rules:
+  - id: csharp.unsafe-deserialization
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      This code deserializes with a serializer that lets the data choose which .NET types to
+      create: BinaryFormatter, SoapFormatter, NetDataContractSerializer, LosFormatter and
+      ObjectStateFormatter always do, Json.NET does once TypeNameHandling is anything but None,
+      and JavaScriptSerializer does with a SimpleTypeResolver. A crafted payload can then build
+      objects whose constructors, setters or finalizers run attacker-chosen code. Use
+      System.Text.Json, DataContractSerializer or XmlSerializer bound to a fixed type; for Json.NET
+      leave TypeNameHandling at None, or set a SerializationBinder that allows only the expected
+      types. Microsoft says BinaryFormatter cannot be made safe, and .NET 9 no longer ships a working
+      implementation of it.
+    metadata:
+      title: Deserialization that lets the data choose the types (C#)
+      cwe: ['CWE-502']
+      owasp: ['A08:2025', 'A08:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [binaryformatter, json-net, javascriptserializer]
+      sources:
+        - https://cwe.mitre.org/data/definitions/502.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Deserialization_Cheat_Sheet.html
+        - https://top10.owasp.org/2025/A08_2025-Software_or_Data_Integrity_Failures
+        - https://top10.owasp.org/2021/A08_2021-Software_and_Data_Integrity_Failures
+        - https://learn.microsoft.com/en-us/dotnet/standard/serialization/binaryformatter-security-guide
+        - https://learn.microsoft.com/en-us/dotnet/standard/serialization/binaryformatter-migration-guide/
+        - https://learn.microsoft.com/en-us/dotnet/api/system.web.script.serialization.javascriptserializer.-ctor
+        - https://www.newtonsoft.com/json/help/html/SerializeTypeNameHandling.htm
+      since: 2026.10.5
+    # A misuse rule: it reports the dangerous type or setting wherever it is, whatever the data is.
+    # Test code is skipped (COVERAGE.md "Test code").
+    # BinaryFormatter on .NET 9 and later throws unless the unsupported compatibility package
+    # (System.Runtime.Serialization.Formatters) is installed; the code is still reported, since it
+    # runs on older targets and with the package.
+    # Known limits (each has a `todo` line in the test file unless it says otherwise):
+    # - A formatter is recognised when its type is written in the same file: `new BinaryFormatter()`,
+    #   or a local, field or parameter declared with the type (also `var x = new BinaryFormatter()`),
+    #   with or without a namespace. One returned by a helper or kept in a member of another file is
+    #   missed.
+    # - TypeNameHandling is reported where it is set to Auto, All, Objects or Arrays literally (an
+    #   initializer, an assignment, or a [JsonProperty]/[JsonObject]/[JsonArray]/[JsonDictionary]
+    #   argument, also ItemTypeNameHandling). A value held in a variable or constant is missed. A
+    #   SerializationBinder that restricts the types is not looked at: the setting is still reported
+    #   (the OWASP cheat sheet allows it with a binder). The attribute form is a text match, so it
+    #   also fires inside a comment or string.
+    # - Serializing with those settings is reported too, since the same settings are normally read
+    #   back (no test line).
+    # - JavaScriptSerializer is reported when SimpleTypeResolver is created in its constructor call;
+    #   a resolver kept in a variable, and custom JavaScriptTypeResolver classes, are missed.
+    # - OpenGrep 1.30 does not parse some C# 11/12 syntax (a raw string literal with two or more
+    #   dollar signs, a type declared without a body such as `class X : Y;`, some multi-line
+    #   collection expressions with a trailing comma): a finding in the skipped part is lost.
+    #   No test line: the test file must parse.
+    paths:
+      exclude:
+        - 'test/'
+        - 'tests/'
+        - '*.Tests/'
+        - '*.UnitTests/'
+        - '*.IntegrationTests/'
+        - '*.Test/'
+        - '*.Specs/'
+        - '*Tests.cs'
+        - '*Test.cs'
+    pattern-either:
+      - patterns:
+          - pattern: ($T $F).Deserialize(...)
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(\w+\.)*(BinaryFormatter|SoapFormatter|NetDataContractSerializer|LosFormatter|ObjectStateFormatter)$
+      - patterns:
+          - pattern: ($U $G).ReadObject(...)
+          - metavariable-regex:
+              metavariable: $U
+              regex: ^(\w+\.)*NetDataContractSerializer$
+      - patterns:
+          - pattern-either:
+              - pattern: TypeNameHandling = $E
+              - pattern: $O.TypeNameHandling = $E
+          - metavariable-regex:
+              metavariable: $E
+              regex: ^(Newtonsoft\.Json\.)?TypeNameHandling\.(Auto|All|Objects|Arrays)$
+      - pattern-regex: '\[\s*(Newtonsoft\.Json\.)?Json(Property|Object|Array|Dictionary|Container)\s*\([^\]]*?\b(Item)?TypeNameHandling\s*=\s*(Newtonsoft\.Json\.)?TypeNameHandling\.(Auto|All|Objects|Arrays)\b'
+      - pattern: new JavaScriptSerializer(new SimpleTypeResolver(...))
