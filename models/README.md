@@ -25,7 +25,8 @@ configuration.
   `Dapper.SqlMapper.Query*` names every method whose name starts with `Query`
   (`QueryFirstOrDefault` too), `System.Linq.Enumerable.*` every method of the type. Without `*` the
   name is exact (`QueryFirst` is not `QueryFirstOrDefault`). Generic methods have no arity in their
-  name (`Query` is `Query<T>`).
+  name (`Query` is `Query<T>`). An indexer is written by its metadata name `Item` (or its
+  `[IndexerName]`): `property-get: Microsoft.AspNetCore.Http.IQueryCollection.Item`.
 - Each entry names its member under one key: `method:` (also `..ctor`), `property-get:` (a read)
   or `property-set:` (a write; an object initializer's too).
 
@@ -103,6 +104,9 @@ unmodelled-external: string-or-collection-return
   `this`, `out` (the `out` and `ref` arguments) or parameter ordinals. Defaults: a method from
   `[this, args]`, a constructor from `[args]`, a property read from `[this]`; to `[return]`.
 - Entries take `method:` or `property-get:`.
+- Element reads of a collection are propagators of its indexer (`property-get: <type>.Item`, from
+  `[this]`): `propagators.yml` names those of the dictionary and list interfaces and of the request
+  collections. An array element read is no member call; it is the engine's own.
 - `unmodelled-external`: what an external member no propagator names does.
   `string-or-collection-return`: its arguments and receiver reach its result when the result is
   string-like or a collection; `none`: nothing passes.

@@ -76,6 +76,52 @@ propagators:
     to: [out]
   - method: Microsoft.Extensions.Primitives.StringValues.op_Implicit
   - method: Microsoft.Extensions.Primitives.StringValues.ToArray
+  # Element reads: an indexer (metadata name Item) of a tainted collection gives a tainted element. OpenGrep
+  # takes `coll[key]` for a container read of a tainted container; the engine needs the indexers named, since
+  # an element of type object (RouteValues["slug"]) or StringValues is neither string-like nor a collection
+  # for `unmodelled-external`. IHeaderDictionary's own indexer, RouteValueDictionary's and Dictionary's match
+  # through the dictionary interfaces; array elements are no member (the engine's own).
+  - property-get: System.Collections.Generic.IDictionary`2.Item
+  - property-get: System.Collections.Generic.IReadOnlyDictionary`2.Item
+  - property-get: System.Collections.Generic.IList`1.Item
+  - property-get: System.Collections.Generic.IReadOnlyList`1.Item
+  - property-get: Microsoft.AspNetCore.Http.IQueryCollection.Item
+  - property-get: Microsoft.AspNetCore.Http.IFormCollection.Item
+  - property-get: Microsoft.AspNetCore.Http.IRequestCookieCollection.Item
+  - property-get: Microsoft.AspNetCore.Http.IHeaderDictionary.Item
+  - property-get: Microsoft.Extensions.Primitives.StringValues.Item
+  # The request body read through its PipeReader (Request.BodyReader: ReadAsync, the result's Buffer, its
+  # segments, decoded with Encoding.GetString). OpenGrep carries taint through every call; none of these
+  # results is string-like or a collection, so `unmodelled-external` would drop it at the first step.
+  # (learn.microsoft.com: dotnet/api/system.io.pipelines.pipereader, system.io.pipelines.readresult,
+  # system.buffers.readonlysequence-1, system.buffers.buffersextensions, system.readonlymemory-1,
+  # system.readonlyspan-1, system.text.encoding.getstring, system.text.encodingextensions.getstring.)
+  - method: System.IO.Pipelines.PipeReader.ReadAsync         # ValueTask<ReadResult>
+    from: [this]
+  - method: System.IO.Pipelines.PipeReader.ReadAtLeastAsync
+    from: [this]
+  - method: System.IO.Pipelines.PipeReader.TryRead
+    from: [this]
+    to: [out]
+  - method: System.IO.Pipelines.PipeReader.AsStream
+    from: [this]
+  - property-get: System.IO.Pipelines.ReadResult.Buffer       # ReadOnlySequence<byte>
+  - property-get: System.Buffers.ReadOnlySequence`1.First     # ReadOnlyMemory<T>
+  - property-get: System.Buffers.ReadOnlySequence`1.FirstSpan # ReadOnlySpan<T>
+  - method: System.Buffers.ReadOnlySequence`1.Slice
+    from: [this]
+  - method: System.Buffers.BuffersExtensions.ToArray          # ReadOnlySequence<T> → T[]
+  - property-get: System.ReadOnlyMemory`1.Span
+  - method: System.ReadOnlyMemory`1.Slice
+    from: [this]
+  - method: System.ReadOnlyMemory`1.ToArray
+  - method: System.ReadOnlySpan`1.Slice
+    from: [this]
+  - method: System.ReadOnlySpan`1.ToArray
+  - method: System.Text.Encoding.GetString                    # byte[], ReadOnlySpan<byte>
+    from: [args]
+  - method: System.Text.EncodingExtensions.GetString          # (this Encoding, in ReadOnlySequence<byte>)
+    from: [1]
   # The request body read as text.
   - method: System.IO.StreamReader..ctor
   - method: System.IO.TextReader.ReadToEnd*     # ReadToEnd, ReadToEndAsync

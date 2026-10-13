@@ -244,6 +244,141 @@ public sealed class SymbolMatchTests
         Assert.False(SymbolMatch.Matches(P("System.Text.StringBuilder.ToString", MemberKind.Method), Called("1.ToString")));
     }
 
+    // Request.BodyReader read as text and the request collections' indexers (review fix round 1, I1/I2), against the
+    // shipped propagators. System.IO.Pipelines is not in the .NET 8 reference assemblies (it ships with ASP.NET Core),
+    // so PipeReader/ReadResult are stubs, as are the ASP.NET Core collections; System.Buffers, System.Memory and
+    // Encoding are the real reference assemblies.
+    private const string BodyStubs = """
+        namespace System.IO.Pipelines
+        {
+            public abstract class PipeReader
+            {
+                public abstract System.Threading.Tasks.ValueTask<ReadResult> ReadAsync(System.Threading.CancellationToken cancellationToken = default);
+                public abstract bool TryRead(out ReadResult result);
+            }
+            public readonly struct ReadResult
+            {
+                public System.Buffers.ReadOnlySequence<byte> Buffer => default;
+            }
+        }
+        namespace Microsoft.Extensions.Primitives
+        {
+            public readonly struct StringValues
+            {
+                public string? this[int index] => null;
+                public static implicit operator string?(StringValues values) => null;
+            }
+        }
+        namespace Microsoft.AspNetCore.Http
+        {
+            public interface IQueryCollection : System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, Microsoft.Extensions.Primitives.StringValues>>
+            {
+                Microsoft.Extensions.Primitives.StringValues this[string key] { get; }
+            }
+            public interface IHeaderDictionary : System.Collections.Generic.IDictionary<string, Microsoft.Extensions.Primitives.StringValues>
+            {
+                new Microsoft.Extensions.Primitives.StringValues this[string key] { get; set; }
+            }
+        }
+        namespace Microsoft.AspNetCore.Routing
+        {
+            public class RouteValueDictionary : System.Collections.Generic.IReadOnlyDictionary<string, object?>
+            {
+                public object? this[string key] => null;
+                public System.Collections.Generic.IEnumerable<string> Keys => throw null!;
+                public System.Collections.Generic.IEnumerable<object?> Values => throw null!;
+                public int Count => 0;
+                public bool ContainsKey(string key) => false;
+                public bool TryGetValue(string key, out object? value) { value = null; return false; }
+                public System.Collections.Generic.IEnumerator<System.Collections.Generic.KeyValuePair<string, object?>> GetEnumerator() => throw null!;
+                System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => throw null!;
+            }
+        }
+        """;
+
+    private const string BodyCode = """
+        using System.Buffers;
+        using System.Collections.Generic;
+        using System.IO.Pipelines;
+        using System.Text;
+        using Microsoft.AspNetCore.Http;
+        public static class Body
+        {
+            public static async System.Threading.Tasks.Task<string> Run(PipeReader reader, IQueryCollection query, IHeaderDictionary headers,
+                Microsoft.AspNetCore.Routing.RouteValueDictionary routes, Dictionary<string, string> dict, IList<string> list)
+            {
+                var result = await reader.ReadAsync();
+                var chunk = Encoding.UTF8.GetString(result.Buffer.FirstSpan);
+                var whole = Encoding.UTF8.GetString(result.Buffer);
+                var bytes = result.Buffer.ToArray();
+                var copied = result.Buffer.First.Span.ToArray();
+                var asArray = result.Buffer.First.ToArray();
+                reader.TryRead(out var again);
+                var q = query["q"];
+                var element = q[0];
+                var text = (string?)q;
+                var header = headers["h"];
+                var slug = routes["slug"];
+                var d = dict["k"];
+                var l = list[0];
+                return chunk + whole + bytes.Length + copied.Length + asArray.Length + element + text + header + slug + d + l;
+            }
+        }
+        """;
+
+    private static readonly Lazy<(CSharpCompilation Compilation, SemanticModel Model, SyntaxNode Root)> BodyCompiled = new(() =>
+    {
+        var compilation = CSharpCompilation.Create("BodyRead",
+            new[] { CSharpSyntaxTree.ParseText(BodyStubs, new CSharpParseOptions(LanguageVersion.CSharp12)), CSharpSyntaxTree.ParseText(BodyCode, new CSharpParseOptions(LanguageVersion.CSharp12)) },
+            Net80.References.All, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, nullableContextOptions: NullableContextOptions.Enable));
+        var tree = compilation.SyntaxTrees[1];
+        return (compilation, compilation.GetSemanticModel(tree), tree.GetRoot());
+    });
+
+    /// The symbol of the expression whose text is `text` (a call, a member access, an element access, or a cast's conversion operator).
+    private static ISymbol BodySymbol(string text)
+    {
+        var (_, model, root) = BodyCompiled.Value;
+        var node = root.DescendantNodes().OfType<ExpressionSyntax>().First(n => n.ToString() == text);
+        if (node is CastExpressionSyntax cast) return ((IConversionOperation)model.GetOperation(cast)!).OperatorMethod!;
+        return model.GetSymbolInfo(node).Symbol ?? throw new InvalidOperationException("no symbol for " + text);
+    }
+
+    [Fact]
+    public void The_body_reader_and_the_request_collections_indexers_are_propagators()
+    {
+        var c = BodyCompiled.Value.Compilation;
+        Assert.Empty(c.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+        Assert.Null(CSharpCompilation.Create("RefsOnly", references: Net80.References.All).GetTypeByMetadataName("System.IO.Pipelines.PipeReader"));   // hence the stub
+        var propagators = ModelLoader.Load(ModelLoaderTests.ShippedModels()).Propagators;
+
+        foreach (var text in new[]
+        {
+            "reader.ReadAsync()", "result.Buffer", "result.Buffer.FirstSpan", "Encoding.UTF8.GetString(result.Buffer.FirstSpan)",
+            "Encoding.UTF8.GetString(result.Buffer)", "result.Buffer.ToArray()", "result.Buffer.First", "result.Buffer.First.Span",
+            "result.Buffer.First.Span.ToArray()", "result.Buffer.First.ToArray()", "reader.TryRead(out var again)",
+            "query[\"q\"]", "q[0]", "(string?)q", "headers[\"h\"]", "routes[\"slug\"]", "dict[\"k\"]", "list[0]",
+        })
+        {
+            var symbol = BodySymbol(text);
+            Assert.True(propagators.Any(p => SymbolMatch.Matches(p.Member, symbol)), $"no propagator matches {text} ({symbol.ToDisplayString()})");
+        }
+    }
+
+    [Fact]
+    public void Indexers_match_by_their_metadata_name_Item()
+    {
+        var indexer = (IPropertySymbol)BodySymbol("query[\"q\"]");
+        Assert.Equal("this[]", indexer.Name);                 // what Roslyn calls it ...
+        Assert.Equal("Item", indexer.MetadataName);           // ... and what the models write
+        Assert.True(SymbolMatch.Matches(P("Microsoft.AspNetCore.Http.IQueryCollection.Item", MemberKind.PropertyGet), indexer));
+        Assert.True(SymbolMatch.Matches(P("Microsoft.AspNetCore.Http.IQueryCollection.It*", MemberKind.PropertyGet), indexer));
+        Assert.True(SymbolMatch.Matches(P("System.Collections.Generic.IReadOnlyDictionary`2.Item", MemberKind.PropertyGet), BodySymbol("routes[\"slug\"]")));
+        Assert.True(SymbolMatch.Matches(P("System.Collections.Generic.IDictionary`2.Item", MemberKind.PropertyGet), BodySymbol("dict[\"k\"]")));
+        Assert.True(SymbolMatch.Matches(P("System.Collections.Generic.IDictionary`2.Item", MemberKind.PropertyGet), BodySymbol("headers[\"h\"]")));   // IHeaderDictionary's `new` indexer
+        Assert.False(SymbolMatch.Matches(P("System.Collections.Generic.IList`1.Item", MemberKind.PropertyGet), BodySymbol("dict[\"k\"]")));
+    }
+
     [Fact]
     public void Metadata_names_of_types()
     {

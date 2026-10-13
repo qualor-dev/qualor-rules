@@ -10,8 +10,9 @@ namespace Qualor.Taint;
 ///   M of interface T (implicitly or explicitly, also through a base class's implementation it overrides).
 /// - Generic members and types match by their definitions (`Query<User>` is `Query`, `List<int>` is `List`1`);
 ///   an extension method called as one (reduced) matches its static form.
-/// - Property patterns take the property itself (the caller knows whether it reads or writes) or the accessor
-///   of their kind (get for property-get; set or init for property-set).
+/// - Property patterns take the property itself or the accessor of their kind (get for property-get; set or init for
+///   property-set). Given the property, both kinds match: the caller picks the patterns by the operation's context
+///   (a read, a write, or both for `x.P += v`). Properties go by metadata name: an indexer is `Item`.
 public static class SymbolMatch
 {
     public static bool Matches(MemberPattern p, ISymbol symbol)
@@ -61,6 +62,10 @@ public static class SymbolMatch
     private static bool IsOrdinaryMethod(IMethodSymbol m) => m.MethodKind is MethodKind.Ordinary or MethodKind.ReducedExtension
         or MethodKind.ExplicitInterfaceImplementation or MethodKind.UserDefinedOperator or MethodKind.Conversion or MethodKind.DelegateInvoke;
 
+    /// The name a model writes: a property's metadata name (an indexer is `Item`, or its [IndexerName], where Roslyn's
+    /// Name is `this[]`), a method's name (no generic arity).
+    private static string MemberName(ISymbol member) => member is IPropertySymbol ? member.MetadataName : member.Name;
+
     private static bool NameMatches(MemberPattern p, string name) =>
         p.Prefix ? name.StartsWith(p.MemberName, StringComparison.Ordinal) : name == p.MemberName;
 
@@ -77,7 +82,7 @@ public static class SymbolMatch
         if (type == null) return false;
 
         // Declared on T or on a class derived from it (overrides and hiding members have the member's own name).
-        if (NameMatches(p, member.Name))
+        if (NameMatches(p, MemberName(member)))
         {
             if (type.TypeKind == TypeKind.Interface)
             {
@@ -99,7 +104,7 @@ public static class SymbolMatch
             if (MetadataName(iface) != p.TypeName) continue;
             foreach (var candidate in iface.GetMembers())
             {
-                if (!KindMatches(p, candidate) || !NameMatches(p, candidate.Name)) continue;
+                if (!KindMatches(p, candidate) || !NameMatches(p, MemberName(candidate))) continue;
                 var impl = type.FindImplementationForInterfaceMember(candidate);
                 if (impl == null) continue;
                 for (var m = member; m != null; m = Overridden(m))
