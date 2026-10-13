@@ -9,4 +9,10 @@ public sealed record CompilationInput(
     string ProjectPath, string TargetFramework, string AssemblyName, OutputKind OutputKind,
     LanguageVersion LanguageVersion, NullableContextOptions Nullable, IReadOnlyList<string> Defines,
     bool AllowUnsafe, string? GeneratedDir, IReadOnlyList<string> Sources,
-    IReadOnlyList<string> References, IReadOnlyList<string> ProjectReferences, string InputFile);
+    IReadOnlyList<string> References, IReadOnlyList<string> ProjectReferences, string InputFile)
+{
+    /// The built assembly of each project reference (`project-reference-assembly=`, ruling R-E4), paired by position
+    /// with ProjectReferences; the loader's fallback when a referenced project has no input or closes a cycle. Empty
+    /// when none were recorded or their count did not match.
+    public IReadOnlyList<string> ProjectReferenceAssemblies { get; init; } = Array.Empty<string>();
+}

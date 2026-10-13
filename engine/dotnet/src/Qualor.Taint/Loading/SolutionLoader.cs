@@ -28,6 +28,9 @@ public static class SolutionLoader
     /// whose TFM is the referencing TFM, else the highest compatible, else the first); project references become
     /// CompilationReferences; generated *.cs under GeneratedDir are added as syntax trees; a cycle or a missing
     /// referenced input falls back to the metadata reference recorded for it (if any) and records an error.
+    /// The fallback is the reference's `project-reference-assembly` (ruling R-E4): when it can be read it is used and
+    /// no error is recorded; otherwise the reference is dropped with an error. Per-project I/O and path failures are
+    /// errors of that project (QT0001), never exceptions.
     public static LoadedSolution Load(IReadOnlyList<CompilationInput> inputs, CancellationToken ct)
     {
         var nodes = new List<Node>();
@@ -55,13 +58,17 @@ public static class SolutionLoader
 
         foreach (var node in nodes)
         {
-            foreach (var reference in node.Input.ProjectReferences)
+            var references = node.Input.ProjectReferences;
+            var assemblies = node.Input.ProjectReferenceAssemblies;
+            for (var n = 0; n < references.Count; n++)
             {
+                var reference = references[n];
+                var assembly = assemblies.Count == references.Count && assemblies[n].Length > 0 ? assemblies[n] : null;
                 var target = byPath.TryGetValue(PathKey(reference), out var candidates)
                     ? Frameworks.Select(candidates, node.Input.TargetFramework, c => c.Input.TargetFramework)
                     : null;
-                if (target is null || ReferenceEquals(target, node)) node.Unresolved.Add(reference);
-                else if (!node.Dependencies.Contains(target))
+                if (target is null || ReferenceEquals(target, node)) node.Unresolved.Add((reference, assembly));
+                else if (node.DependencyAssemblies.TryAdd(target, assembly))
                 {
                     node.Dependencies.Add(target);
                     target.Dependents.Add(node);
@@ -112,9 +119,22 @@ public static class SolutionLoader
         {
             if (seen.Add(PathKey(source))) AddTree(source);
         }
-        if (input.GeneratedDir is { } generatedDir && Directory.Exists(generatedDir))
+        if (input.GeneratedDir is { } generatedDir)
         {
-            var generated = Directory.GetFiles(generatedDir, "*.cs", SearchOption.AllDirectories);
+            string[] generated;
+            try
+            {
+                generated = Directory.GetFiles(generatedDir, "*.cs", SearchOption.AllDirectories);
+            }
+            catch (DirectoryNotFoundException)
+            {
+                generated = Array.Empty<string>();   // no source generator wrote anything
+            }
+            catch (Exception e) when (IsFileFailure(e))
+            {
+                errors.Add(Diagnostic.Create(MissingFile, Location.None, $"generated-dir {generatedDir} cannot be listed: {e.Message}"));
+                generated = Array.Empty<string>();
+            }
             Array.Sort(generated, StringComparer.Ordinal);
             foreach (var file in generated)
             {
@@ -123,25 +143,22 @@ public static class SolutionLoader
         }
 
         var references = new List<MetadataReference>();
-        var recordedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var path in input.References.Distinct(StringComparer.Ordinal))
         {
-            recordedNames.Add(InputReader.FileNameWithoutExtension(path));
             if (cache.Get(path) is { } reference) references.Add(reference);
             else errors.Add(Diagnostic.Create(MissingFile, Location.None, $"reference {path} cannot be read"));
         }
         foreach (var dependency in node.Dependencies)
         {
             if (dependency.Compilation is { } compilation) references.Add(compilation.ToMetadataReference());
-            else errors.Add(Diagnostic.Create(ReferenceCycle, Location.None,
-                $"project reference {dependency.Input.ProjectPath} ({dependency.Input.TargetFramework}) is part of a cycle and was dropped; " +
-                Fallback(recordedNames, dependency.Input.AssemblyName, dependency.Input.ProjectPath)));
+            else if (!AddFallback(node.DependencyAssemblies[dependency], out var why))
+                errors.Add(Diagnostic.Create(ReferenceCycle, Location.None,
+                    $"project reference {dependency.Input.ProjectPath} ({dependency.Input.TargetFramework}) closes a cycle and was dropped; {why}"));
         }
-        foreach (var reference in node.Unresolved)
+        foreach (var (reference, assembly) in node.Unresolved)
         {
-            errors.Add(Diagnostic.Create(MissingProjectReference, Location.None,
-                $"project reference {reference} has no recorded input; " +
-                Fallback(recordedNames, InputReader.FileNameWithoutExtension(reference), reference)));
+            if (!AddFallback(assembly, out var why))
+                errors.Add(Diagnostic.Create(MissingProjectReference, Location.None, $"project reference {reference} has no recorded input; {why}"));
         }
 
         var options = new CSharpCompilationOptions(input.OutputKind,
@@ -152,6 +169,24 @@ public static class SolutionLoader
         errors.AddRange(result.GetDiagnostics(ct).Where(d => d.Severity == DiagnosticSeverity.Error));
         return new ProjectCompilation(input, result, errors);
 
+        // The referenced project's recorded assembly as a metadata reference, in place of its compilation.
+        bool AddFallback(string? assembly, out string why)
+        {
+            why = "";
+            if (assembly is null)
+            {
+                why = "no assembly is recorded for it, its types are missing";
+                return false;
+            }
+            if (cache.Get(assembly) is not { } fallback)
+            {
+                why = $"its recorded assembly {assembly} cannot be read, its types are missing";
+                return false;
+            }
+            if (!references.Contains(fallback)) references.Add(fallback);
+            return true;
+        }
+
         void AddTree(string path)
         {
             SourceText text;
@@ -160,7 +195,7 @@ public static class SolutionLoader
                 using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
                 text = SourceText.From(stream, encoding: null, checksumAlgorithm: SourceHashAlgorithm.Sha256);
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
+            catch (Exception e) when (IsFileFailure(e) || e is InvalidDataException)
             {
                 errors.Add(Diagnostic.Create(MissingFile, Location.None, $"source {path} cannot be read: {e.Message}"));
                 return;
@@ -169,10 +204,9 @@ public static class SolutionLoader
         }
     }
 
-    private static string Fallback(HashSet<string> recordedNames, string assemblyName, string projectPath) =>
-        recordedNames.Contains(assemblyName) || recordedNames.Contains(InputReader.FileNameWithoutExtension(projectPath))
-            ? "its recorded metadata reference is used instead"
-            : "no metadata reference is recorded for it, its types are missing";
+    /// What a recorded path can throw: I/O and access failures, and a malformed path (a NUL character, a bad format).
+    internal static bool IsFileFailure(Exception e) =>
+        e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException;
 
     private static DiagnosticDescriptor Descriptor(string id, string title) =>
         new(id, title, "{0}", "Qualor.Taint.Loading", DiagnosticSeverity.Error, isEnabledByDefault: true);
@@ -200,7 +234,8 @@ public static class SolutionLoader
         public int Index { get; } = index;
         public List<Node> Dependencies { get; } = new();
         public List<Node> Dependents { get; } = new();
-        public List<string> Unresolved { get; } = new();
+        public Dictionary<Node, string?> DependencyAssemblies { get; } = new();
+        public List<(string Project, string? Assembly)> Unresolved { get; } = new();
         public List<Diagnostic> LoadErrors { get; } = new();
         public CSharpCompilation? Compilation { get; set; }
     }
@@ -219,7 +254,7 @@ internal sealed class ReferenceCache
         {
             reference = File.Exists(path) ? MetadataReference.CreateFromFile(path) : null;
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or BadImageFormatException)
+        catch (Exception e) when (SolutionLoader.IsFileFailure(e) || e is BadImageFormatException)
         {
             reference = null;
         }

@@ -115,4 +115,33 @@ public sealed class InputReaderTests : TempDirs
         Assert.Empty(InputReader.Read(missing, out var errors));
         Assert.Contains("absent", Assert.Single(errors));
     }
+
+    [Fact]
+    public void Reads_each_project_reference_with_its_paired_assembly()
+    {
+        var dir = TempDir();
+        File.WriteAllText(Path.Combine(dir, "p.txt"), string.Join("\n",
+            "qualor-compilation=1", @"project=C:\w\App\App.csproj", "tfm=net8.0",
+            @"project-reference=C:\w\Lib\Lib.csproj", @"project-reference-assembly=C:\w\Lib\obj\Debug\net8.0\ref\Lib Ü.dll",
+            "project-reference=/w/Vb/Vb.vbproj", "project-reference-assembly=/w/Vb/bin/Vb.dll"), new UTF8Encoding(false));
+        var i = Assert.Single(InputReader.Read(dir, out var errors));
+        Assert.Empty(errors);
+        Assert.Equal(new[] { @"C:\w\Lib\Lib.csproj", "/w/Vb/Vb.vbproj" }, i.ProjectReferences);
+        Assert.Equal(new[] { @"C:\w\Lib\obj\Debug\net8.0\ref\Lib Ü.dll", "/w/Vb/bin/Vb.dll" }, i.ProjectReferenceAssemblies);
+    }
+
+    [Fact]
+    public void A_project_reference_assembly_count_mismatch_is_an_error_and_the_input_is_kept()
+    {
+        var dir = TempDir();
+        File.WriteAllText(Path.Combine(dir, "m.txt"), string.Join("\n",
+            "qualor-compilation=1", "project=/w/App/App.csproj", "tfm=net8.0",
+            "project-reference=/w/Lib/Lib.csproj", "project-reference=/w/Core/Core.csproj",
+            "project-reference-assembly=/w/Lib/Lib.dll"), new UTF8Encoding(false));
+        var i = Assert.Single(InputReader.Read(dir, out var errors));
+        Assert.Contains("m.txt", Assert.Single(errors));
+        Assert.Contains("project-reference-assembly", errors[0]);
+        Assert.Equal(2, i.ProjectReferences.Count);
+        Assert.Empty(i.ProjectReferenceAssemblies);
+    }
 }

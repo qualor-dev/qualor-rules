@@ -34,7 +34,7 @@ public static class InputReader
         {
             try
             {
-                inputs.Add(Parse(file, File.ReadAllBytes(file)));
+                inputs.Add(Parse(file, File.ReadAllBytes(file), problems));
             }
             catch (FormatException e)
             {
@@ -48,7 +48,7 @@ public static class InputReader
         return inputs;
     }
 
-    private static CompilationInput Parse(string file, byte[] bytes)
+    private static CompilationInput Parse(string file, byte[] bytes, List<string> problems)
     {
         var start = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
         string text;
@@ -69,6 +69,7 @@ public static class InputReader
         var sources = new List<string>();
         var references = new List<string>();
         var projectReferences = new List<string>();
+        var projectReferenceAssemblies = new List<string>();
         for (var n = 1; n < lines.Length; n++)
         {
             var line = lines[n].TrimEnd('\r');
@@ -81,9 +82,26 @@ public static class InputReader
             {
                 case "source": if (value.Length > 0) sources.Add(value); break;
                 case "reference": if (value.Length > 0) references.Add(value); break;
-                case "project-reference": if (value.Length > 0) projectReferences.Add(value); break;
+                case "project-reference": projectReferences.Add(value); break;   // kept empty for the pairing below
+                case "project-reference-assembly": projectReferenceAssemblies.Add(value); break;
                 default: scalars[key] = value; break;
             }
+        }
+
+        // project-reference-assembly lines pair with project-reference lines by position (ruling R-E4); a file
+        // without any (written before R-E4) has no fallback assemblies, a count mismatch is reported.
+        if (projectReferenceAssemblies.Count > 0 && projectReferenceAssemblies.Count != projectReferences.Count)
+        {
+            problems.Add($"{file}: {projectReferenceAssemblies.Count} project-reference-assembly entries for " +
+                $"{projectReferences.Count} project-reference entries; the project references have no fallback assemblies");
+            projectReferenceAssemblies.Clear();
+        }
+        if (projectReferences.Contains(""))
+        {
+            var pairs = projectReferences.Select((p, n) => (Project: p, Assembly: projectReferenceAssemblies.Count > 0 ? projectReferenceAssemblies[n] : null))
+                .Where(x => x.Project.Length > 0).ToList();
+            projectReferences = pairs.Select(x => x.Project).ToList();
+            if (projectReferenceAssemblies.Count > 0) projectReferenceAssemblies = pairs.Select(x => x.Assembly!).ToList();
         }
 
         string Get(string key) => scalars.TryGetValue(key, out var v) ? v : "";
@@ -107,7 +125,10 @@ public static class InputReader
             Sources: sources,
             References: references,
             ProjectReferences: projectReferences,
-            InputFile: file);
+            InputFile: file)
+        {
+            ProjectReferenceAssemblies = projectReferenceAssemblies,
+        };
     }
 
     /// MSBuild's OutputType: Exe and WinExe are applications, Library (or none) a library; others are not supported.

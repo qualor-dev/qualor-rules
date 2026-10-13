@@ -101,6 +101,76 @@ public sealed class SolutionLoaderTests : TempDirs
     }
 
     [Fact]
+    public void A_referenced_project_without_input_falls_back_to_its_recorded_assembly()   // ruling R-E4
+    {
+        var src = TempDir();
+        var libDll = Emit(src, Path.Combine("lib out", "Lib Ü.dll"), "Lib", "public class Svc { public string Get(string s) => s; }");
+        var app = Input(src, "App", "net8.0", new[] { Write(src, "App.cs", "class P { string M() => new Svc().Get(\"x\"); }") },
+            projectRefs: new[] { Path.Combine(src, "Lib", "Lib.csproj") }) with { ProjectReferenceAssemblies = new[] { libDll } };
+        var p = Assert.Single(SolutionLoader.Load(new[] { app }, default).Projects);
+        Assert.Empty(p.Errors);
+        Assert.Contains(p.Compilation.References, r => r is PortableExecutableReference pe && pe.FilePath == libDll);
+    }
+
+    [Fact]
+    public void A_referenced_project_whose_recorded_assembly_is_missing_is_an_error()
+    {
+        var src = TempDir();
+        var app = Input(src, "App", "net8.0", new[] { Write(src, "App.cs", "class P { Svc s; }") },
+            projectRefs: new[] { Path.Combine(src, "Lib.csproj") }) with { ProjectReferenceAssemblies = new[] { Path.Combine(src, "absent", "Lib.dll") } };
+        var p = Assert.Single(SolutionLoader.Load(new[] { app }, default).Projects);
+        Assert.Contains(p.Errors, d => d.Id == SolutionLoader.MissingProjectReferenceId && d.GetMessage().Contains(Path.Combine("absent", "Lib.dll")));
+        Assert.Contains(p.Errors, d => d.Id == "CS0246");
+    }
+
+    [Fact]
+    public void A_cycle_falls_back_to_the_recorded_assembly_of_the_dropped_reference()
+    {
+        var src = TempDir();
+        var bDll = Emit(src, Path.Combine("b", "B.dll"), "B", "public class B { }");
+        var a = Input(src, "A", "net8.0", new[] { Write(src, "A.cs", "public class A { public B? Other; }") },
+            projectRefs: new[] { Path.Combine(src, "B.csproj") }) with { ProjectReferenceAssemblies = new[] { bDll } };
+        var b = Input(src, "B", "net8.0", new[] { Write(src, "B.cs", "public class B { }") },
+            projectRefs: new[] { Path.Combine(src, "A.csproj") }) with { ProjectReferenceAssemblies = new[] { Path.Combine(src, "a", "A.dll") } };
+        var solution = SolutionLoader.Load(new[] { a, b }, default);
+        Assert.Equal(2, solution.Projects.Count);
+        var loadedA = solution.Projects.Single(p => p.Input.AssemblyName == "A");
+        Assert.DoesNotContain(loadedA.Errors, d => d.Id is SolutionLoader.ReferenceCycleId or "CS0246");
+        Assert.Contains(loadedA.Compilation.References, r => r is PortableExecutableReference pe && pe.FilePath == bDll);
+    }
+
+    [Fact]
+    public void Malformed_paths_and_an_unlistable_generated_dir_are_errors_of_that_project_only()   // Review Focus 1
+    {
+        var inputs = WriteTwoProjects();
+        var src = Path.GetDirectoryName(Path.GetDirectoryName(inputs[0].InputFile))!;
+        var broken = inputs.Select(i => i.AssemblyName != "App" ? i : i with
+        {
+            Sources = i.Sources.Append(Path.Combine(src, "bad\0name.cs")).ToList(),
+            References = i.References.Append(Path.Combine(src, "bad\0ref.dll")).ToList(),
+            GeneratedDir = Path.Combine(src, "gen\0dir"),
+        }).ToList();
+        var solution = SolutionLoader.Load(broken, default);
+        Assert.Empty(solution.Projects.Single(p => p.Input.AssemblyName == "Lib").Errors);
+        var app = solution.Projects.Single(p => p.Input.AssemblyName == "App");
+        Assert.Contains(app.Errors, d => d.Id == SolutionLoader.MissingFileId && d.GetMessage().Contains("bad\0name.cs"));
+        Assert.Contains(app.Errors, d => d.Id == SolutionLoader.MissingFileId && d.GetMessage().Contains("bad\0ref.dll"));
+        Assert.Contains(app.Errors, d => d.Id == SolutionLoader.MissingFileId && d.GetMessage().Contains("gen\0dir"));
+        Assert.DoesNotContain(app.Errors, d => d.Id == "CS0246");   // App's own source still binds Lib's Svc
+    }
+
+    [Fact]
+    public void A_generated_dir_that_is_a_file_is_an_error_not_an_exception()
+    {
+        var src = TempDir();
+        var notADir = Write(src, "generated.txt", "not a directory");
+        var input = Input(src, "G", "net8.0", new[] { Write(src, "G.cs", "class G { }") }, generatedDir: notADir);
+        var p = Assert.Single(SolutionLoader.Load(new[] { input }, default).Projects);
+        Assert.NotNull(p.Compilation.GetTypeByMetadataName("G"));
+        Assert.All(p.Errors, d => Assert.Equal(SolutionLoader.MissingFileId, d.Id));
+    }
+
+    [Fact]
     public void A_missing_source_or_reference_file_is_an_error_not_an_exception()
     {
         var src = TempDir();
@@ -150,6 +220,21 @@ public sealed class SolutionLoaderTests : TempDirs
         var path = Path.Combine(dir, relative);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, text, new UTF8Encoding(false));
+        return path;
+    }
+
+    /// A library assembly compiled from text and written to dir/relative, standing in for a project's build output.
+    private static string Emit(string dir, string relative, string assemblyName, string text)
+    {
+        var path = Path.Combine(dir, relative);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var compilation = CSharpCompilation.Create(assemblyName, new[] { CSharpSyntaxTree.ParseText(text) },
+            RefPaths.Value.Select(r => MetadataReference.CreateFromFile(r)), new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        using (var stream = File.Create(path))
+        {
+            var emitted = compilation.Emit(stream);
+            Assert.True(emitted.Success, string.Join("\n", emitted.Diagnostics));
+        }
         return path;
     }
 
