@@ -1,0 +1,88 @@
+# How taint passes through code the engine does not analyse (format v1, models/README.md), shared by every
+# taint model. `from`: this, args (every argument but out ones) or a parameter ordinal; `to`: return, this, out
+# (the out and ref arguments) or a parameter ordinal. Defaults: a method from [this, args], a constructor from
+# [args], a property read from [this]; to [return].
+#
+# The OpenGrep rules (rules/csharp/sql/sql-injection.yml, `pattern-propagators` up to "End of the shared C#
+# propagators") list only what OpenGrep's own taint does not do: text added to a StringBuilder (Append, also
+# later in an Append chain, AppendLine, AppendFormat) and the out value of TryGetValue on a request collection.
+# OpenGrep itself carries taint through every call (arguments and receiver to the result), concatenation and
+# interpolation. The engine carries concatenation and interpolation itself and models the rest here: the items
+# below name the library members the OpenGrep behaviour relies on, and `unmodelled-external` is the default for
+# every other external member (spec §5: only a string-like or collection result; such defaults are counted in
+# the run report).
+# Difference: OpenGrep's TryGetValue propagator applies to any receiver; the engine names the dictionaries
+# (every implementation of the interfaces below: Dictionary, the request's query, form, headers, cookies, route
+# values), since `from: [this]` only matters on a tainted collection.
+#
+# Sources (learn.microsoft.com): dotnet/api/system.string, system.text.stringbuilder, system.io.path,
+# system.uri, system.linq.enumerable, system.collections.generic.idictionary-2,
+# microsoft.extensions.primitives.stringvalues, microsoft.aspnetcore.http.iquerycollection,
+# system.io.streamreader.
+propagators:
+  # Strings: the receiver and the arguments reach the result.
+  - method: System.String..ctor
+  - method: System.String.Concat
+  - method: System.String.Format
+  - method: System.String.Join
+  - method: System.String.Trim*             # Trim, TrimStart, TrimEnd
+  - method: System.String.Substring
+  - method: System.String.Replace
+  - method: System.String.Insert
+  - method: System.String.Remove
+  - method: System.String.Pad*              # PadLeft, PadRight
+  - method: System.String.ToLower*          # ToLower, ToLowerInvariant
+  - method: System.String.ToUpper*
+  - method: System.String.Normalize
+  - method: System.String.Split
+  - method: System.String.ToCharArray
+  - method: System.Object.ToString          # every override too (StringBuilder, Uri, StringValues, ...)
+  - method: System.Convert.ToString
+  # StringBuilder: text added reaches the builder and the call's value (an Append chain).
+  - method: System.Text.StringBuilder..ctor
+  - method: System.Text.StringBuilder.Append*   # Append, AppendLine, AppendFormat, AppendJoin
+    from: [args]
+    to: [this, return]
+  - method: System.Text.StringBuilder.Insert
+    from: [args]
+    to: [this, return]
+  - method: System.Text.StringBuilder.Replace
+    from: [args]
+    to: [this, return]
+  # Paths and URIs.
+  - method: System.IO.Path.Combine
+  - method: System.IO.Path.Join
+  - method: System.IO.Path.GetFullPath
+  - method: System.Uri..ctor
+  - method: System.Uri.TryCreate
+    from: [args]
+    to: [out]
+  - property-get: System.Uri.*              # AbsoluteUri, AbsolutePath, PathAndQuery, Query, Host, ...
+  # Request collections and their values.
+  - method: System.Collections.Generic.IDictionary`2.TryGetValue
+    from: [this]
+    to: [out]
+  - method: System.Collections.Generic.IReadOnlyDictionary`2.TryGetValue
+    from: [this]
+    to: [out]
+  - method: Microsoft.AspNetCore.Http.IQueryCollection.TryGetValue
+    from: [this]
+    to: [out]
+  - method: Microsoft.AspNetCore.Http.IFormCollection.TryGetValue
+    from: [this]
+    to: [out]
+  - method: Microsoft.AspNetCore.Http.IRequestCookieCollection.TryGetValue
+    from: [this]
+    to: [out]
+  - method: Microsoft.Extensions.Primitives.StringValues.op_Implicit
+  - method: Microsoft.Extensions.Primitives.StringValues.ToArray
+  # The request body read as text.
+  - method: System.IO.StreamReader..ctor
+  - method: System.IO.TextReader.ReadToEnd*     # ReadToEnd, ReadToEndAsync
+    from: [this]
+  - method: System.IO.TextReader.ReadLine*
+    from: [this]
+  # LINQ: the source sequence (an extension method's `this` is its first argument) and the other arguments
+  # (a second sequence, a seed) reach the result.
+  - method: System.Linq.Enumerable.*
+unmodelled-external: string-or-collection-return

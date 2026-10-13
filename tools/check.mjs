@@ -1,9 +1,11 @@
 // `npm run check`: the layout, the metadata schema, unique ids, test annotations and the
-// clean-room source list of every rule (README "Checks"). Exit 1 with one line per problem.
-import { readFileSync } from 'node:fs';
+// clean-room source list of every rule, and that every engine model has its rule (README "Checks").
+// Exit 1 with one line per problem.
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
+import { parseAllDocuments } from 'yaml';
 import { readRule, ruleFiles, VERSION } from './rules.mjs';
 
 /** Bounds of Qualor's manifest schema that the metadata schema cannot express. */
@@ -21,6 +23,7 @@ export function checkRepository(root) {
     problems.push('package.json: "taintIntrafile" must be true or false (the taint mode the rules are tested in)');
   }
   const seen = new Map();
+  const ids = new Set();
   let files;
   try {
     files = ruleFiles(root);
@@ -43,6 +46,52 @@ export function checkRepository(root) {
     }
     if (seen.has(r.qualorId)) problems.push(`${file}: id ${r.qualorId} also in ${seen.get(r.qualorId)}`);
     seen.set(r.qualorId, file);
+    if (typeof r.rule.id === 'string') ids.add(r.rule.id);
+  }
+  problems.push(...checkModels(root, ids));
+  return problems;
+}
+
+/** The engine's shared models (models/README.md): in models/csharp, but no rule's model. */
+export const SHARED_MODELS = Object.freeze(['sources.yml', 'propagators.yml']);
+
+/**
+ * models/csharp, the Roslyn engine's models: every `<name>.yml` but the shared files is the model of
+ * the rule `csharp.<name>`, which must exist (`ruleIds`: the OpenGrep ids of the rules) and which its
+ * `rule:` key names. The engine's own loader checks the rest of the format (`npm run test:engine`).
+ */
+export function checkModels(root, ruleIds) {
+  const problems = [];
+  const dir = path.join(root, 'models');
+  if (!existsSync(dir)) return problems;
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    if (e.isFile() && e.name === 'README.md') continue;
+    if (!e.isDirectory() || e.isSymbolicLink() || e.name !== 'csharp') {
+      problems.push(`models/${e.name}: the engine's models are models/csharp only (and models/README.md)`);
+    }
+  }
+  const lang = path.join(dir, 'csharp');
+  if (!existsSync(lang)) return problems;
+  for (const shared of SHARED_MODELS) {
+    if (!existsSync(path.join(lang, shared))) problems.push(`models/csharp/${shared}: missing (the engine's shared model)`);
+  }
+  for (const e of readdirSync(lang, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    const file = `models/csharp/${e.name}`;
+    if (!e.isFile() || e.isSymbolicLink() || !/^[a-z0-9]+(-[a-z0-9]+)*\.yml$/.test(e.name)) {
+      problems.push(`${file}: only <name>.yml model files belong in models/csharp`);
+      continue;
+    }
+    const text = readFileSync(path.join(root, file), 'utf8');
+    if (text.includes('\r')) problems.push(`${file}: carriage return (the repository uses LF only)`);
+    const docs = parseAllDocuments(text, { uniqueKeys: true });
+    if (docs.length !== 1 || docs[0].errors.length > 0) {
+      problems.push(`${file}: not one valid YAML document`);
+      continue;
+    }
+    if (SHARED_MODELS.includes(e.name)) continue;
+    const id = `csharp.${e.name.slice(0, -'.yml'.length)}`;
+    if (!ruleIds.has(id)) problems.push(`${file}: no rule ${id} (a model needs its rule in rules/csharp/)`);
+    if (docs[0].toJS()?.rule !== id) problems.push(`${file}: rule must be ${id} (the file's name)`);
   }
   return problems;
 }

@@ -1,0 +1,108 @@
+# The engine's model of csharp.sql-injection (format v1, models/README.md): the sinks and sanitizers of
+# rules/csharp/sql/sql-injection.yml with types in place of names. Sources and propagators: sources.yml and
+# propagators.yml (shared).
+#
+# Sources: learn.microsoft.com dotnet/api/microsoft.data.sqlclient.sqlcommand,
+# dotnet/api/system.data.common.dbcommand.commandtext, dotnet/api/system.data.common.dbdatasource.createcommand,
+# dotnet/standard/data/sqlite/parameters, ef/core/querying/sql-queries,
+# ef/core/what-is-new/ef-core-3.x/breaking-changes; www.npgsql.org/doc/basic-usage.html;
+# mysqlconnector.net/tutorials/basic-api/; github.com/DapperLib/Dapper/blob/main/Readme.md.
+rule: csharp.sql-injection
+kind: taint
+sinks:
+  # ADO.NET: the command text of SqlClient, Npgsql, Microsoft.Data.Sqlite and MySqlConnector commands
+  # (Parameters bind values), and DbDataSource.CreateCommand.
+  # Differences from the OpenGrep rule, which matches the constructors by the type's simple name and
+  # CommandText on any receiver:
+  # - the engine names the libraries' types: System.Data.SqlClient (the older SqlClient package, same API) and
+  #   MySql.Data's MySqlCommand (Oracle's connector, same constructor) are listed because OpenGrep's name match
+  #   takes them too; a type of another library that happens to be named SqlCommand is not a sink;
+  # - CommandText is a sink on every DbCommand, DbBatchCommand and IDbCommand (overrides and implementations
+  #   included), not on an unrelated class's CommandText property;
+  # - `param-types` limits SqlDataAdapter and MySqlConnector's MySqlCommand to the overloads whose first
+  #   parameter is the SQL text (their other overloads take a command or a connection first);
+  # - CreateCommand of a data source deriving from DbDataSource (NpgsqlDataSource's `new` CreateCommand) counts.
+  - method: Microsoft.Data.SqlClient.SqlCommand..ctor
+    args: [0]
+  - method: System.Data.SqlClient.SqlCommand..ctor
+    args: [0]
+  - method: Microsoft.Data.SqlClient.SqlDataAdapter..ctor
+    args: [0]
+    param-types: [System.String]
+  - method: System.Data.SqlClient.SqlDataAdapter..ctor
+    args: [0]
+    param-types: [System.String]
+  - method: Npgsql.NpgsqlCommand..ctor
+    args: [0]
+  - method: Npgsql.NpgsqlBatchCommand..ctor
+    args: [0]
+  - method: Microsoft.Data.Sqlite.SqliteCommand..ctor
+    args: [0]
+  - method: MySqlConnector.MySqlCommand..ctor
+    args: [0]
+    param-types: [System.String]
+  - method: MySql.Data.MySqlClient.MySqlCommand..ctor
+    args: [0]
+    param-types: [System.String]
+  - property-set: System.Data.Common.DbCommand.CommandText
+  - property-set: System.Data.Common.DbBatchCommand.CommandText
+  - property-set: System.Data.IDbCommand.CommandText
+  - method: System.Data.Common.DbDataSource.CreateCommand
+    args: [0]
+  # EF Core: the Raw methods take the SQL text as it is (the arguments after it are parameters). Extension
+  # methods: the SQL text is parameter 1 (`this` is 0).
+  - method: Microsoft.EntityFrameworkCore.RelationalQueryableExtensions.FromSqlRaw
+    args: [1]
+  - method: Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRaw
+    args: [1]
+  - method: Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlRawAsync
+    args: [1]
+  - method: Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.SqlQueryRaw
+    args: [1]
+  # Older EF Core: FromSql and ExecuteSqlCommand(Async) given a plain string (RawSqlString). Their
+  # FormattableString overloads make an interpolated string into parameters and are no sinks.
+  # Difference: OpenGrep tells the overloads apart by the argument's form (an interpolated string literal in
+  # place is safe) and so reports a FormattableString variable (a Known limit); the engine goes by the
+  # overload the compiler chose (`param-types`), so a FormattableString variable is safe, as EF Core's docs say.
+  - method: Microsoft.EntityFrameworkCore.RelationalQueryableExtensions.FromSql
+    args: [1]
+    param-types: [System.String, Microsoft.EntityFrameworkCore.RawSqlString]
+  - method: Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlCommand
+    args: [1]
+    param-types: [System.String, Microsoft.EntityFrameworkCore.RawSqlString]
+  - method: Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlCommandAsync
+    args: [1]
+    param-types: [System.String, Microsoft.EntityFrameworkCore.RawSqlString]
+  # Dapper: the SQL text of its connection extension methods (Query, QueryAsync, QueryFirst(OrDefault)(Async),
+  # QuerySingle(OrDefault)(Async), QueryMultiple(Async), QueryUnbufferedAsync, Execute(Async),
+  # ExecuteScalar(Async), ExecuteReader(Async): SqlMapper's Query* and Execute* methods) and of a
+  # CommandDefinition (the parameter object binds values).
+  # Differences: OpenGrep matches these names on any receiver in a file that imports Dapper, and only there;
+  # the engine matches Dapper's own methods wherever they are called (a global using included; another
+  # library's Query is not reported). `param-types` keeps the SQL text: the overloads that take a Type or a
+  # CommandDefinition at parameter 1 have no SQL text there.
+  - method: Dapper.SqlMapper.Query*
+    args: [1]
+    param-types: [System.String]
+  - method: Dapper.SqlMapper.Execute*
+    args: [1]
+    param-types: [System.String]
+  - method: Dapper.CommandDefinition..ctor
+    args: [0]
+# Shared C# sanitizers (the same in every taint model, as the OpenGrep rules' shared region up to "End of the
+# shared C# sanitizers"): conversions to numbers, GUIDs, dates and enums. The result of the call is clean.
+# (A TryParse out value, a ternary or a switch expression of constants needs none: the engine never carries
+# taint into a number or out of a constant.)
+# Not here: the OpenGrep region's allow-lists (a static readonly Dictionary/HashSet/list/array of literals that
+# no method changes; its lookups, `T.Contains(x) ? x : literal`, and `x` after `if (!T.Contains(x)) return/throw`).
+# They depend on the table's declaration and on control flow, which format v1 does not express: the engine's
+# allow-list and guard support (plan Task 11).
+sanitizers:
+  - method: System.Int32.Parse
+  - method: System.Int64.Parse
+  - method: System.Guid.Parse
+  - method: System.DateTime.Parse
+  - method: System.Convert.ToInt32
+  - method: System.Convert.ToInt64
+  - method: System.Enum.Parse
+guards: []

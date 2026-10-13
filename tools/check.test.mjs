@@ -15,7 +15,7 @@ const TEST = 'rules/python/sql/sql-injection.py';
 /** checkRepository of a copy of the repository after `edit(dir)`. */
 function withTree(edit) {
   const dir = mkdtempSync(path.join(tmpdir(), 'qualor-rules-check-'));
-  for (const f of ['package.json', 'schema', 'rules']) {
+  for (const f of ['package.json', 'schema', 'rules', 'models']) {
     cpSync(path.join(root, f), path.join(dir, f), { recursive: true });
   }
   edit(dir);
@@ -147,4 +147,40 @@ test('accepts a csharp rule with its test file and refuses another spelling of t
     }).filter((p) => p.includes('csharp/sql/demo'));
   assert.match(withCsharp('c#').join('\n'), /languages must be \[csharp\]/);
   assert.doesNotMatch(withCsharp('csharp').join('\n'), /languages|must be rules|no test file|lang must/);
+});
+
+test('every engine model names an existing rule, and the shared models are there', () => {
+  const MODEL = 'models/csharp/sql-injection.yml';
+  // A model whose rule does not exist, or whose rule went away.
+  assert.match(
+    withTree((dir) => writeFileSync(path.join(dir, 'models/csharp/nosuch.yml'), 'rule: csharp.nosuch\nkind: taint\n')).join('\n'),
+    /models\/csharp\/nosuch\.yml: no rule csharp\.nosuch/,
+  );
+  assert.match(
+    withTree((dir) => {
+      for (const ext of ['.yml', '.cs']) rmSync(path.join(dir, `rules/csharp/sql/sql-injection${ext}`));
+    }).join('\n'),
+    /models\/csharp\/sql-injection\.yml: no rule csharp\.sql-injection/,
+  );
+  // The model's own rule key, a file that is not one YAML document, and a file that is not a model.
+  assert.match(
+    withChange(MODEL, (s) => s.replace('rule: csharp.sql-injection', 'rule: csharp.sqli')).join('\n'),
+    /models\/csharp\/sql-injection\.yml: rule must be csharp\.sql-injection/,
+  );
+  assert.match(withChange(MODEL, (s) => `${s}rule: twice\n`).join('\n'), /sql-injection\.yml: not one valid YAML document/);
+  assert.match(
+    withTree((dir) => writeFileSync(path.join(dir, 'models/csharp/notes.txt'), 'x')).join('\n'),
+    /models\/csharp\/notes\.txt: only <name>\.yml model files/,
+  );
+  // The shared files are no rule's model but must exist; no engine for another language.
+  assert.match(
+    withTree((dir) => rmSync(path.join(dir, 'models/csharp/propagators.yml'))).join('\n'),
+    /models\/csharp\/propagators\.yml: missing/,
+  );
+  assert.match(
+    withTree((dir) => mkdirSync(path.join(dir, 'models/java'))).join('\n'),
+    /models\/java: the engine's models are models\/csharp only/,
+  );
+  // A repository without models is fine (the OpenGrep rules alone).
+  assert.deepEqual(withTree((dir) => rmSync(path.join(dir, 'models'), { recursive: true })), []);
 });

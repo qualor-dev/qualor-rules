@@ -1,0 +1,170 @@
+# The ASP.NET Core request sources of the engine (format v1, models/README.md), shared by every taint
+# model. They follow the shared C# source block of the OpenGrep rules (rules/csharp/sql/sql-injection.yml,
+# `pattern-sources` up to "End of the shared C# source block"; COVERAGE.md "Source blocks", csharp). Where
+# OpenGrep had to guess from names and the engine knows the types, the engine uses the types; each such
+# difference is written next to its item.
+#
+# Sources (learn.microsoft.com):
+#   aspnet/core/mvc/controllers/actions, aspnet/core/mvc/models/model-binding,
+#   aspnet/core/fundamentals/minimal-apis/parameter-binding, .../minimal-apis/route-handlers,
+#   aspnet/core/razor-pages/, dotnet/api/microsoft.aspnetcore.http.httprequest,
+#   dotnet/api/microsoft.aspnetcore.http.httprequestjsonextensions.
+
+# (1) MVC and Web API controllers: the parameters of their public methods (actions).
+# A class is a controller when it derives from one of `bases`, when one of its base classes (at any depth) has a
+# name ending in one of `base-name-suffixes`, when it derives from System.Object only (interfaces allowed) and its
+# own name ends in one of `name-suffixes`, or when it (or a base class) carries one of `class-attributes`; not
+# when it carries one of `not-class-attributes`. Methods with one of `not-method-attributes` are no actions.
+# Differences from the OpenGrep rule:
+# - OpenGrep sees the name of the direct base class only; the engine follows the whole base chain, so a
+#   controller two steps away from ControllerBase (`A : MyBase`, `MyBase : Controller`) counts (an OpenGrep
+#   Known limit), and so does a controller whose base is named otherwise but derives from ControllerBase.
+# - OpenGrep takes a class named *Controller as a controller only when it has no base list; the engine also when
+#   the base list holds interfaces only (the documented condition is the name; a class with another base class,
+#   such as a game engine's script, still is not one).
+controllers:
+  bases: [Microsoft.AspNetCore.Mvc.ControllerBase]
+  base-name-suffixes: [Controller, ControllerBase]
+  name-suffixes: [Controller]
+  class-attributes: [Microsoft.AspNetCore.Mvc.ApiControllerAttribute, Microsoft.AspNetCore.Mvc.ControllerAttribute]
+  not-class-attributes: [Microsoft.AspNetCore.Mvc.NonControllerAttribute]
+  not-method-attributes: [Microsoft.AspNetCore.Mvc.NonActionAttribute]
+  public-methods-only: true
+
+# (2) Razor Pages: the parameters of the public handler methods (names starting with one of `handler-prefixes`:
+# OnGet, OnGetAsync, OnPostDelete, ...) of a class derived from one of `bases`.
+# Difference: OpenGrep takes any class whose direct base class's name ends in PageModel; the engine requires
+# the real PageModel among the base classes (at any depth).
+razor-pages:
+  bases: [Microsoft.AspNetCore.Mvc.RazorPages.PageModel]
+  handler-prefixes: [OnGet, OnPost, OnPut, OnDelete, OnPatch, OnHead, OnOptions]
+  public-methods-only: true
+
+# (3) Properties model binding sets, in any class (the attributes are MVC's own and bind in controllers too):
+# a property with one of `property-attributes`, every public property of a class with one of `class-attributes`.
+# Difference: OpenGrep requires an auto-property (`{ get; set; }`, with or without an initializer); the engine
+# takes the property whatever its accessors' bodies.
+bound-properties:
+  property-attributes: [Microsoft.AspNetCore.Mvc.BindPropertyAttribute]
+  class-attributes: [Microsoft.AspNetCore.Mvc.BindPropertiesAttribute]
+
+# (4) Minimal APIs: the parameters of `source-types` (also Nullable of them: StringValues?) of a handler given to
+# one of `map-methods` (a lambda, a local function or a method group).
+# Difference: OpenGrep follows a method-group handler only when it is a local function of the top-level program
+# or a method of the class whose MapXxx extension method maps it (a Known limit); the engine resolves the
+# delegate to its method wherever it is declared. Like OpenGrep, a complex-type parameter bound from the JSON
+# body without [FromBody] is not a source (it cannot be told from a DI service without DI analysis).
+minimal-api:
+  map-methods:
+    - Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapGet
+    - Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapPost
+    - Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapPut
+    - Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapDelete
+    - Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapPatch
+    - Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapMethods
+  source-types:
+    - System.String
+    - System.String[]
+    - Microsoft.Extensions.Primitives.StringValues
+    - Microsoft.AspNetCore.Http.IFormFile
+    - Microsoft.AspNetCore.Http.IFormFileCollection
+    - Microsoft.AspNetCore.Http.IFormCollection
+    - System.IO.Stream
+    - System.IO.Pipelines.PipeReader
+
+# (5) Parameters bound from the request by one of these attributes, in any method, local function or lambda
+# (Minimal API handlers, method-group handlers, Razor Pages handlers), the `parameter-types` excepted.
+binding-attributes:
+  - Microsoft.AspNetCore.Mvc.FromQueryAttribute
+  - Microsoft.AspNetCore.Mvc.FromRouteAttribute
+  - Microsoft.AspNetCore.Mvc.FromFormAttribute
+  - Microsoft.AspNetCore.Mvc.FromHeaderAttribute
+  - Microsoft.AspNetCore.Mvc.FromBodyAttribute
+  - Microsoft.AspNetCore.Http.AsParametersAttribute
+
+# Parameters with one of these attributes are DI services, never sources, wherever they are.
+# Difference: OpenGrep excepts [FromKeyedServices] in controllers only and [FromServices] in controllers and
+# Razor Pages handlers; the engine excepts both everywhere (a service is DI in every handler; in a Minimal API
+# handler OpenGrep's string-like types make the case rare).
+not-source-attributes:
+  - Microsoft.AspNetCore.Mvc.FromServicesAttribute
+  - Microsoft.Extensions.DependencyInjection.FromKeyedServicesAttribute
+
+# The types that are never sources in (1), (2), (3) and (5): `scalars` (also Nullable of them), arrays and
+# `scalar-collections` of them (elements Nullable too) unless the element is one of `not-scalar-elements`, enums
+# (`enums-are-scalar`), `not-source-types`, and interfaces, which are DI services (`interfaces-are-services`),
+# except `source-interfaces`.
+# Differences from the OpenGrep rule:
+# - Enums: OpenGrep excepts an enum only when it is declared earlier in the same file, and not in (3); the engine
+#   knows every enum type, wherever it is declared, and excepts it everywhere (a Known limit of OpenGrep).
+# - char: OpenGrep takes `char[]` (and `char?[]`) for scalars but `List<char>` for a source; the engine takes both
+#   for sources, since a sequence of chars carries text (`not-scalar-elements`).
+# - Interfaces: OpenGrep excepts every type whose name starts with I and an upper-case letter, except names
+#   starting with IForm or IReadOnly and IEnumerable<, IList<, ICollection<, IDictionary<, ISet<; the engine
+#   names the interfaces that are sources (an interface named IFormatter, which OpenGrep's name test takes for a
+#   source, is a DI service here; the non-generic IEnumerable is a service in both).
+parameter-types:
+  scalars:
+    - System.Byte
+    - System.SByte
+    - System.Int16
+    - System.UInt16
+    - System.Int32
+    - System.UInt32
+    - System.Int64
+    - System.UInt64
+    - System.Decimal
+    - System.Double
+    - System.Single
+    - System.Boolean
+    - System.Char
+    - System.Guid
+    - System.DateTime
+    - System.DateTimeOffset
+    - System.DateOnly
+    - System.TimeOnly
+    - System.TimeSpan
+  scalar-collections:
+    - System.Collections.Generic.List`1
+    - System.Collections.Generic.IList`1
+    - System.Collections.Generic.IEnumerable`1
+    - System.Collections.Generic.ICollection`1
+    - System.Collections.Generic.IReadOnlyList`1
+    - System.Collections.Generic.IReadOnlyCollection`1
+    - System.Collections.Generic.HashSet`1
+    - System.Collections.Generic.ISet`1
+  not-scalar-elements: [System.Char]
+  enums-are-scalar: true
+  not-source-types: [System.Threading.CancellationToken]
+  interfaces-are-services: true
+  source-interfaces:
+    - Microsoft.AspNetCore.Http.IFormFile
+    - Microsoft.AspNetCore.Http.IFormFileCollection
+    - Microsoft.AspNetCore.Http.IFormCollection
+    - System.Collections.Generic.IEnumerable`1
+    - System.Collections.Generic.IList`1
+    - System.Collections.Generic.ICollection`1
+    - System.Collections.Generic.IDictionary`2
+    - System.Collections.Generic.ISet`1
+    - System.Collections.Generic.IReadOnlyList`1
+    - System.Collections.Generic.IReadOnlyCollection`1
+    - System.Collections.Generic.IReadOnlyDictionary`2
+    - System.Collections.Generic.IReadOnlySet`1
+
+# (6) The request: these members of an HttpRequest are sources (a read of the property, the value of the call).
+# Difference: OpenGrep matches the member names on a receiver spelled `Request`, `$CTX.Request`, an HttpRequest
+# parameter or a `var` copy of one of them; the engine matches the members of HttpRequest on any receiver of
+# that type (a field, a property, a helper's return value).
+members:
+  - property-get: Microsoft.AspNetCore.Http.HttpRequest.Query
+  - property-get: Microsoft.AspNetCore.Http.HttpRequest.Form
+  - property-get: Microsoft.AspNetCore.Http.HttpRequest.Headers
+  - property-get: Microsoft.AspNetCore.Http.HttpRequest.Cookies
+  - property-get: Microsoft.AspNetCore.Http.HttpRequest.RouteValues
+  - property-get: Microsoft.AspNetCore.Http.HttpRequest.Path
+  - property-get: Microsoft.AspNetCore.Http.HttpRequest.PathBase
+  - property-get: Microsoft.AspNetCore.Http.HttpRequest.QueryString
+  - property-get: Microsoft.AspNetCore.Http.HttpRequest.Body
+  - property-get: Microsoft.AspNetCore.Http.HttpRequest.BodyReader
+  - method: Microsoft.AspNetCore.Http.HttpRequest.ReadFormAsync
+  - method: Microsoft.AspNetCore.Http.HttpRequestJsonExtensions.ReadFromJsonAsync

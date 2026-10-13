@@ -35,6 +35,9 @@ finding to its rule's page, `docs/rules/<lang>/<name>.md`.
   `cwe`, `owasp`, `kind` (`issue` for taint and definite misuse, `hotspot` for "review this"),
   `severity`, `confidence`, `frameworks`, `sources` (the documents the rule was written from; see
   [`CLEAN-ROOM.md`](CLEAN-ROOM.md)) and `since` (the pack version that added it).
+- `models/csharp/`: the models of the Roslyn taint engine (`engine/dotnet`) for the C# rules, one
+  `<name>.yml` per rule `csharp.<name>` and the shared `sources.yml` and `propagators.yml`; the
+  format is [`models/README.md`](models/README.md).
 - `docs/rules/<lang>/<name>.md`: the rule's public page. `npm run docs` builds its header,
   frameworks, references and test links from the rule's metadata, and the index
   `docs/rules/README.md`; the sections between `<!-- begin: ... -->` and `<!-- end: ... -->` are
