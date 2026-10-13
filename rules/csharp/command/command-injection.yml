@@ -1,0 +1,474 @@
+rules:
+  - id: csharp.command-injection
+    mode: taint
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request chooses the program that Process.Start runs, or reaches the
+      command line of a shell (cmd /c, sh -c, bash -c, PowerShell -Command). Run a fixed program
+      without a shell and pass the values as separate arguments (ProcessStartInfo.ArgumentList),
+      or choose the command from a fixed allow-list.
+    metadata:
+      title: OS command built from HTTP request data (C#)
+      cwe: ['CWE-78']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [aspnetcore-mvc, minimal-apis, razor-pages, system-diagnostics-process]
+      sources:
+        - https://cwe.mitre.org/data/definitions/78.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html
+        - https://learn.microsoft.com/en-us/aspnet/core/mvc/controllers/actions
+        - https://learn.microsoft.com/en-us/aspnet/core/mvc/models/model-binding
+        - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/minimal-apis/parameter-binding
+        - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/minimal-apis/route-handlers
+        - https://learn.microsoft.com/en-us/aspnet/core/razor-pages/
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.httprequest
+        - https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.process.start
+        - https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.processstartinfo
+        - https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.processstartinfo.argumentlist
+        - https://learn.microsoft.com/en-us/windows-server/administration/windows-commands/cmd
+        - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_pwsh
+        - https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_powershell_exe
+        - https://www.gnu.org/software/bash/manual/bash.html#Invoking-Bash
+      since: 2026.10.5
+    # Known limits (each has a `todo` line in the test file, unless it says otherwise):
+    # - Taint is followed through the methods of one file (OpenGrep's --taint-intrafile), not into
+    #   other files: request data handed to a service of another file is missed. Request data
+    #   read by an expression-bodied method (`=> expr`) or by any property getter (block body
+    #   too), such as `string Tool => Request.Headers[...]`, is missed. A pass-through helper
+    #   (`Wrap(c) => "/c " + c`) given request data is followed. Block-bodied methods work.
+    # - Minimal APIs: a complex-type parameter bound from the JSON body without [FromBody] is not a
+    #   source; a handler given as a method group of another class (Handlers.Run) is missed.
+    # - A class named *Controller whose base class is named otherwise (a base two steps away from
+    #   ControllerBase) is missed.
+    # - An enum declared after its use (or in another file) is still a source; an equality guard,
+    #   Enumerable.Contains called as a static method or a table in another file is no allow-list;
+    #   a variable assigned again after a Contains guard still counts as checked.
+    # - Argument injection into a fixed program that is not a shell (CWE-88: an option such as
+    #   `--output=/etc/x` in the arguments of git or tar) is out of scope; such calls are not
+    #   reported (no `todo` line: the test file has `ok:` lines for them).
+    # - A shell is recognised by its name as a string literal (cmd, sh, bash, dash, zsh, ksh, mksh,
+    #   ash, pwsh, powershell, with a path and .exe), written in place or held in a constant or a
+    #   local variable, and as both branches of a ternary in a ProcessStartInfo initializer; a
+    #   ternary given to Process.Start, or a shell name from configuration, is missed.
+    # - An arguments string given to a shell is reported when it holds a command switch (/c, /k,
+    #   -c, -lc, -Command, -CommandWithArgs, -EncodedCommand) or no string literal at all. For a
+    #   POSIX shell, data after the script (a positional parameter) is reported too. An argument
+    #   vector (array, list) written in place is checked element by element; one held in a
+    #   variable is taken as a whole, so request data in a positional parameter there is reported.
+    # - OpenGrep 1.30 does not parse some C# 11/12 syntax: a raw string literal with two or more
+    #   dollar signs ($$"""..."""), a type declared without a body (`class X : Y;`), some
+    #   multi-line collection expressions with a trailing comma. That part of the file is skipped.
+    #   No test line: the test file must parse.
+    pattern-sources:
+      # MVC and Web API controllers: the parameters of public methods (actions) of a class whose
+      # base class's name ends in Controller (ControllerBase too; generic bases as well), of a class without a base list
+      # whose own name ends in Controller, and of a class marked [ApiController] or [Controller]
+      # ([NonController] excepted). Numbers, booleans, GUIDs, dates and times (also nullable,
+      # arrays and lists of them), enums declared earlier in the file, CancellationToken and
+      # interfaces (DI services; the IForm* types and collection interfaces excepted) cannot carry
+      # SQL text or are not bound from the request.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $CTRL : $CTRLBASE { ... }
+              - patterns:
+                  - pattern-inside: |
+                      class $CTRLBASE { ... }
+                  - pattern-not-inside: |
+                      class $CTRLBASE : $OTHERBASE { ... }
+              - pattern-inside: |
+                  [$CTRLBASE]
+                  class $CTRL { ... }
+          - metavariable-regex:
+              metavariable: $CTRLBASE
+              regex: ^(\w+\.)*\w*(Controller|ControllerBase)(<.*>)?$
+          - pattern-not-inside: |
+              [NonController]
+              class $NOTCTRL { ... }
+          - pattern-inside: |
+              public $RET $ACTION(..., $T $P, ...) { ... }
+          - pattern-not-inside: |
+              $RET $ACTION(..., [FromServices(...)] $T $P, ...) { ... }
+          - pattern-not-inside: |
+              $RET $ACTION(..., [FromKeyedServices(...)] $T $P, ...) { ... }
+          - pattern-not-inside: |
+              [NonAction]
+              $RET $ACTION(...) { ... }
+          - pattern-not-inside: |
+              enum $T { ... }
+              ...
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern: $P
+      # Razor Pages: the parameters of handler methods (On<Verb>...) of a class whose base class's
+      # name ends in PageModel (the same types excepted).
+      - patterns:
+          - pattern-inside: |
+              class $PAGE : $PAGEBASE { ... }
+          - metavariable-regex:
+              metavariable: $PAGEBASE
+              regex: ^(\w+\.)*\w*PageModel$
+          - pattern-inside: |
+              public $RET $HANDLER(..., $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $HANDLER
+              regex: ^On(Get|Post|Put|Delete|Patch|Head|Options)\w*$
+          - pattern-not-inside: |
+              $RET $HANDLER(..., [FromServices(...)] $T $P, ...) { ... }
+          - pattern-not-inside: |
+              enum $T { ... }
+              ...
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern: $P
+      # Razor Pages (and controllers): [BindProperty] properties, and every public property of a
+      # [BindProperties] class.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $BOUND {
+                    ...
+                    [BindProperty(...)] public $T $P { get; set; }
+                    ...
+                  }
+              - pattern-inside: |
+                  class $BOUND {
+                    ...
+                    [BindProperty(...)] public $T $P { get; set; } = $INIT;
+                    ...
+                  }
+              - pattern-inside: |
+                  [BindProperties]
+                  class $BOUND {
+                    ...
+                    public $T $P { get; set; }
+                    ...
+                  }
+              - pattern-inside: |
+                  [BindProperties]
+                  class $BOUND {
+                    ...
+                    public $T $P { get; set; } = $INIT;
+                    ...
+                  }
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern-either:
+              - pattern: $P
+              - pattern: this.$P
+      # Minimal APIs: the string-like parameters (route values, query strings, headers, forms,
+      # uploaded files, the body stream) of a handler given to MapGet/MapPost/... as a lambda, or as
+      # a method group declared in this file (top level, or in the class that maps it).
+      - patterns:
+          - pattern-either:
+              # A lambda with an expression body or a block body (async too).
+              - pattern-inside: $APP.$MAPVERB($ROUTE, ..., (..., $T $P, ...) => $BODY)
+              - pattern-inside: $APP.$MAPVERB($ROUTE, ..., (..., $T $P, ...) => { ... })
+              - patterns:
+                  - pattern-inside: |
+                      $RET $HANDLER(..., $T $P, ...) { ... }
+                  - pattern-either:
+                      - pattern-inside: |
+                          <... $APP.$MAPVERB($ROUTE, ..., $HANDLER) ...>;
+                          ...
+                      # ... or mapped in an extension method of its class (MapXxxApi(this
+                      # IEndpointRouteBuilder app)).
+                      - pattern-inside: |
+                          class $ENDPOINTS { ... $R2 $MAPPER(this $BUILDERTYPE $BUILDER, ...) { ... <... $APP.$MAPVERB($ROUTE, ..., $HANDLER) ...>; ... } ... }
+          - metavariable-regex:
+              metavariable: $MAPVERB
+              regex: ^Map(Get|Post|Put|Delete|Patch|Methods)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(string\??|string\[\]\??|StringValues\??|IFormFile\??|IFormFileCollection\??|IFormCollection\??|Stream\??|PipeReader\??)$
+          - pattern: $P
+      # Parameters bound from the request by an attribute, in any method or lambda (Minimal API
+      # handlers, method-group handlers, Razor Pages handlers); the same types excepted.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $RET $BOUNDM(..., [$FROM(...)] $T $P, ...) { ... }
+              - pattern-inside: (..., [$FROM(...)] $T $P, ...) => $BODY
+              - pattern-inside: (..., [$FROM(...)] $T $P, ...) => { ... }
+          - metavariable-regex:
+              metavariable: $FROM
+              regex: ^(\w+\.)*(FromQuery|FromRoute|FromForm|FromHeader|FromBody|AsParameters)(Attribute)?$
+          - pattern-not-inside: |
+              enum $T { ... }
+              ...
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern: $P
+      # The request: Request (a controller's or page's property), HttpContext.Request and
+      # context.Request, a parameter or variable of type HttpRequest, or a variable assigned one
+      # of them with var. Its query, form, headers, cookies, route values, path, raw query string
+      # and body, and what ReadFormAsync and ReadFromJsonAsync read from it.
+      - patterns:
+          - pattern-either:
+              - pattern: Request.$REQPART
+              - pattern: $CTX.Request.$REQPART
+              - pattern: (HttpRequest $REQ).$REQPART
+              - patterns:
+                  - pattern-inside: |
+                      var $REQ = $CTX.Request;
+                      ...
+                  - pattern: $REQ.$REQPART
+              - patterns:
+                  - pattern-inside: |
+                      var $REQ = Request;
+                      ...
+                  - pattern: $REQ.$REQPART
+          - metavariable-regex:
+              metavariable: $REQPART
+              regex: ^(Query|Form|Headers|Cookies|RouteValues|Path|PathBase|QueryString|Body|BodyReader|ReadFormAsync|ReadFromJsonAsync(<.*>)?)$
+      # (End of the shared C# source block; the items below are this rule's own.)
+    pattern-propagators:
+      # Shared C# propagators (up to the end comment): text added to a StringBuilder (also later
+      # in an Append chain), and
+      # the value TryGetValue hands out of a request collection. (OpenGrep's --taint-intrafile
+      # mode already carries StringBuilder.Insert(index, text) into the builder.)
+      - pattern: $SB.Append($X)
+        from: $X
+        to: $SB
+      - pattern: $SB.Append(...). ... .Append($X)
+        from: $X
+        to: $SB
+      - pattern: $SB.AppendLine($X)
+        from: $X
+        to: $SB
+      - pattern: $SB.AppendFormat(..., $X, ...)
+        from: $X
+        to: $SB
+      - pattern: $COLL.TryGetValue($KEY, out $V)
+        from: $COLL
+        to: $V
+      # (End of the shared C# propagators; the items below are this rule's own.)
+    pattern-sanitizers:
+      # Shared C# sanitizers: conversions to numbers, GUIDs, dates and enums, and allow-lists.
+      # (TryParse's out value, a ternary or a switch expression of constants needs no sanitizer.)
+      - pattern-either:
+          - pattern: int.Parse(...)
+          - pattern: long.Parse(...)
+          - pattern: Guid.Parse(...)
+          - pattern: DateTime.Parse(...)
+          - pattern: Convert.ToInt32(...)
+          - pattern: Convert.ToInt64(...)
+          - pattern: Enum.Parse<$ENUM>(...)
+          - pattern: Enum.Parse(...)
+      # An allow-list: a static readonly Dictionary, HashSet, list or array of literals that no
+      # method after it in its class changes (indexer write, Add, TryAdd, AddRange, Insert,
+      # InsertRange, UnionWith, SymmetricExceptWith). Its lookups (an indexer, or
+      # GetValueOrDefault with a literal default) are clean, and so is the checked value in
+      # `T.Contains(x) ? x : <literal>` and after a guard that always leaves the method when the
+      # value is not in the table (`if (!T.Contains(x)) return/throw ...;`, ContainsKey too).
+      - patterns:
+          - pattern-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... }
+          - metavariable-regex:
+              metavariable: $TABLEINIT
+              regex: ^(new\s*((\w+\.)*(Dictionary|SortedDictionary)\s*<[^>]*>)?\s*(\(\s*(StringComparer\.\w+)?\s*\))?\s*\{\s*(\[\s*("([^"\\]|\\.)*"|-?\d+)\s*\]\s*=\s*("([^"\\]|\\.)*"|-?\d+)|\{\s*("([^"\\]|\\.)*"|-?\d+)\s*,\s*("([^"\\]|\\.)*"|-?\d+)\s*\})(\s*,\s*(\[\s*("([^"\\]|\\.)*"|-?\d+)\s*\]\s*=\s*("([^"\\]|\\.)*"|-?\d+)|\{\s*("([^"\\]|\\.)*"|-?\d+)\s*,\s*("([^"\\]|\\.)*"|-?\d+)\s*\}))*\s*,?\s*\}|(new\s*((\w+\.)*(HashSet|SortedSet)\s*<[^>]*>|(\w+\.)*\w*\s*\[\s*\])?\s*(\(\s*(StringComparer\.\w+)?\s*\))?\s*)?\{\s*("([^"\\]|\\.)*"|-?\d+)(\s*,\s*("([^"\\]|\\.)*"|-?\d+))*\s*,?\s*\})$
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE[$A] = $B; ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.Add(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.TryAdd(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.AddRange(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.Insert(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.InsertRange(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.UnionWith(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.SymmetricExceptWith(...); ... } ... }
+          - pattern-either:
+              - pattern: $TABLE[$K]
+              - patterns:
+                  - pattern: $TABLE.GetValueOrDefault($K, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^("([^"\\]|\\.)*"|-?\d+|null)$
+              - patterns:
+                  - pattern: '$TABLE.$CONTAINS($X) ? $X : $FALLBACK'
+                  - metavariable-regex:
+                      metavariable: $CONTAINS
+                      regex: ^Contains(Key)?$
+                  - metavariable-regex:
+                      metavariable: $FALLBACK
+                      regex: ^("([^"\\]|\\.)*"|-?\d+|null)$
+              - patterns:
+                  - pattern-either:
+                      # The body leaves the method: its last top-level statement (after at most
+                      # two others) is a return or a throw (a single one also in braces).
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) return ...;
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) throw $EX;
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; return ...; }
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; throw $EX; }
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; $S2; return ...; }
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; $S2; throw $EX; }
+                          ...
+                  - metavariable-regex:
+                      metavariable: $CONTAINS
+                      regex: ^Contains(Key)?$
+                  # Not inside the guard itself, where the value failed the check (its block,
+                  # or its single return or throw statement).
+                  - pattern-not-inside: |
+                      if (!$TABLE.$CONTAINS($X)) { ... }
+                  - pattern: $X
+      # (End of the shared C# sanitizers; the items below are this rule's own.)
+    pattern-sinks:
+      # A file that names Process.Start, ProcessStartInfo or StartInfo as a word: a whole-file
+      # anchor that gives OpenGrep's prefilter a regex, since the sink words alone (Start, Process,
+      # FileName, Arguments) also occur inside other identifiers and let large files through.
+      - patterns:
+          - pattern-regex: (?s)\A.*\b(Process\s*\.\s*Start|ProcessStartInfo|StartInfo)\b.*\z
+          - pattern-either:
+              # The program: the file name given to Process.Start or a ProcessStartInfo
+              # (constructor, initializer, or a FileName assignment on one created in the method or
+              # on a Process.StartInfo).
+              - patterns:
+                  - pattern-either:
+                      - pattern: Process.Start($PROG, $FIRSTARG, ...)
+                      - pattern: System.Diagnostics.Process.Start($PROG, $FIRSTARG, ...)
+                      # One argument: a file name, unless it is a ProcessStartInfo (its parts are
+                      # checked where they are set).
+                      - patterns:
+                          - pattern-either:
+                              - pattern: Process.Start($PROG)
+                              - pattern: System.Diagnostics.Process.Start($PROG)
+                          - pattern-not: "$PROCESS.Start(new ProcessStartInfo(...) { ... })"
+                          - pattern-not: $PROCESS.Start($INFO.StartInfo)
+                          - pattern-not-inside: |
+                              $PROG = new ProcessStartInfo(...) { ... };
+                              ...
+                          - pattern-not-inside: |
+                              var $PROG = new ProcessStartInfo(...) { ... };
+                              ...
+                          - pattern-not-inside: |
+                              $RET $METHOD(..., ProcessStartInfo $PROG, ...) { ... }
+                      - pattern: "new ProcessStartInfo($PROG, ...) { ... }"
+                      - pattern: 'new ProcessStartInfo { ..., FileName = $PROG, ... }'
+                      - pattern: $PROC.StartInfo.FileName = $PROG
+                      # FileName of a ProcessStartInfo created in the method: not outside its
+                      # creation (an exclusion, which costs OpenGrep's prefilter nothing).
+                      - patterns:
+                          - pattern: $PSI.FileName = $PROG
+                          - pattern-not:
+                              patterns:
+                                - pattern: $PSI.FileName = $PROG
+                                - pattern-not-inside: |
+                                    $PSI = new ProcessStartInfo(...) { ... };
+                                    ...
+                                - pattern-not-inside: |
+                                    var $PSI = new ProcessStartInfo(...) { ... };
+                                    ...
+                  - focus-metavariable: $PROG
+              # The command line of a shell given as one arguments string: in place, in an
+              # initializer (either order; the shell also as both branches of a ternary), or
+              # assigned to Arguments of a ProcessStartInfo whose FileName is a shell (not outside
+              # such a creation or assignment).
+              - patterns:
+                  - pattern-either:
+                      - pattern: Process.Start("=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", $ARGS)
+                      - pattern: System.Diagnostics.Process.Start("=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", $ARGS)
+                      - pattern: 'new ProcessStartInfo("=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", $ARGS) { ... }'
+                      - pattern: 'new ProcessStartInfo("=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/") { ..., Arguments = $ARGS, ... }'
+                      - pattern: 'new ProcessStartInfo { ..., FileName = "=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", ..., Arguments = $ARGS, ... }'
+                      - pattern: 'new ProcessStartInfo { ..., Arguments = $ARGS, ..., FileName = "=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", ... }'
+                      - pattern: 'new ProcessStartInfo { ..., FileName = $WHICH ? "=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/" : "=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", ..., Arguments = $ARGS, ... }'
+                      - pattern: 'new ProcessStartInfo { ..., Arguments = $ARGS, ..., FileName = $WHICH ? "=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/" : "=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", ... }'
+                      - patterns:
+                          - pattern: $PSI.Arguments = $ARGS
+                          - pattern-not:
+                              patterns:
+                                - pattern: $PSI.Arguments = $ARGS
+                                - pattern-not-inside: |
+                                    $PSI = new ProcessStartInfo("=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", ...) { ... };
+                                    ...
+                                - pattern-not-inside: |
+                                    var $PSI = new ProcessStartInfo("=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", ...) { ... };
+                                    ...
+                                - pattern-not-inside: |
+                                    var $PSI = new ProcessStartInfo { ..., FileName = "=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", ... };
+                                    ...
+                                - pattern-not-inside: |
+                                    $PSI.FileName = "=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/";
+                                    ...
+                                - pattern-not-inside: |
+                                    $PSI.Arguments = $ARGS;
+                                    ...
+                                    $PSI.FileName = "=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/";
+                  # A command switch in the string, or no string literal at all (a variable); not an
+                  # argument vector.
+                  - metavariable-regex:
+                      metavariable: $ARGS
+                      regex: ^(?!\s*(?:new\b|\[|\{))(?:[^"]*|(?is).*?(?:^|[\s"(\x27])(?:/[ck]|-[a-z]*c|-command|-commandwithargs|-cwa|-encodedcommand)(?:[\s"\x27]|$).*)$
+                  - focus-metavariable: $ARGS
+              # A shell's argument vector written in place (an array or a List<string>): for a POSIX
+              # shell the element right after -c (also -lc, -ec) is the script and the later ones
+              # are positional parameters; for cmd /c or /k and PowerShell -Command (-c) every later
+              # element is part of the command; for PowerShell -CommandWithArgs (-cwa) and
+              # -EncodedCommand (-e, -ec) the next one is.
+              - patterns:
+                  - pattern-either:
+                      - pattern: 'Process.Start("=~/(?i)^(.*[\\/])?(sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", new[] { ..., "=~/(?i)^-([a-z]*c[a-z]*|cwa|commandwithargs|e|encodedcommand)$/", $SCRIPT, ... })'
+                      - pattern: 'Process.Start("=~/(?i)^(.*[\\/])?(sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", new string[] { ..., "=~/(?i)^-([a-z]*c[a-z]*|cwa|commandwithargs|e|encodedcommand)$/", $SCRIPT, ... })'
+                      - pattern: 'Process.Start("=~/(?i)^(.*[\\/])?(sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", new List<string> { ..., "=~/(?i)^-([a-z]*c[a-z]*|cwa|commandwithargs|e|encodedcommand)$/", $SCRIPT, ... })'
+                      - pattern: 'new ProcessStartInfo("=~/(?i)^(.*[\\/])?(sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", new[] { ..., "=~/(?i)^-([a-z]*c[a-z]*|cwa|commandwithargs|e|encodedcommand)$/", $SCRIPT, ... }) { ... }'
+                      - pattern: 'new ProcessStartInfo("=~/(?i)^(.*[\\/])?(sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", new string[] { ..., "=~/(?i)^-([a-z]*c[a-z]*|cwa|commandwithargs|e|encodedcommand)$/", $SCRIPT, ... }) { ... }'
+                      - pattern: 'new ProcessStartInfo("=~/(?i)^(.*[\\/])?(sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", new List<string> { ..., "=~/(?i)^-([a-z]*c[a-z]*|cwa|commandwithargs|e|encodedcommand)$/", $SCRIPT, ... }) { ... }'
+                      - pattern: 'Process.Start("=~/(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$/", new[] { ..., "=~/(?i)^(/[ck]|-c|-command)$/", ..., $SCRIPT, ... })'
+                      - pattern: 'Process.Start("=~/(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$/", new string[] { ..., "=~/(?i)^(/[ck]|-c|-command)$/", ..., $SCRIPT, ... })'
+                      - pattern: 'Process.Start("=~/(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$/", new List<string> { ..., "=~/(?i)^(/[ck]|-c|-command)$/", ..., $SCRIPT, ... })'
+                      - pattern: 'new ProcessStartInfo("=~/(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$/", new[] { ..., "=~/(?i)^(/[ck]|-c|-command)$/", ..., $SCRIPT, ... }) { ... }'
+                      - pattern: 'new ProcessStartInfo("=~/(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$/", new string[] { ..., "=~/(?i)^(/[ck]|-c|-command)$/", ..., $SCRIPT, ... }) { ... }'
+                      - pattern: 'new ProcessStartInfo("=~/(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$/", new List<string> { ..., "=~/(?i)^(/[ck]|-c|-command)$/", ..., $SCRIPT, ... }) { ... }'
+                  - focus-metavariable: $SCRIPT
+              # ProcessStartInfo.ArgumentList of a shell (not outside its creation or a FileName
+              # assignment): the element added right after -c (also -lc, -cwa, -EncodedCommand), or
+              # any element added after /c, /k or -Command.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $LPSI.ArgumentList.Add("=~/(?i)^-([a-z]*c[a-z]*|cwa|commandwithargs|e|encodedcommand)$/");
+                          $LPSI.ArgumentList.Add($SCRIPT);
+                      - pattern-inside: |
+                          $LPSI.ArgumentList.Add("=~/(?i)^(/[ck]|-command)$/");
+                          ...
+                  - pattern: $LPSI.ArgumentList.Add($SCRIPT)
+                  - pattern-not:
+                      patterns:
+                        - pattern: $LPSI.ArgumentList.Add($SCRIPT)
+                        - pattern-not-inside: |
+                            $LPSI = new ProcessStartInfo("=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", ...) { ... };
+                            ...
+                        - pattern-not-inside: |
+                            var $LPSI = new ProcessStartInfo("=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", ...) { ... };
+                            ...
+                        - pattern-not-inside: |
+                            var $LPSI = new ProcessStartInfo { ..., FileName = "=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", ... };
+                            ...
+                        - pattern-not-inside: |
+                            $LPSI.FileName = "=~/(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/";
+                            ...
+                  - focus-metavariable: $SCRIPT
