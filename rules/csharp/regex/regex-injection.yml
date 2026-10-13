@@ -49,8 +49,13 @@ rules:
     # - A pattern with a match time-out or RegexOptions.NonBacktracking is still reported, as
     #   Microsoft's best practices say neither is a security boundary against malicious patterns
     #   (not a limit: the test file has ruleid lines for them).
+    # - An allow-list table of verbatim literals (@"^\d+$") counts through a rule-own copy of the
+    #   shared allow-list (indexer, GetValueOrDefault with a literal default, a Contains ternary, a
+    #   single return or throw guard); a guard with other statements before its return or throw
+    #   counts only for tables of "..." literals (todook).
     # - The sinks are the Regex constructor (also target-typed `Regex r = new(...)`) and the static
-    #   methods called on Regex; a pattern passed to a helper of another library (a validation
+    #   methods called on Regex, written as Regex (namespace imported, also by a global using) or
+    #   fully qualified; a pattern passed to a helper of another library (a validation
     #   attribute, a routing constraint) is missed (no test line). [GeneratedRegex] takes only a
     #   constant pattern, so it needs no check.
     # - OpenGrep 1.30 does not parse some C# 11/12 syntax: a raw string literal with two or more
@@ -331,8 +336,70 @@ rules:
                       if (!$TABLE.$CONTAINS($X)) { ... }
                   - pattern: $X
       # (End of the shared C# sanitizers; the items below are this rule's own.)
-      # Regex.Escape: the value it returns matches literally.
-      - pattern: Regex.Escape(...)
+      # Regex.Escape: the value it returns matches literally. Exact: a sink or a source written
+      # inside the call is still checked.
+      - patterns:
+          - pattern: Regex.Escape(...)
+        exact: true
+      # The shared allow-list again, with verbatim string literals (@"^\d+$", the usual way to
+      # write a pattern) accepted in the table and as the default or fallback: its indexer lookups,
+      # GetValueOrDefault with a literal default, `T.Contains(x) ? x : <literal>`, and the value after
+      # a single `return` or `throw` guard (the shared block takes "..." literals only).
+      - patterns:
+          - pattern-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... }
+          - metavariable-regex:
+              metavariable: $TABLEINIT
+              regex: ^(new\s*((\w+\.)*(Dictionary|SortedDictionary)\s*<[^>]*>)?\s*(\(\s*(StringComparer\.\w+)?\s*\))?\s*\{\s*(\[\s*((@"([^"]|"")*"|"([^"\\]|\\.)*")|-?\d+)\s*\]\s*=\s*((@"([^"]|"")*"|"([^"\\]|\\.)*")|-?\d+)|\{\s*((@"([^"]|"")*"|"([^"\\]|\\.)*")|-?\d+)\s*,\s*((@"([^"]|"")*"|"([^"\\]|\\.)*")|-?\d+)\s*\})(\s*,\s*(\[\s*((@"([^"]|"")*"|"([^"\\]|\\.)*")|-?\d+)\s*\]\s*=\s*((@"([^"]|"")*"|"([^"\\]|\\.)*")|-?\d+)|\{\s*((@"([^"]|"")*"|"([^"\\]|\\.)*")|-?\d+)\s*,\s*((@"([^"]|"")*"|"([^"\\]|\\.)*")|-?\d+)\s*\}))*\s*,?\s*\}|(new\s*((\w+\.)*(HashSet|SortedSet)\s*<[^>]*>|(\w+\.)*\w*\s*\[\s*\])?\s*(\(\s*(StringComparer\.\w+)?\s*\))?\s*)?\{\s*((@"([^"]|"")*"|"([^"\\]|\\.)*")|-?\d+)(\s*,\s*((@"([^"]|"")*"|"([^"\\]|\\.)*")|-?\d+))*\s*,?\s*\})$
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE[$A] = $B; ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.Add(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.TryAdd(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.AddRange(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.Insert(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.InsertRange(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.UnionWith(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.SymmetricExceptWith(...); ... } ... }
+          - pattern-either:
+              - pattern: $TABLE[$K]
+              - patterns:
+                  - pattern: $TABLE.GetValueOrDefault($K, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^((@"([^"]|"")*"|"([^"\\]|\\.)*")|-?\d+|null)$
+              - patterns:
+                  - pattern: '$TABLE.$CONTAINS($X) ? $X : $FALLBACK'
+                  - metavariable-regex:
+                      metavariable: $CONTAINS
+                      regex: ^Contains(Key)?$
+                  - metavariable-regex:
+                      metavariable: $FALLBACK
+                      regex: ^((@"([^"]|"")*"|"([^"\\]|\\.)*")|-?\d+|null)$
+              - patterns:
+                  - pattern-either:
+                      # The body leaves the method: its last top-level statement (after at most
+                      # two others) is a return or a throw (a single one also in braces).
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) return ...;
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) throw $EX;
+                          ...
+                  - metavariable-regex:
+                      metavariable: $CONTAINS
+                      regex: ^Contains(Key)?$
+                  # Not inside the guard itself, where the value failed the check (its block,
+                  # or its single return or throw statement).
+                  - pattern-not-inside: |
+                      if (!$TABLE.$CONTAINS($X)) { ... }
+                  - pattern: $X
     pattern-sinks:
       # A file that creates a Regex or calls a static Regex method: a whole-file anchor that gives
       # OpenGrep's prefilter a regex, since Regex and IsMatch are also words of files that only use
@@ -340,10 +407,15 @@ rules:
       - patterns:
           - pattern-regex: (?s)\A.*(\bnew\s+(System\.Text\.RegularExpressions\.)?Regex\s*\(|\bRegex\s*\.\s*(IsMatch|Match|Matches|Replace|Split|Count|EnumerateMatches|EnumerateSplits)\s*\(|\bRegex\s+\w+\s*=\s*new\s*\().*\z
           - pattern-either:
+              # Written as Regex (the namespace imported, also by a global using in another file)
+              # or fully qualified.
+              - pattern: new Regex($PATTERN, ...)
               - pattern: new System.Text.RegularExpressions.Regex($PATTERN, ...)
               - pattern: Regex $TARGET = new($PATTERN, ...);
               - patterns:
-                  - pattern: System.Text.RegularExpressions.Regex.$STATIC($INPUT, $PATTERN, ...)
+                  - pattern-either:
+                      - pattern: Regex.$STATIC($INPUT, $PATTERN, ...)
+                      - pattern: System.Text.RegularExpressions.Regex.$STATIC($INPUT, $PATTERN, ...)
                   - metavariable-regex:
                       metavariable: $STATIC
                       regex: ^(IsMatch|Match|Matches|Replace|Split|Count|EnumerateMatches|EnumerateSplits)$

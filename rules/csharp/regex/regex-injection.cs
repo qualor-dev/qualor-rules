@@ -144,6 +144,9 @@ public partial class TextController : ControllerBase
         var escaped = Regex.Escape(term);
         // ruleid: csharp.regex-injection
         var raw = Regex.IsMatch(input, escaped + term);
+        // A pattern call written inside Regex.Escape is still checked.
+        // ruleid: csharp.regex-injection
+        var nested = Regex.Escape(Regex.Replace(input, term, ""));
         return Ok(literal && prefix.IsMatch(input) && chosen && sized && typed && letters && raw);
     }
 
@@ -210,6 +213,61 @@ public partial class TextController : ControllerBase
     private string Exclude
     {
         get { return Request.Headers["X-Exclude"].ToString(); }
+    }
+}
+
+// Allow-lists of verbatim pattern literals (@"..."), the way regex patterns are usually written.
+public class ShapesController : ControllerBase
+{
+    private static readonly Dictionary<string, string> Shapes = new()
+    {
+        { "zip", @"^\d{5}$" },
+        { "code", @"^[A-Z]{2}-\d+$" },
+    };
+
+    private static readonly HashSet<string> Known = new() { @"^\w+$", @"^\d+$" };
+
+    public IActionResult Check(string kind, string input, string chosen, string guarded, string thrown, string logged)
+    {
+        // ok: csharp.regex-injection
+        var a = Regex.IsMatch(input, Shapes[kind]);
+        // ok: csharp.regex-injection
+        var b = Regex.IsMatch(input, Shapes.GetValueOrDefault(kind, @"^$"));
+        // ok: csharp.regex-injection
+        var c = Regex.IsMatch(input, Known.Contains(chosen) ? chosen : @"^\w+$");
+        if (!Known.Contains(guarded)) return BadRequest();
+        // ok: csharp.regex-injection
+        var d = Regex.IsMatch(input, guarded);
+        if (!Known.Contains(thrown)) throw new ArgumentException("pattern");
+        // ok: csharp.regex-injection
+        var e = Regex.IsMatch(input, thrown);
+        if (!Known.Contains(logged))
+        {
+            Console.WriteLine("unknown pattern");
+            return BadRequest();
+        }
+        // A guard with other statements before its return counts for "..." tables only (Known limit).
+        // todook: csharp.regex-injection
+        var f = Regex.IsMatch(input, logged);
+        return Ok(a && b && c && d && e && f);
+    }
+}
+
+// A verbatim table that a method changes is no allow-list.
+public class EditableShapesController : ControllerBase
+{
+    private static readonly Dictionary<string, string> Shapes = new() { { "zip", @"^\d{5}$" } };
+
+    public IActionResult Add(string kind, string pattern)
+    {
+        Shapes[kind] = pattern;
+        return Ok();
+    }
+
+    public IActionResult Check(string kind, string input)
+    {
+        // ruleid: csharp.regex-injection
+        return Ok(Regex.IsMatch(input, Shapes[kind]));
     }
 }
 

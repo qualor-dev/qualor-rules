@@ -107,6 +107,9 @@ public class SearchController : ControllerBase
   allow-lists written as `static readonly` tables of literals count; an equality check or
   `Enumerable.Contains(...)` called as a static method does not, and a variable assigned again
   after a check still counts as checked.
+- An allow-list of verbatim pattern literals (`@"^\d+$"`) counts for lookups, a `Contains` ternary
+  and a guard that only returns or throws; a guard with other statements before its `return`
+  counts only for tables of ordinary `"..."` literals.
 - Only the `Regex` constructor and the static `Regex` methods are checked; a pattern handed to
   another library (a validation attribute, a route constraint) is missed.
 - OpenGrep 1.30 does not parse some newer C# syntax (raw strings with `$$"""`, types declared
