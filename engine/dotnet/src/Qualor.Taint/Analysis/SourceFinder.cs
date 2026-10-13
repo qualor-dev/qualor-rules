@@ -130,13 +130,22 @@ internal sealed class SourceFinder
         var type = method.ContainingType;
         var c = _model.Controllers;
         if ((!c.PublicMethodsOnly || method.DeclaredAccessibility == Accessibility.Public) && IsController(type)
-            && !HasAttribute(method.GetAttributes(), _notActionAttributes))
+            && !NotAction(method))
             return true;
         var p = _model.RazorPages;
         if ((!p.PublicMethodsOnly || method.DeclaredAccessibility == Accessibility.Public)
             && p.HandlerPrefixes.Any(h => method.Name.StartsWith(h, StringComparison.Ordinal))
             && BaseTypes(type).Any(b => _pageBases.Contains(SymbolMatch.MetadataName(b))))
             return true;
+        return false;
+    }
+
+    /// A method with a not-action attribute, on itself or on a method it overrides (`[NonAction]` is inherited:
+    /// Controller.OnActionExecuting overridden in a controller is no action).
+    private bool NotAction(IMethodSymbol method)
+    {
+        for (var m = method; m != null; m = m.OverriddenMethod)
+            if (HasAttribute(m.GetAttributes(), _notActionAttributes)) return true;
         return false;
     }
 

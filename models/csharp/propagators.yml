@@ -59,42 +59,54 @@ propagators:
     from: [args]
     to: [out]
   - property-get: System.Uri.*              # AbsoluteUri, AbsolutePath, PathAndQuery, Query, Host, ...
-  # Request collections and their values.
+  # Request collections and their values. Element reads (ruling R-E9): the element of a tainted collection, and
+  # the element found by a tainted key (OpenGrep's taint passes through a lookup by its key; a table of literals that
+  # no method changes is an allow-list, the engine's Task 11), so TryGetValue's out value comes from the dictionary
+  # and the key.
   - method: System.Collections.Generic.IDictionary`2.TryGetValue
-    from: [this]
+    from: [this, args]
     to: [out]
   - method: System.Collections.Generic.IReadOnlyDictionary`2.TryGetValue
-    from: [this]
+    from: [this, args]
     to: [out]
   - method: Microsoft.AspNetCore.Http.IQueryCollection.TryGetValue
-    from: [this]
+    from: [this, args]
     to: [out]
   - method: Microsoft.AspNetCore.Http.IFormCollection.TryGetValue
-    from: [this]
+    from: [this, args]
     to: [out]
   - method: Microsoft.AspNetCore.Http.IRequestCookieCollection.TryGetValue
-    from: [this]
+    from: [this, args]
     to: [out]
   - method: Microsoft.Extensions.Primitives.StringValues.op_Implicit
   - method: Microsoft.Extensions.Primitives.StringValues.ToArray
-  # Element reads: an indexer (metadata name Item) of a tainted collection gives a tainted element. OpenGrep
-  # takes `coll[key]` for a container read of a tainted container; the engine needs the indexers named, since
-  # an element of type object (RouteValues["slug"]) or StringValues is neither string-like nor a collection
-  # for `unmodelled-external`. IHeaderDictionary's own indexer, RouteValueDictionary's and Dictionary's match
-  # through the dictionary interfaces; array elements are no member (the engine's own).
+  # Element reads: an indexer (metadata name Item) gives a tainted element when the collection or the key is
+  # tainted (ruling R-E9, as TryGetValue above; an int index is a scalar and never tainted). The engine needs the
+  # indexers named, since an element of type object (RouteValues["slug"]) or StringValues is neither string-like
+  # nor a collection for `unmodelled-external`. IHeaderDictionary's own indexer, RouteValueDictionary's and
+  # Dictionary's match through the dictionary interfaces; array elements are no member (the engine's own).
   - property-get: System.Collections.Generic.IDictionary`2.Item
+    from: [this, args]
   - property-get: System.Collections.Generic.IReadOnlyDictionary`2.Item
+    from: [this, args]
   - property-get: System.Collections.Generic.IList`1.Item
+    from: [this, args]
   - property-get: System.Collections.Generic.IReadOnlyList`1.Item
+    from: [this, args]
   - property-get: Microsoft.AspNetCore.Http.IQueryCollection.Item
+    from: [this, args]
   - property-get: Microsoft.AspNetCore.Http.IFormCollection.Item
+    from: [this, args]
   - property-get: Microsoft.AspNetCore.Http.IRequestCookieCollection.Item
+    from: [this, args]
   - property-get: Microsoft.AspNetCore.Http.IHeaderDictionary.Item
+    from: [this, args]
   - property-get: Microsoft.Extensions.Primitives.StringValues.Item
-  # GetValueOrDefault: the dictionary's element or the default value given (ordinal 2 of the three-parameter
-  # overload); like the indexer, not the key (an extension method: the dictionary is ordinal 0).
+    from: [this, args]
+  # GetValueOrDefault: the dictionary's element, found by the key, or the default value given (an extension
+  # method: the dictionary is ordinal 0, the key 1, the default 2 in the three-parameter overload); R-E9.
   - method: System.Collections.Generic.CollectionExtensions.GetValueOrDefault
-    from: [0, 2]
+    from: [0, 1, 2]
   # Enumeration (a foreach, lowered by the compiler to GetEnumerator, MoveNext and Current): the enumerator of a
   # tainted collection is a collection for `unmodelled-external`; its Current is an element read, whatever its type
   # (a KeyValuePair of a dictionary too, whose Key and Value are then element reads).

@@ -100,10 +100,6 @@ public class OpenGrepFixtureTests
     /// an allow-list or a guard (Task 11). A listed line the engine gets right fails the test too (remove the entry).
     private static readonly (string Rule, string File, int Line, string Kind, string Why)[] Pending =
     {
-        ("csharp.sql-injection", "sql-injection.cs", 780, "missing", "Task 11: a lookup with a request key in a table that is no allow-list of literals (Columns holds an environment variable); the indexer model reads the collection only"),
-        ("csharp.sql-injection", "sql-injection.cs", 782, "missing", "Task 8 (heap): Aliases is written with request data in AddAlias"),
-        ("csharp.sql-injection", "sql-injection.cs", 784, "missing", "Task 8 (heap): Views is written with request data in AddAlias"),
-        ("csharp.sql-injection", "sql-injection.cs", 786, "missing", "Task 8 (heap): Schemas is written with request data in AddAlias"),
         ("csharp.sql-injection", "sql-injection.cs", 862, "missing", "Task 8 (summaries): TermOf(Request) reads the request in a helper"),
         ("csharp.sql-injection", "sql-injection.cs", 515, "unexpected", "Task 11 (guard): !Directions.Contains(dir) then return"),
         ("csharp.sql-injection", "sql-injection.cs", 523, "unexpected", "Task 11 (guard): !Directions.Contains(dir) return"),
@@ -118,6 +114,10 @@ public class OpenGrepFixtureTests
         ("csharp.sql-injection", "sql-injection.cs", 631, "unexpected", "Task 11 (guard): !Directions.Contains(dir) then return"),
         ("csharp.sql-injection", "sql-injection.cs", 640, "unexpected", "Task 11 (guard): !Directions.Contains(dir) return"),
         ("csharp.sql-injection", "sql-injection.cs", 649, "unexpected", "Task 11 (guard): !Regions.Contains(region) throw"),
+        ("csharp.sql-injection", "sql-injection.cs", 761, "unexpected", "Task 11 (allow-list): SortColumns[sort], a lookup in a table of literals"),
+        ("csharp.sql-injection", "sql-injection.cs", 763, "unexpected", "Task 11 (allow-list): SortColumns.GetValueOrDefault(sort, literal)"),
+        ("csharp.sql-injection", "sql-injection.cs", 765, "unexpected", "Task 11 (allow-list): Filters.GetValueOrDefault(filter)"),
+        ("csharp.sql-injection", "sql-injection.cs", 769, "unexpected", "Task 11 (allow-list): SortColumns.TryGetValue(sort, out var column)"),
     };
 
     /// The engine runs to completion (no internal error, no iteration cap) on every fixture, modelled or not.
@@ -127,7 +127,8 @@ public class OpenGrepFixtureTests
     {
         var compiled = FixtureRunner.Compile(OpenGrepFixtureCompileTests.PathOf(name), Expectations.Load(Path.Combine(Repo.EngineDir, "expectations.yml")));
         var result = new TaintEngine(Models.Value, new TaintEngineOptions(TimeSpan.FromMinutes(10), 4L << 30)).Analyze(compiled.Solution, CancellationToken.None);
-        Assert.True(result.Complete, name + ": " + result.IncompleteReason);
+        Assert.True(result.Complete && result.Stats.FailedMethods == 0,
+            name + ": " + result.IncompleteReason + "; failed bodies: " + string.Join("; ", result.Stats.FirstErrors));
     }
 
     [Theory]

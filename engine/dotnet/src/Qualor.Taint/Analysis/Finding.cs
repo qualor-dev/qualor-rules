@@ -20,5 +20,14 @@ public sealed record AnalysisResult(IReadOnlyList<Finding> Findings, bool Comple
 
 /// Counters of a run: projects and method bodies (methods, accessors, lambdas, local functions, initializers)
 /// analysed, strongly connected components (Task 8), distinct external call sites that got the `unmodelled-external`
-/// default, the elapsed time and the peak working set seen.
-public sealed record AnalysisStats(int Projects, int Methods, int Sccs, int UnmodelledExternalCalls, TimeSpan Elapsed, long PeakMemoryBytes);
+/// default, the elapsed time and the peak working set seen. FailedMethods: bodies skipped because their analysis threw
+/// (ruling R-E10: the run stays complete up to 1 % of the bodies), with the first FirstErrors (at most
+/// MaxErrors, `<file>:<line>: <exception>: <message>`).
+public sealed record AnalysisStats(int Projects, int Methods, int Sccs, int UnmodelledExternalCalls, TimeSpan Elapsed, long PeakMemoryBytes)
+{
+    public const int MaxErrors = 10;
+
+    public int FailedMethods { get; init; }
+
+    public IReadOnlyList<string> FirstErrors { get; init; } = Array.Empty<string>();
+}

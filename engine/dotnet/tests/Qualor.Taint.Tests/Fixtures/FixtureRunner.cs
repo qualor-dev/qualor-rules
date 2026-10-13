@@ -103,7 +103,8 @@ public static class FixtureRunner
     public static IReadOnlyList<(string RuleId, string File, int Line)> Lines(AnalysisResult result) =>
         result.Findings.Select(f => (f.RuleId, f.Sink.SourceTree?.FilePath ?? "", f.Sink.GetLineSpan().StartLinePosition.Line + 1)).ToList();
 
-    /// Runs the real TaintEngine (default options: 10 minutes, 4 GB) on the fixture; an incomplete run fails.
+    /// Runs the real TaintEngine (default options: 10 minutes, 4 GB) on the fixture; an incomplete run or a failed body
+    /// (ruling R-E10 would hide it in a complete run) fails.
     public static FixtureResult Run(string fixturePath, ModelSet models, TaintEngineOptions? options = null, Expectations? expectations = null)
     {
         options ??= new TaintEngineOptions(TimeSpan.FromMinutes(10), 4L << 30);
@@ -111,6 +112,7 @@ public static class FixtureRunner
         {
             var result = new TaintEngine(models, options).Analyze(solution, CancellationToken.None);
             if (!result.Complete) throw new InvalidOperationException("incomplete engine run: " + result.IncompleteReason);
+            if (result.Stats.FailedMethods > 0) throw new InvalidOperationException("failed bodies: " + string.Join("; ", result.Stats.FirstErrors));
             return Lines(result);
         }, expectations);
     }

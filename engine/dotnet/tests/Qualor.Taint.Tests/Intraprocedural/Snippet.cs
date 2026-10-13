@@ -32,8 +32,13 @@ internal static class Snippet
         Analyze(code).Findings.Where(f => f.RuleId == rule && Path.GetFileName(f.Sink.SourceTree!.FilePath) == "Snippet.cs")
             .Select(f => f.Sink.GetLineSpan().StartLinePosition.Line + 1).OrderBy(l => l).ToList();
 
-    public static AnalysisResult Analyze(string code, TaintEngineOptions? options = null) =>
-        new TaintEngine(Models, options ?? Options).Analyze(Compile(code), CancellationToken.None);
+    /// Analyses the snippet; a body that fails throws (the gates must not hide engine crashes, ruling R-E10).
+    public static AnalysisResult Analyze(string code, TaintEngineOptions? options = null)
+    {
+        var result = new TaintEngine(Models, options ?? Options).Analyze(Compile(code), CancellationToken.None);
+        if (result.Stats.FailedMethods > 0) throw new InvalidOperationException("failed bodies: " + string.Join("; ", result.Stats.FirstErrors));
+        return result;
+    }
 
     /// Compiles the snippet as one project; a snippet with compile errors throws (the test is wrong, not the engine).
     public static LoadedSolution Compile(string code)

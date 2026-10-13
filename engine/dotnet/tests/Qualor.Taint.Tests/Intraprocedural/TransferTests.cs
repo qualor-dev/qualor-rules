@@ -119,14 +119,17 @@ public sealed class TransferTests
         """);
 
     [Fact]
-    public void GetValueOrDefault_reads_the_table_and_the_default_not_the_key() => Expect("""
+    public void A_lookup_by_a_request_key_is_request_data_until_allow_lists_exist() => Expect("""
         public class C
         {
             private static readonly Dictionary<string, string> Columns = new() { ["price"] = "unit_price" };
             public void M([FromQuery] string q, SqlConnection c)
             {
-                c.Execute("SELECT * FROM t ORDER BY " + Columns.GetValueOrDefault(q, "name"));
-                c.Execute("SELECT * FROM t ORDER BY " + Columns.GetValueOrDefault(q, q)); /*sink*/
+                c.Execute("SELECT * FROM t ORDER BY " + Columns.GetValueOrDefault(q, "name")); /*sink*/
+                c.Execute("SELECT * FROM t ORDER BY " + Columns.GetValueOrDefault("price", q)); /*sink*/
+                c.Execute("SELECT * FROM t ORDER BY " + Columns[q]); /*sink*/
+                if (Columns.TryGetValue(q, out var column)) c.Execute("SELECT * FROM t ORDER BY " + column); /*sink*/
+                c.Execute("SELECT * FROM t ORDER BY " + Columns.GetValueOrDefault("price", "name"));
             }
         }
         """);
