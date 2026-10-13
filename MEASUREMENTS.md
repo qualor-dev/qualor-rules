@@ -115,6 +115,34 @@ OpenGrep 1.30.0 with --taint-intrafile; 5 rule directories; results in `.tmp/pro
 
 ### vulnerablecoreapp (csharp, 1ae87f8648c7): 0 finding(s), 23 files, 0 error(s)
 
+### C# noise review (by hand, 2026-10-13)
+
+Probe of `rules/csharp` at 34d63fc (`npm run probe -- rules/csharp`, results in `.tmp/probe/2026-10-13T18-30-14-754Z`); every finding judged from its file and lines. Cells are findings per project; qualor-cc (0 files with C#) had none.
+
+| rule | eshop | eshoponweb | orchardcore | jellyfin | nopcommerce | true | false |
+|---|---|---|---|---|---|---|---|
+| csharp.sql-injection | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| csharp.command-injection | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| csharp.path-traversal | 0 | 0 | 0 | 4 | 0 | 2 | 2 |
+| csharp.ssrf | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| csharp.xss | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| csharp.open-redirect | 1 | 0 | 1 | 0 | 0 | 1 | 1 |
+| csharp.ldap-injection | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| csharp.xpath-injection | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| csharp.regex-injection | 0 | 0 | 0 | 0 | 1 | 1 | 0 |
+| csharp.unsafe-deserialization | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| csharp.xxe | 0 | 0 | 0 | 0 | 0 | 0 | 0 |
+| csharp.tls-verification-disabled | 0 | 0 | 0 | 0 | 1 | 1 | 0 |
+| **all** | 1 | 0 | 1 | 4 | 2 | 5 | 3 |
+
+- True: orchardcore open-redirect (AdminController of the Tenants module, a redirect to a tenant host an administrator sets: a real flow, by design); jellyfin path-traversal at EnvironmentController 115 and 121 (the validate-path endpoint writes and deletes a probe file under the requested directory); nopcommerce tls-verification-disabled (the SMTP certificate validator accepts any certificate); nopcommerce regex-injection (SettingController 1275: an administrator-set username rule is run as a pattern; counted true as a flow).
+- False, recorded (Known limit, `todook:` line and page text exist): eshop open-redirect (ConsentController 63: the URL comes back from a service of another class that validated the return URL); jellyfin path-traversal at ImageController 2069 (a path built by a service of another class) and PluginsController 242 (a path from the plugin manifest, checked by a StartsWith guard written in a form the rule does not recognise; new BACKLOG row `csharp.path-traversal#guard-is-false-or`).
+- Noise findings per project match each rule's reviewed probe: no new finding.
+
+### C# recall (by hand)
+
+Planted vulnerabilities of the five recall sets in the 12 rules' categories, scored by file and line against each app's own list (table: the controller's ledger `recall-table.md`). Found / planted: path-traversal 4/4, ssrf 4/4, xxe 2/2, open-redirect 2/2 (aspgoat only), unsafe-deserialization 2/3 (missed: dvcsharp-api's import builds an XmlSerializer for a type named in the request body), sql-injection 2/3 (missed: vulnerablelightapp's login filter, request in Program.cs and sink in another file), xss 1/5 (four are `Html.Raw` in Razor views, which OpenGrep does not parse), command-injection 0/2 (aspgoat: the shell name is set in if/else branches; vulnerablelightapp: the input is written to the shell's standard input). 17 of 25 found; one miss is cross-file, seven are other. Recall not measured: ldap-injection, xpath-injection, regex-injection and tls-verification-disabled (no planted vulnerability in any set), and open-redirect beyond aspgoat.
+
 ## 2026-10-12 rules f8b01fae64a77dfcd6d4f3b52bb483f94e244460 (js, python, java, go)
 
 OpenGrep 1.30.0 with --taint-intrafile; 4 rule directories; results in `.tmp/probe/2026-10-12T17-23-59-970Z`.
