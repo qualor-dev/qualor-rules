@@ -25,7 +25,7 @@ public static class FixtureRunner
     /// The implicit global usings of a Microsoft.NET.Sdk.Web project (`<ImplicitUsings>enable`), which the SDK generates
     /// into obj/ and Qualor's build hook records among the sources: the OpenGrep fixtures are written for such a project
     /// (they use Task, List and Uri without a using).
-    private const string ImplicitUsings = """
+    internal const string ImplicitUsings = """
         global using global::System;
         global using global::System.Collections.Generic;
         global using global::System.IO;
@@ -99,9 +99,25 @@ public static class FixtureRunner
         return new CompiledFixture(name, fixturePath, solution, annotations, errors);
     }
 
+    /// The engine's findings as the comparison takes them: (rule id, file path, 1-based line of the sink location).
+    public static IReadOnlyList<(string RuleId, string File, int Line)> Lines(AnalysisResult result) =>
+        result.Findings.Select(f => (f.RuleId, f.Sink.SourceTree?.FilePath ?? "", f.Sink.GetLineSpan().StartLinePosition.Line + 1)).ToList();
+
+    /// Runs the real TaintEngine (default options: 10 minutes, 4 GB) on the fixture; an incomplete run fails.
+    public static FixtureResult Run(string fixturePath, ModelSet models, TaintEngineOptions? options = null, Expectations? expectations = null)
+    {
+        options ??= new TaintEngineOptions(TimeSpan.FromMinutes(10), 4L << 30);
+        return Run(fixturePath, solution =>
+        {
+            var result = new TaintEngine(models, options).Analyze(solution, CancellationToken.None);
+            if (!result.Complete) throw new InvalidOperationException("incomplete engine run: " + result.IncompleteReason);
+            return Lines(result);
+        }, expectations);
+    }
+
     /// Compiles the fixture and compares what `analyze` reports (rule id, file name or path, line) for the fixture's
     /// rule(s) with the annotations: ruleid not reported → Missing; ok reported → Unexpected; todoruleid reported →
-    /// TodoFound. The overload that runs the real TaintEngine (`Run(fixturePath, models, options)`) arrives with Task 7.
+    /// TodoFound.
     public static FixtureResult Run(
         string fixturePath, Func<LoadedSolution, IReadOnlyList<(string RuleId, string File, int Line)>> analyze, Expectations? expectations = null)
     {

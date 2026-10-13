@@ -18,7 +18,8 @@
 # Sources (learn.microsoft.com): dotnet/api/system.string, system.text.stringbuilder, system.io.path,
 # system.uri, system.linq.enumerable, system.collections.generic.idictionary-2,
 # microsoft.extensions.primitives.stringvalues, microsoft.aspnetcore.http.iquerycollection,
-# system.io.streamreader.
+# system.io.streamreader, system.collections.generic.collectionextensions.getvalueordefault,
+# system.collections.generic.ienumerator-1, system.collections.generic.keyvaluepair-2.
 propagators:
   # Strings: the receiver and the arguments reach the result.
   - method: System.String..ctor
@@ -90,6 +91,17 @@ propagators:
   - property-get: Microsoft.AspNetCore.Http.IRequestCookieCollection.Item
   - property-get: Microsoft.AspNetCore.Http.IHeaderDictionary.Item
   - property-get: Microsoft.Extensions.Primitives.StringValues.Item
+  # GetValueOrDefault: the dictionary's element or the default value given (ordinal 2 of the three-parameter
+  # overload); like the indexer, not the key (an extension method: the dictionary is ordinal 0).
+  - method: System.Collections.Generic.CollectionExtensions.GetValueOrDefault
+    from: [0, 2]
+  # Enumeration (a foreach, lowered by the compiler to GetEnumerator, MoveNext and Current): the enumerator of a
+  # tainted collection is a collection for `unmodelled-external`; its Current is an element read, whatever its type
+  # (a KeyValuePair of a dictionary too, whose Key and Value are then element reads).
+  - property-get: System.Collections.Generic.IEnumerator`1.Current
+  - property-get: System.Collections.IEnumerator.Current
+  - property-get: System.Collections.Generic.KeyValuePair`2.Key
+  - property-get: System.Collections.Generic.KeyValuePair`2.Value
   # The request body read through its PipeReader (Request.BodyReader: ReadAsync, the result's Buffer, its
   # segments, decoded with Encoding.GetString). OpenGrep carries taint through every call; none of these
   # results is string-like or a collection, so `unmodelled-external` would drop it at the first step.

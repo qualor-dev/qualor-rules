@@ -1,0 +1,279 @@
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
+using Microsoft.CodeAnalysis.Text;
+
+namespace Qualor.Taint;
+
+/// Which parameters and properties are request data (sources.yml, models/README.md "sources.yml"), and the type facts
+/// the transfer functions need: scalars carry no taint, string-like and collection results take the
+/// `unmodelled-external` default. Results are cached by symbol.
+internal sealed class SourceFinder
+{
+    private readonly SourceModel _model;
+    private readonly HashSet<string> _scalars, _scalarCollections, _notScalarElements, _notSourceTypes, _sourceInterfaces;
+    private readonly HashSet<string> _bindingAttributes, _notSourceAttributes, _minimalSourceTypes, _controllerBases, _pageBases;
+    private readonly HashSet<string> _controllerAttributes, _notControllerAttributes, _notActionAttributes;
+    private readonly HashSet<string> _propertyAttributes, _boundClassAttributes;
+    private readonly HashSet<string> _mapMethodNames;
+    private readonly HashSet<(SyntaxTree Tree, TextSpan Span)> _handlers = new();
+    private readonly MemberTable<MemberPattern> _members = new();
+    private readonly Dictionary<ISymbol, bool> _parameterCache = new(SymbolEqualityComparer.Default);
+    private readonly Dictionary<ISymbol, bool> _propertyCache = new(SymbolEqualityComparer.Default);
+    private readonly Dictionary<ISymbol, bool> _controllerCache = new(SymbolEqualityComparer.Default);
+    private readonly Dictionary<ITypeSymbol, bool> _scalarCache = new(SymbolEqualityComparer.Default);
+    private readonly Dictionary<ITypeSymbol, bool> _stringOrCollectionCache = new(SymbolEqualityComparer.Default);
+
+    public SourceFinder(SourceModel model)
+    {
+        _model = model;
+        static HashSet<string> Set(IEnumerable<string> items) => new(items, StringComparer.Ordinal);
+        var types = model.ParameterTypes;
+        _scalars = Set(types.Scalars);
+        _scalarCollections = Set(types.ScalarCollections);
+        _notScalarElements = Set(types.NotScalarElements);
+        _notSourceTypes = Set(types.NotSourceTypes);
+        _sourceInterfaces = Set(types.SourceInterfaces);
+        _bindingAttributes = Set(model.BindingAttributes);
+        _notSourceAttributes = Set(model.NotSourceAttributes);
+        _minimalSourceTypes = Set(model.MinimalApi.SourceTypes);
+        _controllerBases = Set(model.Controllers.Bases);
+        _pageBases = Set(model.RazorPages.Bases);
+        _controllerAttributes = Set(model.Controllers.ClassAttributes);
+        _notControllerAttributes = Set(model.Controllers.NotClassAttributes);
+        _notActionAttributes = Set(model.Controllers.NotMethodAttributes);
+        _propertyAttributes = Set(model.BoundProperties.PropertyAttributes);
+        _boundClassAttributes = Set(model.BoundProperties.ClassAttributes);
+        _mapMethodNames = Set(model.MinimalApi.MapMethods.Select(m => m.MemberName));
+        foreach (var member in model.Members) _members.Add(member, member);
+    }
+
+    /// The source member (sources.yml (6) `members`) a call or a property read is, or null.
+    public MemberPattern? SourceMember(ISymbol member, Access access)
+    {
+        var hits = _members.Match(member, access);
+        return hits.Length == 0 ? null : hits[0];
+    }
+
+    // ---- Minimal API handlers ----
+
+    /// Records the handlers given to a map method in this compilation: lambdas, local functions and method groups (the
+    /// method wherever it is declared), by their declaring syntax.
+    public void RegisterHandlers(Compilation compilation, CancellationToken ct)
+    {
+        foreach (var tree in compilation.SyntaxTrees)
+        {
+            ct.ThrowIfCancellationRequested();
+            SemanticModel? model = null;
+            foreach (var call in tree.GetRoot(ct).DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                var name = call.Expression switch
+                {
+                    MemberAccessExpressionSyntax m => m.Name.Identifier.ValueText,
+                    SimpleNameSyntax s => s.Identifier.ValueText,
+                    _ => null,
+                };
+                if (name == null || !_mapMethodNames.Contains(name)) continue;
+                model ??= compilation.GetSemanticModel(tree);
+                if (model.GetOperation(call, ct) is not IInvocationOperation invocation) continue;
+                if (!_model.MinimalApi.MapMethods.Any(p => SymbolMatch.Matches(p, invocation.TargetMethod))) continue;
+                foreach (var argument in invocation.Arguments)
+                {
+                    var handler = HandlerOf(argument.Value);
+                    if (handler == null) continue;
+                    foreach (var r in handler.DeclaringSyntaxReferences) _handlers.Add((r.SyntaxTree, r.Span));
+                }
+            }
+        }
+    }
+
+    private static IMethodSymbol? HandlerOf(IOperation value)
+    {
+        while (true)
+        {
+            switch (value)
+            {
+                case IConversionOperation c: value = c.Operand; continue;
+                case IDelegateCreationOperation d: value = d.Target; continue;
+                case IAnonymousFunctionOperation f: return f.Symbol;
+                case IMethodReferenceOperation m: return m.Method.OriginalDefinition;
+                default: return null;
+            }
+        }
+    }
+
+    private bool IsHandler(IMethodSymbol method) =>
+        _handlers.Count > 0 && method.OriginalDefinition.DeclaringSyntaxReferences.Any(r => _handlers.Contains((r.SyntaxTree, r.Span)));
+
+    // ---- Parameters ----
+
+    /// Whether a parameter is bound from the request: a binding attribute (5), a Minimal API handler's parameter of a
+    /// source type (4), a controller action's (1) or a Razor Pages handler's (2) parameter; never with a DI attribute.
+    public bool IsSourceParameter(IParameterSymbol parameter)
+    {
+        parameter = parameter.OriginalDefinition;
+        if (_parameterCache.TryGetValue(parameter, out var cached)) return cached;
+        var result = Compute(parameter);
+        _parameterCache[parameter] = result;
+        return result;
+    }
+
+    private bool Compute(IParameterSymbol parameter)
+    {
+        if (parameter.RefKind == RefKind.Out || parameter.ContainingSymbol is not IMethodSymbol method) return false;
+        if (HasAttribute(parameter.GetAttributes(), _notSourceAttributes)) return false;
+        if (HasAttribute(parameter.GetAttributes(), _bindingAttributes) && !IsNeverSourceType(parameter.Type)) return true;
+        if (IsHandler(method) && _minimalSourceTypes.Contains(SymbolMatch.MetadataName(UnwrapNullable(parameter.Type)))) return true;
+        if (method.MethodKind != MethodKind.Ordinary || method.IsStatic || method.ContainingType == null) return false;
+        if (IsNeverSourceType(parameter.Type)) return false;
+
+        var type = method.ContainingType;
+        var c = _model.Controllers;
+        if ((!c.PublicMethodsOnly || method.DeclaredAccessibility == Accessibility.Public) && IsController(type)
+            && !HasAttribute(method.GetAttributes(), _notActionAttributes))
+            return true;
+        var p = _model.RazorPages;
+        if ((!p.PublicMethodsOnly || method.DeclaredAccessibility == Accessibility.Public)
+            && p.HandlerPrefixes.Any(h => method.Name.StartsWith(h, StringComparison.Ordinal))
+            && BaseTypes(type).Any(b => _pageBases.Contains(SymbolMatch.MetadataName(b))))
+            return true;
+        return false;
+    }
+
+    /// A controller (sources.yml (1)): by a base class, a base class's name, its own name over System.Object, or an
+    /// attribute; never with a not-controller attribute.
+    public bool IsController(INamedTypeSymbol type)
+    {
+        type = type.OriginalDefinition;
+        if (_controllerCache.TryGetValue(type, out var cached)) return cached;
+        var result = false;
+        if (type.TypeKind == TypeKind.Class && !SelfAndBases(type).Any(t => HasAttribute(t.GetAttributes(), _notControllerAttributes)))
+        {
+            var c = _model.Controllers;
+            result = SelfAndBases(type).Any(t => HasAttribute(t.GetAttributes(), _controllerAttributes))
+                || BaseTypes(type).Any(b => _controllerBases.Contains(SymbolMatch.MetadataName(b))
+                    || c.BaseNameSuffixes.Any(s => b.Name.EndsWith(s, StringComparison.Ordinal)))
+                || (type.BaseType?.SpecialType == SpecialType.System_Object
+                    && c.NameSuffixes.Any(s => type.Name.EndsWith(s, StringComparison.Ordinal)));
+        }
+        _controllerCache[type] = result;
+        return result;
+    }
+
+    // ---- Properties ----
+
+    /// A property model binding sets (sources.yml (3)): with a property attribute, or public in a class with a class
+    /// attribute; not of a never-source type.
+    public bool IsBoundProperty(IPropertySymbol property)
+    {
+        property = property.OriginalDefinition;
+        if (_propertyCache.TryGetValue(property, out var cached)) return cached;
+        var result = !property.IsStatic && !property.IsIndexer
+            && (HasAttribute(property.GetAttributes(), _propertyAttributes)
+                || (property.DeclaredAccessibility == Accessibility.Public
+                    && SelfAndBases(property.ContainingType).Any(t => HasAttribute(t.GetAttributes(), _boundClassAttributes))))
+            && !IsNeverSourceType(property.Type);
+        _propertyCache[property] = result;
+        return result;
+    }
+
+    // ---- Types ----
+
+    /// The parameter types that are never sources (sources.yml `parameter-types`).
+    public bool IsNeverSourceType(ITypeSymbol type)
+    {
+        type = UnwrapNullable(type);
+        var t = _model.ParameterTypes;
+        if (IsScalar(type)) return true;
+        var name = SymbolMatch.MetadataName(type);
+        if (_notSourceTypes.Contains(name)) return true;
+        if (type is IArrayTypeSymbol array) return IsScalarElement(UnwrapNullable(array.ElementType));
+        if (type is INamedTypeSymbol { TypeArguments.Length: 1 } named && _scalarCollections.Contains(name))
+            return IsScalarElement(UnwrapNullable(named.TypeArguments[0]));
+        return type.TypeKind == TypeKind.Interface && t.InterfacesAreServices && !_sourceInterfaces.Contains(name);
+    }
+
+    private bool IsScalarElement(ITypeSymbol type) =>
+        !_notScalarElements.Contains(SymbolMatch.MetadataName(type)) && IsScalar(type);
+
+    /// A value of this type never carries request data: a scalar of the model (also Nullable of one), an enum when
+    /// `enums-are-scalar`, and void.
+    public bool IsScalar(ITypeSymbol type)
+    {
+        if (_scalarCache.TryGetValue(type, out var cached)) return cached;
+        var t = UnwrapNullable(type);
+        var result = t.SpecialType == SpecialType.System_Void
+            || (t.TypeKind == TypeKind.Enum && _model.ParameterTypes.EnumsAreScalar)
+            || (t is INamedTypeSymbol && _scalars.Contains(SymbolMatch.MetadataName(t)));
+        _scalarCache[type] = result;
+        return result;
+    }
+
+    /// The results the `string-or-collection-return` default passes taint to: string-like types (string, StringBuilder,
+    /// FormattableString, StringValues, spans and memories of char), arrays, enumerables and enumerators (IEnumerable,
+    /// IEnumerator and their async forms), also as a Task's or ValueTask's result.
+    public bool IsStringOrCollection(ITypeSymbol type)
+    {
+        if (_stringOrCollectionCache.TryGetValue(type, out var cached)) return cached;
+        var result = ComputeStringOrCollection(UnwrapNullable(type));
+        _stringOrCollectionCache[type] = result;
+        return result;
+    }
+
+    private static readonly HashSet<string> StringLike = new(StringComparer.Ordinal)
+    {
+        "System.String", "System.Text.StringBuilder", "System.FormattableString", "Microsoft.Extensions.Primitives.StringValues",
+        "Microsoft.Extensions.Primitives.StringSegment",
+    };
+
+    private static readonly HashSet<string> CharContainers = new(StringComparer.Ordinal)
+    {
+        "System.Span`1", "System.ReadOnlySpan`1", "System.Memory`1", "System.ReadOnlyMemory`1",
+    };
+
+    private static readonly HashSet<string> Enumerables = new(StringComparer.Ordinal)
+    {
+        "System.Collections.IEnumerable", "System.Collections.IEnumerator",
+        "System.Collections.Generic.IAsyncEnumerable`1", "System.Collections.Generic.IAsyncEnumerator`1",
+    };
+
+    private static bool ComputeStringOrCollection(ITypeSymbol type)
+    {
+        if (type is IArrayTypeSymbol) return true;
+        var name = SymbolMatch.MetadataName(type);
+        if (StringLike.Contains(name)) return true;
+        if (type is INamedTypeSymbol named)
+        {
+            if (CharContainers.Contains(name)) return named.TypeArguments[0].SpecialType == SpecialType.System_Char;
+            if ((name == "System.Threading.Tasks.Task`1" || name == "System.Threading.Tasks.ValueTask`1"))
+                return ComputeStringOrCollection(UnwrapNullable(named.TypeArguments[0]));
+        }
+        if (Enumerables.Contains(name)) return true;
+        return type.AllInterfaces.Any(i => Enumerables.Contains(SymbolMatch.MetadataName(i)));
+    }
+
+    public static ITypeSymbol UnwrapNullable(ITypeSymbol type) =>
+        type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } n ? n.TypeArguments[0] : type;
+
+    // ---- Helpers ----
+
+    private static IEnumerable<INamedTypeSymbol> BaseTypes(INamedTypeSymbol type)
+    {
+        for (var b = type.BaseType; b != null; b = b.BaseType) yield return b;
+    }
+
+    private static IEnumerable<INamedTypeSymbol> SelfAndBases(INamedTypeSymbol type)
+    {
+        for (INamedTypeSymbol? t = type; t != null; t = t.BaseType) yield return t;
+    }
+
+    /// An attribute of one of these classes, or of a class derived from one.
+    private static bool HasAttribute(IEnumerable<AttributeData> attributes, HashSet<string> names)
+    {
+        if (names.Count == 0) return false;
+        foreach (var a in attributes)
+            for (var c = a.AttributeClass; c != null; c = c.BaseType)
+                if (names.Contains(SymbolMatch.MetadataName(c))) return true;
+        return false;
+    }
+}
