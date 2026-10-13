@@ -37,6 +37,10 @@ rules:
         - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.httpresponsewritingextensions.writeasync
         - https://learn.microsoft.com/en-us/dotnet/api/system.text.encodings.web.htmlencoder
         - https://learn.microsoft.com/en-us/dotnet/api/system.net.webutility.htmlencode
+        - https://learn.microsoft.com/en-us/dotnet/api/system.text.encodings.web.urlencoder
+        - https://learn.microsoft.com/en-us/dotnet/api/system.uri.escapedatastring
+        - https://learn.microsoft.com/en-us/dotnet/api/system.net.webutility.urlencode
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.pathstring.tostring
         - https://learn.microsoft.com/en-us/dotnet/api/system.net.mime.mediatypenames.text.html
       since: 2026.10.5
     # Known limits (each has a `todo` line in the test file, unless it says otherwise):
@@ -57,9 +61,11 @@ rules:
     # - The HTML content type must be written in place (or held in a constant) as a string starting
     #   with text/html or application/xhtml+xml, or as MediaTypeNames.Text.Html; a content type
     #   chosen at run time is not followed.
-    # - Request.Path and Request.PathBase written as PathString values are escaped for a URI and not
-    #   reported; their .Value is reported when read in place, but a PathString held in a variable
-    #   before its .Value is read is missed.
+    # - Request.Path and Request.PathBase written as PathString values are not reported: they are
+    #   escaped for a URI, which keeps them inside text and double-quoted attributes. PathString
+    #   does not escape for HTML (' ( ) = ; & pass), so one in a single-quoted attribute or a script
+    #   string is missed; a PathString held in a variable before its .Value is read is missed too.
+    #   .Value read in place is reported.
     # - Response.WriteAsync is checked only after `Response.ContentType` is set to HTML in the same
     #   method; a response written without a content type (which a browser may sniff as HTML) is
     #   not.
@@ -349,9 +355,20 @@ rules:
           - pattern: (HtmlEncoder $ENCODER).Encode(...)
           - pattern: WebUtility.HtmlEncode(...)
           - pattern: HttpUtility.HtmlEncode(...)
+      # URL encoding (UrlEncoder Default, Create(...) or injected, Uri.EscapeDataString,
+      # WebUtility.UrlEncode) percent-encodes ' " < > & as well: a value encoded for a URL cannot
+      # leave an attribute or start a tag.
+      - pattern-either:
+          - pattern: UrlEncoder.Default.Encode(...)
+          - pattern: UrlEncoder.Create(...).Encode(...)
+          - pattern: (UrlEncoder $URLENCODER).Encode(...)
+          - pattern: Uri.EscapeDataString(...)
+          - pattern: WebUtility.UrlEncode(...)
       # The request's Path and PathBase are PathString values, which turn into text escaped for a
-      # URI ('<', '"' and spaces percent-encoded); their .Value is the unescaped path and stays
-      # request data.
+      # URI: '<', '>', '"' and spaces are percent-encoded, so they cannot open a tag or leave text or
+      # a double-quoted attribute. They are escaped for a URI, not for HTML: ' ( ) = ; & pass, so a
+      # single-quoted attribute or a script string is missed (Known limit). Their .Value is the
+      # unescaped path and stays request data.
       - patterns:
           - pattern-either:
               - pattern: $PATHREQ.Path

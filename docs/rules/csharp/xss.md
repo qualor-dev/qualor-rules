@@ -20,7 +20,9 @@ into an HTML response without encoding:
   `HtmlContentBuilder`);
 - `Response.WriteAsync(...)` after `Response.ContentType` is set to HTML in the same method.
 
-An error message that echoes a rejected value is reported too, also inside an allow-list check.
+An error message that echoes a rejected value is reported too, also inside an allow-list check. Values
+encoded for HTML (`HtmlEncoder`, `WebUtility.HtmlEncode`) or for a URL (`UrlEncoder`,
+`Uri.EscapeDataString`, `WebUtility.UrlEncode`) are not reported.
 Request data means the parameters of controller actions, Razor Pages handlers and Minimal API
 handlers (strings, string arrays, `StringValues`, forms, uploaded files, the body stream, and any
 parameter bound with `[FromQuery]`, `[FromRoute]`, `[FromForm]`, `[FromHeader]`, `[FromBody]` or
@@ -113,9 +115,11 @@ public class SearchController : ControllerBase
 - The HTML content type must be written as a string starting with `text/html` or
   `application/xhtml+xml` (in place or in a constant) or as `MediaTypeNames.Text.Html`; a content
   type chosen at run time is not followed.
-- `Request.Path` and `Request.PathBase` written as they are (`PathString`) are escaped for a URI
-  and not reported; their `.Value` is, but not when the `PathString` was first stored in a
-  variable.
+- `Request.Path` and `Request.PathBase` written as they are (`PathString`) are not reported: they
+  are escaped for a URI, which keeps them inside text and double-quoted attributes. That escaping
+  is not HTML encoding (`'`, `(`, `)`, `=` and `&` pass), so one placed in a single-quoted
+  attribute or a script string is missed. Their `.Value` is reported, but not when the
+  `PathString` was first stored in a variable.
 - `Response.WriteAsync` is checked only after the response's content type is set to HTML in the
   same method; a response written without a content type, which a browser may still sniff as HTML,
   is not reported.
@@ -145,6 +149,10 @@ public class SearchController : ControllerBase
 - <https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.httpresponsewritingextensions.writeasync>
 - <https://learn.microsoft.com/en-us/dotnet/api/system.text.encodings.web.htmlencoder>
 - <https://learn.microsoft.com/en-us/dotnet/api/system.net.webutility.htmlencode>
+- <https://learn.microsoft.com/en-us/dotnet/api/system.text.encodings.web.urlencoder>
+- <https://learn.microsoft.com/en-us/dotnet/api/system.uri.escapedatastring>
+- <https://learn.microsoft.com/en-us/dotnet/api/system.net.webutility.urlencode>
+- <https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.pathstring.tostring>
 - <https://learn.microsoft.com/en-us/dotnet/api/system.net.mime.mediatypenames.text.html>
 
 ## Tests

@@ -83,8 +83,31 @@ public class PagesController : ControllerBase
     private static readonly HashSet<string> Sections = new() { "news", "sports" };
 
     private readonly HtmlEncoder _encoder;
+    private readonly UrlEncoder _urlEncoder;
 
-    public PagesController(HtmlEncoder encoder) => _encoder = encoder;
+    public PagesController(HtmlEncoder encoder, UrlEncoder urlEncoder)
+    {
+        _encoder = encoder;
+        _urlEncoder = urlEncoder;
+    }
+
+    // URL-encoded values: quotes, angle brackets and ampersands are percent-encoded.
+    [HttpGet("links")]
+    public IActionResult Links(string q)
+    {
+        // ok: csharp.xss
+        var a = Content("<a href=\"/search?q=" + UrlEncoder.Default.Encode(q) + "\">Search</a>", "text/html");
+        // ok: csharp.xss
+        var b = Content("<a href=\"/search?q=" + UrlEncoder.Create(UnicodeRanges.BasicLatin).Encode(q) + "\">Search</a>", "text/html");
+        // ok: csharp.xss
+        var c = Content("<a href=\"/search?q=" + _urlEncoder.Encode(q) + "\">Search</a>", "text/html");
+        // ok: csharp.xss
+        var d = Content("<a href='/search?q=" + Uri.EscapeDataString(q) + "'>Search</a>", "text/html");
+        // ok: csharp.xss
+        var e = Content("<a href=\"/search?q=" + WebUtility.UrlEncode(q) + "\">Search</a>", "text/html");
+        // ruleid: csharp.xss
+        return Content("<a href=\"/search?q=" + q + "\">Search</a>", "text/html");
+    }
 
     // Content with an HTML content type, in every form.
     [HttpGet("search")]
@@ -172,6 +195,12 @@ public class PagesController : ControllerBase
         var held = Request.Path;
         // todoruleid: csharp.xss
         var g = Content("<p>Not found: " + held.Value + "</p>", "text/html");
+        // PathString escapes for a URI, not for HTML: a quote (') passes, so a single-quoted
+        // attribute or a script string is missed (Known limit).
+        // todoruleid: csharp.xss
+        var h = Content("<a href='" + Request.Path + "'>Reload</a>", "text/html");
+        // todoruleid: csharp.xss
+        var i = Content("<script>var page = '" + Request.PathBase + "';</script>", "text/html");
         var builder = new HtmlContentBuilder();
         // ruleid: csharp.xss
         builder.AppendHtml("<b>" + name + "</b>");
