@@ -24,6 +24,12 @@ Entry format:
   branches left behind.
 ```
 
+## 2026-10-13: rules run (`/write-rules 11 csharp`) (in progress)
+
+- **Request:** Phase 6B-C# (the maintainer's spec of 2026-10-13): the 11 C# rows after the seed csharp.sql-injection. The auto-mode classifier refuses merges into `main`, so this run integrates on branch `csharp` (worktree `E:/Personal/qualor/worktrees/qualor-rules-csharp`) in place of `main`; the maintainer fast-forwards `main` to it.
+- **Plan:** BASE = this commit; tested with `--taint-intrafile`; `since: 2026.10.5`. Batches: csharp-1 (csharp.command-injection, csharp.path-traversal, csharp.ssrf, csharp.xss), csharp-2 (csharp.open-redirect, csharp.ldap-injection, csharp.xpath-injection, csharp.regex-injection), csharp-3 (csharp.unsafe-deserialization, csharp.xxe, csharp.tls-verification-disabled). csharp-3 holds misuse rules without the request source block, so it runs in parallel with csharp-1; csharp-2 starts after csharp-1 is merged.
+- **Progress:**
+
 ## 2026-10-12: release 2026.10.4 (`/release-pack`)
 
 - **Request:** the maintainer asked for a new rules release after closing the 6B tails ("делай новый релиз правил", 2026-10-10).
