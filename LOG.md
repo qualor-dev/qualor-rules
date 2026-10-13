@@ -31,6 +31,7 @@ Entry format:
 - **Progress:**
 - csharp-3 (csharp.unsafe-deserialization, csharp.xxe, csharp.tls-verification-disabled): APPROVED in round 1; merged 7a03f5e..9e5dcca
 - csharp-1 (csharp.command-injection, csharp.path-traversal, csharp.ssrf, csharp.xss): APPROVED in round 2 (Critical: URL-encoded values in HTML reported; Important: PathString is URI-escaped, not HTML-escaped, recorded as a limit); merged 968d098..aec73ca
+- csharp-2 (csharp.open-redirect, csharp.xpath-injection, csharp.regex-injection; csharp.ldap-injection BLOCKED in this batch, see csharp-4): APPROVED in round 3 (Critical: fixture passages copied from probe findings, rewritten and folded out of history; Important: own-Host redirects, verbatim allow-lists, global usings, a request-chosen scheme in BuildAbsolute); merged cf7b185..d2d1bcc
 
 ## 2026-10-12: release 2026.10.4 (`/release-pack`)
 
