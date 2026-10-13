@@ -1,0 +1,436 @@
+rules:
+  - id: csharp.xss
+    mode: taint
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request is written into an HTML response without encoding: Content or
+      Results.Content/Text with an HTML content type, a ContentResult, HtmlString, AppendHtml or
+      SetHtmlContent, or Response.WriteAsync after an HTML content type. Encode it with
+      HtmlEncoder.Default.Encode or WebUtility.HtmlEncode, or render it through a Razor view, which
+      encodes by default.
+    metadata:
+      title: HTML response built from HTTP request data (C#)
+      cwe: ['CWE-79']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [aspnetcore-mvc, minimal-apis, razor-pages]
+      sources:
+        - https://cwe.mitre.org/data/definitions/79.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html
+        - https://learn.microsoft.com/en-us/aspnet/core/security/cross-site-scripting
+        - https://learn.microsoft.com/en-us/aspnet/core/mvc/controllers/actions
+        - https://learn.microsoft.com/en-us/aspnet/core/mvc/models/model-binding
+        - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/minimal-apis/parameter-binding
+        - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/minimal-apis/route-handlers
+        - https://learn.microsoft.com/en-us/aspnet/core/razor-pages/
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.httprequest
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.mvc.controllerbase.content
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.mvc.contentresult
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.results.content
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.results.text
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.html.htmlstring
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.html.htmlcontentbuilder
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.html.htmlcontentbuilderextensions
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.httpresponsewritingextensions.writeasync
+        - https://learn.microsoft.com/en-us/dotnet/api/system.text.encodings.web.htmlencoder
+        - https://learn.microsoft.com/en-us/dotnet/api/system.net.webutility.htmlencode
+        - https://learn.microsoft.com/en-us/dotnet/api/system.net.mime.mediatypenames.text.html
+      since: 2026.10.5
+    # Known limits (each has a `todo` line in the test file, unless it says otherwise):
+    # - Razor views (.cshtml) and Razor components (.razor) are not parsed by OpenGrep, so
+    #   `@Html.Raw(...)` and `MarkupString` in markup, the main raw-HTML sinks of MVC and Razor
+    #   Pages, are not seen (no test line: the test file is C#).
+    # - Taint is followed through the methods of one file (OpenGrep's --taint-intrafile), not into
+    #   other files: request data handed to a view, a view component or a service of another file is
+    #   missed. Request data read by an expression-bodied method (`=> expr`) or by any property
+    #   getter (block body too), such as `string Referrer => Request.Headers[...]`, is missed.
+    # - Minimal APIs: a complex-type parameter bound from the JSON body without [FromBody] is not a
+    #   source; a handler given as a method group of another class (Handlers.Echo) is missed.
+    # - A class named *Controller whose base class is named otherwise (a base two steps away from
+    #   ControllerBase) is missed.
+    # - An enum declared after its use (or in another file) is still a source; an equality guard,
+    #   Enumerable.Contains called as a static method or a table in another file is no allow-list; a
+    #   variable assigned again after a Contains guard still counts as checked.
+    # - The HTML content type must be written in place (or held in a constant) as a string starting
+    #   with text/html or application/xhtml+xml, or as MediaTypeNames.Text.Html; a content type
+    #   chosen at run time is not followed.
+    # - Request.Path and Request.PathBase written as PathString values are escaped for a URI and not
+    #   reported; their .Value is reported when read in place, but a PathString held in a variable
+    #   before its .Value is read is missed.
+    # - Response.WriteAsync is checked only after `Response.ContentType` is set to HTML in the same
+    #   method; a response written without a content type (which a browser may sniff as HTML) is
+    #   not.
+    # - OpenGrep 1.30 does not parse some C# 11/12 syntax: a raw string literal with two or more
+    #   dollar signs ($$"""..."""), a type declared without a body (`class X : Y;`), some multi-line
+    #   collection expressions with a trailing comma. That part of the file is skipped. No test
+    #   line: the test file must parse.
+    pattern-sources:
+      # MVC and Web API controllers: the parameters of public methods (actions) of a class whose
+      # base class's name ends in Controller (ControllerBase too; generic bases as well), of a class without a base list
+      # whose own name ends in Controller, and of a class marked [ApiController] or [Controller]
+      # ([NonController] excepted). Numbers, booleans, GUIDs, dates and times (also nullable,
+      # arrays and lists of them), enums declared earlier in the file, CancellationToken and
+      # interfaces (DI services; the IForm* types and collection interfaces excepted) cannot carry
+      # SQL text or are not bound from the request.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $CTRL : $CTRLBASE { ... }
+              - patterns:
+                  - pattern-inside: |
+                      class $CTRLBASE { ... }
+                  - pattern-not-inside: |
+                      class $CTRLBASE : $OTHERBASE { ... }
+              - pattern-inside: |
+                  [$CTRLBASE]
+                  class $CTRL { ... }
+          - metavariable-regex:
+              metavariable: $CTRLBASE
+              regex: ^(\w+\.)*\w*(Controller|ControllerBase)(<.*>)?$
+          - pattern-not-inside: |
+              [NonController]
+              class $NOTCTRL { ... }
+          - pattern-inside: |
+              public $RET $ACTION(..., $T $P, ...) { ... }
+          - pattern-not-inside: |
+              $RET $ACTION(..., [FromServices(...)] $T $P, ...) { ... }
+          - pattern-not-inside: |
+              $RET $ACTION(..., [FromKeyedServices(...)] $T $P, ...) { ... }
+          - pattern-not-inside: |
+              [NonAction]
+              $RET $ACTION(...) { ... }
+          - pattern-not-inside: |
+              enum $T { ... }
+              ...
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern: $P
+      # Razor Pages: the parameters of handler methods (On<Verb>...) of a class whose base class's
+      # name ends in PageModel (the same types excepted).
+      - patterns:
+          - pattern-inside: |
+              class $PAGE : $PAGEBASE { ... }
+          - metavariable-regex:
+              metavariable: $PAGEBASE
+              regex: ^(\w+\.)*\w*PageModel$
+          - pattern-inside: |
+              public $RET $HANDLER(..., $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $HANDLER
+              regex: ^On(Get|Post|Put|Delete|Patch|Head|Options)\w*$
+          - pattern-not-inside: |
+              $RET $HANDLER(..., [FromServices(...)] $T $P, ...) { ... }
+          - pattern-not-inside: |
+              enum $T { ... }
+              ...
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern: $P
+      # Razor Pages (and controllers): [BindProperty] properties, and every public property of a
+      # [BindProperties] class.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $BOUND {
+                    ...
+                    [BindProperty(...)] public $T $P { get; set; }
+                    ...
+                  }
+              - pattern-inside: |
+                  class $BOUND {
+                    ...
+                    [BindProperty(...)] public $T $P { get; set; } = $INIT;
+                    ...
+                  }
+              - pattern-inside: |
+                  [BindProperties]
+                  class $BOUND {
+                    ...
+                    public $T $P { get; set; }
+                    ...
+                  }
+              - pattern-inside: |
+                  [BindProperties]
+                  class $BOUND {
+                    ...
+                    public $T $P { get; set; } = $INIT;
+                    ...
+                  }
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern-either:
+              - pattern: $P
+              - pattern: this.$P
+      # Minimal APIs: the string-like parameters (route values, query strings, headers, forms,
+      # uploaded files, the body stream) of a handler given to MapGet/MapPost/... as a lambda, or as
+      # a method group declared in this file (top level, or in the class that maps it).
+      - patterns:
+          - pattern-either:
+              # A lambda with an expression body or a block body (async too).
+              - pattern-inside: $APP.$MAPVERB($ROUTE, ..., (..., $T $P, ...) => $BODY)
+              - pattern-inside: $APP.$MAPVERB($ROUTE, ..., (..., $T $P, ...) => { ... })
+              - patterns:
+                  - pattern-inside: |
+                      $RET $HANDLER(..., $T $P, ...) { ... }
+                  - pattern-either:
+                      - pattern-inside: |
+                          <... $APP.$MAPVERB($ROUTE, ..., $HANDLER) ...>;
+                          ...
+                      # ... or mapped in an extension method of its class (MapXxxApi(this
+                      # IEndpointRouteBuilder app)).
+                      - pattern-inside: |
+                          class $ENDPOINTS { ... $R2 $MAPPER(this $BUILDERTYPE $BUILDER, ...) { ... <... $APP.$MAPVERB($ROUTE, ..., $HANDLER) ...>; ... } ... }
+          - metavariable-regex:
+              metavariable: $MAPVERB
+              regex: ^Map(Get|Post|Put|Delete|Patch|Methods)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(string\??|string\[\]\??|StringValues\??|IFormFile\??|IFormFileCollection\??|IFormCollection\??|Stream\??|PipeReader\??)$
+          - pattern: $P
+      # Parameters bound from the request by an attribute, in any method or lambda (Minimal API
+      # handlers, method-group handlers, Razor Pages handlers); the same types excepted.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $RET $BOUNDM(..., [$FROM(...)] $T $P, ...) { ... }
+              - pattern-inside: (..., [$FROM(...)] $T $P, ...) => $BODY
+              - pattern-inside: (..., [$FROM(...)] $T $P, ...) => { ... }
+          - metavariable-regex:
+              metavariable: $FROM
+              regex: ^(\w+\.)*(FromQuery|FromRoute|FromForm|FromHeader|FromBody|AsParameters)(Attribute)?$
+          - pattern-not-inside: |
+              enum $T { ... }
+              ...
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern: $P
+      # The request: Request (a controller's or page's property), HttpContext.Request and
+      # context.Request, a parameter or variable of type HttpRequest, or a variable assigned one
+      # of them with var. Its query, form, headers, cookies, route values, path, raw query string
+      # and body, and what ReadFormAsync and ReadFromJsonAsync read from it.
+      - patterns:
+          - pattern-either:
+              - pattern: Request.$REQPART
+              - pattern: $CTX.Request.$REQPART
+              - pattern: (HttpRequest $REQ).$REQPART
+              - patterns:
+                  - pattern-inside: |
+                      var $REQ = $CTX.Request;
+                      ...
+                  - pattern: $REQ.$REQPART
+              - patterns:
+                  - pattern-inside: |
+                      var $REQ = Request;
+                      ...
+                  - pattern: $REQ.$REQPART
+          - metavariable-regex:
+              metavariable: $REQPART
+              regex: ^(Query|Form|Headers|Cookies|RouteValues|Path|PathBase|QueryString|Body|BodyReader|ReadFormAsync|ReadFromJsonAsync(<.*>)?)$
+      # (End of the shared C# source block; the items below are this rule's own.)
+    pattern-propagators:
+      # Shared C# propagators (up to the end comment): text added to a StringBuilder (also later
+      # in an Append chain), and
+      # the value TryGetValue hands out of a request collection. (OpenGrep's --taint-intrafile
+      # mode already carries StringBuilder.Insert(index, text) into the builder.)
+      - pattern: $SB.Append($X)
+        from: $X
+        to: $SB
+      - pattern: $SB.Append(...). ... .Append($X)
+        from: $X
+        to: $SB
+      - pattern: $SB.AppendLine($X)
+        from: $X
+        to: $SB
+      - pattern: $SB.AppendFormat(..., $X, ...)
+        from: $X
+        to: $SB
+      - pattern: $COLL.TryGetValue($KEY, out $V)
+        from: $COLL
+        to: $V
+      # (End of the shared C# propagators; the items below are this rule's own.)
+    pattern-sanitizers:
+      # Shared C# sanitizers: conversions to numbers, GUIDs, dates and enums, and allow-lists.
+      # (TryParse's out value, a ternary or a switch expression of constants needs no sanitizer.)
+      - pattern-either:
+          - pattern: int.Parse(...)
+          - pattern: long.Parse(...)
+          - pattern: Guid.Parse(...)
+          - pattern: DateTime.Parse(...)
+          - pattern: Convert.ToInt32(...)
+          - pattern: Convert.ToInt64(...)
+          - pattern: Enum.Parse<$ENUM>(...)
+          - pattern: Enum.Parse(...)
+      # An allow-list: a static readonly Dictionary, HashSet, list or array of literals that no
+      # method after it in its class changes (indexer write, Add, TryAdd, AddRange, Insert,
+      # InsertRange, UnionWith, SymmetricExceptWith). Its lookups (an indexer, or
+      # GetValueOrDefault with a literal default) are clean, and so is the checked value in
+      # `T.Contains(x) ? x : <literal>` and after a guard that always leaves the method when the
+      # value is not in the table (`if (!T.Contains(x)) return/throw ...;`, ContainsKey too).
+      - patterns:
+          - pattern-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... }
+          - metavariable-regex:
+              metavariable: $TABLEINIT
+              regex: ^(new\s*((\w+\.)*(Dictionary|SortedDictionary)\s*<[^>]*>)?\s*(\(\s*(StringComparer\.\w+)?\s*\))?\s*\{\s*(\[\s*("([^"\\]|\\.)*"|-?\d+)\s*\]\s*=\s*("([^"\\]|\\.)*"|-?\d+)|\{\s*("([^"\\]|\\.)*"|-?\d+)\s*,\s*("([^"\\]|\\.)*"|-?\d+)\s*\})(\s*,\s*(\[\s*("([^"\\]|\\.)*"|-?\d+)\s*\]\s*=\s*("([^"\\]|\\.)*"|-?\d+)|\{\s*("([^"\\]|\\.)*"|-?\d+)\s*,\s*("([^"\\]|\\.)*"|-?\d+)\s*\}))*\s*,?\s*\}|(new\s*((\w+\.)*(HashSet|SortedSet)\s*<[^>]*>|(\w+\.)*\w*\s*\[\s*\])?\s*(\(\s*(StringComparer\.\w+)?\s*\))?\s*)?\{\s*("([^"\\]|\\.)*"|-?\d+)(\s*,\s*("([^"\\]|\\.)*"|-?\d+))*\s*,?\s*\})$
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE[$A] = $B; ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.Add(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.TryAdd(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.AddRange(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.Insert(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.InsertRange(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.UnionWith(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.SymmetricExceptWith(...); ... } ... }
+          - pattern-either:
+              - pattern: $TABLE[$K]
+              - patterns:
+                  - pattern: $TABLE.GetValueOrDefault($K, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^("([^"\\]|\\.)*"|-?\d+|null)$
+              - patterns:
+                  - pattern: '$TABLE.$CONTAINS($X) ? $X : $FALLBACK'
+                  - metavariable-regex:
+                      metavariable: $CONTAINS
+                      regex: ^Contains(Key)?$
+                  - metavariable-regex:
+                      metavariable: $FALLBACK
+                      regex: ^("([^"\\]|\\.)*"|-?\d+|null)$
+              - patterns:
+                  - pattern-either:
+                      # The body leaves the method: its last top-level statement (after at most
+                      # two others) is a return or a throw (a single one also in braces).
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) return ...;
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) throw $EX;
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; return ...; }
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; throw $EX; }
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; $S2; return ...; }
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; $S2; throw $EX; }
+                          ...
+                  - metavariable-regex:
+                      metavariable: $CONTAINS
+                      regex: ^Contains(Key)?$
+                  # Not inside the guard itself, where the value failed the check (its block,
+                  # or its single return or throw statement).
+                  - pattern-not-inside: |
+                      if (!$TABLE.$CONTAINS($X)) { ... }
+                  - pattern: $X
+      # (End of the shared C# sanitizers; the items below are this rule's own.)
+      # HTML encoding: HtmlEncoder (Default, Create(...) or an injected one) and the HtmlEncode
+      # helpers.
+      - pattern-either:
+          - pattern: HtmlEncoder.Default.Encode(...)
+          - pattern: HtmlEncoder.Create(...).Encode(...)
+          - pattern: (HtmlEncoder $ENCODER).Encode(...)
+          - pattern: WebUtility.HtmlEncode(...)
+          - pattern: HttpUtility.HtmlEncode(...)
+      # The request's Path and PathBase are PathString values, which turn into text escaped for a
+      # URI ('<', '"' and spaces percent-encoded); their .Value is the unescaped path and stays
+      # request data.
+      - patterns:
+          - pattern-either:
+              - pattern: $PATHREQ.Path
+              - pattern: $PATHREQ.PathBase
+          - metavariable-regex:
+              metavariable: $PATHREQ
+              regex: ^((\w+\.)*Request|request|req)$
+          - pattern-not-inside: $PATHREQ.Path.Value
+          - pattern-not-inside: $PATHREQ.PathBase.Value
+    pattern-sinks:
+      # A file that names an HTML content type or an HTML content API: a whole-file anchor that
+      # gives OpenGrep's prefilter a regex, since Content, Text and WriteAsync are common words.
+      - patterns:
+          - pattern-regex: (?si)\A.*(text/html|application/xhtml\+xml|MediaTypeNames\.Text\.Html|\bHtmlString\b|\bAppendHtml|\bSetHtmlContent\b).*\z
+          - pattern-either:
+              # Results/TypedResults.Content and .Text with an HTML content type (text/html,
+              # application/xhtml+xml, MediaTypeNames.Text.Html).
+              - patterns:
+                  - pattern-either:
+                      - pattern: $RESULTS.Content($HTML, "=~/(?i)^\s*(text/html|application/xhtml\+xml)/", ...)
+                      - pattern: $RESULTS.Content($HTML, MediaTypeNames.Text.Html, ...)
+                      - pattern: $RESULTS.Text($HTML, "=~/(?i)^\s*(text/html|application/xhtml\+xml)/", ...)
+                      - pattern: $RESULTS.Text($HTML, MediaTypeNames.Text.Html, ...)
+                  - metavariable-regex:
+                      metavariable: $RESULTS
+                      regex: ^(Results|TypedResults)$
+                  - focus-metavariable: $HTML
+              # Content of a controller or a page with an HTML content type.
+              - patterns:
+                  - pattern-either:
+                      - pattern: Content($HTML, "=~/(?i)^\s*(text/html|application/xhtml\+xml)/", ...)
+                      - pattern: Content($HTML, MediaTypeNames.Text.Html, ...)
+                      - pattern: this.Content($HTML, "=~/(?i)^\s*(text/html|application/xhtml\+xml)/", ...)
+                      - pattern: this.Content($HTML, MediaTypeNames.Text.Html, ...)
+                  - focus-metavariable: $HTML
+              # A ContentResult with an HTML content type: an initializer (either order), or Content
+              # assigned on one whose ContentType is set to HTML in the method (not outside such an
+              # assignment, before or after).
+              - patterns:
+                  - pattern-either:
+                      - pattern: 'new ContentResult { ..., ContentType = "=~/(?i)^\s*(text/html|application/xhtml\+xml)/", ..., Content = $HTML, ... }'
+                      - pattern: 'new ContentResult { ..., Content = $HTML, ..., ContentType = "=~/(?i)^\s*(text/html|application/xhtml\+xml)/", ... }'
+                      - pattern: 'new ContentResult { ..., ContentType = MediaTypeNames.Text.Html, ..., Content = $HTML, ... }'
+                      - pattern: 'new ContentResult { ..., Content = $HTML, ..., ContentType = MediaTypeNames.Text.Html, ... }'
+                      - patterns:
+                          - pattern: $RESULT.Content = $HTML
+                          - pattern-not:
+                              patterns:
+                                - pattern: $RESULT.Content = $HTML
+                                - pattern-not-inside: |
+                                    $RESULT.ContentType = "=~/(?i)^\s*(text/html|application/xhtml\+xml)/";
+                                    ...
+                                - pattern-not-inside: |
+                                    $RESULT.ContentType = MediaTypeNames.Text.Html;
+                                    ...
+                                - pattern-not-inside: |
+                                    $RESULT.Content = $HTML;
+                                    ...
+                                    $RESULT.ContentType = "=~/(?i)^\s*(text/html|application/xhtml\+xml)/";
+                  - focus-metavariable: $HTML
+              # Raw HTML content: HtmlString, and AppendHtml/SetHtmlContent of an
+              # IHtmlContentBuilder (TagBuilder.InnerHtml, a tag helper's output,
+              # HtmlContentBuilder).
+              - patterns:
+                  - pattern-either:
+                      - pattern: new HtmlString($HTML)
+                      - pattern: new Microsoft.AspNetCore.Html.HtmlString($HTML)
+                      - pattern: $BUILDER.AppendHtml($HTML)
+                      - pattern: $BUILDER.AppendHtmlLine($HTML)
+                      - pattern: $BUILDER.SetHtmlContent($HTML)
+                  - focus-metavariable: $HTML
+              # The response body written after its content type is set to HTML in the method.
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $RESPONSE.ContentType = "=~/(?i)^\s*(text/html|application/xhtml\+xml)/";
+                          ...
+                      - pattern-inside: |
+                          $RESPONSE.ContentType = MediaTypeNames.Text.Html;
+                          ...
+                  - pattern: $RESPONSE.WriteAsync($HTML, ...)
+                  - focus-metavariable: $HTML
