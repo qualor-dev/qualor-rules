@@ -1,0 +1,71 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Qualor.Taint", "src\Qualor.Taint\Qualor.Taint.csproj", "{6BC44C85-9B0A-420D-80F5-F49061758E2E}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Qualor.Taint.Cli", "src\Qualor.Taint.Cli\Qualor.Taint.Cli.csproj", "{400046CB-2F8D-4B2E-9734-1E653AC686EE}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05-4346-4AA6-1389-037BE0695223}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Qualor.Taint.Tests", "tests\Qualor.Taint.Tests\Qualor.Taint.Tests.csproj", "{EA4F7410-19CF-481F-B3E5-22468C4B4AD1}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{6BC44C85-9B0A-420D-80F5-F49061758E2E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6BC44C85-9B0A-420D-80F5-F49061758E2E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6BC44C85-9B0A-420D-80F5-F49061758E2E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{6BC44C85-9B0A-420D-80F5-F49061758E2E}.Debug|x64.Build.0 = Debug|Any CPU
+		{6BC44C85-9B0A-420D-80F5-F49061758E2E}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{6BC44C85-9B0A-420D-80F5-F49061758E2E}.Debug|x86.Build.0 = Debug|Any CPU
+		{6BC44C85-9B0A-420D-80F5-F49061758E2E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6BC44C85-9B0A-420D-80F5-F49061758E2E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6BC44C85-9B0A-420D-80F5-F49061758E2E}.Release|x64.ActiveCfg = Release|Any CPU
+		{6BC44C85-9B0A-420D-80F5-F49061758E2E}.Release|x64.Build.0 = Release|Any CPU
+		{6BC44C85-9B0A-420D-80F5-F49061758E2E}.Release|x86.ActiveCfg = Release|Any CPU
+		{6BC44C85-9B0A-420D-80F5-F49061758E2E}.Release|x86.Build.0 = Release|Any CPU
+		{400046CB-2F8D-4B2E-9734-1E653AC686EE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{400046CB-2F8D-4B2E-9734-1E653AC686EE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{400046CB-2F8D-4B2E-9734-1E653AC686EE}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{400046CB-2F8D-4B2E-9734-1E653AC686EE}.Debug|x64.Build.0 = Debug|Any CPU
+		{400046CB-2F8D-4B2E-9734-1E653AC686EE}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{400046CB-2F8D-4B2E-9734-1E653AC686EE}.Debug|x86.Build.0 = Debug|Any CPU
+		{400046CB-2F8D-4B2E-9734-1E653AC686EE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{400046CB-2F8D-4B2E-9734-1E653AC686EE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{400046CB-2F8D-4B2E-9734-1E653AC686EE}.Release|x64.ActiveCfg = Release|Any CPU
+		{400046CB-2F8D-4B2E-9734-1E653AC686EE}.Release|x64.Build.0 = Release|Any CPU
+		{400046CB-2F8D-4B2E-9734-1E653AC686EE}.Release|x86.ActiveCfg = Release|Any CPU
+		{400046CB-2F8D-4B2E-9734-1E653AC686EE}.Release|x86.Build.0 = Release|Any CPU
+		{EA4F7410-19CF-481F-B3E5-22468C4B4AD1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EA4F7410-19CF-481F-B3E5-22468C4B4AD1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EA4F7410-19CF-481F-B3E5-22468C4B4AD1}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{EA4F7410-19CF-481F-B3E5-22468C4B4AD1}.Debug|x64.Build.0 = Debug|Any CPU
+		{EA4F7410-19CF-481F-B3E5-22468C4B4AD1}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{EA4F7410-19CF-481F-B3E5-22468C4B4AD1}.Debug|x86.Build.0 = Debug|Any CPU
+		{EA4F7410-19CF-481F-B3E5-22468C4B4AD1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EA4F7410-19CF-481F-B3E5-22468C4B4AD1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EA4F7410-19CF-481F-B3E5-22468C4B4AD1}.Release|x64.ActiveCfg = Release|Any CPU
+		{EA4F7410-19CF-481F-B3E5-22468C4B4AD1}.Release|x64.Build.0 = Release|Any CPU
+		{EA4F7410-19CF-481F-B3E5-22468C4B4AD1}.Release|x86.ActiveCfg = Release|Any CPU
+		{EA4F7410-19CF-481F-B3E5-22468C4B4AD1}.Release|x86.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{6BC44C85-9B0A-420D-80F5-F49061758E2E} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{400046CB-2F8D-4B2E-9734-1E653AC686EE} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
+		{EA4F7410-19CF-481F-B3E5-22468C4B4AD1} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
+	EndGlobalSection
+EndGlobal

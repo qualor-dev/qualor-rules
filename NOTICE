@@ -1,1 +1,24 @@
 Required Notice: Copyright 2026 The Qualor project (https://qualor.dev)
+
+Third-party components of the C# taint engine (engine/dotnet)
+
+Shipped with the engine (the pack's dotnet/ directory):
+- Microsoft.CodeAnalysis.CSharp 5.6.0 and Microsoft.CodeAnalysis.Common 5.6.0 (.NET Compiler
+  Platform "Roslyn"), Copyright (c) .NET Foundation and Contributors, MIT licence,
+  https://github.com/dotnet/roslyn
+- System.Collections.Immutable 10.0.1 and System.Reflection.Metadata 10.0.1 (Roslyn's
+  dependencies on net8.0), Copyright (c) .NET Foundation and Contributors, MIT licence,
+  https://github.com/dotnet/runtime
+- YamlDotNet 18.1.0 (the engine's models, from Task 5 of the engine plan), Copyright (c) Antoine
+  Aubry and contributors, MIT licence, https://github.com/aaubry/YamlDotNet
+
+Used to build and test the engine only, not shipped:
+- Microsoft.CodeAnalysis.Analyzers 5.3.0 (Roslyn's dependency; its analyzers are not run), MIT
+  licence, https://github.com/dotnet/roslyn
+- Microsoft.NET.Test.Sdk 18.11.0, Copyright (c) Microsoft Corporation, MIT licence,
+  https://github.com/microsoft/vstest
+- xunit 2.9.3 and xunit.runner.visualstudio 4.0.1, Copyright (c) .NET Foundation and
+  Contributors, Apache License 2.0, https://github.com/xunit/xunit
+- Basic.Reference.Assemblies.Net80 1.8.12 (the .NET 8 reference assemblies the tests compile
+  against), Copyright (c) Jared Parsons, MIT licence; the assemblies it carries are Microsoft's,
+  MIT licence, https://github.com/jaredpar/basic-reference-assemblies

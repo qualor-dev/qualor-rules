@@ -17,6 +17,7 @@
     "test:rules": "node tools/test-rules.mjs",
     "test:examples": "node tools/test-examples.mjs",
     "test:prefilter": "node tools/prefilter.mjs",
+    "test:engine": "dotnet test engine/dotnet --nologo",
     "test": "npm run check && npm run test:tools && npm run test:rules && npm run test:examples && npm run test:prefilter",
     "test:docker": "node tools/scanner.mjs test",
     "probe": "node tools/scanner.mjs probe",

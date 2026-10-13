@@ -1,0 +1,23 @@
+<Project>
+  <!-- The engine's own projects: net8.0, runs on later runtimes too (RollForward Major), reproducible
+       builds, warnings are errors. The SDK is pinned by global.json (8.0 of the scanner-dotnet image). -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild>true</ContinuousIntegrationBuild>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <!-- Roslyn's package depends on Microsoft.CodeAnalysis.Analyzers, rules for analyzer authors (RS*) whose analyzers
+       need a newer compiler than the pinned SDK 8.0.4xx's (CS9057); the engine is no analyzer, so they are dropped. -->
+  <Target Name="QualorDropAnalyzerAuthoringRules" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <Analyzer Remove="@(Analyzer)" Condition="'%(Analyzer.NuGetPackageId)' == 'Microsoft.CodeAnalysis.Analyzers'" />
+    </ItemGroup>
+  </Target>
+</Project>

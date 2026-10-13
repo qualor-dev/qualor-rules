@@ -1,3 +1,5 @@
 node_modules/
 dist/
 .tmp/
+engine/dotnet/**/bin/
+engine/dotnet/**/obj/
