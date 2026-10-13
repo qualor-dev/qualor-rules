@@ -2,7 +2,7 @@
 
 # Qualor security rules
 
-The security rules of Qualor's `qualor` engine, 62 in all. Each page says what the rule finds, why
+The security rules of Qualor's `qualor` engine, 63 in all. Each page says what the rule finds, why
 it matters, how to fix it, what the rule misses or may wrongly report, and shows a short example.
 Qualor links every finding to its page.
 
@@ -96,6 +96,7 @@ The key `qualor:<lang>/<name>` is how Qualor names a rule; the rule itself is
 | Rule | Title | Kind | Severity | CWE |
 |---|---|---|---|---|
 | [`qualor:csharp/command-injection`](csharp/command-injection.md) | OS command built from HTTP request data (C#) | Issue | High | [CWE-78](https://cwe.mitre.org/data/definitions/78.html) |
+| [`qualor:csharp/path-traversal`](csharp/path-traversal.md) | File path built from HTTP request data (C#) | Issue | High | [CWE-22](https://cwe.mitre.org/data/definitions/22.html) |
 | [`qualor:csharp/sql-injection`](csharp/sql-injection.md) | SQL statement built from HTTP request data (C#) | Issue | High | [CWE-89](https://cwe.mitre.org/data/definitions/89.html) |
 | [`qualor:csharp/tls-verification-disabled`](csharp/tls-verification-disabled.md) | TLS certificate verification disabled (C#) | Issue | High | [CWE-295](https://cwe.mitre.org/data/definitions/295.html) |
 | [`qualor:csharp/unsafe-deserialization`](csharp/unsafe-deserialization.md) | Deserialization that lets the data choose the types (C#) | Issue | High | [CWE-502](https://cwe.mitre.org/data/definitions/502.html) |
