@@ -193,7 +193,60 @@ What each language's block holds today (2026-10-11 run):
   the 7 rules. go.xss carries a verbatim copy of go.command-injection's sinks as sanitizers;
   python.xss carries one of python.command-injection's sinks (python-3): a sink change there must
   be copied in the same commit.
-- **csharp** (12 rules planned, spec 2026-10-13 §5.1; the seed rule csharp.sql-injection defines the block, and the block is completed when the seed is approved). Stage 0 (parser probe, 2026-10-13) found these forms necessary: Minimal API lambda parameters need their own source form (a method-parameter pattern does not match lambda parameters); request-body sources (`ReadFromJsonAsync`, `StreamReader(Request.Body).ReadToEnd(Async)`, `ReadFormAsync`) are separate source items; `[BindProperty]` properties are matched with a `pattern-inside` on the class (a bare attribute pattern is a rule parse error). Known limit: a `$$"""` multi-dollar raw string gives a partial parse, never claimed as covered.
+- **csharp** (1 of 12 planned rules: csharp.sql-injection, the seed, 2026-10-13; spec 2026-10-13
+  §5.1). The shared part is the whole `pattern-sources` list up to the comment
+  `# (End of the shared C# source block; the items below are this rule's own.)`, the whole
+  `pattern-propagators` list, and the `pattern-sanitizers` up to
+  `# (End of the shared C# sanitizers; the items below are this rule's own.)`. Sources:
+  (1) **controller actions**: the parameters of public methods of a class whose name ends in
+  `Controller`, or whose (first) base class's name ends in `Controller` or `ControllerBase` (the
+  documented controller conventions), except `[FromServices]`/`[FromKeyedServices]` parameters and
+  `[NonAction]` methods; (2) **Razor Pages handlers**: parameters of `On<Verb>...` methods of a class
+  whose base class's name ends in `PageModel`, `[FromServices]` excepted; (3) **`[BindProperty]`
+  properties** (with or without arguments or an initializer) in any class, and every public property
+  of a `[BindProperties]` class, used as `P` or `this.P` (no PageModel base is required: the
+  attribute is MVC's own and binds in controllers too); (4) **Minimal API handlers** given to
+  `MapGet/Post/Put/Delete/Patch/Methods`: a lambda with an expression or a block body (`async` is
+  transparent), or a method group that is a local function of the top-level program mapped before
+  it, or a method of the class whose extension method (`MapXxx(this IEndpointRouteBuilder b)`)
+  maps it; only the types `string`, `string?`, `string[]`, `StringValues`, `IFormFile`,
+  `IFormFileCollection`, `IFormCollection`, `Stream`, `PipeReader` count (a DTO bound implicitly
+  from the body cannot be told from a DI service: Known limit); (5) **attribute-bound parameters**
+  (`[FromQuery]`, `[FromRoute]`, `[FromForm]`, `[FromHeader]`, `[FromBody]`, `[AsParameters]`, also
+  qualified or with `Attribute`) of any method or lambda; (6) **the request**: `Request.X`,
+  `ctx.Request.X`, `(HttpRequest r).X`, and `r.X` after `var r = ctx.Request;` or
+  `var r = Request;`, for X in `Query`, `Form`, `Headers`, `Cookies`, `RouteValues`, `Path`,
+  `PathBase`, `QueryString`, `Body`, `BodyReader`, `ReadFormAsync`, `ReadFromJsonAsync(<T>)` (a
+  field-access pattern on the method name also taints the call's value). **Scalar types** (not
+  sources in (1), (2), (3), (5)): `byte`, `sbyte`, `short`, `ushort`, `int`, `uint`, `long`,
+  `ulong`, `decimal`, `double`, `float`, `bool`, `char`, `Guid`, `DateTime`, `DateTimeOffset`,
+  `DateOnly`, `TimeOnly`, `TimeSpan` and the `System.Int32`-style names, nullable, as arrays, and
+  as `List`/`IList`/`IEnumerable`/`ICollection`/`IReadOnlyList`/`IReadOnlyCollection`/`HashSet`/`ISet`
+  of them; also `CancellationToken` and interfaces (DI services), except the `IForm*` types and the
+  collection interfaces. **Propagators**: `StringBuilder` `Append` (also later in an `Append`
+  chain), `AppendLine`, `AppendFormat`, and the out value of `TryGetValue` on a request collection
+  (`Insert(i, x)` needs none: intrafile mode takes it for a container write). **Sanitizers**:
+  `int`/`long`/`Guid`/`DateTime.Parse`, `Convert.ToInt32/64`, `Enum.Parse<T>`/`Enum.Parse`, and an
+  indexer lookup in a `static readonly` `Dictionary` of literals (target-typed or not, a
+  `StringComparer` argument allowed) that no method after it in the class changes (indexer
+  write, `Add`, `TryAdd`); `TryParse` out values, ternaries and switch expressions of constants
+  need none. **OpenGrep facts** (2026-10-13): a method-name metavariable binds the generic
+  arguments too (`Query<User>`), so name regexes end in `(<.*>)?`, and a literal method name does
+  not match a generic call; `[$A(...)]` matches an attribute with or without arguments; `=> $BODY`
+  matches expression bodies only and `=> { ... }` block bodies; `class $C { ... }` also matches a
+  class with a base list; a `var` local needs its own `var $R = ...; ...` form; no taint leaves an
+  expression-bodied method (`=> expr`); a one-argument `GetValueOrDefault(key)` is a container
+  read that drops the key's taint. **Prefilter**: the source block gives no words, so a C# taint
+  rule's prefilter is its sinks' alone and every sink item needs a word (seed: Some, 1.5 kB,
+  135 ms). **Cost**: the class-wide method-group form and the allow-list exclusions dominate; both
+  are anchored (an extension method; the table's field first), seed 1.48 s vs 0.82 s for a
+  one-source taint rule on a 358 kB file given the sink words, 0.11 s on the largest real files
+  with them. **Limits to copy into each new rule as todo lines**: a Minimal API DTO bound from the
+  body without `[FromBody]`, a method-group handler of another class, a controller marked only
+  with `[Controller]`, a helper written as an expression-bodied method (`todoruleid:`); an enum
+  parameter (`todook:`); and as comments without lines: other files (intrafile), `$$"""` raw
+  strings, body-less types (`class X : Y;`) and some multi-line collection expressions, which
+  OpenGrep 1.30 parses only partly (a finding there comes from error recovery, never counted).
 
 ### Test code
 

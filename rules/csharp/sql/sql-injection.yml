@@ -1,0 +1,313 @@
+rules:
+  - id: csharp.sql-injection
+    mode: taint
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      Data from the HTTP request reaches the text of an SQL statement. Pass it as a parameter
+      (an SqlParameter, a Dapper parameter object, or EF Core's FromSql/ExecuteSql with an
+      interpolated string, which become parameters) instead of building the statement text from it.
+    metadata:
+      title: SQL statement built from HTTP request data (C#)
+      cwe: ['CWE-89']
+      owasp: ['A05:2025', 'A03:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [aspnetcore-mvc, minimal-apis, razor-pages, ado-net, ef-core, dapper]
+      sources:
+        - https://cwe.mitre.org/data/definitions/89.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+        - https://learn.microsoft.com/en-us/aspnet/core/mvc/controllers/actions
+        - https://learn.microsoft.com/en-us/aspnet/core/mvc/models/model-binding
+        - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/minimal-apis/parameter-binding
+        - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/minimal-apis/route-handlers
+        - https://learn.microsoft.com/en-us/aspnet/core/razor-pages/
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.httprequest
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.data.sqlclient.sqlcommand
+        - https://learn.microsoft.com/en-us/dotnet/api/system.data.common.dbdatasource.createcommand
+        - https://learn.microsoft.com/en-us/dotnet/standard/data/sqlite/parameters
+        - https://www.npgsql.org/doc/basic-usage.html
+        - https://mysqlconnector.net/tutorials/basic-api/
+        - https://learn.microsoft.com/en-us/ef/core/querying/sql-queries
+        - https://learn.microsoft.com/en-us/ef/core/what-is-new/ef-core-3.x/breaking-changes
+        - https://github.com/DapperLib/Dapper/blob/main/Readme.md
+      since: 2026.10.5
+    # Known limits (each has a `todo` line in the test file, unless it says otherwise):
+    # - Taint is followed through the methods of one file (OpenGrep's --taint-intrafile), not into
+    #   other files: request data handed to a repository or service of another file is missed.
+    #   OpenGrep also carries no taint out of an expression-bodied method (`=> expr`): a helper of
+    #   this file written that way that reads the request is missed.
+    # - Minimal APIs: a complex-type parameter bound from the JSON body without [FromBody] is not a
+    #   source, since without types it cannot be told from a DI service. A handler given as a
+    #   method group counts only when it is a local function of the top-level program or a
+    #   method of the class whose extension method (MapXxx(this IEndpointRouteBuilder ...)) maps
+    #   it; a handler of another class (Handlers.Get) is missed.
+    # - Controllers are recognised by their name (suffix Controller) or by their base class's
+    #   name (suffix Controller or ControllerBase): a class that is a controller only through
+    #   [Controller], or through a base class two steps away under another name, is missed. Razor
+    #   Pages handlers count in a class whose base class's name ends in PageModel.
+    # - Only the scalar types listed below count as safe: an enum parameter is still a source,
+    #   although it cannot carry SQL.
+    # - EF Core's FromSql and ExecuteSqlCommand(Async) count as safe only with an interpolated
+    #   string literal in place: a FormattableString variable (also made into parameters) is
+    #   reported.
+    # - Dapper's methods are sinks on any receiver in a file that imports Dapper (another
+    #   library's Query or Execute there is reported), and only there: a file that gets Dapper
+    #   from a global using in another file is missed (no test line: the test file imports Dapper
+    #   at its top).
+    # - An allow-list is recognised as an indexer lookup in a static readonly Dictionary of
+    #   literals that no method after it changes (indexer write, Add, TryAdd). OpenGrep takes
+    #   GetValueOrDefault(key) for a read of the dictionary, not of the key, so such a lookup in a
+    #   table that request data changes is missed.
+    # - OpenGrep 1.30 does not parse some C# 11/12 syntax: a raw string literal with two or more
+    #   dollar signs ($$"""..."""), a type declared without a body (`class X : Y;`), some
+    #   multi-line collection expressions with a trailing comma. That part of the file is skipped
+    #   (a finding inside it comes only from the parser's error recovery and is not counted on).
+    #   No test line: the test file must parse.
+    pattern-sources:
+      # MVC and Web API controllers: the parameters of public methods (actions) of a class whose
+      # name ends in Controller, or whose base class's name does (ControllerBase too). Numbers,
+      # booleans, GUIDs, dates and times (also nullable, arrays and lists of them),
+      # CancellationToken and interfaces (DI services; the IForm* types and collection
+      # interfaces excepted) cannot carry SQL text or are not bound from the request.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $CTRL : $CTRLBASE { ... }
+              - pattern-inside: |
+                  class $CTRLBASE { ... }
+          - metavariable-regex:
+              metavariable: $CTRLBASE
+              regex: ^(\w+\.)*\w*(Controller|ControllerBase)$
+          - pattern-inside: |
+              public $RET $ACTION(..., $T $P, ...) { ... }
+          - pattern-not-inside: |
+              $RET $ACTION(..., [FromServices(...)] $T $P, ...) { ... }
+          - pattern-not-inside: |
+              $RET $ACTION(..., [FromKeyedServices(...)] $T $P, ...) { ... }
+          - pattern-not-inside: |
+              [NonAction]
+              $RET $ACTION(...) { ... }
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern: $P
+      # Razor Pages: the parameters of handler methods (On<Verb>...) of a class whose base class's
+      # name ends in PageModel.
+      - patterns:
+          - pattern-inside: |
+              class $PAGE : $PAGEBASE { ... }
+          - metavariable-regex:
+              metavariable: $PAGEBASE
+              regex: ^(\w+\.)*\w*PageModel$
+          - pattern-inside: |
+              public $RET $HANDLER(..., $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $HANDLER
+              regex: ^On(Get|Post|Put|Delete|Patch|Head|Options)\w*$
+          - pattern-not-inside: |
+              $RET $HANDLER(..., [FromServices(...)] $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern: $P
+      # Razor Pages (and controllers): [BindProperty] properties, and every public property of a
+      # [BindProperties] class.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $BOUND {
+                    ...
+                    [BindProperty(...)] public $T $P { get; set; }
+                    ...
+                  }
+              - pattern-inside: |
+                  class $BOUND {
+                    ...
+                    [BindProperty(...)] public $T $P { get; set; } = $INIT;
+                    ...
+                  }
+              - pattern-inside: |
+                  [BindProperties]
+                  class $BOUND {
+                    ...
+                    public $T $P { get; set; }
+                    ...
+                  }
+              - pattern-inside: |
+                  [BindProperties]
+                  class $BOUND {
+                    ...
+                    public $T $P { get; set; } = $INIT;
+                    ...
+                  }
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern-either:
+              - pattern: $P
+              - pattern: this.$P
+      # Minimal APIs: the string-like parameters (route values, query strings, headers, forms,
+      # uploaded files, the body stream) of a handler given to MapGet/MapPost/... as a lambda, or as
+      # a method group declared in this file (top level, or in the class that maps it).
+      - patterns:
+          - pattern-either:
+              # A lambda with an expression body or a block body (async too).
+              - pattern-inside: $APP.$MAPVERB($ROUTE, ..., (..., $T $P, ...) => $BODY)
+              - pattern-inside: $APP.$MAPVERB($ROUTE, ..., (..., $T $P, ...) => { ... })
+              - patterns:
+                  - pattern-inside: |
+                      $RET $HANDLER(..., $T $P, ...) { ... }
+                  - pattern-either:
+                      - pattern-inside: |
+                          <... $APP.$MAPVERB($ROUTE, ..., $HANDLER) ...>;
+                          ...
+                      # ... or mapped in an extension method of its class (MapXxxApi(this
+                      # IEndpointRouteBuilder app)).
+                      - pattern-inside: |
+                          class $ENDPOINTS { ... $R2 $MAPPER(this $BUILDERTYPE $BUILDER, ...) { ... <... $APP.$MAPVERB($ROUTE, ..., $HANDLER) ...>; ... } ... }
+          - metavariable-regex:
+              metavariable: $MAPVERB
+              regex: ^Map(Get|Post|Put|Delete|Patch|Methods)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(string\??|string\[\]\??|StringValues\??|IFormFile\??|IFormFileCollection\??|IFormCollection\??|Stream\??|PipeReader\??)$
+          - pattern: $P
+      # Parameters bound from the request by an attribute, in any method or lambda (Minimal API
+      # handlers, method-group handlers, Razor Pages handlers).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $RET $BOUNDM(..., [$FROM(...)] $T $P, ...) { ... }
+              - pattern-inside: (..., [$FROM(...)] $T $P, ...) => $BODY
+              - pattern-inside: (..., [$FROM(...)] $T $P, ...) => { ... }
+          - metavariable-regex:
+              metavariable: $FROM
+              regex: ^(\w+\.)*(FromQuery|FromRoute|FromForm|FromHeader|FromBody|AsParameters)(Attribute)?$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern: $P
+      # The request: Request (a controller's or page's property), HttpContext.Request and
+      # context.Request, a parameter or variable of type HttpRequest, or a variable assigned one
+      # of them with var. Its query, form, headers, cookies, route values, path, raw query string
+      # and body, and what ReadFormAsync and ReadFromJsonAsync read from it.
+      - patterns:
+          - pattern-either:
+              - pattern: Request.$REQPART
+              - pattern: $CTX.Request.$REQPART
+              - pattern: (HttpRequest $REQ).$REQPART
+              - patterns:
+                  - pattern-inside: |
+                      var $REQ = $CTX.Request;
+                      ...
+                  - pattern: $REQ.$REQPART
+              - patterns:
+                  - pattern-inside: |
+                      var $REQ = Request;
+                      ...
+                  - pattern: $REQ.$REQPART
+          - metavariable-regex:
+              metavariable: $REQPART
+              regex: ^(Query|Form|Headers|Cookies|RouteValues|Path|PathBase|QueryString|Body|BodyReader|ReadFormAsync|ReadFromJsonAsync(<.*>)?)$
+      # (End of the shared C# source block; the items below are this rule's own.)
+    pattern-propagators:
+      # Shared C# propagators: text added to a StringBuilder (also later in an Append chain), and
+      # the value TryGetValue hands out of a request collection. (OpenGrep's --taint-intrafile
+      # mode already carries StringBuilder.Insert(index, text) into the builder.)
+      - pattern: $SB.Append($X)
+        from: $X
+        to: $SB
+      - pattern: $SB.Append(...). ... .Append($X)
+        from: $X
+        to: $SB
+      - pattern: $SB.AppendLine($X)
+        from: $X
+        to: $SB
+      - pattern: $SB.AppendFormat(..., $X, ...)
+        from: $X
+        to: $SB
+      - pattern: $COLL.TryGetValue($KEY, out $V)
+        from: $COLL
+        to: $V
+    pattern-sanitizers:
+      # Shared C# sanitizers: conversions to numbers, GUIDs, dates and enums, and a lookup (an
+      # indexer, or GetValueOrDefault with a literal default) in a static readonly Dictionary of
+      # literals that no method after it in its class changes with an indexer write, Add or
+      # TryAdd. (TryParse's out value, a ternary or a switch expression of constants needs no
+      # sanitizer.)
+      - pattern-either:
+          - pattern: int.Parse(...)
+          - pattern: long.Parse(...)
+          - pattern: Guid.Parse(...)
+          - pattern: DateTime.Parse(...)
+          - pattern: Convert.ToInt32(...)
+          - pattern: Convert.ToInt64(...)
+          - pattern: Enum.Parse<$ENUM>(...)
+          - pattern: Enum.Parse(...)
+      - patterns:
+          - pattern-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... }
+          - metavariable-regex:
+              metavariable: $TABLEINIT
+              regex: ^new\s*((\w+\.)*(Dictionary|SortedDictionary)\s*<[^>]*>)?\s*(\(\s*(StringComparer\.\w+)?\s*\))?\s*\{\s*(\[\s*("([^"\\]|\\.)*"|-?\d+)\s*\]\s*=\s*("([^"\\]|\\.)*"|-?\d+)|\{\s*("([^"\\]|\\.)*"|-?\d+)\s*,\s*("([^"\\]|\\.)*"|-?\d+)\s*\})(\s*,\s*(\[\s*("([^"\\]|\\.)*"|-?\d+)\s*\]\s*=\s*("([^"\\]|\\.)*"|-?\d+)|\{\s*("([^"\\]|\\.)*"|-?\d+)\s*,\s*("([^"\\]|\\.)*"|-?\d+)\s*\}))*\s*,?\s*\}$
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE[$A] = $B; ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.Add(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.TryAdd(...); ... } ... }
+          - pattern-either:
+              - pattern: $TABLE[$K]
+              - patterns:
+                  - pattern: $TABLE.GetValueOrDefault($K, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^("([^"\\]|\\.)*"|-?\d+|null)$
+      # (End of the shared C# sanitizers; the items below are this rule's own.)
+    pattern-sinks:
+      # ADO.NET: the command text of SqlClient, Npgsql, Microsoft.Data.Sqlite and MySqlConnector
+      # commands (Parameters bind values), and DbDataSource.CreateCommand.
+      - patterns:
+          - pattern-either:
+              - pattern: new SqlCommand($SQL, ...)
+              - pattern: new SqlDataAdapter($SQL, ...)
+              - pattern: new NpgsqlCommand($SQL, ...)
+              - pattern: new NpgsqlBatchCommand($SQL, ...)
+              - pattern: new SqliteCommand($SQL, ...)
+              - pattern: new MySqlCommand($SQL, ...)
+              - pattern: 'new $CMDTYPE { ..., CommandText = $SQL, ... }'
+              - pattern: $CMD.CommandText = $SQL
+              - pattern: $DATASOURCE.CreateCommand($SQL)
+          - focus-metavariable: $SQL
+      # EF Core: the Raw methods take the SQL text as it is (the arguments after it are parameters).
+      - patterns:
+          - pattern: $EF.$RAWSQL($SQL, ...)
+          - metavariable-regex:
+              metavariable: $RAWSQL
+              regex: ^(FromSqlRaw|ExecuteSqlRaw|ExecuteSqlRawAsync|SqlQueryRaw)(<.*>)?$
+          - focus-metavariable: $SQL
+      # Older EF Core: FromSql and ExecuteSqlCommand(Async) given a plain string (an interpolated
+      # string literal there becomes parameters).
+      - patterns:
+          - pattern: $EF.$OLDSQL($SQL, ...)
+          - metavariable-regex:
+              metavariable: $OLDSQL
+              regex: ^(FromSql|ExecuteSqlCommand|ExecuteSqlCommandAsync)$
+          - pattern-not: $EF.$OLDSQL($"...", ...)
+          - focus-metavariable: $SQL
+      # Dapper, in a file that imports it: the SQL text of its connection extension methods and of
+      # a CommandDefinition (the parameter object binds values).
+      - patterns:
+          - pattern-inside: |
+              using Dapper;
+              ...
+          - pattern-either:
+              - patterns:
+                  - pattern: $CONN.$DAPPER($SQL, ...)
+                  - metavariable-regex:
+                      metavariable: $DAPPER
+                      regex: ^(Query|QueryAsync|QueryFirst|QueryFirstAsync|QueryFirstOrDefault|QueryFirstOrDefaultAsync|QuerySingle|QuerySingleAsync|QuerySingleOrDefault|QuerySingleOrDefaultAsync|QueryMultiple|QueryMultipleAsync|QueryUnbufferedAsync|Execute|ExecuteAsync|ExecuteScalar|ExecuteScalarAsync|ExecuteReader|ExecuteReaderAsync)(<.*>)?$
+              - pattern: new CommandDefinition($SQL, ...)
+          - focus-metavariable: $SQL

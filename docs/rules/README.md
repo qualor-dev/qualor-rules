@@ -2,7 +2,7 @@
 
 # Qualor security rules
 
-The security rules of Qualor's `qualor` engine, 57 in all. Each page says what the rule finds, why
+The security rules of Qualor's `qualor` engine, 58 in all. Each page says what the rule finds, why
 it matters, how to fix it, what the rule misses or may wrongly report, and shows a short example.
 Qualor links every finding to its page.
 
@@ -90,3 +90,9 @@ The key `qualor:<lang>/<name>` is how Qualor names a rule; the rule itself is
 | [`qualor:go/weak-hash`](go/weak-hash.md) | Weak hash MD5 or SHA-1 (Go) | Security hotspot | Low | [CWE-328](https://cwe.mitre.org/data/definitions/328.html) |
 | [`qualor:go/xss`](go/xss.md) | HTML response built from HTTP request data (Go) | Issue | High | [CWE-79](https://cwe.mitre.org/data/definitions/79.html) |
 | [`qualor:go/zip-slip`](go/zip-slip.md) | Archive entry name used as an extraction path (Go) | Issue | High | [CWE-22](https://cwe.mitre.org/data/definitions/22.html) |
+
+## C#
+
+| Rule | Title | Kind | Severity | CWE |
+|---|---|---|---|---|
+| [`qualor:csharp/sql-injection`](csharp/sql-injection.md) | SQL statement built from HTTP request data (C#) | Issue | High | [CWE-89](https://cwe.mitre.org/data/definitions/89.html) |
