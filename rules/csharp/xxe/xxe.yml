@@ -1,0 +1,130 @@
+rules:
+  - id: csharp.xxe
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      This XML parser is set up to process DTDs and to fetch what they name: an XmlResolver
+      (XmlUrlResolver) is set on an XmlReaderSettings that parses DTDs, on an XmlDocument or on an
+      XmlTextReader. A document can then declare external entities that make the parser read local
+      files or call internal URLs (XML external entities), or expand entities without bound. Keep
+      the defaults (DtdProcessing.Prohibit, no resolver), or, when a DTD is needed, set
+      DtdProcessing.Parse without any resolver (or with XmlResolver.ThrowingResolver), and do not
+      assign an XmlUrlResolver to an XmlDocument or XmlTextReader that reads untrusted XML.
+    metadata:
+      title: XML parser that resolves external entities (C#)
+      cwe: ['CWE-611', 'CWE-776']
+      owasp: ['A02:2025', 'A05:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [system-xml]
+      sources:
+        - https://cwe.mitre.org/data/definitions/611.html
+        - https://cwe.mitre.org/data/definitions/776.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/XML_External_Entity_Prevention_Cheat_Sheet.html
+        - https://top10.owasp.org/2025/A02_2025-Security_Misconfiguration
+        - https://top10.owasp.org/2021/A05_2021-Security_Misconfiguration/
+        - https://learn.microsoft.com/en-us/dotnet/api/system.xml.xmlreadersettings.dtdprocessing
+        - https://learn.microsoft.com/en-us/dotnet/api/system.xml.xmlreadersettings.xmlresolver
+        - https://learn.microsoft.com/en-us/dotnet/api/system.xml.xmldocument.xmlresolver
+        - https://learn.microsoft.com/en-us/dotnet/api/system.xml.xmltextreader.dtdprocessing
+        - https://learn.microsoft.com/en-us/dotnet/api/system.xml.xmltextreader.xmlresolver
+      since: 2026.10.5
+    # A misuse rule: it reports the unsafe setting wherever it is, whatever the document is.
+    # Test code is skipped (COVERAGE.md "Test code").
+    # Defaults (learn.microsoft.com and the OWASP XXE cheat sheet): XmlReaderSettings has
+    # DtdProcessing.Prohibit and, from .NET Framework 4.5.2 and in .NET Core and .NET 5+, a null
+    # XmlResolver (before 4.5.2 the default resolver was an XmlUrlResolver). XmlDocument and
+    # XmlTextReader have a null resolver from 4.5.2 on; XmlTextReader's DtdProcessing default is
+    # Parse, XmlDocument loads through a reader that parses DTDs. So the rule reports a resolver
+    # that is set explicitly, together with DTD processing that is on.
+    # Known limits (each has a `todo` line in the test file unless it says otherwise):
+    # - Only `new XmlUrlResolver(...)` counts as a resolver. A resolver held in a variable or
+    #   returned by a helper is missed, as is a custom XmlResolver subclass.
+    # - XmlReaderSettings: DtdProcessing.Parse and the resolver must be set in the same block or
+    #   the same initializer, as literals; set in different methods, they are missed.
+    # - DtdProcessing.Parse with no resolver (not fetching external entities on 4.5.2+, .NET Core
+    #   and .NET 5+) is not reported, though the parser still expands internal entities without a
+    #   limit unless MaxCharactersFromEntities is set (billion laughs); and on .NET Framework before
+    #   4.5.2, where the default resolver was an XmlUrlResolver, Parse alone and a bare XmlTextReader
+    #   or XmlDocument were unsafe: the rule does not know the target framework (no test line).
+    # - An XmlDocument given an XmlUrlResolver is reported when it is loaded through a reader that
+    #   refuses DTDs as well.
+    # - OpenGrep 1.30 does not parse some C# 11/12 syntax (a raw string literal with two or more
+    #   dollar signs, a type declared without a body such as `class X : Y;`, some multi-line
+    #   collection expressions with a trailing comma): a finding in the skipped part is lost.
+    #   No test line: the test file must parse.
+    paths:
+      exclude:
+        - 'test/'
+        - 'tests/'
+        - '*.Tests/'
+        - '*.UnitTests/'
+        - '*.IntegrationTests/'
+        - '*.Test/'
+        - '*.Specs/'
+        - '*Tests.cs'
+        - '*Test.cs'
+    pattern-either:
+      # XmlReaderSettings: DtdProcessing.Parse together with an XmlUrlResolver.
+      - patterns:
+          - pattern: ($T1 $S1).XmlResolver = new $R1(...)
+          - metavariable-regex:
+              metavariable: $T1
+              regex: ^(\w+\.)*XmlReaderSettings$
+          - metavariable-regex:
+              metavariable: $R1
+              regex: ^(\w+\.)*XmlUrlResolver$
+          - pattern-inside: |
+              { ... $S1.DtdProcessing = $P1; ... }
+          - metavariable-regex:
+              metavariable: $P1
+              regex: ^(\w+\.)*DtdProcessing\.Parse$
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  new $T2 { ..., DtdProcessing = $P2, ..., XmlResolver = new $R2(...), ... }
+              - pattern: |
+                  new $T2 { ..., XmlResolver = new $R2(...), ..., DtdProcessing = $P2, ... }
+          - metavariable-regex:
+              metavariable: $T2
+              regex: ^(\w+\.)*XmlReaderSettings$
+          - metavariable-regex:
+              metavariable: $R2
+              regex: ^(\w+\.)*XmlUrlResolver$
+          - metavariable-regex:
+              metavariable: $P2
+              regex: ^(\w+\.)*DtdProcessing\.Parse$
+      # XmlDocument: any XmlUrlResolver. Load(string), Load(Stream) and LoadXml parse DTDs.
+      - patterns:
+          - pattern-either:
+              - pattern: ($T3 $S3).XmlResolver = new $R3(...)
+              - pattern: |
+                  new $T3 { ..., XmlResolver = new $R3(...), ... }
+          - metavariable-regex:
+              metavariable: $T3
+              regex: ^(\w+\.)*XmlDocument$
+          - metavariable-regex:
+              metavariable: $R3
+              regex: ^(\w+\.)*XmlUrlResolver$
+      # XmlTextReader parses DTDs by default, so a resolver is enough unless DtdProcessing is
+      # Prohibit or Ignore.
+      - patterns:
+          - pattern-either:
+              - pattern: ($T4 $S4).XmlResolver = new $R4(...)
+              - pattern: |
+                  new $T4(...) { ..., XmlResolver = new $R4(...), ... }
+          - metavariable-regex:
+              metavariable: $T4
+              regex: ^(\w+\.)*XmlTextReader$
+          - metavariable-regex:
+              metavariable: $R4
+              regex: ^(\w+\.)*XmlUrlResolver$
+          - pattern-not-inside: |
+              { ... $S4.DtdProcessing = System.Xml.DtdProcessing.Prohibit; ... }
+          - pattern-not-inside: |
+              { ... $S4.DtdProcessing = System.Xml.DtdProcessing.Ignore; ... }
+          - pattern-not: |
+              new $T4(...) { ..., DtdProcessing = System.Xml.DtdProcessing.Prohibit, ... }
+          - pattern-not: |
+              new $T4(...) { ..., DtdProcessing = System.Xml.DtdProcessing.Ignore, ... }
