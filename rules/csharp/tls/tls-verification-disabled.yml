@@ -1,0 +1,112 @@
+rules:
+  - id: csharp.tls-verification-disabled
+    languages: [csharp]
+    severity: ERROR
+    message: >-
+      This TLS client check accepts anything: a certificate-validation callback that returns true
+      whatever it is given (a lambda, an anonymous method or a method), or
+      HttpClientHandler.DangerousAcceptAnyServerCertificateValidator, makes the client trust every
+      server certificate, expired, self-signed or issued for another host. Anyone on the network
+      path can then pose as the server and read or change the traffic. Remove the callback so the
+      system's trust store is used, or have it return `sslPolicyErrors == SslPolicyErrors.None`, or
+      compare the certificate with a pinned thumbprint or your own private CA; for a development
+      server, trust its certificate on the machine instead of switching validation off.
+    metadata:
+      title: TLS certificate verification disabled (C#)
+      cwe: ['CWE-295']
+      owasp: ['A07:2025', 'A07:2021']
+      kind: issue
+      severity: high
+      confidence: high
+      frameworks: [httpclient, sslstream, servicepointmanager]
+      sources:
+        - https://cwe.mitre.org/data/definitions/295.html
+        - https://top10.owasp.org/2025/A07_2025-Authentication_Failures/
+        - https://top10.owasp.org/2021/A07_2021-Identification_and_Authentication_Failures/
+        - https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html
+        - https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpclienthandler.servercertificatecustomvalidationcallback
+        - https://learn.microsoft.com/en-us/dotnet/api/system.net.http.httpclienthandler.dangerousacceptanyservercertificatevalidator
+        - https://learn.microsoft.com/en-us/dotnet/api/system.net.servicepointmanager.servercertificatevalidationcallback
+        - https://learn.microsoft.com/en-us/dotnet/api/system.net.security.remotecertificatevalidationcallback
+        - https://learn.microsoft.com/en-us/dotnet/api/system.net.security.sslclientauthenticationoptions.remotecertificatevalidationcallback
+      since: 2026.10.5
+    # A misuse rule: it reports the setting wherever it is. Test code is skipped (COVERAGE.md
+    # "Test code"): tests often talk to a local server with a self-signed certificate.
+    # What counts as "returns true whatever it gets": an expression-bodied lambda `=> true`, or a
+    # lambda, anonymous method or method with a block body that returns true and has no other
+    # return and no throw (so a log line or an `if` that only logs does not hide it, and a
+    # callback that returns false on errors, throws, or returns an expression is quiet).
+    # Known limits (each has a `todo` line in the test file unless it says otherwise):
+    # - A lambda is reported where it is given to ServerCertificateCustomValidationCallback,
+    #   ServerCertificateValidationCallback or RemoteCertificateValidationCallback (assigned, +=,
+    #   in an object initializer), to `new RemoteCertificateValidationCallback(...)` or as the
+    #   third argument of `new SslStream(...)`. A callback kept in a variable first is missed.
+    # - A method is reported by its declaration when it has a parameter of type SslPolicyErrors
+    #   and returns true; the place that wires it in is not reported. A method that returns true
+    #   after a check that does not end in a return or throw is reported, and so is one that does
+    #   not use its arguments.
+    # - Callbacks that accept particular errors only (name mismatch, untrusted root), or return
+    #   `true || ...`, are not reported (accepting some errors is not looked at).
+    # - A callback reported although it is only installed under a condition (development flag).
+    # - The text of a block-bodied lambda is checked for the words `throw` and `return`, so those
+    #   words in a string or comment count (no test line).
+    # - OpenGrep 1.30 does not parse some C# 11/12 syntax (a raw string literal with two or more
+    #   dollar signs, a type declared without a body such as `class X : Y;`, some multi-line
+    #   collection expressions with a trailing comma): a finding in the skipped part is lost.
+    #   No test line: the test file must parse.
+    paths:
+      exclude:
+        - 'test/'
+        - 'tests/'
+        - '*.Tests/'
+        - '*.UnitTests/'
+        - '*.IntegrationTests/'
+        - '*.Test/'
+        - '*.Specs/'
+        - '*Tests.cs'
+        - '*Test.cs'
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: $P1 = $L1
+              - pattern: $X1.$P1 = $L1
+              - pattern: $X1.$P1 += $L1
+          - metavariable-regex:
+              metavariable: $P1
+              regex: ^(ServerCertificateCustomValidationCallback|ServerCertificateValidationCallback|RemoteCertificateValidationCallback)$
+          - metavariable-regex:
+              metavariable: $L1
+              regex: ^(?!(?s).*(\bthrow\b|\breturn\b.*\breturn\b))
+          - metavariable-regex:
+              metavariable: $L1
+              regex: ^(static\s+)?(\(|delegate\b|\w+\s*=>)
+          - metavariable-pattern:
+              metavariable: $L1
+              patterns:
+                - pattern-either:
+                    - pattern: (...) => true
+                    - pattern: (...) => { ... return true; }
+      - patterns:
+          - pattern-either:
+              - pattern: new RemoteCertificateValidationCallback($L2)
+              - pattern: new SslStream($A2, $B2, $L2, ...)
+          - metavariable-regex:
+              metavariable: $L2
+              regex: ^(?!(?s).*(\bthrow\b|\breturn\b.*\breturn\b))
+          - metavariable-regex:
+              metavariable: $L2
+              regex: ^(static\s+)?(\(|delegate\b|\w+\s*=>)
+          - metavariable-pattern:
+              metavariable: $L2
+              patterns:
+                - pattern-either:
+                    - pattern: (...) => true
+                    - pattern: (...) => { ... return true; }
+      - pattern: System.Net.Http.HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+      - patterns:
+          - pattern: bool $F(..., System.Net.Security.SslPolicyErrors $E) { ... return true; }
+          - pattern-not: |
+              bool $F(..., System.Net.Security.SslPolicyErrors $E) { ... throw $T; ... }
+          - pattern-not: |
+              bool $F(..., System.Net.Security.SslPolicyErrors $E) { ... return $R; ... return $Q; ... }
+      - pattern: bool $F(..., System.Net.Security.SslPolicyErrors $E) => true;
