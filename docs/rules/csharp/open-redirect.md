@@ -120,7 +120,8 @@ public class AccountController : Controller
 - `Request.PathBase` is taken for the application's configured path base and is not reported.
 - A URL rebuilt on the request's own host is recognised only when it is written in place as
   scheme, `Request.Host` and then only `PathBase`, `Path` and `QueryString` (or with
-  `UriHelper.BuildAbsolute`); built in steps, it is still reported.
+  `UriHelper.BuildAbsolute` with a literal `"https"` or `Request.Scheme` as its scheme); built in
+  steps, or with a scheme taken from request data, it is still reported.
 - The value of `Uri.MakeRelativeUri` is not reported, also when its argument is a URL from the
   request.
 - The value of an awaited `GetXxx`, `FindXxx` or `LoadXxx` call on another object (a record found

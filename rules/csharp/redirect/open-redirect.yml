@@ -100,8 +100,10 @@ rules:
     # - A URL rebuilt on the request's own host counts as fixed only in these forms: a literal
     #   "http://" or "https://" (or the request's Scheme + "://") + the request's Host + only its
     #   PathBase, Path and QueryString, as a concatenation or an interpolated string written in
-    #   place, or UriHelper.BuildAbsolute with the request's Host; the same URL built in steps
-    #   (a StringBuilder, a variable holding the host part) is still reported (no test line).
+    #   place, or UriHelper.BuildAbsolute with the request's Host and a literal "http"/"https" or the
+    #   request's Scheme as its scheme (a scheme from request data is reported); the same URL
+    #   built in steps (a StringBuilder, a variable holding the host part) is still reported (no
+    #   test line).
     #   UriHelper.BuildRelative is reported: a request path may start with "//".
     # - Url.Action, Url.Page and Url.RouteUrl with at most three arguments build a path on this
     #   site and are clean; with a protocol and host argument they are still checked.
@@ -423,7 +425,8 @@ rules:
       # A URL rebuilt on the request's own host: a literal scheme or the request's Scheme, then
       # "://" and the request's Host, then only its PathBase, Path and QueryString (PathString and
       # QueryString values, escaped and starting with "/" or "?"), as a concatenation, an
-      # interpolated string or UriHelper.BuildAbsolute with the request's Host. The host comes
+      # interpolated string or UriHelper.BuildAbsolute with the request's Host and Scheme (or a
+      # literal http/https scheme). The host comes
       # first, so the target stays on this site.
       - patterns:
           - pattern: $OWNHOST + $OWNPART
@@ -439,6 +442,10 @@ rules:
           - metavariable-regex:
               metavariable: $OWNHOSTARG
               regex: ^(\w+\.)*Request\.Host$
+          # The scheme is written first: only a literal http/https or the request's own Scheme.
+          - metavariable-regex:
+              metavariable: $OWNSCHEME
+              regex: ^("https?"|(\w+\.)*Request\.Scheme)$
       # URLs generated from routes on this site (Url.Action, Url.Page, Url.RouteUrl without a
       # protocol and host).
       - patterns:

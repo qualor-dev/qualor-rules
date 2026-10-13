@@ -577,6 +577,15 @@ public class AccountController : ControllerBase
         Response.Redirect($"https://{Request.Host}{section}");
         // ruleid: csharp.open-redirect
         Response.Redirect(UriHelper.BuildAbsolute("https", new HostString(section), Request.PathBase));
+        // BuildAbsolute writes the scheme first: a scheme from the request ("https://evil.example/#")
+        // puts another host before ours.
+        // ruleid: csharp.open-redirect
+        Response.Redirect(UriHelper.BuildAbsolute(Request.Headers["X-Forwarded-Proto"].ToString(), Request.Host, Request.Path));
+        var scheme = Request.Query["scheme"].ToString();
+        // ruleid: csharp.open-redirect
+        Response.Redirect(UriHelper.BuildAbsolute(scheme, Request.Host, Request.PathBase, Request.Path));
+        // ok: csharp.open-redirect
+        Response.Redirect(UriHelper.BuildAbsolute(Request.Scheme, Request.Host, Request.Path));
         // A relative path can start with "//".
         // ruleid: csharp.open-redirect
         return Redirect(UriHelper.BuildRelative(Request.PathBase, Request.Path));
