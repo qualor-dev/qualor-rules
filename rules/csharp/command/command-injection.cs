@@ -270,6 +270,23 @@ public class ToolsController : ControllerBase
         n.ArgumentList.Add(
             // ruleid: csharp.command-injection
             command);
+        // ArgumentList written as a collection initializer.
+        // ruleid: csharp.command-injection
+        var p1 = new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", command } };
+        // ruleid: csharp.command-injection
+        var p2 = new ProcessStartInfo { FileName = "bash", ArgumentList = { "-c", command } };
+        // ruleid: csharp.command-injection
+        var p3 = new ProcessStartInfo { ArgumentList = { "-lc", command }, FileName = "/bin/zsh" };
+        // ruleid: csharp.command-injection
+        var p4 = new ProcessStartInfo("cmd.exe") { ArgumentList = { "/c", "type", command } };
+        // ruleid: csharp.command-injection
+        var p5 = new ProcessStartInfo { FileName = "pwsh", ArgumentList = { "-Command", "Get-Item", command } };
+        // ruleid: csharp.command-injection
+        var p6 = new ProcessStartInfo { ArgumentList = { "/k", "dir", command }, FileName = "cmd" };
+        // ok: csharp.command-injection
+        var p7 = new ProcessStartInfo("/bin/sh") { ArgumentList = { "-c", "grep -- \"$0\" /var/log/app", command } };
+        // ok: csharp.command-injection
+        var p8 = new ProcessStartInfo("git") { ArgumentList = { "-c", "user.name=" + command } };
         var o = new ProcessStartInfo("git") { Arguments = "log " + command };
         // ok: csharp.command-injection
         Process.Start(o);

@@ -424,9 +424,10 @@ rules:
                       metavariable: $ARGS
                       regex: ^(?!\s*(?:new\b|\[|\{))(?:[^"]*|(?is).*?(?:^|[\s"(\x27])(?:/[ck]|-[a-z]*c|-command|-commandwithargs|-cwa|-encodedcommand)(?:[\s"\x27]|$).*)$
                   - focus-metavariable: $ARGS
-              # A shell's argument vector written in place (an array or a List<string>): for a POSIX
-              # shell the element right after -c (also -lc, -ec) is the script and the later ones
-              # are positional parameters; for cmd /c or /k and PowerShell -Command (-c) every later
+              # A shell's argument vector written in place (an array, a List<string>, or an
+              # ArgumentList collection initializer of a ProcessStartInfo): for a POSIX shell the
+              # element right after -c (also -lc, -ec) is the script and the later ones are
+              # positional parameters; for cmd /c or /k and PowerShell -Command (-c) every later
               # element is part of the command; for PowerShell -CommandWithArgs (-cwa) and
               # -EncodedCommand (-e, -ec) the next one is.
               - patterns:
@@ -443,6 +444,12 @@ rules:
                       - pattern: 'new ProcessStartInfo("=~/(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$/", new[] { ..., "=~/(?i)^(/[ck]|-c|-command)$/", ..., $SCRIPT, ... }) { ... }'
                       - pattern: 'new ProcessStartInfo("=~/(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$/", new string[] { ..., "=~/(?i)^(/[ck]|-c|-command)$/", ..., $SCRIPT, ... }) { ... }'
                       - pattern: 'new ProcessStartInfo("=~/(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$/", new List<string> { ..., "=~/(?i)^(/[ck]|-c|-command)$/", ..., $SCRIPT, ... }) { ... }'
+                      - pattern: 'new ProcessStartInfo("=~/(?i)^(.*[\\/])?(sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/") { ..., ArgumentList = { ..., "=~/(?i)^-([a-z]*c[a-z]*|cwa|commandwithargs|e|encodedcommand)$/", $SCRIPT, ... }, ... }'
+                      - pattern: 'new ProcessStartInfo { ..., FileName = "=~/(?i)^(.*[\\/])?(sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", ..., ArgumentList = { ..., "=~/(?i)^-([a-z]*c[a-z]*|cwa|commandwithargs|e|encodedcommand)$/", $SCRIPT, ... }, ... }'
+                      - pattern: 'new ProcessStartInfo { ..., ArgumentList = { ..., "=~/(?i)^-([a-z]*c[a-z]*|cwa|commandwithargs|e|encodedcommand)$/", $SCRIPT, ... }, ..., FileName = "=~/(?i)^(.*[\\/])?(sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$/", ... }'
+                      - pattern: 'new ProcessStartInfo("=~/(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$/") { ..., ArgumentList = { ..., "=~/(?i)^(/[ck]|-c|-command)$/", ..., $SCRIPT, ... }, ... }'
+                      - pattern: 'new ProcessStartInfo { ..., FileName = "=~/(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$/", ..., ArgumentList = { ..., "=~/(?i)^(/[ck]|-c|-command)$/", ..., $SCRIPT, ... }, ... }'
+                      - pattern: 'new ProcessStartInfo { ..., ArgumentList = { ..., "=~/(?i)^(/[ck]|-c|-command)$/", ..., $SCRIPT, ... }, ..., FileName = "=~/(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$/", ... }'
                   - focus-metavariable: $SCRIPT
               # ProcessStartInfo.ArgumentList of a shell (not outside its creation or a FileName
               # assignment): the element added right after -c (also -lc, -cwa, -EncodedCommand), or
