@@ -8,6 +8,21 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="4.0.1" />
     <PackageReference Include="Basic.Reference.Assemblies.Net80" Version="1.8.12" />
   </ItemGroup>
+  <!-- Test-only: the libraries the OpenGrep C# fixtures use, so FixtureRunner compiles them with real references
+       (never shipped; licences in the repository NOTICE). -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
+    <PackageReference Include="Npgsql" Version="8.0.5" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+    <PackageReference Include="MySqlConnector" Version="2.3.7" />
+    <PackageReference Include="Dapper" Version="2.1.35" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.10" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.NewtonsoftJson" Version="8.0.10" />
+    <PackageReference Include="System.DirectoryServices" Version="8.0.0" />
+    <PackageReference Include="System.DirectoryServices.Protocols" Version="8.0.0" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\Qualor.Taint\Qualor.Taint.csproj" />
     <ProjectReference Include="..\..\src\Qualor.Taint.Cli\Qualor.Taint.Cli.csproj" />
@@ -15,4 +30,14 @@
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
+  <!-- FixtureReferences.All: the compile-time reference assemblies of this project (the .NET 8 and ASP.NET Core 8
+       targeting packs and the packages above), written next to the test assembly. The packages and framework the test
+       tooling itself needs (xunit, Roslyn, the test SDK) are left out. -->
+  <Target Name="QualorWriteFixtureReferences" AfterTargets="Build">
+    <ItemGroup>
+      <_FixtureRef Include="@(ReferencePath)"
+                   Condition="!$([System.String]::Copy('%(ReferencePath.NuGetPackageId)').StartsWith('xunit')) And !$([System.String]::Copy('%(ReferencePath.NuGetPackageId)').StartsWith('Microsoft.CodeAnalysis')) And !$([System.String]::Copy('%(ReferencePath.NuGetPackageId)').StartsWith('Microsoft.TestPlatform')) And !$([System.String]::Copy('%(ReferencePath.NuGetPackageId)').StartsWith('Basic.Reference')) And '%(ReferencePath.NuGetPackageId)' != 'Microsoft.NET.Test.Sdk' And '%(ReferencePath.NuGetPackageId)' != 'YamlDotNet' And '%(ReferencePath.ReferenceSourceTarget)' != 'ProjectReference'" />
+    </ItemGroup>
+    <WriteLinesToFile File="$(OutDir)fixture-references.txt" Lines="@(_FixtureRef->'%(FullPath)')" Overwrite="true" />
+  </Target>
 </Project>

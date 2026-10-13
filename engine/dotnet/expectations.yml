@@ -1,0 +1,51 @@
+# Which todo lines of the OpenGrep fixtures the engine must turn into findings (todoruleid) or keep quiet (todook).
+# The OpenGrep fixtures are never edited for the engine (spec §6.1).
+must-find: []        # entries: { rule: csharp.sql-injection, line: 123, why: "expression-bodied member" }
+must-stay-quiet: []
+# Fixture lines that cannot compile in any form (an intentionally invalid shape); excluded from the engine comparison.
+uncompilable:
+  - { rule: csharp.open-redirect, file: open-redirect.cs, line: 51, reason: "RedirectHttpResult.IsLocalUrl is not public in the ASP.NET Core 8 reference assemblies (added in .NET 10); the call does not bind" }
+  - { rule: csharp.open-redirect, file: open-redirect.cs, line: 614, reason: "Back is both a method (line 179) and a property (line 673) of AccountController: the name binds to the method group" }
+  - { rule: csharp.open-redirect, file: open-redirect.cs, line: 673, reason: "the property Back duplicates the action method Back() (line 179) in the same class (CS0102)" }
+  - { rule: csharp.path-traversal, file: path-traversal.cs, line: 23, reason: "Results.PhysicalFile does not exist in the ASP.NET Core 8 reference assemblies (TypedResults.PhysicalFile does)" }
+  - { rule: csharp.path-traversal, file: path-traversal.cs, line: 88, reason: "Results.PhysicalFile does not exist in the ASP.NET Core 8 reference assemblies (TypedResults.PhysicalFile does)" }
+  - { rule: csharp.path-traversal, file: path-traversal.cs, line: 243, reason: "_logger is not declared anywhere in the class FilesController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.path-traversal, file: path-traversal.cs, line: 251, reason: "_logger is not declared anywhere in the class FilesController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.path-traversal, file: path-traversal.cs, line: 316, reason: "_archive is not declared anywhere in the class FilesController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.path-traversal, file: path-traversal.cs, line: 318, reason: "_logger is not declared anywhere in the class FilesController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.path-traversal, file: path-traversal.cs, line: 347, reason: "_store is not declared anywhere in the class FilesController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.sql-injection, file: sql-injection.cs, line: 422, reason: "RelationalQueryableExtensions.FromSql(string) is EF Core 2.x (RawSqlString); in EF Core 8 FromSql takes a FormattableString, so a concatenated string does not bind" }
+  - { rule: csharp.sql-injection, file: sql-injection.cs, line: 424, reason: "ExecuteSqlCommand and ExecuteSqlCommandAsync were removed in EF Core 3.0; they exist in no EF Core version that also has the 8.0 APIs this fixture uses" }
+  - { rule: csharp.sql-injection, file: sql-injection.cs, line: 426, reason: "ExecuteSqlCommand and ExecuteSqlCommandAsync were removed in EF Core 3.0; they exist in no EF Core version that also has the 8.0 APIs this fixture uses" }
+  - { rule: csharp.sql-injection, file: sql-injection.cs, line: 428, reason: "ExecuteSqlCommand and ExecuteSqlCommandAsync were removed in EF Core 3.0; they exist in no EF Core version that also has the 8.0 APIs this fixture uses" }
+  - { rule: csharp.sql-injection, file: sql-injection.cs, line: 455, reason: "_graph is not declared anywhere in ProductsController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.sql-injection, file: sql-injection.cs, line: 511, reason: "_log is not declared anywhere in ProductsController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.sql-injection, file: sql-injection.cs, line: 540, reason: "_log is not declared anywhere in ProductsController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.sql-injection, file: sql-injection.cs, line: 577, reason: "_log is not declared anywhere in ProductsController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.sql-injection, file: sql-injection.cs, line: 599, reason: "_log is not declared anywhere in ProductsController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.sql-injection, file: sql-injection.cs, line: 612, reason: "_log is not declared anywhere in ProductsController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.sql-injection, file: sql-injection.cs, line: 613, reason: "_metrics is not declared anywhere in ProductsController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.sql-injection, file: sql-injection.cs, line: 659, reason: "_log is not declared anywhere in ProductsController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.sql-injection, file: sql-injection.cs, line: 674, reason: "_log is not declared anywhere in ProductsController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.sql-injection, file: sql-injection.cs, line: 686, reason: "_log is not declared anywhere in ProductsController and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.tls-verification-disabled, file: tls-verification-disabled.cs, line: 206, reason: "Pinned(cert) calls HttpClient Pinned(string thumbprint) with an X509Certificate (CS1503)" }
+  - { rule: csharp.tls-verification-disabled, file: tls-verification-disabled.cs, line: 207, reason: "known is an HttpClient (line 206), returned as bool (CS0029)" }
+  - { rule: csharp.unsafe-deserialization, file: unsafe-deserialization.cs, line: 112, reason: "JsonSerializer is ambiguous between Newtonsoft.Json and System.Text.Json (both namespaces are imported); the shim aliases Json.NET for line 153, so this System.Text.Json static call cannot bind" }
+  - { rule: csharp.xss, file: xss.cs, line: 244, reason: "_logger is not declared anywhere in the class and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.xss, file: xss.cs, line: 246, reason: "_notes is not declared anywhere in the class and the class is not partial: a shim cannot add a field" }
+  - { rule: csharp.xss, file: xss.cs, line: 248, reason: "_notes is not declared anywhere in the class and the class is not partial: a shim cannot add a field" }
+
+# Lines that compile, but whose annotation rests on an uncompilable line; excluded from the engine comparison too.
+excluded:
+  - { rule: csharp.open-redirect, file: open-redirect.cs, line: 54, reason: "its ok: rests on the guard at line 51 (RedirectHttpResult.IsLocalUrl does not bind); the engine cannot know the call is a guard" }
+
+# Names the models use that do not resolve against FixtureReferences.All (a test checks this list matches exactly).
+# All are APIs of libraries older than the ones the fixtures compile against, modelled so a project that still uses
+# them is covered.
+unresolved-model-names:
+  - { name: "System.Data.SqlClient.SqlCommand", reason: "System.Data.SqlClient package (legacy; Microsoft.Data.SqlClient replaced it) is not a fixture reference" }
+  - { name: "System.Data.SqlClient.SqlDataAdapter", reason: "System.Data.SqlClient package (legacy) is not a fixture reference" }
+  - { name: "MySql.Data.MySqlClient.MySqlCommand", reason: "MySql.Data (Oracle connector, GPL) is not a fixture reference; MySqlConnector is" }
+  - { name: "Microsoft.EntityFrameworkCore.RawSqlString", reason: "EF Core 2.x type; removed in EF Core 3.0" }
+  - { name: "Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlCommand [Method]", reason: "EF Core 2.x method; removed in EF Core 3.0" }
+  - { name: "Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlCommandAsync [Method]", reason: "EF Core 2.x method; removed in EF Core 3.0" }

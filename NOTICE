@@ -22,3 +22,14 @@ Used to build and test the engine only, not shipped:
 - Basic.Reference.Assemblies.Net80 1.8.12 (the .NET 8 reference assemblies the tests compile
   against), Copyright (c) Jared Parsons, MIT licence; the assemblies it carries are Microsoft's,
   MIT licence, https://github.com/jaredpar/basic-reference-assemblies
+- Test-only references for compiling the OpenGrep C# fixtures (engine/dotnet/tests; FixtureReferences), not shipped:
+  Microsoft.Data.SqlClient 5.2.2, Microsoft.Data.Sqlite 8.0.10, Microsoft.EntityFrameworkCore.Relational 8.0.10,
+  Microsoft.AspNetCore.Mvc.NewtonsoftJson 8.0.10, System.DirectoryServices 8.0.0 and
+  System.DirectoryServices.Protocols 8.0.0 (Copyright (c) Microsoft Corporation / .NET Foundation, MIT licence,
+  https://github.com/dotnet/runtime, https://github.com/dotnet/efcore, https://github.com/dotnet/SqlClient);
+  Newtonsoft.Json 13.0.3 (Copyright (c) James Newton-King, MIT licence); MySqlConnector 2.3.7 (Copyright (c) Bradley
+  Grainger, MIT licence); Dapper 2.1.35 (Copyright (c) Sam Saffron, Marc Gravell, Nick Craver, Apache License 2.0);
+  Npgsql 8.0.5 (Copyright (c) Shay Rojansky, Nikita Kazmin, Brar Piening, PostgreSQL licence (permissive, OSI-approved), test-only;
+  https://github.com/npgsql/npgsql). Their dependencies (Azure.Core, Azure.Identity, Microsoft.Identity.Client,
+  Microsoft.IdentityModel.*, Microsoft.SqlServer.Server, System.ClientModel, System.Memory.Data, Newtonsoft.Json.Bson,
+  Microsoft.AspNetCore.JsonPatch: MIT; SQLitePCLRaw.*: Apache License 2.0) are restored with them.
