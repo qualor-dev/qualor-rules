@@ -15,4 +15,11 @@ public sealed record CompilationInput(
     /// with ProjectReferences; the loader's fallback when a referenced project has no input or closes a cycle. Empty
     /// when none were recorded or their count did not match.
     public IReadOnlyList<string> ProjectReferenceAssemblies { get; init; } = Array.Empty<string>();
+
+    /// MSBuild's Features (`features=`, ruling R-E6): each entry `key` or `key=value`, for the parse options.
+    public IReadOnlyList<string> Features { get; init; } = Array.Empty<string>();
+
+    /// MSBuild's InterceptorsNamespaces (`interceptors-namespaces=`, ruling R-E6), set by the SDK for generators that
+    /// write interceptors (configuration binder, request delegate generator).
+    public IReadOnlyList<string> InterceptorsNamespaces { get; init; } = Array.Empty<string>();
 }

@@ -131,6 +131,31 @@ public sealed class InputReaderTests : TempDirs
     }
 
     [Fact]
+    public void Reads_features_and_interceptors_namespaces()   // ruling R-E6
+    {
+        var dir = TempDir();
+        File.WriteAllText(Path.Combine(dir, "f.txt"), string.Join("\n",
+            "qualor-compilation=1", "project=/w/App/App.csproj", "tfm=net10.0",
+            "features=strict; peverify-compat=false;;InterceptorsNamespaces=A.B",
+            "interceptors-namespaces=Microsoft.Extensions.Configuration.Binder.SourceGeneration;Gen.X"), new UTF8Encoding(false));
+        var i = Assert.Single(InputReader.Read(dir, out var errors));
+        Assert.Empty(errors);
+        Assert.Equal(new[] { "strict", "peverify-compat=false", "InterceptorsNamespaces=A.B" }, i.Features);
+        Assert.Equal(new[] { "Microsoft.Extensions.Configuration.Binder.SourceGeneration", "Gen.X" }, i.InterceptorsNamespaces);
+    }
+
+    [Fact]
+    public void Features_and_interceptors_namespaces_are_empty_when_not_recorded()
+    {
+        var dir = TempDir();
+        File.WriteAllText(Path.Combine(dir, "e.txt"), "qualor-compilation=1\nproject=/w/A.csproj\nfeatures=\ninterceptors-namespaces=\n");
+        var i = Assert.Single(InputReader.Read(dir, out var errors));
+        Assert.Empty(errors);
+        Assert.Empty(i.Features);
+        Assert.Empty(i.InterceptorsNamespaces);
+    }
+
+    [Fact]
     public void A_project_reference_assembly_count_mismatch_is_an_error_and_the_input_is_kept()
     {
         var dir = TempDir();

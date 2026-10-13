@@ -110,6 +110,48 @@ public sealed class SolutionLoaderTests : TempDirs
         var p = Assert.Single(SolutionLoader.Load(new[] { app }, default).Projects);
         Assert.Empty(p.Errors);
         Assert.Contains(p.Compilation.References, r => r is PortableExecutableReference pe && pe.FilePath == libDll);
+        Assert.Equal(new[] { libDll }, p.FallbackAssemblies);
+    }
+
+    [Theory]   // ruling R-E6: the SDK's InterceptorsNamespaces (configuration binder, RDG) reach the parse options
+    [InlineData("interceptors-namespaces=Other.Ns;Gen.Interceptors", false)]
+    [InlineData("features=InterceptorsNamespaces=Gen.Interceptors", false)]
+    [InlineData("features=qualor-unrelated", true)]
+    [InlineData("", true)]
+    public void Recorded_interceptors_namespaces_enable_generated_interceptors(string line, bool expectCs9137)
+    {
+        var src = TempDir();
+        const string target = "namespace App { public static class C { public static int M() => 1; public static int Use() => M(); } }";
+        var targetFile = Write(src, "Program.cs", target);
+        var interceptor = Write(src, Path.Combine("generated", "Interceptor.g.cs"), InterceptorFor(targetFile, target));
+        var inputs = Path.Combine(src, "compilations");
+        Directory.CreateDirectory(inputs);
+        File.WriteAllText(Path.Combine(inputs, "i.txt"), string.Join("\n", new[] { "qualor-compilation=1",
+            "project=" + Path.Combine(src, "App.csproj"), "tfm=net8.0", "assembly=App", "output-kind=Library", line,
+            "source=" + targetFile, "source=" + interceptor }.Concat(RefPaths.Value.Select(r => "reference=" + r))) + "\n", new UTF8Encoding(false));
+        var read = InputReader.Read(inputs, out var errors);
+        Assert.Empty(errors);
+
+        var p = Assert.Single(SolutionLoader.Load(read, default).Projects);
+
+        if (expectCs9137) Assert.Contains(p.Errors, d => d.Id == "CS9137");
+        else Assert.Empty(p.Errors);
+    }
+
+    [Fact]
+    public void Features_reach_the_parse_options_with_true_for_a_bare_key()
+    {
+        var src = TempDir();
+        var input = Input(src, "F", "net8.0", new[] { Write(src, "F.cs", "class F { }") }) with
+        {
+            Features = new[] { "qualor-flag", "qualor-key=v=1" },
+            InterceptorsNamespaces = new[] { "A.B", "C" },
+        };
+        var options = (CSharpParseOptions)Assert.Single(Assert.Single(SolutionLoader.Load(new[] { input }, default).Projects).Compilation.SyntaxTrees).Options;
+        Assert.Equal("true", options.Features["qualor-flag"]);
+        Assert.Equal("v=1", options.Features["qualor-key"]);
+        Assert.Equal("A.B;C", options.Features["InterceptorsNamespaces"]);
+        Assert.Equal("A.B;C", options.Features["InterceptorsPreviewNamespaces"]);
     }
 
     [Fact]
@@ -221,6 +263,22 @@ public sealed class SolutionLoaderTests : TempDirs
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, text, new UTF8Encoding(false));
         return path;
+    }
+
+    /// A generated interceptor of the call `M()` in the target file, in namespace Gen.Interceptors, the way a source
+    /// generator writes one: InterceptsLocation(version, data) from Roslyn's GetInterceptableLocation.
+    private static string InterceptorFor(string targetPath, string targetText)
+    {
+        var tree = CSharpSyntaxTree.ParseText(targetText, path: targetPath, encoding: Encoding.UTF8);
+        var compilation = CSharpCompilation.Create("probe", new[] { tree }, RefPaths.Value.Select(r => MetadataReference.CreateFromFile(r)));
+        var call = tree.GetRoot().DescendantNodes().OfType<Microsoft.CodeAnalysis.CSharp.Syntax.InvocationExpressionSyntax>().Single();
+#pragma warning disable RSEXPERIMENTAL002   // the interceptors API is marked experimental
+        var location = compilation.GetSemanticModel(tree).GetInterceptableLocation(call)!;
+#pragma warning restore RSEXPERIMENTAL002
+        return "namespace System.Runtime.CompilerServices { [System.AttributeUsage(System.AttributeTargets.Method, AllowMultiple = true)] " +
+            "file sealed class InterceptsLocationAttribute : System.Attribute { public InterceptsLocationAttribute(int version, string data) { } } }\n" +
+            "namespace Gen.Interceptors { static file class I { " +
+            $"[System.Runtime.CompilerServices.InterceptsLocation({location.Version}, \"{location.Data}\")] public static int Intercepted() => 2; }} }}\n";
     }
 
     /// A library assembly compiled from text and written to dir/relative, standing in for a project's build output.

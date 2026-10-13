@@ -128,8 +128,14 @@ public static class InputReader
             InputFile: file)
         {
             ProjectReferenceAssemblies = projectReferenceAssemblies,
+            Features = SplitList(Get("features")),
+            InterceptorsNamespaces = SplitList(Get("interceptors-namespaces")),
         };
     }
+
+    /// A ';'-separated MSBuild list; empty items (";a", "a;;b") are dropped.
+    private static string[] SplitList(string value) =>
+        value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
     /// MSBuild's OutputType: Exe and WinExe are applications, Library (or none) a library; others are not supported.
     private static OutputKind ParseOutputKind(string value) => value.ToLowerInvariant() switch

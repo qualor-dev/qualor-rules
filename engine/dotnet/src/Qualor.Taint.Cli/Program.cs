@@ -7,7 +7,8 @@ using Microsoft.CodeAnalysis;
 namespace Qualor.Taint.Cli;
 
 /// `Qualor.Taint.Cli rebuild --inputs <dir> --json <file>`: rebuilds the recorded compilations and writes, per
-/// project and target framework, its source count and compiler errors. Exit code 0 whatever the projects' errors;
+/// project and target framework, its source count, the project references served by their recorded assembly and the
+/// errors. Exit code 0 whatever the projects' errors;
 /// 2 when the arguments are invalid.
 public static class Program
 {
@@ -65,6 +66,10 @@ public static class Program
             w.WriteString("tfm", p.Input.TargetFramework);
             w.WriteNumber("sources", p.Input.Sources.Count);
             w.WriteNumber("trees", p.Compilation.SyntaxTrees.Count());
+            w.WriteNumber("fallbacks", p.FallbackAssemblies.Count);
+            w.WriteStartArray("fallbackAssemblies");
+            foreach (var assembly in p.FallbackAssemblies) w.WriteStringValue(assembly);
+            w.WriteEndArray();
             w.WriteNumber("errors", p.Errors.Count);
             w.WriteStartArray("firstErrors");
             foreach (var d in p.Errors.Take(FirstErrors)) w.WriteStringValue(Format(d));

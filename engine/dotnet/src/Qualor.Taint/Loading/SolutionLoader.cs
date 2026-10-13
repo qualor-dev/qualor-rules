@@ -111,7 +111,9 @@ public static class SolutionLoader
     {
         var input = node.Input;
         var errors = new List<Diagnostic>(node.LoadErrors);
-        var parseOptions = new CSharpParseOptions(input.LanguageVersion, preprocessorSymbols: input.Defines);
+        var parseOptions = new CSharpParseOptions(input.LanguageVersion, preprocessorSymbols: input.Defines)
+            .WithFeatures(Features(input));
+        var fallbacks = new List<string>();
 
         var trees = new List<SyntaxTree>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
@@ -167,7 +169,7 @@ public static class SolutionLoader
         var result = CSharpCompilation.Create(input.AssemblyName, trees, references, options);
         node.Compilation = result;
         errors.AddRange(result.GetDiagnostics(ct).Where(d => d.Severity == DiagnosticSeverity.Error));
-        return new ProjectCompilation(input, result, errors);
+        return new ProjectCompilation(input, result, errors) { FallbackAssemblies = fallbacks };
 
         // The referenced project's recorded assembly as a metadata reference, in place of its compilation.
         bool AddFallback(string? assembly, out string why)
@@ -184,6 +186,7 @@ public static class SolutionLoader
                 return false;
             }
             if (!references.Contains(fallback)) references.Add(fallback);
+            fallbacks.Add(assembly);
             return true;
         }
 
@@ -202,6 +205,27 @@ public static class SolutionLoader
             }
             trees.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path, ct));
         }
+    }
+
+    /// csc's /features: each Features entry `key[=value]` (value "true" when absent), then InterceptorsNamespaces
+    /// under both keys the compiler reads (ruling R-E6); later entries win.
+    internal static Dictionary<string, string> Features(CompilationInput input)
+    {
+        var features = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var entry in input.Features)
+        {
+            var eq = entry.IndexOf('=');
+            if (eq == 0) continue;
+            if (eq < 0) features[entry] = "true";
+            else features[entry[..eq]] = entry[(eq + 1)..];
+        }
+        if (input.InterceptorsNamespaces.Count > 0)
+        {
+            var namespaces = string.Join(';', input.InterceptorsNamespaces);
+            features["InterceptorsNamespaces"] = namespaces;
+            features["InterceptorsPreviewNamespaces"] = namespaces;
+        }
+        return features;
     }
 
     /// What a recorded path can throw: I/O and access failures, and a malformed path (a NUL character, a bad format).

@@ -39,6 +39,32 @@ public sealed class CliTests : TempDirs
         Assert.Contains("broken.txt", Assert.Single(doc.RootElement.GetProperty("inputErrors").EnumerateArray()).GetString());
     }
 
+    [Fact]
+    public void Rebuild_reports_the_project_references_served_by_their_recorded_assembly()   // ruling R-E6
+    {
+        var dir = TempDir();
+        var corlib = Net80.ReferenceInfos.All.Single(r => r.FileName == "System.Runtime.dll");
+        var corlibPath = Path.Combine(dir, corlib.FileName);
+        File.WriteAllBytes(corlibPath, corlib.ImageBytes);
+        var libDll = Path.Combine(dir, "Lib Ü.dll");
+        File.WriteAllBytes(libDll, corlib.ImageBytes);   // any readable assembly serves as the fallback
+        var source = Path.Combine(dir, "A.cs");
+        File.WriteAllText(source, "class A { }", new UTF8Encoding(false));
+        var inputs = Path.Combine(dir, "compilations");
+        Directory.CreateDirectory(inputs);
+        File.WriteAllText(Path.Combine(inputs, "a.txt"), string.Join("\n", "qualor-compilation=1",
+            "project=" + Path.Combine(dir, "A.csproj"), "tfm=net8.0", "assembly=A", "source=" + source, "reference=" + corlibPath,
+            "project-reference=" + Path.Combine(dir, "Lib", "Lib.vbproj"), "project-reference-assembly=" + libDll) + "\n", new UTF8Encoding(false));
+        var json = Path.Combine(dir, "rebuild.json");
+
+        Assert.Equal(0, Qualor.Taint.Cli.Program.Run(new[] { "rebuild", "--inputs", inputs, "--json", json }, TextWriter.Null));
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(json, Encoding.UTF8));
+        var project = Assert.Single(doc.RootElement.GetProperty("projects").EnumerateArray());
+        Assert.Equal(1, project.GetProperty("fallbacks").GetInt32());
+        Assert.Equal(libDll, Assert.Single(project.GetProperty("fallbackAssemblies").EnumerateArray()).GetString());
+    }
+
     [Theory]
     [InlineData()]
     [InlineData("rebuild")]
