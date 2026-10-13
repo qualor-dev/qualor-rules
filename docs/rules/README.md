@@ -2,7 +2,7 @@
 
 # Qualor security rules
 
-The security rules of Qualor's `qualor` engine, 66 in all. Each page says what the rule finds, why
+The security rules of Qualor's `qualor` engine, 67 in all. Each page says what the rule finds, why
 it matters, how to fix it, what the rule misses or may wrongly report, and shows a short example.
 Qualor links every finding to its page.
 
@@ -102,5 +102,6 @@ The key `qualor:<lang>/<name>` is how Qualor names a rule; the rule itself is
 | [`qualor:csharp/ssrf`](csharp/ssrf.md) | Server-side request to a URL from HTTP request data (C#) | Issue | High | [CWE-918](https://cwe.mitre.org/data/definitions/918.html) |
 | [`qualor:csharp/tls-verification-disabled`](csharp/tls-verification-disabled.md) | TLS certificate verification disabled (C#) | Issue | High | [CWE-295](https://cwe.mitre.org/data/definitions/295.html) |
 | [`qualor:csharp/unsafe-deserialization`](csharp/unsafe-deserialization.md) | Deserialization that lets the data choose the types (C#) | Issue | High | [CWE-502](https://cwe.mitre.org/data/definitions/502.html) |
+| [`qualor:csharp/xpath-injection`](csharp/xpath-injection.md) | XPath expression built from HTTP request data (C#) | Issue | High | [CWE-643](https://cwe.mitre.org/data/definitions/643.html) |
 | [`qualor:csharp/xss`](csharp/xss.md) | HTML response built from HTTP request data (C#) | Issue | High | [CWE-79](https://cwe.mitre.org/data/definitions/79.html) |
 | [`qualor:csharp/xxe`](csharp/xxe.md) | XML parser that resolves external entities (C#) | Issue | High | [CWE-611](https://cwe.mitre.org/data/definitions/611.html), [CWE-776](https://cwe.mitre.org/data/definitions/776.html) |
