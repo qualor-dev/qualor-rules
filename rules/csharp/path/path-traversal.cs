@@ -128,9 +128,11 @@ public enum Kind { Text, Image }
 public class FilesController : ControllerBase
 {
     private const string Storage = "/var/app/storage";
+    private const string StorageRoot = "/var/app/storage/";
     private static readonly Dictionary<string, string> Reports = new() { ["daily"] = "daily.csv", ["weekly"] = "weekly.csv" };
 
     private readonly IFileProvider _files;
+    private readonly string _root = Environment.GetEnvironmentVariable("FILES_ROOT") ?? "/var/app/storage";
 
     public FilesController(IFileProvider files) => _files = files;
 
@@ -225,18 +227,18 @@ public class FilesController : ControllerBase
     {
         string first;
         first = Path.GetFullPath(Path.Combine(Storage, a));
-        if (!first.StartsWith(Storage)) return NotFound();
+        if (!first.StartsWith(_root + "/")) return NotFound();
         // ok: csharp.path-traversal
         var one = System.IO.File.ReadAllText(first);
         var second = Path.GetFullPath(Path.Combine(Storage, b));
-        if (!second.StartsWith(Storage))
+        if (!second.StartsWith(Storage + '/'))
         {
             throw new UnauthorizedAccessException();
         }
         // ok: csharp.path-traversal
         var two = System.IO.File.ReadAllText(second);
         var third = Path.GetFullPath(Path.Combine(Storage, c));
-        if (!third.StartsWith(Storage))
+        if (!third.StartsWith(Storage + Path.AltDirectorySeparatorChar))
         {
             _logger.LogWarning("Refused {Path}", third);
             return NotFound();
@@ -244,22 +246,31 @@ public class FilesController : ControllerBase
         // ok: csharp.path-traversal
         var three = System.IO.File.ReadAllText(third);
         var fourth = Path.GetFullPath(Path.Combine(Storage, d));
-        if (!fourth.StartsWith(Storage))
+        if (!fourth.StartsWith(StorageRoot, StringComparison.Ordinal))
         {
             _logger.LogWarning("Refused {Path}", fourth);
             throw new UnauthorizedAccessException();
         }
         // ok: csharp.path-traversal
-        return PhysicalFile(fourth, "text/plain");
+        var four = System.IO.File.ReadAllText(fourth);
+        var fifth = Path.GetFullPath(Path.Combine(Storage, d));
+        if (!fifth.StartsWith(Storage + '\\')) return NotFound();
+        // ok: csharp.path-traversal
+        return PhysicalFile(fifth, "text/plain");
     }
 
     [HttpGet("checked2")]
     public IActionResult Checked2(string name)
     {
         string resolved = Path.GetFullPath(Path.Combine(Storage, name));
-        if (!resolved.StartsWith(Storage)) throw new UnauthorizedAccessException();
+        if (!resolved.StartsWith("/var/app/storage/")) throw new UnauthorizedAccessException();
         // ok: csharp.path-traversal
-        return PhysicalFile(resolved, "text/plain");
+        var text = System.IO.File.ReadAllText(resolved);
+        // A prefix without a separator also admits a sibling folder ("/var/app/storage-old").
+        var sibling = Path.GetFullPath(Path.Combine(Storage, name));
+        if (!sibling.StartsWith(Storage)) throw new UnauthorizedAccessException();
+        // ruleid: csharp.path-traversal
+        return PhysicalFile(sibling, "text/plain");
     }
 
     // Inside the guard the path is the one that failed the check.
@@ -336,6 +347,16 @@ public class FilesController : ControllerBase
         var document = _store.Find(id);
         // todook: csharp.path-traversal
         return PhysicalFile(document.StoragePath, "application/pdf");
+    }
+
+    // A separator added by interpolation is not recognised (Known limit).
+    [HttpGet("interpolated")]
+    public IActionResult Interpolated(string name)
+    {
+        var full = Path.GetFullPath(Path.Combine(_root, name));
+        if (!full.StartsWith($"{_root}{Path.DirectorySeparatorChar}")) return NotFound();
+        // todook: csharp.path-traversal
+        return PhysicalFile(full, "text/plain");
     }
 
     // Results.File with request bytes or a request stream is not a path (Known limit).

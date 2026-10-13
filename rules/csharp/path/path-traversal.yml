@@ -59,10 +59,13 @@ rules:
     # - The value a method of another class returns for request data (a stored document found by an
     #   id, a file an image processor made from request options) is taken for request data: OpenGrep
     #   passes taint through calls it cannot see into.
-    # - The containment check is recognised as `if (!full.StartsWith(...))` leaving the method, on a
-    #   variable assigned Path.GetFullPath(...) in the method; a check written in the condition of
-    #   an `if` that guards the use (`if (Path.GetFullPath(p).StartsWith(root)) { ... }`) is not,
-    #   and the path stays reported there.
+    # - The containment check is recognised as `if (!full.StartsWith(prefix))` leaving the method,
+    #   on a variable assigned Path.GetFullPath(...) in the method, with a prefix that ends in a
+    #   directory separator (a string ending in / or \, or base + Path.DirectorySeparatorChar,
+    #   AltDirectorySeparatorChar, '/' or '\'); a prefix built otherwise (an interpolated string,
+    #   Path.Join with an empty segment) is not taken for a check, and a check written in the
+    #   condition of an `if` that guards the use (`if (Path.GetFullPath(p).StartsWith(root)) { ...
+    #   }`) is not either: the path stays reported there.
     # - Not sinks: ControllerBase.File(virtualPath) and IFileProvider.GetFileInfo, which resolve
     #   below the web root and refuse paths outside it; File.Exists and Directory.Exists, which only
     #   test for existence (`ok:` lines).
@@ -354,9 +357,12 @@ rules:
           - pattern: System.IO.Path.GetFileNameWithoutExtension(...)
           - pattern: System.IO.Path.GetExtension(...)
       # A full path checked against the base folder: after `var full = Path.GetFullPath(...);` and a
-      # guard `if (!full.StartsWith(...))` that always leaves the method (a single return or throw,
-      # also in braces, or a block ending in one after one other statement), `full` is clean; never
-      # inside the guard itself.
+      # guard `if (!full.StartsWith(prefix))` that always leaves the method (a single return or
+      # throw, also in braces, or a block ending in one after one other statement), `full` is clean;
+      # never inside the guard itself. The prefix must end with a directory separator (a string
+      # ending in / or \ (a literal, a constant, or base + "/"), or base +
+      # Path.DirectorySeparatorChar, AltDirectorySeparatorChar, '/' or '\'): "/srv/files" alone also
+      # admits the sibling "/srv/files-old".
       - patterns:
           - pattern-either:
               - pattern-inside: |
@@ -367,17 +373,26 @@ rules:
                   ...
           - pattern-either:
               - pattern-inside: |
-                  if (!$FULL.StartsWith(...)) return ...;
+                  if (!$FULL.StartsWith($PREFIX, ...)) return ...;
                   ...
               - pattern-inside: |
-                  if (!$FULL.StartsWith(...)) throw $EX;
+                  if (!$FULL.StartsWith($PREFIX, ...)) throw $EX;
                   ...
               - pattern-inside: |
-                  if (!$FULL.StartsWith(...)) { $S1; return ...; }
+                  if (!$FULL.StartsWith($PREFIX, ...)) { $S1; return ...; }
                   ...
               - pattern-inside: |
-                  if (!$FULL.StartsWith(...)) { $S1; throw $EX; }
+                  if (!$FULL.StartsWith($PREFIX, ...)) { $S1; throw $EX; }
                   ...
+          - metavariable-pattern:
+              metavariable: $PREFIX
+              patterns:
+                - pattern-either:
+                    - pattern: '"=~/[\\/]$/"'
+                    - pattern: $BASE + Path.DirectorySeparatorChar
+                    - pattern: $BASE + Path.AltDirectorySeparatorChar
+                    - pattern: "$BASE + '/'"
+                    - pattern: "$BASE + '\\\\'"
           - pattern-not-inside: |
               if (!$FULL.StartsWith(...)) { ... }
           - pattern: $FULL

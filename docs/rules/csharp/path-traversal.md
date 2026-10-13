@@ -123,9 +123,13 @@ public class DocumentsController : ControllerBase
   `Enumerable.Contains(...)` called as a static method does not, and a variable assigned again
   after a check still counts as checked.
 - The containment check is recognised in the form shown above: a variable assigned
-  `Path.GetFullPath(...)`, then `if (!full.StartsWith(...))` that returns or throws. A check
-  written as the condition around the use (`if (Path.GetFullPath(p).StartsWith(root)) { ... }`)
-  is not recognised, and the use is still reported.
+  `Path.GetFullPath(...)`, then `if (!full.StartsWith(root))` that returns or throws, where `root`
+  ends with a directory separator (a string ending in `/` or `\`, or `base +
+  Path.DirectorySeparatorChar`); without the separator, `/srv/files` would also admit
+  `/srv/files-old`, so such a check is not taken for one. A separator added by string
+  interpolation, or a check written as the condition around the use
+  (`if (Path.GetFullPath(p).StartsWith(root)) { ... }`), is not recognised either, and the use is
+  still reported.
 - `StreamReader` and `StreamWriter` given a path are not checked, since their other constructors
   take streams such as the request body.
 - `Results.File` given request bytes or a request stream, rather than a path, is reported.
