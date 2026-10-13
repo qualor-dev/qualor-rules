@@ -30,6 +30,7 @@ Entry format:
 - **Plan:** BASE = this commit; tested with `--taint-intrafile`; `since: 2026.10.5`. Batches: csharp-1 (csharp.command-injection, csharp.path-traversal, csharp.ssrf, csharp.xss), csharp-2 (csharp.open-redirect, csharp.ldap-injection, csharp.xpath-injection, csharp.regex-injection), csharp-3 (csharp.unsafe-deserialization, csharp.xxe, csharp.tls-verification-disabled). csharp-3 holds misuse rules without the request source block, so it runs in parallel with csharp-1; csharp-2 starts after csharp-1 is merged.
 - **Progress:**
 - csharp-3 (csharp.unsafe-deserialization, csharp.xxe, csharp.tls-verification-disabled): APPROVED in round 1; merged 7a03f5e..9e5dcca
+- csharp-1 (csharp.command-injection, csharp.path-traversal, csharp.ssrf, csharp.xss): APPROVED in round 2 (Critical: URL-encoded values in HTML reported; Important: PathString is URI-escaped, not HTML-escaped, recorded as a limit); merged 968d098..aec73ca
 
 ## 2026-10-12: release 2026.10.4 (`/release-pack`)
 
