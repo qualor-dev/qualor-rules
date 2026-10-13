@@ -337,6 +337,10 @@ rules:
                   - metavariable-regex:
                       metavariable: $CONTAINS
                       regex: ^Contains(Key)?$
+                  # Not inside the guard itself, where the value failed the check (its block,
+                  # or its single return or throw statement).
+                  - pattern-not-inside: |
+                      if (!$TABLE.$CONTAINS($X)) { ... }
                   - pattern: $X
       # (End of the shared C# sanitizers; the items below are this rule's own.)
     pattern-sinks:

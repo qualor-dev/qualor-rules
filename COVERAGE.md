@@ -239,9 +239,11 @@ What each language's block holds today (2026-10-11 run):
   lookups, `GetValueOrDefault(k, <literal>)`, `T.Contains(x) ? x : <literal>` (`ContainsKey` too),
   and `x` after `if (!T.Contains(x))` whose body always leaves the method: a single `return`/`throw`,
   or one ending in it after at most two other top-level statements (`{ ... return ...; }` would
-  also take a conditional return, one in a loop or in a lambda). `TryParse` out values, ternaries and switch expressions of constants need
-  none. (C# has no `const` collections, so spec §5.1's "or a const" has no form.) **OpenGrep
-  facts** (2026-10-13): a method-name metavariable binds the generic arguments too
+  also take a conditional return, one in a loop or in a lambda); never inside the guard itself
+  (its statements and its return/throw expression), where the value failed the check. `TryParse`
+  out values, ternaries and switch expressions of constants need none. (C# has no `const`
+  collections, so spec §5.1's "or a const" has no form.) **OpenGrep facts** (2026-10-13): a
+  method-name metavariable binds the generic arguments too
   (`Query<User>`), so name regexes end in `(<.*>)?`, and a literal method name does not match a
   generic call; `[$A(...)]` matches an attribute with or without arguments; `=> $BODY` matches
   expression bodies only and `=> { ... }` block bodies; `class $C { ... }` also matches a class

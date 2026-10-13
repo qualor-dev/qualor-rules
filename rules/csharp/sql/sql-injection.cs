@@ -617,6 +617,38 @@ public class ProductsController : ControllerBase
         return Ok(_conn.Query<User>("SELECT * FROM history_" + region));
     }
 
+    // Inside a guard the value is the one that failed the check.
+    [HttpGet("rejected")]
+    public IActionResult Rejected(string dir)
+    {
+        if (!Directions.Contains(dir))
+        {
+            // ruleid: csharp.sql-injection
+            _conn.Execute("INSERT INTO rejected (value) VALUES ('" + dir + "')");
+            return BadRequest();
+        }
+        // ok: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY name " + dir));
+    }
+
+    [HttpGet("rejected2")]
+    public IActionResult Rejected2(string dir)
+    {
+        // ruleid: csharp.sql-injection
+        if (!Directions.Contains(dir)) return Ok(_conn.Query<User>("SELECT * FROM products WHERE alias = '" + dir + "'"));
+        // ok: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY name " + dir));
+    }
+
+    [HttpGet("rejected3")]
+    public IActionResult Rejected3(string region)
+    {
+        // ruleid: csharp.sql-injection
+        if (!Regions.Contains(region)) throw new ArgumentException(_conn.ExecuteScalar<string>("SELECT hint FROM region_hints WHERE code = '" + region + "'"));
+        // ok: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM stock_" + region));
+    }
+
     // Guards that do not always leave the method.
     [HttpGet("strict")]
     public IActionResult Strict(string dir, bool strict)
