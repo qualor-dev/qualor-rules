@@ -253,6 +253,10 @@ public class FetchController : ControllerBase
         var other = await this.GetTargetAsync(id);
         // todoruleid: csharp.ssrf
         await _http.PostAsync(other, null);
+        // So does a helper of another class or object that hands the value back (Known limit).
+        var normalized = await UrlTools.LoadNormalizedAsync(id);
+        // todoruleid: csharp.ssrf
+        await _http.PostAsync(normalized, null);
         return Ok();
     }
 
@@ -397,6 +401,15 @@ public class FeedReader
     {
         // ok: csharp.ssrf
         return _http.GetStringAsync(url);
+    }
+}
+
+public static class UrlTools
+{
+    public static async Task<string> LoadNormalizedAsync(string url)
+    {
+        await Task.Yield();
+        return url.Trim();
     }
 }
 
