@@ -67,7 +67,6 @@ public class PeopleController : ControllerBase
 ```csharp
 using System.DirectoryServices;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Security.Application;
 
 [ApiController]
 [Route("api/[controller]")]
@@ -88,8 +87,9 @@ public class PeopleController : ControllerBase
 
 <!-- begin: how-to-fix -->
 - Escape every value that goes into a filter as LDAP filter text: `*`, `(`, `)`, `\` and NUL
-  must be written as `\2a`, `\28`, `\29`, `\5c` and `\00` (RFC 4515). The AntiXSS `Encoder` class
-  does this with `Encoder.LdapFilterEncode`. Escaping for a distinguished name
+  must be written as `\2a`, `\28`, `\29`, `\5c` and `\00` (RFC 4515). The .NET AntiXSS `Encoder` class
+  named by the OWASP LDAP Injection Prevention Cheat Sheet does this with
+  `Encoder.LdapFilterEncode`. Escaping for a distinguished name
   (`LdapDistinguishedNameEncode`) is not enough for a filter.
 - Where the value can only be one of a few known values (an object class, a department), look it
   up in a fixed table instead of passing it on; where it is a number or an identifier, parse it
@@ -122,11 +122,14 @@ public class PeopleController : ControllerBase
   helper from request data is reported as if it were a filter when it is the only argument of
   `new DirectorySearcher(...)`, and so is an attribute list created by a helper from request data
   when it follows the filter.
-- Only `Encoder.LdapFilterEncode` of the AntiXSS library (`Microsoft.Security.Application`) counts
-  as escaping; a hand-written escaper or another class's method of that name is still reported,
-  and so is the AntiXSS encoder in a file that gets its namespace from a global using.
+- Only `Encoder.LdapFilterEncode` counts as escaping, recognised by that name: a class of your
+  own named `Encoder` whose `LdapFilterEncode` does not escape is trusted all the same, while a
+  hand-written escaper, or the method reached through another qualified class name, is still
+  reported.
 - `SearchRequest` is checked only as the type of `System.DirectoryServices.Protocols`, written out
-  or imported in the same file; a file that gets that namespace from a global using is missed.
+  or imported in the same file; a file that gets that namespace from a global using is missed,
+  and another library's `SearchRequest` declared in a file that also imports that namespace is
+  reported when its `Filter` is set in an object initializer.
 - OpenGrep 1.30 does not parse some newer C# syntax (raw strings with `$$"""`, types declared
   without a body such as `class X : Y;`, some multi-line collection expressions); code in those
   parts of a file may be missed.

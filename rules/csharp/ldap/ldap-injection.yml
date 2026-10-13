@@ -56,16 +56,17 @@ rules:
     #   place (a DirectoryEntry from a helper that takes request data is reported). After a filter,
     #   the propertiesToLoad array counts as a filter unless it is declared as string[] or created
     #   in place (an array from a helper that holds request data is reported).
-    # - Escaping counts only as LdapFilterEncode of the AntiXSS Encoder class (the class the OWASP
-    #   cheat sheet names, Microsoft.Security.Application.Encoder), written out in full or as
-    #   Encoder.LdapFilterEncode in a file that imports Microsoft.Security.Application: a
-    #   hand-written escaper (a chain of Replace calls) or another class's LdapFilterEncode is still
-    #   reported, and so is the AntiXSS encoder in a file that gets the namespace from a global
-    #   using in another file (no test line for that one: the test file imports it at its top).
+    # - Escaping counts only as Encoder.LdapFilterEncode, matched by that name as the OWASP LDAP
+    #   Injection Prevention Cheat Sheet gives it (".NET AntiXSS (now the Encoder class)"): a
+    #   project's own class named Encoder whose LdapFilterEncode does not escape is taken for it,
+    #   while a hand-written escaper (a chain of Replace calls) or LdapFilterEncode reached through
+    #   another qualified name (Acme.Text.Encoder.LdapFilterEncode) is still reported.
     # - SearchRequest is checked only as System.DirectoryServices.Protocols.SearchRequest, written
     #   out or in a file that imports that namespace, since other libraries have SearchRequest
     #   types with a Filter property; a file that gets the namespace from a global using in another
-    #   file is missed (no test line: the test file imports it at its top).
+    #   file is missed (no test line: the test file imports it at its top), and another library's
+    #   SearchRequest declared in a file that also imports that namespace is reported in an object
+    #   initializer.
     # - OpenGrep 1.30 does not parse some C# 11/12 syntax: a raw string literal with two or more
     #   dollar signs ($$"""..."""), a type declared without a body (`class X : Y;`), some
     #   multi-line collection expressions with a trailing comma. That part of the file is skipped.
@@ -344,13 +345,13 @@ rules:
                       if (!$TABLE.$CONTAINS($X)) { ... }
                   - pattern: $X
       # (End of the shared C# sanitizers; the items below are this rule's own.)
-      # LDAP filter encoding: the AntiXSS Encoder class's LdapFilterEncode (OWASP's LDAP Injection
-      # Prevention Cheat Sheet) writes '*', '(', ')', '\' and NUL as a backslash and two hex
-      # digits, as RFC 4515 section 3 requires. Only the value it returns is clean. Written with
-      # its namespace, the pattern matches `Encoder.LdapFilterEncode` only in a file that imports
-      # Microsoft.Security.Application (OpenGrep resolves the using directive), not another class
-      # named Encoder.
-      - pattern: Microsoft.Security.Application.Encoder.LdapFilterEncode(...)
+      # LDAP filter encoding: Encoder.LdapFilterEncode, the AntiXSS encoder the OWASP LDAP Injection
+      # Prevention Cheat Sheet names (its "Safe C Sharp .NET Example"), writes '*', '(', ')', '\'
+      # and NUL as a backslash and two hex digits, as RFC 4515 section 3 requires. Exact: only the
+      # value it returns is clean; a sink or a source written inside its argument is still checked.
+      - patterns:
+          - pattern: Encoder.LdapFilterEncode(...)
+        exact: true
     pattern-sinks:
       # DirectorySearcher (System.DirectoryServices): the filter of a constructor. The first
       # argument is the filter unless it is the search root, a DirectoryEntry (declared as one or

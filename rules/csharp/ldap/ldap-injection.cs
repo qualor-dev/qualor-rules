@@ -5,7 +5,6 @@ using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using Microsoft.Security.Application;
 
 var app = WebApplication.Create(args);
 
@@ -90,7 +89,8 @@ app.MapGet("/directory/me", (HttpContext context) =>
     return Results.Ok();
 });
 
-// Safe forms in a Minimal API: a constant filter, a number, the AntiXSS LDAP filter encoder.
+// Safe forms in a Minimal API: a constant filter, a number, the LDAP filter encoder the OWASP LDAP
+// Injection Prevention Cheat Sheet names (Encoder.LdapFilterEncode, AntiXSS).
 app.MapGet("/directory/safe", (string name, string id) =>
 {
     using var searcher = new DirectorySearcher();
@@ -101,7 +101,7 @@ app.MapGet("/directory/safe", (string name, string id) =>
     // ok: csharp.ldap-injection
     searcher.Filter = "(cn=" + Encoder.LdapFilterEncode(name) + ")";
     // ok: csharp.ldap-injection
-    searcher.Filter = $"(sn={Microsoft.Security.Application.Encoder.LdapFilterEncode(name)})";
+    searcher.Filter = $"(sn={Encoder.LdapFilterEncode(name)})";
     var encoded = Encoder.LdapFilterEncode(name);
     // ok: csharp.ldap-injection
     using var other = new DirectorySearcher("(cn=" + encoded + ")");
@@ -134,6 +134,9 @@ app.MapGet("/directory/half", (string name) =>
     // Distinguished-name encoding (RFC 4514) leaves '*', '(' and ')' as they are.
     // ruleid: csharp.ldap-injection
     searcher.Filter = "(cn=" + Encoder.LdapDistinguishedNameEncode(name) + ")";
+    // A sink inside the encoder's argument is still checked: only the encoder's value is clean.
+    // ruleid: csharp.ldap-injection
+    var label = Encoder.LdapFilterEncode(Describe(new DirectorySearcher("(cn=" + name + ")")));
     return Results.Ok();
 });
 
@@ -162,6 +165,11 @@ app.Run();
 static string[] AttributesFor(string extra)
 {
     return new[] { "cn", extra };
+}
+
+static string Describe(DirectorySearcher searcher)
+{
+    return searcher.Filter;
 }
 
 public record UserQuery(string Name, string Department);
@@ -314,7 +322,8 @@ public class DirectoryController : ControllerBase
     {
         // todook: csharp.ldap-injection
         _searcher.Filter = "(cn=" + EscapeFilterValue(name) + ")";
-        // So is a method of another class named Encoder: only AntiXSS's counts.
+        // So is LdapFilterEncode reached through another qualified class name: only the name
+        // Encoder.LdapFilterEncode counts.
         // todook: csharp.ldap-injection
         _searcher.Filter = "(cn=" + Acme.Text.Encoder.LdapFilterEncode(name) + ")";
         return Ok();
@@ -449,3 +458,47 @@ public interface IDirectoryCache
 }
 
 public enum Level { Low, High }
+
+// A project's own class named Encoder whose LdapFilterEncode does not escape is taken for the
+// AntiXSS encoder, since the encoder is matched by its name (Known limit).
+namespace Acme.Directory
+{
+    using Acme.Text;
+
+    [ApiController]
+    public class StaffController : ControllerBase
+    {
+        private readonly DirectorySearcher _searcher = new DirectorySearcher();
+
+        [HttpGet("staff")]
+        public IActionResult Find(string name)
+        {
+            // todoruleid: csharp.ldap-injection
+            _searcher.Filter = "(cn=" + Encoder.LdapFilterEncode(name) + ")";
+            return Ok();
+        }
+    }
+}
+
+// Another library's SearchRequest declared in a file that also imports
+// System.DirectoryServices.Protocols: OpenGrep resolves the name through the using directive, so
+// its Filter is reported in an object initializer (Known limit).
+namespace Acme.Catalog
+{
+    public class SearchRequest
+    {
+        public string Filter { get; set; } = "";
+    }
+
+    [ApiController]
+    public class CatalogController : ControllerBase
+    {
+        [HttpGet("catalog")]
+        public IActionResult Search(string term)
+        {
+            // todook: csharp.ldap-injection
+            var request = new SearchRequest { Filter = term };
+            return Ok(request);
+        }
+    }
+}
