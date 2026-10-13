@@ -1,0 +1,648 @@
+rules:
+  - id: csharp.open-redirect
+    mode: taint
+    languages: [csharp]
+    severity: WARNING
+    message: >-
+      Data from the HTTP request decides where the response redirects the browser (Redirect,
+      RedirectPermanent, RedirectResult, Results.Redirect, Response.Redirect or the Location
+      header), so a link to this site can send a user on to any other site (open redirect, often
+      used for phishing). Use LocalRedirect or Results.LocalRedirect, check the URL with
+      Url.IsLocalUrl first, build it from a fixed path or origin with the request data after a
+      separator or in the query, or map the request value to an allow-list of targets.
+    metadata:
+      title: Redirect to a URL from HTTP request data (C#)
+      cwe: ['CWE-601']
+      owasp: ['A01:2025', 'A01:2021']
+      kind: issue
+      severity: medium
+      confidence: high
+      frameworks: [aspnetcore-mvc, minimal-apis, razor-pages]
+      sources:
+        - https://cwe.mitre.org/data/definitions/601.html
+        - https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html
+        - https://learn.microsoft.com/en-us/aspnet/core/security/preventing-open-redirects
+        - https://learn.microsoft.com/en-us/aspnet/core/mvc/controllers/actions
+        - https://learn.microsoft.com/en-us/aspnet/core/mvc/models/model-binding
+        - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/minimal-apis/parameter-binding
+        - https://learn.microsoft.com/en-us/aspnet/core/fundamentals/minimal-apis/route-handlers
+        - https://learn.microsoft.com/en-us/aspnet/core/razor-pages/
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.httprequest
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.mvc.controllerbase
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.mvc.controllerbase.redirect
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.mvc.redirectresult
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.mvc.razorpages.pagemodel
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.results.redirect
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.typedresults.redirect
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.results.localredirect
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.httpresponse.redirect
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.iheaderdictionary.location
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.net.http.headers.headernames.location
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.mvc.iurlhelper.islocalurl
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.httpresults.redirecthttpresult.islocalurl
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.mvc.urlhelperextensions
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.webutilities.queryhelpers.addquerystring
+        - https://learn.microsoft.com/en-us/dotnet/api/system.uri.escapedatastring
+        - https://learn.microsoft.com/en-us/dotnet/api/system.net.webutility.urlencode
+        - https://url.spec.whatwg.org/
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.builder.usepathbaseextensions.usepathbase
+        - https://learn.microsoft.com/en-us/dotnet/api/system.uri.makerelativeuri
+        - https://docs.duendesoftware.com/identityserver/ui/login/redirect/
+        - https://docs.duendesoftware.com/identityserver/reference/v8/services/interaction-service/
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.extensions.urihelper.buildabsolute
+        - https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.http.pathstring
+      since: 2026.10.5
+    # Known limits (each has a `todo` line in the test file, unless it says otherwise):
+    # - Taint is followed through the methods of one file (OpenGrep's --taint-intrafile), not into
+    #   other files: request data handed to a service of another file is missed. Request data read
+    #   by an expression-bodied method (`=> expr`) or by any property getter (block body too), such
+    #   as `string Next => Request.Query[...]`, is missed.
+    # - Minimal APIs: a complex-type parameter bound from the JSON body without [FromBody] is not a
+    #   source; a handler given as a method group of another class (OtherHandlers.Continue) is
+    #   missed.
+    # - A class named *Controller whose base class is named otherwise (a base two steps away from
+    #   ControllerBase) is missed.
+    # - An enum declared after its use (or in another file) is still a source; an equality guard,
+    #   Enumerable.Contains called as a static method or a table in another file is no allow-list; a
+    #   variable assigned again after a Contains guard still counts as checked.
+    # - Url.IsLocalUrl (also this.Url, RedirectHttpResult.IsLocalUrl, an IUrlHelper held in a
+    #   field or variable named urlHelper or _urlHelper) and Duende IdentityServer's
+    #   IsValidReturnUrl (on a field or variable named interaction, _interaction or
+    #   *InteractionService) count in an if condition alone or as one side of `&&` (then the
+    #   then-branch), negated alone or as the right side of `||` (then the else-branch, the code
+    #   after a branch that always leaves the method, or after a branch that gives the variable a
+    #   literal or Url.Content/Action/Page/RouteUrl), and in a ternary. IdentityServer's
+    #   GetAuthorizationContextAsync/GetAuthenticationContextAsync count when their result, held in
+    #   a var, is compared with null (the not-null branch, or after `if (ctx == null) return`). A
+    #   result stored in a variable first, a deeper condition, or a check in a helper method is not
+    #   recognised (todook).
+    # - The request's PathBase is taken for the application's configured path base and is not
+    #   reported (UsePathBase, the server's virtual directory); one set from X-Forwarded-Prefix by
+    #   the forwarded-headers middleware from a trusted proxy is not followed either (no test line).
+    # - Uri.MakeRelativeUri's value is clean: a path relative to the receiver, or its argument
+    #   when the host or scheme differs; a request URL given as the argument is missed (todoruleid).
+    # - The value of an awaited GetXxx, FindXxx or LoadXxx call (with or without Async) on another
+    #   object is taken for stored data, not request data (a record found by an id): such a method
+    #   that hands request data back is missed (todoruleid). A lookup without await
+    #   (`_store.Find(id)`) is still taken for request data, so a URL stored in the record is
+    #   reported (todook). (csharp.ssrf takes only the Async names.)
+    # - An object that a helper method of this file returns is tainted as a whole when one of its
+    #   fields holds request data, so a checked URL in another field is still reported (todook).
+    # - A check of the URL's host against an allow-list (`AllowedHosts.Contains(uri.Host)`) is not
+    #   recognised: the URL is still reported after it (todook).
+    # - A fixed target counts as a string literal (or the first literal part of an interpolated
+    #   string or of a string.Format format) that holds a scheme, a host and then a separator (`/`,
+    #   `?`, `#`), a local path "/x" or "~/x" (not "/" or "~/" alone, "//" or "/\", which browsers
+    #   read as "//"), a relative path with a separator and no colon ("orders/"), or starts with
+    #   "?" or "#"; and QueryHelpers.AddQueryString on a literal. A target held in a constant or a
+    #   configuration value is not recognised, so request data after it is still reported (no
+    #   test line: the rule reports those as it reports a host from the request).
+    # - A URL rebuilt on the request's own host counts as fixed only in these forms: a literal
+    #   "http://" or "https://" (or the request's Scheme + "://") + the request's Host + only its
+    #   PathBase, Path and QueryString, as a concatenation or an interpolated string written in
+    #   place, or UriHelper.BuildAbsolute with the request's Host; the same URL built in steps
+    #   (a StringBuilder, a variable holding the host part) is still reported (no test line).
+    #   UriHelper.BuildRelative is reported: a request path may start with "//".
+    # - Url.Action, Url.Page and Url.RouteUrl with at most three arguments build a path on this
+    #   site and are clean; with a protocol and host argument they are still checked.
+    # - Response.Redirect and the Location header are checked on Response (a controller's or
+    #   page's property), on HttpContext.Response or a `context`/`ctx` variable's Response, and on
+    #   a parameter or variable declared as HttpResponse; a response reached otherwise is missed (no
+    #   test line). The Refresh header and AuthenticationProperties.RedirectUri are not checked.
+    # - OpenGrep 1.30 does not parse some C# 11/12 syntax: a raw string literal with two or more
+    #   dollar signs ($$"""..."""), a type declared without a body (`class X : Y;`), some multi-line
+    #   collection expressions with a trailing comma. That part of the file is skipped. No test
+    #   line: the test file must parse.
+    pattern-sources:
+      # MVC and Web API controllers: the parameters of public methods (actions) of a class whose
+      # base class's name ends in Controller (ControllerBase too; generic bases as well), of a class without a base list
+      # whose own name ends in Controller, and of a class marked [ApiController] or [Controller]
+      # ([NonController] excepted). Numbers, booleans, GUIDs, dates and times (also nullable,
+      # arrays and lists of them), enums declared earlier in the file, CancellationToken and
+      # interfaces (DI services; the IForm* types and collection interfaces excepted) cannot carry
+      # SQL text or are not bound from the request.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $CTRL : $CTRLBASE { ... }
+              - patterns:
+                  - pattern-inside: |
+                      class $CTRLBASE { ... }
+                  - pattern-not-inside: |
+                      class $CTRLBASE : $OTHERBASE { ... }
+              - pattern-inside: |
+                  [$CTRLBASE]
+                  class $CTRL { ... }
+          - metavariable-regex:
+              metavariable: $CTRLBASE
+              regex: ^(\w+\.)*\w*(Controller|ControllerBase)(<.*>)?$
+          - pattern-not-inside: |
+              [NonController]
+              class $NOTCTRL { ... }
+          - pattern-inside: |
+              public $RET $ACTION(..., $T $P, ...) { ... }
+          - pattern-not-inside: |
+              $RET $ACTION(..., [FromServices(...)] $T $P, ...) { ... }
+          - pattern-not-inside: |
+              $RET $ACTION(..., [FromKeyedServices(...)] $T $P, ...) { ... }
+          - pattern-not-inside: |
+              [NonAction]
+              $RET $ACTION(...) { ... }
+          - pattern-not-inside: |
+              enum $T { ... }
+              ...
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern: $P
+      # Razor Pages: the parameters of handler methods (On<Verb>...) of a class whose base class's
+      # name ends in PageModel (the same types excepted).
+      - patterns:
+          - pattern-inside: |
+              class $PAGE : $PAGEBASE { ... }
+          - metavariable-regex:
+              metavariable: $PAGEBASE
+              regex: ^(\w+\.)*\w*PageModel$
+          - pattern-inside: |
+              public $RET $HANDLER(..., $T $P, ...) { ... }
+          - metavariable-regex:
+              metavariable: $HANDLER
+              regex: ^On(Get|Post|Put|Delete|Patch|Head|Options)\w*$
+          - pattern-not-inside: |
+              $RET $HANDLER(..., [FromServices(...)] $T $P, ...) { ... }
+          - pattern-not-inside: |
+              enum $T { ... }
+              ...
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern: $P
+      # Razor Pages (and controllers): [BindProperty] properties, and every public property of a
+      # [BindProperties] class.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  class $BOUND {
+                    ...
+                    [BindProperty(...)] public $T $P { get; set; }
+                    ...
+                  }
+              - pattern-inside: |
+                  class $BOUND {
+                    ...
+                    [BindProperty(...)] public $T $P { get; set; } = $INIT;
+                    ...
+                  }
+              - pattern-inside: |
+                  [BindProperties]
+                  class $BOUND {
+                    ...
+                    public $T $P { get; set; }
+                    ...
+                  }
+              - pattern-inside: |
+                  [BindProperties]
+                  class $BOUND {
+                    ...
+                    public $T $P { get; set; } = $INIT;
+                    ...
+                  }
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern-either:
+              - pattern: $P
+              - pattern: this.$P
+      # Minimal APIs: the string-like parameters (route values, query strings, headers, forms,
+      # uploaded files, the body stream) of a handler given to MapGet/MapPost/... as a lambda, or as
+      # a method group declared in this file (top level, or in the class that maps it).
+      - patterns:
+          - pattern-either:
+              # A lambda with an expression body or a block body (async too).
+              - pattern-inside: $APP.$MAPVERB($ROUTE, ..., (..., $T $P, ...) => $BODY)
+              - pattern-inside: $APP.$MAPVERB($ROUTE, ..., (..., $T $P, ...) => { ... })
+              - patterns:
+                  - pattern-inside: |
+                      $RET $HANDLER(..., $T $P, ...) { ... }
+                  - pattern-either:
+                      - pattern-inside: |
+                          <... $APP.$MAPVERB($ROUTE, ..., $HANDLER) ...>;
+                          ...
+                      # ... or mapped in an extension method of its class (MapXxxApi(this
+                      # IEndpointRouteBuilder app)).
+                      - pattern-inside: |
+                          class $ENDPOINTS { ... $R2 $MAPPER(this $BUILDERTYPE $BUILDER, ...) { ... <... $APP.$MAPVERB($ROUTE, ..., $HANDLER) ...>; ... } ... }
+          - metavariable-regex:
+              metavariable: $MAPVERB
+              regex: ^Map(Get|Post|Put|Delete|Patch|Methods)$
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(string\??|string\[\]\??|StringValues\??|IFormFile\??|IFormFileCollection\??|IFormCollection\??|Stream\??|PipeReader\??)$
+          - pattern: $P
+      # Parameters bound from the request by an attribute, in any method or lambda (Minimal API
+      # handlers, method-group handlers, Razor Pages handlers); the same types excepted.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  $RET $BOUNDM(..., [$FROM(...)] $T $P, ...) { ... }
+              - pattern-inside: (..., [$FROM(...)] $T $P, ...) => $BODY
+              - pattern-inside: (..., [$FROM(...)] $T $P, ...) => { ... }
+          - metavariable-regex:
+              metavariable: $FROM
+              regex: ^(\w+\.)*(FromQuery|FromRoute|FromForm|FromHeader|FromBody|AsParameters)(Attribute)?$
+          - pattern-not-inside: |
+              enum $T { ... }
+              ...
+          - metavariable-regex:
+              metavariable: $T
+              regex: ^(?!((s?byte|u?short|u?int|u?long|decimal|double|float|bool|char|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan|(System\.)?(S?Byte|U?Int16|U?Int32|U?Int64|Decimal|Double|Single|Boolean|Char))\??(\[\])?|(I?List|IEnumerable|ICollection|IReadOnlyList|IReadOnlyCollection|HashSet|ISet)<(s?byte|u?short|u?int|u?long|decimal|double|float|bool|Guid|DateTime|DateTimeOffset|DateOnly|TimeOnly|TimeSpan)\??>|CancellationToken|I(?!Form|Enumerable<|List<|Collection<|ReadOnly|Dictionary<|Set<)[A-Z]\w*(<.*>)?)$)
+          - pattern: $P
+      # The request: Request (a controller's or page's property), HttpContext.Request and
+      # context.Request, a parameter or variable of type HttpRequest, or a variable assigned one
+      # of them with var. Its query, form, headers, cookies, route values, path, raw query string
+      # and body, and what ReadFormAsync and ReadFromJsonAsync read from it.
+      - patterns:
+          - pattern-either:
+              - pattern: Request.$REQPART
+              - pattern: $CTX.Request.$REQPART
+              - pattern: (HttpRequest $REQ).$REQPART
+              - patterns:
+                  - pattern-inside: |
+                      var $REQ = $CTX.Request;
+                      ...
+                  - pattern: $REQ.$REQPART
+              - patterns:
+                  - pattern-inside: |
+                      var $REQ = Request;
+                      ...
+                  - pattern: $REQ.$REQPART
+          - metavariable-regex:
+              metavariable: $REQPART
+              regex: ^(Query|Form|Headers|Cookies|RouteValues|Path|PathBase|QueryString|Body|BodyReader|ReadFormAsync|ReadFromJsonAsync(<.*>)?)$
+      # (End of the shared C# source block; the items below are this rule's own.)
+    pattern-propagators:
+      # Shared C# propagators (up to the end comment): text added to a StringBuilder (also later
+      # in an Append chain), and
+      # the value TryGetValue hands out of a request collection. (OpenGrep's --taint-intrafile
+      # mode already carries StringBuilder.Insert(index, text) into the builder.)
+      - pattern: $SB.Append($X)
+        from: $X
+        to: $SB
+      - pattern: $SB.Append(...). ... .Append($X)
+        from: $X
+        to: $SB
+      - pattern: $SB.AppendLine($X)
+        from: $X
+        to: $SB
+      - pattern: $SB.AppendFormat(..., $X, ...)
+        from: $X
+        to: $SB
+      - pattern: $COLL.TryGetValue($KEY, out $V)
+        from: $COLL
+        to: $V
+      # (End of the shared C# propagators; the items below are this rule's own.)
+    pattern-sanitizers:
+      # Shared C# sanitizers: conversions to numbers, GUIDs, dates and enums, and allow-lists.
+      # (TryParse's out value, a ternary or a switch expression of constants needs no sanitizer.)
+      - pattern-either:
+          - pattern: int.Parse(...)
+          - pattern: long.Parse(...)
+          - pattern: Guid.Parse(...)
+          - pattern: DateTime.Parse(...)
+          - pattern: Convert.ToInt32(...)
+          - pattern: Convert.ToInt64(...)
+          - pattern: Enum.Parse<$ENUM>(...)
+          - pattern: Enum.Parse(...)
+      # An allow-list: a static readonly Dictionary, HashSet, list or array of literals that no
+      # method after it in its class changes (indexer write, Add, TryAdd, AddRange, Insert,
+      # InsertRange, UnionWith, SymmetricExceptWith). Its lookups (an indexer, or
+      # GetValueOrDefault with a literal default) are clean, and so is the checked value in
+      # `T.Contains(x) ? x : <literal>` and after a guard that always leaves the method when the
+      # value is not in the table (`if (!T.Contains(x)) return/throw ...;`, ContainsKey too).
+      - patterns:
+          - pattern-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... }
+          - metavariable-regex:
+              metavariable: $TABLEINIT
+              regex: ^(new\s*((\w+\.)*(Dictionary|SortedDictionary)\s*<[^>]*>)?\s*(\(\s*(StringComparer\.\w+)?\s*\))?\s*\{\s*(\[\s*("([^"\\]|\\.)*"|-?\d+)\s*\]\s*=\s*("([^"\\]|\\.)*"|-?\d+)|\{\s*("([^"\\]|\\.)*"|-?\d+)\s*,\s*("([^"\\]|\\.)*"|-?\d+)\s*\})(\s*,\s*(\[\s*("([^"\\]|\\.)*"|-?\d+)\s*\]\s*=\s*("([^"\\]|\\.)*"|-?\d+)|\{\s*("([^"\\]|\\.)*"|-?\d+)\s*,\s*("([^"\\]|\\.)*"|-?\d+)\s*\}))*\s*,?\s*\}|(new\s*((\w+\.)*(HashSet|SortedSet)\s*<[^>]*>|(\w+\.)*\w*\s*\[\s*\])?\s*(\(\s*(StringComparer\.\w+)?\s*\))?\s*)?\{\s*("([^"\\]|\\.)*"|-?\d+)(\s*,\s*("([^"\\]|\\.)*"|-?\d+))*\s*,?\s*\})$
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE[$A] = $B; ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.Add(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.TryAdd(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.AddRange(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.Insert(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.InsertRange(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.UnionWith(...); ... } ... }
+          - pattern-not-inside: |
+              class $HOLDER { ... static readonly $DT $TABLE = $TABLEINIT; ... $R $M(...) { ... $TABLE.SymmetricExceptWith(...); ... } ... }
+          - pattern-either:
+              - pattern: $TABLE[$K]
+              - patterns:
+                  - pattern: $TABLE.GetValueOrDefault($K, $DEFAULT)
+                  - metavariable-regex:
+                      metavariable: $DEFAULT
+                      regex: ^("([^"\\]|\\.)*"|-?\d+|null)$
+              - patterns:
+                  - pattern: '$TABLE.$CONTAINS($X) ? $X : $FALLBACK'
+                  - metavariable-regex:
+                      metavariable: $CONTAINS
+                      regex: ^Contains(Key)?$
+                  - metavariable-regex:
+                      metavariable: $FALLBACK
+                      regex: ^("([^"\\]|\\.)*"|-?\d+|null)$
+              - patterns:
+                  - pattern-either:
+                      # The body leaves the method: its last top-level statement (after at most
+                      # two others) is a return or a throw (a single one also in braces).
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) return ...;
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) throw $EX;
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; return ...; }
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; throw $EX; }
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; $S2; return ...; }
+                          ...
+                      - pattern-inside: |
+                          if (!$TABLE.$CONTAINS($X)) { $S1; $S2; throw $EX; }
+                          ...
+                  - metavariable-regex:
+                      metavariable: $CONTAINS
+                      regex: ^Contains(Key)?$
+                  # Not inside the guard itself, where the value failed the check (its block,
+                  # or its single return or throw statement).
+                  - pattern-not-inside: |
+                      if (!$TABLE.$CONTAINS($X)) { ... }
+                  - pattern: $X
+      # (End of the shared C# sanitizers; the items below are this rule's own.)
+      # A fixed target: a string concatenation whose first operand is a literal URL with a host and
+      # a separator after it ("https://help.example/" + x), a local path ("/orders/" + x, "~/orders/"
+      # + x; not "/" + x or "~/" + x, which make "//host"), a relative path with a separator and no
+      # colon ("orders/" + x), or a query or fragment ("?page=" + x).
+      - patterns:
+          - pattern: $ORIGIN + $REST
+          - metavariable-regex:
+              metavariable: $ORIGIN
+              regex: '^@?"(https?://[^/?#"\s\\]+[/?#]|~?/[^/\\"]|[?#]|[^/\\"\s:~?#][^"\s:]*[/?#])'
+      # The same as an interpolated string (the text range of the literal, holes included) or a
+      # string.Format format.
+      - pattern-regex: '(\$@?|@\$)"(https?://[^/?#"{\s\\]+[/?#]|~?/[^/\\"{]|[?#]|[^/\\"{\s:~?#][^"{\s:]*[/?#])[^"]*"'
+      - patterns:
+          - pattern: string.Format($FORMAT, ...)
+          - metavariable-regex:
+              metavariable: $FORMAT
+              regex: '^@?"(https?://[^/?#"{\s\\]+[/?#]|~?/[^/\\"{]|[?#]|[^/\\"{\s:~?#][^"{\s:]*[/?#])'
+      # QueryHelpers.AddQueryString on a literal URI: the request data goes into the query,
+      # encoded.
+      - patterns:
+          - pattern: QueryHelpers.AddQueryString($BASEURI, ...)
+          - metavariable-regex:
+              metavariable: $BASEURI
+              regex: ^@?"
+      # Percent-encoding leaves no ':' or '/' to form a scheme or a host. Exact: a sink or a source
+      # written inside the call is still checked.
+      - patterns:
+          - pattern-either:
+              - pattern: Uri.EscapeDataString(...)
+              - pattern: WebUtility.UrlEncode(...)
+              - pattern: HttpUtility.UrlEncode(...)
+              - pattern: UrlEncoder.Default.Encode(...)
+        exact: true
+      # A URL rebuilt on the request's own host: a literal scheme or the request's Scheme, then
+      # "://" and the request's Host, then only its PathBase, Path and QueryString (PathString and
+      # QueryString values, escaped and starting with "/" or "?"), as a concatenation, an
+      # interpolated string or UriHelper.BuildAbsolute with the request's Host. The host comes
+      # first, so the target stays on this site.
+      - patterns:
+          - pattern: $OWNHOST + $OWNPART
+          - metavariable-regex:
+              metavariable: $OWNHOST
+              regex: ^("https?://"|(\w+\.)*Request\.Scheme\s*\+\s*"://")\s*\+\s*(\w+\.)*Request\.Host(\s*\+\s*(\w+\.)*Request\.(PathBase|Path|QueryString))*$
+          - metavariable-regex:
+              metavariable: $OWNPART
+              regex: ^(\w+\.)*Request\.(PathBase|Path|QueryString)$
+      - pattern-regex: (\$@?|@\$)"(https?://|\{(\w+\.)*Request\.Scheme\}://)\{(\w+\.)*Request\.Host\}(\{(\w+\.)*Request\.(PathBase|Path|QueryString)\})*"
+      - patterns:
+          - pattern: UriHelper.BuildAbsolute($OWNSCHEME, $OWNHOSTARG, ...)
+          - metavariable-regex:
+              metavariable: $OWNHOSTARG
+              regex: ^(\w+\.)*Request\.Host$
+      # URLs generated from routes on this site (Url.Action, Url.Page, Url.RouteUrl without a
+      # protocol and host).
+      - patterns:
+          - pattern-either:
+              - pattern: $URLGEN.$GENERATE($G1)
+              - pattern: $URLGEN.$GENERATE($G1, $G2)
+              - pattern: $URLGEN.$GENERATE($G1, $G2, $G3)
+          - metavariable-regex:
+              metavariable: $URLGEN
+              regex: ^((this\.)?Url|_?[uU]rlHelper)$
+          - metavariable-regex:
+              metavariable: $GENERATE
+              regex: ^(Action|Page|RouteUrl)$
+      # Url.IsLocalUrl, RedirectHttpResult.IsLocalUrl and IdentityServer's IsValidReturnUrl: the
+      # checked value in the branch where the check holds (alone or one side of &&), in the else
+      # branch of a failing check, and in a ternary.
+      - patterns:
+          - pattern-either:
+              - pattern-inside: if ($LOCAL.$CHECKURL($X)) $CHECKED
+              - pattern-inside: if ($A && $LOCAL.$CHECKURL($X)) $CHECKED
+              - pattern-inside: if ($LOCAL.$CHECKURL($X) && $B) $CHECKED
+              - pattern-inside: if (!$LOCAL.$CHECKURL($X)) { ... } else $CHECKED
+              - pattern-inside: if ($A || !$LOCAL.$CHECKURL($X)) { ... } else $CHECKED
+              - pattern-inside: '$LOCAL.$CHECKURL($X) ? $CHECKED : $FAILED'
+          - metavariable-regex:
+              metavariable: $LOCAL
+              regex: ^((this\.)?Url|(\w+\.)*RedirectHttpResult|_?[uU]rlHelper|_?interaction|\w*[iI]nteractionService)$
+          - metavariable-regex:
+              metavariable: $CHECKURL
+              regex: ^(IsLocalUrl|IsValidReturnUrl)$
+          - pattern: $X
+          - focus-metavariable: $CHECKED
+      # ... after a failing check whose body always leaves the method (a return or a throw, a
+      # return after at most two other statements) ...
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  if (!$LOCAL.$CHECKURL($X)) return ...;
+                  ...
+              - pattern-inside: |
+                  if (!$LOCAL.$CHECKURL($X)) throw $EX;
+                  ...
+              - pattern-inside: |
+                  if (!$LOCAL.$CHECKURL($X)) { $S1; return ...; }
+                  ...
+              - pattern-inside: |
+                  if (!$LOCAL.$CHECKURL($X)) { $S1; $S2; return ...; }
+                  ...
+              - pattern-inside: |
+                  if ($A || !$LOCAL.$CHECKURL($X)) return ...;
+                  ...
+              - pattern-inside: |
+                  if ($A || !$LOCAL.$CHECKURL($X)) throw $EX;
+                  ...
+              - pattern-inside: |
+                  if ($A || !$LOCAL.$CHECKURL($X)) { $S1; return ...; }
+                  ...
+              - pattern-inside: |
+                  if ($A || !$LOCAL.$CHECKURL($X)) { $S1; $S2; return ...; }
+                  ...
+          - metavariable-regex:
+              metavariable: $LOCAL
+              regex: ^((this\.)?Url|(\w+\.)*RedirectHttpResult|_?[uU]rlHelper|_?interaction|\w*[iI]nteractionService)$
+          - metavariable-regex:
+              metavariable: $CHECKURL
+              regex: ^(IsLocalUrl|IsValidReturnUrl)$
+          # Not inside the guard itself, where the value failed the check.
+          - pattern-not-inside: |
+              if (!$LOCAL.$CHECKURL($X)) { ... }
+          - pattern-not-inside: |
+              if ($A || !$LOCAL.$CHECKURL($X)) { ... }
+          - pattern: $X
+      # ... or after a failing check that gives the variable a literal, Url.Content of a literal or
+      # a generated local URL (also in braces).
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  if (!$LOCAL.$CHECKURL($X)) $X = $FIXED;
+                  ...
+              - pattern-inside: |
+                  if (!$LOCAL.$CHECKURL($X)) { ... $X = $FIXED; ... }
+                  ...
+              - pattern-inside: |
+                  if ($A || !$LOCAL.$CHECKURL($X)) $X = $FIXED;
+                  ...
+              - pattern-inside: |
+                  if ($A || !$LOCAL.$CHECKURL($X)) { ... $X = $FIXED; ... }
+                  ...
+          - metavariable-regex:
+              metavariable: $LOCAL
+              regex: ^((this\.)?Url|(\w+\.)*RedirectHttpResult|_?[uU]rlHelper|_?interaction|\w*[iI]nteractionService)$
+          - metavariable-regex:
+              metavariable: $CHECKURL
+              regex: ^(IsLocalUrl|IsValidReturnUrl)$
+          - metavariable-regex:
+              metavariable: $FIXED
+              regex: ^("([^"\\]|\\.)*"|(this\.)?Url\.Content\("[^"]*"\)|(this\.)?Url\.(Action|Page|RouteUrl)\(([^()]|\([^()]*\))*\))$
+          - pattern: $X
+      # Duende IdentityServer: GetAuthorizationContextAsync (GetAuthenticationContextAsync) returns
+      # null for a return URL that is no valid pending authorization request, so the URL is checked
+      # in the branch where the context is not null and after a branch that leaves when it is.
+      - patterns:
+          - pattern-inside: |
+              var $AUTHCONTEXT = await $INTERACTION.$GETCONTEXT($X, ...);
+              ...
+          - pattern-either:
+              - pattern-inside: if ($AUTHCONTEXT != null) $CHECKED
+              - pattern-inside: if ($AUTHCONTEXT is not null) $CHECKED
+          - metavariable-regex:
+              metavariable: $GETCONTEXT
+              regex: ^Get(Authorization|Authentication)ContextAsync$
+          - pattern: $X
+          - focus-metavariable: $CHECKED
+      - patterns:
+          - pattern-inside: |
+              var $AUTHCONTEXT = await $INTERACTION.$GETCONTEXT($X, ...);
+              ...
+          - pattern-either:
+              - pattern-inside: |
+                  if ($AUTHCONTEXT == null) return ...;
+                  ...
+              - pattern-inside: |
+                  if ($AUTHCONTEXT is null) return ...;
+                  ...
+          - metavariable-regex:
+              metavariable: $GETCONTEXT
+              regex: ^Get(Authorization|Authentication)ContextAsync$
+          - pattern-not-inside: |
+              if ($AUTHCONTEXT == null) { ... }
+          - pattern-not-inside: |
+              if ($AUTHCONTEXT is null) { ... }
+          - pattern: $X
+      # The value of an awaited lookup on another object (GetXxx, FindXxx, LoadXxx, with or without
+      # Async, also with ConfigureAwait: a stored record found by an id) is stored data, not request
+      # data. Exact: a sink or a source written inside the call is still checked.
+      - patterns:
+          - pattern-either:
+              - pattern: await $STORE.$LOOKUP(...)
+              - pattern: await $STORE.$LOOKUP(...).ConfigureAwait($CONTEXT)
+          - metavariable-regex:
+              metavariable: $LOOKUP
+              regex: ^(Get|Find|Load)\w*(<.*>)?$
+        exact: true
+      # The request's PathBase is the path base the application configured (UsePathBase, the
+      # server's virtual directory), not a value the client chooses.
+      - patterns:
+          - pattern: $PATHBASEREQ.PathBase
+          - metavariable-regex:
+              metavariable: $PATHBASEREQ
+              regex: ^((\w+\.)*Request|request|req)$
+      # Uri.MakeRelativeUri: a path relative to the receiver, or the argument itself when the host
+      # or scheme differs; request data in the receiver cannot choose the host (Known limit: the
+      # argument is cleaned too).
+      - patterns:
+          - pattern: $RELBASE.MakeRelativeUri($RELTARGET)
+        exact: true
+    pattern-sinks:
+      # MVC and Razor Pages helpers (Redirect, RedirectPermanent, RedirectPreserveMethod,
+      # RedirectPermanentPreserveMethod), RedirectResult, Results/TypedResults.Redirect and
+      # HttpResponse.Redirect: the URL.
+      - patterns:
+          - pattern-either:
+              - pattern: Redirect($URL)
+              - pattern: RedirectPermanent($URL)
+              - pattern: RedirectPreserveMethod($URL)
+              - pattern: RedirectPermanentPreserveMethod($URL)
+              - pattern: this.Redirect($URL)
+              - pattern: this.RedirectPermanent($URL)
+              - pattern: this.RedirectPreserveMethod($URL)
+              - pattern: this.RedirectPermanentPreserveMethod($URL)
+              - pattern: new RedirectResult($URL, ...)
+              - pattern: new Microsoft.AspNetCore.Mvc.RedirectResult($URL, ...)
+              - pattern: Results.Redirect($URL, ...)
+              - pattern: TypedResults.Redirect($URL, ...)
+              - pattern: Response.Redirect($URL, ...)
+              - pattern: this.Response.Redirect($URL, ...)
+              - pattern: (HttpResponse $HTTPRESPONSE).Redirect($URL, ...)
+              - patterns:
+                  - pattern: $CTX.Response.Redirect($URL, ...)
+                  - metavariable-regex:
+                      metavariable: $CTX
+                      regex: ^((\w+\.)*HttpContext|\w*[cC]ontext|ctx)$
+          - focus-metavariable: $URL
+      # The Location header set by hand (Headers.Location, the indexer, Append or Add with
+      # "Location" or HeaderNames.Location). A whole-file anchor gives the prefilter a word for the
+      # string form.
+      - patterns:
+          - pattern-regex: (?si)\A.*\blocation\b.*\z
+          - pattern-either:
+              - patterns:
+                  - pattern-either:
+                      - pattern: $RESPONSE.Headers.Location = $URL
+                      - pattern: $RESPONSE.Headers["=~/(?i)^location$/"] = $URL
+                      - pattern: $RESPONSE.Headers[HeaderNames.Location] = $URL
+                      - pattern: $RESPONSE.Headers.Append("=~/(?i)^location$/", $URL)
+                      - pattern: $RESPONSE.Headers.Append(HeaderNames.Location, $URL)
+                      - pattern: $RESPONSE.Headers.Add("=~/(?i)^location$/", $URL)
+                      - pattern: $RESPONSE.Headers.Add(HeaderNames.Location, $URL)
+                  - metavariable-regex:
+                      metavariable: $RESPONSE
+                      regex: ^((this\.)?Response|((\w+\.)*HttpContext|\w*[cC]ontext|ctx)\.Response)$
+              - pattern: (HttpResponse $HTTPRESPONSE).Headers.Location = $URL
+              - pattern: (HttpResponse $HTTPRESPONSE).Headers["=~/(?i)^location$/"] = $URL
+              - pattern: (HttpResponse $HTTPRESPONSE).Headers[HeaderNames.Location] = $URL
+              - pattern: (HttpResponse $HTTPRESPONSE).Headers.Append("=~/(?i)^location$/", $URL)
+              - pattern: (HttpResponse $HTTPRESPONSE).Headers.Append(HeaderNames.Location, $URL)
+          - focus-metavariable: $URL
