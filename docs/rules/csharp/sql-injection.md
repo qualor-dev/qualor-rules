@@ -20,13 +20,16 @@ Razor Pages) and run through:
   `ExecuteScalar`, `ExecuteReader` (and their variants) and `CommandDefinition`, in a file that
   imports Dapper.
 
-Request data means the parameters of controller actions, of Razor Pages handlers and of Minimal API
+Request data means the parameters of controller actions (classes derived from a `*Controller` or
+`ControllerBase` class, base-less classes named `*Controller`, and `[ApiController]` or
+`[Controller]` classes), of Razor Pages handlers and of Minimal API
 handlers (strings, string arrays, `StringValues`, forms, uploaded files, the body stream, and any
 parameter bound with `[FromQuery]`, `[FromRoute]`, `[FromForm]`, `[FromHeader]`, `[FromBody]` or
 `[AsParameters]`), `[BindProperty]` properties, and the request object itself: `Request.Query`,
 `Form`, `Headers`, `Cookies`, `RouteValues`, `Path`, `PathBase`, `QueryString`, `Body`,
 `BodyReader`, `ReadFormAsync()` and `ReadFromJsonAsync()`. Numbers, booleans, GUIDs and dates are
-converted by the framework and are not reported; neither are DI services.
+converted by the framework and are not reported; neither are enums declared earlier in the file,
+nor DI services.
 <!-- end: what-it-finds -->
 
 ## Why it matters
@@ -100,8 +103,10 @@ public record Product(int Id, string Name);
   (or an `SqlParameter`) with ADO.NET, a parameter object with Dapper
   (`conn.Query<T>(sql, new { name })`), `FromSqlRaw(sql, args)` with `{0}` placeholders, or EF Core's
   `FromSql`, `ExecuteSql` and `SqlQuery` with an interpolated string, which become parameters.
-- For identifiers (a column to sort by), choose from a fixed allow-list: a `static readonly`
-  dictionary of literals, a `switch` expression or a ternary of constants.
+- For identifiers (a column to sort by), choose from a fixed allow-list: a lookup in a
+  `static readonly` dictionary of literals, a check against a `static readonly` set or array of
+  literals (`Allowed.Contains(sort) ? sort : "name"`, or `if (!Allowed.Contains(sort)) return
+  BadRequest();` before the query), a `switch` expression or a ternary of constants.
 - Converting the value to a number, GUID, date or enum (`int.Parse`, `Guid.Parse`,
   `Enum.Parse<T>`) also makes it safe.
 <!-- end: how-to-fix -->
@@ -119,25 +124,33 @@ public record Product(int Id, string Name);
 
 <!-- begin: known-limits -->
 - Taint is followed through the methods of one file, not into other files: request data handed to a
-  repository or service in another file is missed. A helper of the same file written as an
-  expression-bodied method (`=> request.Query["q"]`) does not pass the value on either.
+  repository or service in another file is missed. OpenGrep also passes nothing out of an
+  expression-bodied method (`=> ...`) or out of any property getter: request data built into SQL by
+  such a helper (`BuildSql(q) => "..." + q`), or read by one
+  (`string Region => Request.Headers["X-Region"]`), is missed. Block-bodied methods work.
 - Minimal APIs: a class or record parameter bound from the JSON body without `[FromBody]` is not
   taken for request data, since it cannot be told from a DI service without types. A handler
   passed as a method group counts when it is a local function of the top-level program or a method
   of the class whose extension method maps it; a handler of another class (`Handlers.Get`) is
   missed.
-- Controllers are recognised by a class name ending in `Controller` or a base class whose name ends
-  in `Controller` or `ControllerBase`; a class that is a controller only through `[Controller]` is
-  missed. Razor Pages handlers count in classes whose base class name ends in `PageModel`.
-- An enum parameter is still reported, although it cannot carry SQL.
+- Controllers are recognised by a base class whose name ends in `Controller` or `ControllerBase`,
+  by a name ending in `Controller` on a class without a base class, or by `[ApiController]` or
+  `[Controller]`; a controller named `*Controller` whose base class has another name (one more step
+  away from `ControllerBase`) is missed. Razor Pages handlers count in classes whose base class
+  name ends in `PageModel`.
+- An enum parameter is reported when the enum is declared after its use or in another file,
+  although it cannot carry SQL.
+- Allow-lists are recognised as lookups in, and `Contains`/`ContainsKey` checks against, a
+  `static readonly` dictionary, set or array of literals that the class does not change. Other
+  checks are not: an equality guard (`if (dir != "ASC" && dir != "DESC") return ...;`) or
+  `Enumerable.Contains` called as a static method is still reported, and a variable assigned again
+  after a `Contains` guard still counts as checked. `GetValueOrDefault(key)` on a dictionary that
+  request data changes is missed.
 - `FromSql` and `ExecuteSqlCommand` are taken as safe only with an interpolated string written in
   place; passing a `FormattableString` variable is reported.
 - Dapper calls are checked in files that import Dapper (`using Dapper;`), on any receiver: another
   library's `Query` or `Execute` there is reported, and a file that gets Dapper from a global using
   elsewhere is not checked.
-- Allow-lists are recognised as an indexer lookup in a `static readonly` dictionary of literals that
-  the class does not change; `GetValueOrDefault(key)` on a dictionary that request data changes is
-  missed.
 - OpenGrep 1.30 does not parse some newer C# syntax (raw strings with `$$"""`, types declared
   without a body such as `class X : Y;`, some multi-line collection expressions); code in those
   parts of a file may be missed.

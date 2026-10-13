@@ -186,6 +186,7 @@ public static class UserEndpoints
         group.MapGet("/by-email", ByEmail)
             .WithName("ByEmail");
         group.MapPost("/import", Import);
+        group.MapGet("/sorted", Sorted);
         return routes;
     }
 
@@ -194,6 +195,12 @@ public static class UserEndpoints
         // ruleid: csharp.sql-injection
         var user = conn.QuerySingle<User>("SELECT * FROM users WHERE email = '" + email + "'");
         return Results.Ok(user);
+    }
+
+    public static IResult Sorted([FromQuery] SortOrder order, SqlConnection conn)
+    {
+        // ok: csharp.sql-injection
+        return Results.Ok(conn.Query<User>("SELECT * FROM users ORDER BY " + order));
     }
 
     public static IResult Import([FromBody] NewUser user, SqlConnection conn)
@@ -243,6 +250,14 @@ public class ProductsController : ControllerBase
     private static readonly Dictionary<string, string> Schemas = new() { ["main"] = "dbo" };
 
     private static readonly Dictionary<string, string> Columns = new() { ["custom"] = Environment.GetEnvironmentVariable("SORT_COLUMN") ?? "name" };
+
+    private static readonly HashSet<string> Directions = new(StringComparer.OrdinalIgnoreCase) { "ASC", "DESC" };
+
+    private static readonly string[] Regions = { "eu", "us", "apac" };
+
+    private static readonly string[] Zones = { "north", "south" };
+
+    private static readonly HashSet<string> Tags = new HashSet<string> { "new", "sale" };
 
     private readonly SqlConnection _conn;
     private readonly ShopContext _db;
@@ -459,13 +474,142 @@ public class ProductsController : ControllerBase
         return Ok();
     }
 
-    // An enum parameter cannot carry SQL, but enums are not told apart from classes (Known limit).
+    // An enum parameter cannot carry SQL: an enum declared earlier in the file is not a source.
     [HttpGet("ordered")]
     public IActionResult Ordered(SortOrder order)
     {
-        // todook: csharp.sql-injection
+        // ok: csharp.sql-injection
         var rows = _conn.Query<User>("SELECT * FROM users ORDER BY " + order);
         return Ok(rows);
+    }
+
+    // An enum declared after its use is not told apart from a class (Known limit).
+    [HttpGet("prioritised")]
+    public IActionResult Prioritised(Priority priority)
+    {
+        // todook: csharp.sql-injection
+        var rows = _conn.Query<User>("SELECT * FROM tickets ORDER BY " + priority);
+        return Ok(rows);
+    }
+
+    // Allow-list guards and checks against a set or an array of literals.
+    [HttpGet("direction")]
+    public IActionResult Direction(string dir)
+    {
+        if (!Directions.Contains(dir))
+        {
+            _log.Warn("unexpected direction");
+            return BadRequest();
+        }
+        // ok: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY name " + dir));
+    }
+
+    [HttpGet("direction2")]
+    public IActionResult Direction2(string dir)
+    {
+        if (!Directions.Contains(dir)) return BadRequest();
+        // ok: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY name " + dir));
+    }
+
+    [HttpGet("region")]
+    public IActionResult InRegion(string region)
+    {
+        if (!Regions.Contains(region))
+            throw new ArgumentOutOfRangeException(nameof(region));
+        // ok: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM stock_" + region));
+    }
+
+    [HttpGet("region2")]
+    public IActionResult InRegion2(string region)
+    {
+        if (!Regions.Contains(region))
+        {
+            _log.Warn("unexpected region");
+            throw new ArgumentOutOfRangeException(nameof(region));
+        }
+        // ok: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM archive_" + region));
+    }
+
+    [HttpGet("column")]
+    public IActionResult ByColumn(string sort)
+    {
+        if (!SortColumns.ContainsKey(sort)) return BadRequest();
+        // ok: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY " + SortColumns[sort] + ", " + sort));
+    }
+
+    [HttpGet("checked")]
+    public IActionResult Checked(string dir, string region, string tag, string fallback)
+    {
+        // ok: csharp.sql-injection
+        _conn.Query<User>("SELECT * FROM products ORDER BY name " + (Directions.Contains(dir) ? dir : "ASC"));
+        var column = SortColumns.ContainsKey(dir) ? dir : "name";
+        // ok: csharp.sql-injection
+        _conn.Query<User>("SELECT * FROM products ORDER BY " + column);
+        // ruleid: csharp.sql-injection
+        _conn.Query<User>("SELECT * FROM products ORDER BY name " + (Directions.Contains(dir) ? dir : fallback));
+        // ruleid: csharp.sql-injection
+        _conn.Query<User>("SELECT * FROM products WHERE tag = '" + (Tags.Contains(tag) ? tag : "new") + "'");
+        // ruleid: csharp.sql-injection
+        _conn.Query<User>("SELECT * FROM products WHERE zone = '" + (Zones.Contains(region) ? region : "north") + "'");
+        return Ok();
+    }
+
+    [HttpGet("logged")]
+    public IActionResult Logged(string dir)
+    {
+        if (!Directions.Contains(dir))
+        {
+            _log.Warn("unexpected direction");
+        }
+        // ruleid: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY name " + dir));
+    }
+
+    // Another method of the table is not a membership check.
+    [HttpGet("equals")]
+    public IActionResult EqualsCheck(string dir, string sort)
+    {
+        // ruleid: csharp.sql-injection
+        _conn.Query<User>("SELECT * FROM products ORDER BY " + (SortColumns.Equals(sort) ? sort : "name"));
+        if (!Directions.Equals(dir)) return BadRequest();
+        // ruleid: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY name " + dir));
+    }
+
+    // An equality guard is not recognised (Known limit).
+    [HttpGet("compared")]
+    public IActionResult Compared(string dir)
+    {
+        if (dir != "ASC" && dir != "DESC")
+        {
+            return BadRequest();
+        }
+        // todook: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY name " + dir));
+    }
+
+    // Enumerable.Contains called as a static method is not recognised (Known limit).
+    [HttpGet("listed2")]
+    public IActionResult Listed2(string region)
+    {
+        var chosen = Enumerable.Contains(Regions, region) ? region : "eu";
+        // todook: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM stock_" + chosen));
+    }
+
+    // A value assigned again after a guard still counts as checked (Known limit).
+    [HttpGet("reassigned")]
+    public IActionResult Reassigned(string dir)
+    {
+        if (!Directions.Contains(dir)) return BadRequest();
+        dir = Request.Query["direction"].ToString();
+        // todoruleid: csharp.sql-injection
+        return Ok(_conn.Query<User>("SELECT * FROM products ORDER BY name " + dir));
     }
 
     // Allow-lists: a lookup in a table of literals that nothing changes.
@@ -512,6 +656,8 @@ public class ProductsController : ControllerBase
         Aliases[key] = table;
         Views.Add(key, table);
         Schemas.TryAdd(key, table);
+        Tags.Add(key);
+        Zones[0] = table;
         return Ok();
     }
 
@@ -568,9 +714,18 @@ public class ProductsController : ControllerBase
         // A request value read in a helper of this file.
         // ruleid: csharp.sql-injection
         _conn.Execute("DELETE FROM carts WHERE term = '" + TermOf(Request) + "'");
-        // OpenGrep does not carry taint out of an expression-bodied helper (Known limit).
+        // OpenGrep carries no taint out of an expression-bodied method or a property getter
+        // (Known limit): a helper that reads the request, one that passes its argument on, and
+        // properties that read the request.
         // todoruleid: csharp.sql-injection
         _conn.Execute("DELETE FROM carts WHERE tag = '" + TagOf(Request) + "'");
+        var term = Request.Query["term"].ToString();
+        // todoruleid: csharp.sql-injection
+        _conn.Query<User>(BuildFilter(term));
+        // todoruleid: csharp.sql-injection
+        _conn.Execute("DELETE FROM carts WHERE region = '" + Region + "'");
+        // todoruleid: csharp.sql-injection
+        _conn.Execute("DELETE FROM carts WHERE channel = '" + Channel + "'");
         // ok: csharp.sql-injection
         _conn.Execute("DELETE FROM carts WHERE id = " + CountFor("carts"));
         return Ok();
@@ -602,6 +757,15 @@ public class ProductsController : ControllerBase
     }
 
     private static string TagOf(HttpRequest request) => request.Query["tag"].ToString();
+
+    private static string BuildFilter(string name) => "SELECT * FROM products WHERE name = '" + name + "'";
+
+    private string Region => Request.Headers["X-Region"].ToString();
+
+    private string Channel
+    {
+        get { return Request.Query["channel"].ToString(); }
+    }
 
     private int CountFor(string table)
     {
@@ -639,7 +803,7 @@ public class StatusController
         "UPDATE nodes SET seen = 1 WHERE name = '" + node + "'");
 }
 
-// A controller marked only with [Controller] is not recognised (Known limit).
+// Controllers marked with [Controller] or [ApiController] only.
 [Controller]
 public class Health
 {
@@ -649,8 +813,70 @@ public class Health
 
     public int Check(string probe)
     {
-        // todoruleid: csharp.sql-injection
+        // ruleid: csharp.sql-injection
         return _conn.Execute("UPDATE probes SET seen = 1 WHERE name = '" + probe + "'");
+    }
+}
+
+[ApiController]
+[Route("api/probes")]
+public class ProbeApi
+{
+    private readonly SqlConnection _conn;
+
+    public ProbeApi(SqlConnection conn) => _conn = conn;
+
+    [HttpDelete("{name}")]
+    public int Remove(string name)
+    {
+        // ruleid: csharp.sql-injection
+        return _conn.Execute("DELETE FROM probes WHERE name = '" + name + "'");
+    }
+}
+
+// [NonController] takes a class out of the controllers.
+[NonController]
+public class LegacyController : Controller
+{
+    private readonly SqlConnection _conn;
+
+    public LegacyController(SqlConnection conn) => _conn = conn;
+
+    public int Purge(string table)
+    {
+        // ok: csharp.sql-injection
+        return _conn.Execute("DELETE FROM " + table);
+    }
+}
+
+// A class named like a controller whose base class is not one (a game engine's script).
+public class SaveGameController : GameBehaviour
+{
+    private readonly SqliteConnection _db = new("Data Source=save.db");
+
+    public void Load(string slot)
+    {
+        var cmd = _db.CreateCommand();
+        // ok: csharp.sql-injection
+        cmd.CommandText = "SELECT data FROM saves WHERE slot = '" + slot + "'";
+    }
+}
+
+// A controller whose base class is named otherwise is not recognised (Known limit).
+public abstract class AppBase : ControllerBase
+{
+}
+
+public class ReportsController : AppBase
+{
+    private readonly SqlConnection _conn;
+
+    public ReportsController(SqlConnection conn) => _conn = conn;
+
+    public int Archive(string year)
+    {
+        // todoruleid: csharp.sql-injection
+        return _conn.Execute("INSERT INTO archive SELECT * FROM reports WHERE year = '" + year + "'");
     }
 }
 
@@ -684,12 +910,14 @@ public class SearchModel : PageModel
         _conn.Execute("UPDATE stats SET message = '" + Message + "'");
     }
 
-    public async Task OnGetAsync(string sort, int page)
+    public async Task OnGetAsync(string sort, int page, SortOrder order)
     {
         // ruleid: csharp.sql-injection
         await _conn.QueryAsync<User>("SELECT * FROM products ORDER BY " + sort);
         // ok: csharp.sql-injection
         await _conn.QueryAsync<User>("SELECT * FROM products OFFSET " + page);
+        // ok: csharp.sql-injection
+        await _conn.QueryAsync<User>("SELECT * FROM products ORDER BY " + order);
     }
 
     public void OnPostArchive([FromServices] TenantInfo tenant)
@@ -785,3 +1013,5 @@ public class ReportService
         return _conn.Execute("INSERT INTO runs VALUES ('" + year + "')");
     }
 }
+
+public enum Priority { Low, High }
