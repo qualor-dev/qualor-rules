@@ -2,7 +2,7 @@
 
 # Qualor security rules
 
-The security rules of Qualor's `qualor` engine, 68 in all. Each page says what the rule finds, why
+The security rules of Qualor's `qualor` engine, 69 in all. Each page says what the rule finds, why
 it matters, how to fix it, what the rule misses or may wrongly report, and shows a short example.
 Qualor links every finding to its page.
 
@@ -96,6 +96,7 @@ The key `qualor:<lang>/<name>` is how Qualor names a rule; the rule itself is
 | Rule | Title | Kind | Severity | CWE |
 |---|---|---|---|---|
 | [`qualor:csharp/command-injection`](csharp/command-injection.md) | OS command built from HTTP request data (C#) | Issue | High | [CWE-78](https://cwe.mitre.org/data/definitions/78.html) |
+| [`qualor:csharp/ldap-injection`](csharp/ldap-injection.md) | LDAP search filter built from HTTP request data (C#) | Issue | High | [CWE-90](https://cwe.mitre.org/data/definitions/90.html) |
 | [`qualor:csharp/open-redirect`](csharp/open-redirect.md) | Redirect to a URL from HTTP request data (C#) | Issue | Medium | [CWE-601](https://cwe.mitre.org/data/definitions/601.html) |
 | [`qualor:csharp/path-traversal`](csharp/path-traversal.md) | File path built from HTTP request data (C#) | Issue | High | [CWE-22](https://cwe.mitre.org/data/definitions/22.html) |
 | [`qualor:csharp/regex-injection`](csharp/regex-injection.md) | Regular expression pattern from HTTP request data (C#) | Issue | Medium | [CWE-1333](https://cwe.mitre.org/data/definitions/1333.html), [CWE-400](https://cwe.mitre.org/data/definitions/400.html) |
