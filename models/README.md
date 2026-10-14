@@ -133,8 +133,8 @@ two successors the state as the condition leaves it on that branch.
 
 - A guard's call in the condition (alone, negated, either side of `&&` or `||`, a ternary's condition; the graph splits
   `&&` and `||` into blocks) makes the checked value clean for the guard's rule on the branch where the call returns
-  `clean-when`. The value is a local or a parameter (or a flow capture that holds one); a field, a property or a
-  call's result is not refined.
+  `clean-when`. The value is a local or a parameter (or a flow capture that holds one), or a member read on one
+  (section "Guards on members"); a call's result is not refined.
 - The value is clean only on that branch: inside the failing branch it is the value that failed; where a failing
   branch that does not leave the method (no return or throw on every path) rejoins, the join is the unchecked value
   again; a value assigned anew after the check is whatever it is assigned.
@@ -145,7 +145,8 @@ two successors the state as the condition leaves it on that branch.
   string, `Path.DirectorySeparatorChar` and `Path.AltDirectorySeparatorChar` as `/`, any other value as U+FFFC.
 - `clean-when: not-null`: where a null check (`x != null`, `x == null`, `x is null`, `x is not null`) says that a local
   x is not null, and x is assigned once in the body, from the (awaited) result of a call of the guard's member, that
-  call's argument `arg` is clean for the rule, when it is a local or a parameter assigned nowhere after the call.
+  call's argument `arg` is clean for the rule, when it is a local or a parameter assigned nowhere after the call, or a
+  member (below) that no write or call changed between the call and the null check.
 
 The engine's own guard, for every rule: where a value is equal to a constant (`x == c`, `x != c` on its false branch,
 `x.Equals(c)`, `string.Equals(x, c, ...)`, `x is c`, `x is c1 or c2`; `c` a literal, a `const` or `null`), the local or
@@ -153,6 +154,40 @@ parameter x is that constant: clean for every rule (`if (dir != "ASC" && dir != 
 Only for a string, char, number, bool or enum (or Nullable of one), with the built-in `==` (or System.String's) and
 System.String's or a primitive's `Equals`: a user-defined `==` or an overridden `Equals` may compare anything and is no
 guard (ruling R-E13).
+
+### Guards on members
+
+Every guard above (a model guard, the not-null guard, the equality guard, an allow-list's membership) also holds for a
+member read on a local, a parameter or `this`: an access path `x.M`, `x.M.N` (up to four members; fields and
+properties that are not indexers; `x?.M` too; a static member's path `T.M` as well). On the branch where the check
+holds, a read of that path is clean for the guard's rule (for every rule after an equality); the other members of x
+keep their taint. `if (Url.IsLocalUrl(model.ReturnUrl)) return Redirect(model.ReturnUrl);`,
+`if (!Sorts.Contains(dto.Sort)) return BadRequest();` and `if (req.Kind == "a" || req.Kind == "b")` are guards.
+
+The engine keeps these as must-hold facts in its state: where branches meet, a path stays clean only if it is clean on
+every one of them (a loop's head included: a write later in the loop's body reaches it through the back edge). A fact
+ends at:
+
+- an assignment of x (a local or parameter; a `foreach` taking the next element is one), x given as a `ref` or `out`
+  argument, an increment of it;
+- a write of any member on the path (`x.M = ...`, `x.M.N = ...`, `x.M++`, `ref x.F`, a collection write into it), on
+  whatever object it is written: `alias.M = ...` ends the fact of `x.M` (an alias of x is not tracked, its member is);
+- a call (or a setter that is not an auto-property's) that may change an object along the path. The choice, by type:
+  the call's receiver or an argument has the type of the root or of a member on the path (string, scalars, enums and
+  delegates aside), a type derived from it or one it derives from, an interface it implements, or `object` or a type
+  parameter; a struct of the project called in place is written. Every call ends the facts of static paths. A call
+  given other objects (`_audit.NoteAsync(form.User, form.Remember)`, `_mail.SendAsync(new Notice(...))`)
+  keeps them.
+- A path whose root or member a lambda or local function of the method writes gets no fact (the delegate may run at
+  any call).
+
+The not-null guard on a member: its call records the path as given to it; the null check of the call's held result
+makes the path clean only if that record survived every write and call in between.
+
+Not covered (by design): a guarded path read through another variable (`var copy = x;` then `copy.M`: still request
+data); an object changed through the heap or a collection it was stored in by a callee that receives neither it nor an
+object of a related type; a write through a `ref` local taken to a member; a guard on a member read through a getter
+that computes a different value each time.
 
 ### Allow-lists
 
@@ -351,9 +386,9 @@ false positives (FP) or misses (FN) there.
   member is request data in that member of every object of the type in the requests that reach the write (cache keys
   built from request values make cached lookups request data), and an interface every action reaches joins most code
   into one request (FP).
-- Guards clean a local or a parameter only: `Url.IsLocalUrl(model.ReturnUrl)` (or a not-null check of the IdentityServer
-  context looked up for it) leaves `model.ReturnUrl` tainted (FP). A guard inside a project's own helper
-  (`CheckIsLocalUrl(x)` that calls `IsLocalUrl`) is no guard (FP).
+- Guards hold for locals, parameters and members read on them (since Task 21, "Guards on members"); a call given the
+  guarded object (or one of a related type) between the check and the sink ends the guard (FP). A guard inside a
+  project's own helper (`CheckIsLocalUrl(x)` that calls `IsLocalUrl`) is no guard (FP).
 - Validation in another method or by an attribute is not seen: a filename sanitizer, a child-path or containment check,
   `[RegularExpression]` on a bound parameter, a hash used as a file name, an allow-list lookup (FP).
 - The fixed-origin prefix (ssrf, open-redirect) is read only where the URL is built in place, not through a helper that

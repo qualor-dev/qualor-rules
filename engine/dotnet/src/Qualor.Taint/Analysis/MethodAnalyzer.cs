@@ -323,7 +323,7 @@ internal sealed partial class MethodAnalyzer
             case IFlowCaptureReferenceOperation capture:
                 return state.Get(capture.Id);
             case IFieldReferenceOperation field:
-                return ReadMember(field, field.Field, Value(field.Instance, state), state);
+                return Guarded(field, ReadMember(field, field.Field, Value(field.Instance, state), state), state);
 
             case IFlowCaptureOperation capture:
                 state.Set(capture.Id, Value(capture.Value, state));
@@ -358,6 +358,7 @@ internal sealed partial class MethodAnalyzer
             }
             case IIncrementOrDecrementOperation increment:
                 Value(increment.Target, state);
+                ForgetWritten(increment.Target, state);
                 return TaintValue.Clean;
 
             case IVariableDeclaratorOperation declarator:
@@ -368,7 +369,7 @@ internal sealed partial class MethodAnalyzer
             }
 
             case IPropertyReferenceOperation property:
-                return ReadProperty(property, state);
+                return Guarded(property, ReadProperty(property, state), state);
             case IArrayElementReferenceOperation element:
             {
                 var array = Value(element.ArrayReference, state);
@@ -613,6 +614,7 @@ internal sealed partial class MethodAnalyzer
     /// A strong update of a local or parameter (a captured one is also a captured write of this body).
     private void SetLocal(ISymbol symbol, TaintValue value, TaintState state)
     {
+        ForgetRoot(symbol, state);
         state.Set(symbol, value);
         _body.Assigned(symbol, value);
     }
@@ -672,7 +674,7 @@ internal sealed partial class MethodAnalyzer
     /// The current value of an assignment's target (the read half of `x += v`; M1: a property's get patterns).
     private TaintValue Read(IOperation target, TaintState state) => target switch
     {
-        IPropertyReferenceOperation property => ReadProperty(property, state),
+        IPropertyReferenceOperation property => Guarded(property, ReadProperty(property, state), state),
         _ => Value(target, state),
     };
 
@@ -703,9 +705,11 @@ internal sealed partial class MethodAnalyzer
             }
             case IFieldReferenceOperation field:
                 Value(field.Instance, state);
+                ForgetWritten(field, state);
                 AssignMember(field.Field, field.Instance, value, state, assignment);
                 break;
             case IPropertyReferenceOperation property:
+                ForgetWritten(property, state);
                 AssignProperty(property, value, state, assignment);
                 break;
             case IArrayElementReferenceOperation element:
@@ -723,6 +727,8 @@ internal sealed partial class MethodAnalyzer
                 Assign(conversion.Operand, value, state, assignment);
                 break;
             default:
+                // A target the engine does not follow (a dynamic member, an event): what it changes is unknown.
+                state.ForgetAll();
                 Value(target, state);
                 break;
         }
@@ -740,6 +746,7 @@ internal sealed partial class MethodAnalyzer
     /// both `this` and `return`: `sb.Append(a).Append(b)`).
     private void Write(IOperation operation, TaintValue value, TaintState state)
     {
+        ForgetWritten(operation, state);
         if (!value.Any) return;
         switch (operation)
         {
@@ -961,6 +968,8 @@ internal sealed partial class MethodAnalyzer
         var property = operation.Property;
         var receiver = Value(operation.Instance, state);
         var inputs = IndexInputs(operation, state, (value, assignment));
+        // A setter other than an auto-property's runs code on its receiver: as a call given the receiver (Task 21).
+        if (state.HasFacts && !(SymbolKeys.InSource(property) && _body.IsHeapMember(property))) ForgetForCall(operation.Instance, inputs, state);
         foreach (var hit in _ctx.Sinks.Sinks(property, Access.Set))
             if (value.Any && (hit.Sink.When.Count == 0 || _ctx.Conditions.Check(hit.Sink, assignment, -1, Model()).Holds))
                 SinkReached(hit.RuleId, assignment.Syntax, value, property);
@@ -1053,7 +1062,8 @@ internal sealed partial class MethodAnalyzer
         }
         if (n < inputs.Length) Array.Resize(ref inputs, n);
         if (_ctx.Sinks.HasStringSanitizers && method is { Name: "Format", ContainingType.SpecialType: SpecialType.System_String }) FormatPlaced(inputs);
-        if (method != null) GuardArguments(method, inputs);
+        if (state.HasFacts) ForgetForCall(instance, inputs, state);
+        if (method != null) GuardArguments(operation, method, inputs, state);
         HigherOrder(inputs, instanceValue, state);
 
         var all = JoinInputs(inputs);

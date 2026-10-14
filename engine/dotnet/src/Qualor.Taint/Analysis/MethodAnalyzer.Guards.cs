@@ -1,3 +1,4 @@
+using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FlowAnalysis;
 using Microsoft.CodeAnalysis.Operations;
@@ -20,6 +21,12 @@ namespace Qualor.Taint;
 /// A guard cleans a local or a parameter (and the flow capture that holds one): the value is clean on the branch where
 /// the check succeeded only, so it is not clean inside the failing branch, and where that branch rejoins (it did not
 /// leave the method) the join is the unchecked value again.
+///
+/// A guard on a member read on one (`x.M`, `x.M.N`, `this.M`; Task 21) records a must-hold fact for that access path in
+/// the state (TaintState.Facts): a read of the path is clean while the fact holds. A join keeps a fact only where every
+/// predecessor has it; an assignment of x, a write of a member on the path (on any object), a ref or out use, and a call
+/// that may change an object along the path (ForgetForCall: by type) end it. The not-null guard's call records the path
+/// as pending; its null check turns that into a fact if the record survived.
 internal sealed partial class MethodAnalyzer
 {
     private Dictionary<ISymbol, List<IOperation>?>? _assignments;
@@ -148,9 +155,17 @@ internal sealed partial class MethodAnalyzer
         if (Awaited(assigned) is not { } call) return;
         foreach (var (rule, guard) in _ctx.Sinks.Guards.Match(call.TargetMethod, Access.Call))
         {
-            if (guard.Kind != GuardKind.NotNull) continue;
-            if (SinkConditions.ArgumentValue(call, guard.Arg) is { } checkedValue && UnchangedAfter(checkedValue, call) && Holds(guard, call, checkedValue, state))
+            if (guard.Kind != GuardKind.NotNull || SinkConditions.ArgumentValue(call, guard.Arg) is not { } checkedValue) continue;
+            if (UnchangedAfter(checkedValue, call) && Holds(guard, call, checkedValue, state))
+            {
                 Clean(checkedValue, new[] { rule }, state, ref refined);
+            }
+            else if (PathOf(checkedValue) is { } path && (refined ?? state).Fact(path) is { } fact && fact.Pending.Contains(call) && Holds(guard, call, checkedValue, state))
+            {
+                // A member given to the call and unchanged since (its pending fact survived every write and call).
+                refined ??= state.Clone();
+                refined.AddFact(new MemberFact(path, false, ImmutableHashSet.Create(rule), ImmutableHashSet<IOperation>.Empty));
+            }
         }
     }
 
@@ -190,11 +205,21 @@ internal sealed partial class MethodAnalyzer
             or SpecialType.System_Double;
     }
 
-    /// Records the values of a call's arguments when the call is a guard's (for Holds).
-    private void GuardArguments(IMethodSymbol method, Input[] inputs)
+    /// Records the values of a call's arguments when the call is a guard's (for Holds); a `not-null` guard's checked
+    /// argument that is a member (`x.M`) gets a pending fact, which its null check turns into a guard if no write or call
+    /// has ended it by then.
+    private void GuardArguments(IOperation operation, IMethodSymbol method, Input[] inputs, TaintState state)
     {
-        if (_ctx.Sinks.Guards.IsEmpty || _ctx.Sinks.Guards.Match(method, Access.Call).Length == 0) return;
+        if (_ctx.Sinks.Guards.IsEmpty) return;
+        var guards = _ctx.Sinks.Guards.Match(method, Access.Call);
+        if (guards.Length == 0) return;
         foreach (var i in inputs) _guardArguments[i.Operation] = i.Value;
+        if (operation is not IInvocationOperation call) return;
+        foreach (var (_, guard) in guards)
+        {
+            if (guard.Kind == GuardKind.NotNull && SinkConditions.ArgumentValue(call, guard.Arg) is { } checkedValue && PathOf(checkedValue) is { } path && CanHold(path))
+                state.AddFact(new MemberFact(path, false, ImmutableHashSet<string>.Empty, ImmutableHashSet.Create<IOperation>(call)));
+        }
     }
 
     /// The call a value comes from: through conversions, an await and ConfigureAwait.
@@ -365,7 +390,8 @@ internal sealed partial class MethodAnalyzer
         return op.ConstantValue is { HasValue: true, Value: null };
     }
 
-    /// The value is a constant on this branch: clean for every rule (its labels too).
+    /// The value is a constant on this branch: clean for every rule (its labels too). A member's access path gets the
+    /// fact.
     private void CleanAll(IOperation value, TaintState state, ref TaintState? refined)
     {
         foreach (var key in Keys(value))
@@ -373,9 +399,14 @@ internal sealed partial class MethodAnalyzer
             refined ??= state.Clone();
             refined.Set(key, TaintValue.Clean);
         }
+        if (PathOf(value) is { } path && CanHold(path))
+        {
+            refined ??= state.Clone();
+            refined.AddFact(new MemberFact(path, true, ImmutableHashSet<string>.Empty, ImmutableHashSet<IOperation>.Empty));
+        }
     }
 
-    /// The value is clean for these rules on this branch.
+    /// The value is clean for these rules on this branch. A member's access path gets the fact.
     private void Clean(IOperation value, IReadOnlyCollection<string> rules, TaintState state, ref TaintState? refined)
     {
         foreach (var key in Keys(value))
@@ -385,7 +416,231 @@ internal sealed partial class MethodAnalyzer
             refined ??= state.Clone();
             refined.Set(key, current.CleanedFor(rules));
         }
+        if (rules.Count > 0 && PathOf(value) is { } path && CanHold(path))
+        {
+            refined ??= state.Clone();
+            refined.AddFact(new MemberFact(path, false, rules.ToImmutableHashSet(), ImmutableHashSet<IOperation>.Empty));
+        }
     }
+
+    // ---- Guards on members (Task 21) ----
+
+    /// The members written inside the lambdas and local functions of the analysed method (and the locals and parameters
+    /// they assign): a guard on a path that mentions one is not recorded, since the delegate may run at any call.
+    private HashSet<ISymbol>? _nestedWrites;
+
+    /// The access path an operation reads (`x.M`, `x.M.N`, `this.M`, `T.S.M`; through conversions and a flow capture of
+    /// one value), or null: a plain local or parameter (guarded as before), an indexer, a call, a path longer than
+    /// AccessPath.MaxMembers.
+    private AccessPath? PathOf(IOperation operation)
+    {
+        while (operation is IConversionOperation conversion) operation = conversion.Operand;
+        if (operation is IFlowCaptureReferenceOperation capture && _captured.TryGetValue(capture.Id, out var values) && values.Count > 1)
+        {
+            // `x?.M` held in one capture: the path on one branch, null on the other (where it reads nothing).
+            AccessPath? common = null;
+            foreach (var v in values)
+            {
+                if (IsNull(v)) continue;
+                if (v is IFlowCaptureReferenceOperation || PathOf(v) is not { } p || (common != null && !common.Equals(p))) return null;
+                common = p;
+            }
+            return common;
+        }
+        var members = new List<ISymbol>(2);
+        var types = new List<ITypeSymbol>(3);
+        IOperation? op = operation;
+        object? root = null;
+        for (var depth = 0; depth < 16 && root == null; depth++)
+        {
+            while (op is IConversionOperation c) op = c.Operand;
+            switch (op)
+            {
+                case IFieldReferenceOperation f:
+                    members.Add(f.Field.OriginalDefinition);
+                    if (MemberFacts.IsChangeable(f.Field.Type)) types.Add(f.Field.Type);
+                    if (f.Field.IsStatic) root = AccessPath.Static;
+                    else op = f.Instance;
+                    break;
+                case IPropertyReferenceOperation { Arguments.Length: 0 } p:
+                    members.Add(p.Property.OriginalDefinition);
+                    if (MemberFacts.IsChangeable(p.Property.Type)) types.Add(p.Property.Type);
+                    if (p.Property.IsStatic) root = AccessPath.Static;
+                    else op = p.Instance;
+                    break;
+                case ILocalReferenceOperation l:
+                    root = l.Local;
+                    if (MemberFacts.IsChangeable(l.Local.Type)) types.Add(l.Local.Type);
+                    break;
+                case IParameterReferenceOperation p:
+                    root = p.Parameter;
+                    if (MemberFacts.IsChangeable(p.Parameter.Type)) types.Add(p.Parameter.Type);
+                    break;
+                case IInstanceReferenceOperation { ReferenceKind: InstanceReferenceKind.ContainingTypeInstance } i:
+                    root = AccessPath.This;
+                    if (i.Type != null) types.Add(i.Type);
+                    break;
+                case IFlowCaptureReferenceOperation r when _captured.TryGetValue(r.Id, out var list) && list.Count == 1:
+                    op = list[0];
+                    break;
+                default:
+                    return null;
+            }
+            if (op == null) return null;
+        }
+        if (root == null || members.Count == 0 || members.Count > AccessPath.MaxMembers) return null;
+        members.Reverse();
+        return new AccessPath(root, members.ToImmutableArray(), types.ToImmutableArray());
+    }
+
+    /// A member read on a path a guard cleaned on this branch: clean (for every rule, or for the guard's rules).
+    private TaintValue Guarded(IOperation member, TaintValue value, TaintState state)
+    {
+        if (!value.Any || !state.HasFacts || PathOf(member) is not { } path || state.Fact(path) is not { Cleans: true } fact) return value;
+        return fact.All ? TaintValue.Clean : value.CleanedFor(fact.Rules);
+    }
+
+    /// Whether a guard on this path may be recorded: no lambda or local function of the method writes its root or one of
+    /// its members.
+    private bool CanHold(AccessPath path)
+    {
+        _nestedWrites ??= NestedWrites();
+        if (_nestedWrites.Count == 0) return true;
+        if (path.Root is ISymbol root && _nestedWrites.Contains(root)) return false;
+        foreach (var m in path.Members) if (_nestedWrites.Contains(m)) return false;
+        return true;
+    }
+
+    private HashSet<ISymbol> NestedWrites()
+    {
+        var set = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+        var g = _cfg;
+        while (g.Parent != null) g = g.Parent;
+        foreach (var nested in g.OriginalOperation.Descendants())
+        {
+            if (nested is not (IAnonymousFunctionOperation or ILocalFunctionOperation)) continue;
+            foreach (var o in nested.Descendants())
+            {
+                IOperation? target = o switch
+                {
+                    IAssignmentOperation a => a.Target,
+                    IIncrementOrDecrementOperation i => i.Target,
+                    IArgumentOperation { Parameter.RefKind: RefKind.Ref or RefKind.Out } r => r.Value,
+                    _ => null,
+                };
+                if (target == null) continue;
+                foreach (var t in target.DescendantsAndSelf())
+                {
+                    switch (t)
+                    {
+                        case ILocalReferenceOperation l:
+                            set.Add(l.Local);
+                            break;
+                        case IParameterReferenceOperation p:
+                            set.Add(p.Parameter);
+                            break;
+                        case IFieldReferenceOperation f:
+                            set.Add(f.Field.OriginalDefinition);
+                            break;
+                        case IPropertyReferenceOperation p:
+                            set.Add(p.Property.OriginalDefinition);
+                            break;
+                    }
+                }
+            }
+        }
+        return set;
+    }
+
+    /// A local or parameter assigned: its paths' facts end.
+    private static void ForgetRoot(ISymbol symbol, TaintState state)
+    {
+        if (state.HasFacts) state.Forget(p => SymbolOrCapture.Comparer.Equals(p.Root, symbol));
+    }
+
+    /// What a write of `target` (an assignment, an increment, a ref or out argument, a collection write into it) ends: the
+    /// facts rooted at a local or parameter written, at `this` written into, and of every path that mentions a member
+    /// written, on whatever object (an alias writes the same member).
+    private void ForgetWritten(IOperation? target, TaintState state, int depth = 0)
+    {
+        if (!state.HasFacts || target == null || depth > 8) return;
+        while (target is IConversionOperation c) target = c.Operand;
+        switch (target)
+        {
+            case ILocalReferenceOperation l:
+                ForgetRoot(l.Local, state);
+                break;
+            case IParameterReferenceOperation p:
+                ForgetRoot(p.Parameter, state);
+                break;
+            case IInstanceReferenceOperation { ReferenceKind: InstanceReferenceKind.ContainingTypeInstance }:
+                state.Forget(p => ReferenceEquals(p.Root, AccessPath.This));
+                break;
+            case IFieldReferenceOperation f:
+            {
+                var member = f.Field.OriginalDefinition;
+                state.Forget(p => p.Mentions(member));
+                break;
+            }
+            case IPropertyReferenceOperation p:
+            {
+                var member = p.Property.OriginalDefinition;
+                state.Forget(x => x.Mentions(member));
+                break;
+            }
+            case IArrayElementReferenceOperation e:
+                ForgetWritten(e.ArrayReference, state, depth + 1);
+                break;
+            case IDeclarationExpressionOperation d:
+                ForgetWritten(d.Expression, state, depth + 1);
+                break;
+            case ITupleOperation t:
+                foreach (var e in t.Elements) ForgetWritten(e, state, depth + 1);
+                break;
+            case IFlowCaptureReferenceOperation r when _captured.TryGetValue(r.Id, out var list):
+                foreach (var captured in list) ForgetWritten(captured, state, depth + 1);
+                break;
+        }
+    }
+
+    /// A call (or a setter that is not an auto-property's) may change what it is given. The choice (conservative, by
+    /// type): every fact of a static path ends; a ref or out argument is a write; and a fact ends when an object along
+    /// its path (the root's or a member's) could be the receiver or an argument: the same type, one derived from the
+    /// other, an implemented interface, or an argument typed object or a type parameter (MemberFacts.MayChange). A
+    /// struct receiver declared in source is written in place. Not covered: an object reached from the heap or a
+    /// collection that the callee changes (the guarded object stored in a field, then changed through it).
+    private void ForgetForCall(IOperation? instance, Input[] inputs, TaintState state)
+    {
+        state.Forget(p => ReferenceEquals(p.Root, AccessPath.Static));
+        if (!state.HasFacts) return;
+        List<ITypeSymbol>? types = null;
+        Given(instance, true);
+        foreach (var i in inputs)
+        {
+            if (i.RefKind is RefKind.Ref or RefKind.Out) ForgetWritten(i.Operation, state);
+            else if (!ReferenceEquals(i.Operation, instance)) Given(i.Operation, false);
+        }
+        if (types != null && state.HasFacts) state.Forget(p => p.ObjectTypes.Any(held => types.Any(t => MemberFacts.MayChange(t, held))));
+
+        void Given(IOperation? op, bool receiver)
+        {
+            while (op is IConversionOperation c) op = c.Operand;
+            if (op == null) return;
+            if (op is IArrayCreationOperation { Initializer: { } initializer })
+            {
+                foreach (var e in initializer.ElementValues) Given(e, false);
+                return;
+            }
+            if (!MemberFacts.IsChangeable(op.Type)) return;
+            if (op.Type!.IsValueType)
+            {
+                if (receiver) ForgetWritten(op, state);
+                return;
+            }
+            (types ??= new List<ITypeSymbol>()).Add(op.Type);
+        }
+    }
+
 
     /// The state keys a checked value is held in: a local, a parameter, a flow capture (and the local or parameter it
     /// captured).

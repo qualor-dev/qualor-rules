@@ -445,13 +445,36 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
 /// The map is persistent (ruling R-E11): a hash array mapped trie whose nodes never change once built, so Clone is
 /// O(1), an update copies one path, and a join walks only the subtrees the two states do not share (a block that
 /// changes two variables of a thousand costs two paths, not a thousand entries).
+///
+/// Member facts (Task 21): what guards established for access paths (`x.M`), must-hold, so a join keeps only the facts
+/// both sides hold (MemberFacts); an empty list (most states) costs nothing.
 internal sealed class TaintState
 {
     private object? _root;
 
+    private ImmutableArray<MemberFact> _facts = ImmutableArray<MemberFact>.Empty;
+
     public TaintState() { }
 
-    private TaintState(object? root) => _root = root;
+    private TaintState(object? root, ImmutableArray<MemberFact> facts)
+    {
+        _root = root;
+        _facts = facts;
+    }
+
+    public bool HasFacts => !_facts.IsEmpty;
+
+    public ImmutableArray<MemberFact> Facts => _facts;
+
+    public MemberFact? Fact(AccessPath path) => _facts.IsEmpty ? null : MemberFacts.Find(_facts, path);
+
+    /// Records what a guard established for a path on this branch (united with what was known).
+    public void AddFact(MemberFact fact) => _facts = MemberFacts.Add(_facts, fact);
+
+    /// Forgets the facts of the paths `predicate` holds for (a write or a call that may change them).
+    public void Forget(Func<AccessPath, bool> predicate) => _facts = MemberFacts.RemoveWhere(_facts, predicate);
+
+    public void ForgetAll() => _facts = ImmutableArray<MemberFact>.Empty;
 
     public IEnumerable<KeyValuePair<object, TaintValue>> Entries =>
         TaintMap.Entries(_root).Select(e => new KeyValuePair<object, TaintValue>(e.Key, e.Value));
@@ -487,13 +510,19 @@ internal sealed class TaintState
         if (!joined.SameTaint(old.Value)) _root = TaintMap.Set(_root, new TaintMap.Entry(key, hash, joined), 0);
     }
 
-    public TaintState Clone() => new(_root);
+    public TaintState Clone() => new(_root, _facts);
 
-    /// Joins `other` into this state; true when this state changed (in the lattice).
+    /// Joins `other` into this state; true when this state changed (in the lattice: a value rose or a member fact was
+    /// lost).
     public bool JoinWith(TaintState other)
     {
         var changed = false;
         _root = TaintMap.Join(_root, other._root, 0, ref changed);
+        if (!_facts.IsEmpty && _facts != other._facts)
+        {
+            _facts = MemberFacts.Meet(_facts, other._facts, out var lost);
+            changed |= lost;
+        }
         return changed;
     }
 }
