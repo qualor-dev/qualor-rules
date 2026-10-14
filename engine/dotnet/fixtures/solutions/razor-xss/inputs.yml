@@ -1,0 +1,5 @@
+rule: csharp.xss
+projects:
+  - { name: Models, folder: Models }
+  - { name: Ui, folder: Ui }
+  - { name: Web, folder: Web, references: [Models, Ui] }

@@ -1,12 +1,14 @@
 namespace Qualor.Taint.Tests.Fixtures;
 
 /// An OpenGrep test annotation (`// ruleid: <rule>` and the like). Kind is ruleid, ok, todoruleid or todook; Line is the
-/// line AFTER the comment (the annotated line); File is the file name (not the path) the comment is in.
+/// line AFTER the comment (the annotated line); File is the file name (not the path) the comment is in. In a Razor file
+/// (.cshtml, .razor) the comment is a Razor comment, `@* <kind>: <rule id> *@`.
 public sealed record Annotation(string File, int Line, string Kind, string RuleId)
 {
     public static readonly IReadOnlyList<string> Kinds = new[] { "ruleid", "ok", "todoruleid", "todook" };
 
-    /// The annotations of one file's text: every line that, after trimming, is `// <kind>: <rule id>`.
+    /// The annotations of one file's text: every line that, after trimming, is `// <kind>: <rule id>` (or
+    /// `@* <kind>: <rule id> *@`).
     public static IReadOnlyList<Annotation> Parse(string file, string text)
     {
         var result = new List<Annotation>();
@@ -14,8 +16,10 @@ public sealed record Annotation(string File, int Line, string Kind, string RuleI
         for (var i = 0; i < lines.Length; i++)
         {
             var line = lines[i].Trim();
-            if (!line.StartsWith("//", StringComparison.Ordinal)) continue;
-            var body = line[2..].Trim();
+            string body;
+            if (line.StartsWith("//", StringComparison.Ordinal)) body = line[2..].Trim();
+            else if (line.StartsWith("@*", StringComparison.Ordinal) && line.EndsWith("*@", StringComparison.Ordinal) && line.Length >= 4) body = line[2..^2].Trim();
+            else continue;
             var colon = body.IndexOf(':');
             if (colon <= 0) continue;
             var kind = body[..colon].Trim();

@@ -1,0 +1,26 @@
+@model UserProfile
+@{
+    ViewData["Title"] = "Profile";
+}
+<h1>@Model.Name</h1>
+<section class="bio">
+    @* ruleid: csharp.xss *@
+    @Html.Raw(Model.Bio)
+</section>
+<p>
+    @* ok: csharp.xss *@
+    @Model.Bio
+</p>
+@* ok: csharp.xss *@
+<p title="@Model.Bio">@Html.Raw(Model.Name)</p>
+@* ok: csharp.xss *@
+@Html.Raw(Html.Encode(Model.Bio))
+@* ok: csharp.xss *@
+@ViewHelpers.Separator()
+@ViewHelpers.Highlight(Model.Bio)
+<form asp-action="Show" method="get">
+    @* ruleid: csharp.xss *@
+    <div>@Html.Raw(Model.Bio)</div>
+    @* ok: csharp.xss *@
+    <input name="q" value="@Model.Bio" />
+</form>

@@ -14,11 +14,22 @@ public sealed record TaintEngineOptions(TimeSpan TimeLimit, long MemoryLimitByte
 }
 
 /// One step of a finding's path: "request data enters here", "assigned to 'sql'", "reaches the sink ...".
-public sealed record PathStep(Location Location, string Message);
+public sealed record PathStep(Location Location, string Message)
+{
+    /// Where to report the step: its mapped file and lines (see Finding.SinkSpan).
+    public FileLinePositionSpan Span => Location.GetMappedLineSpan();
+}
 
 /// One result: a sink site of a rule (the location of the sink argument or of the assignment of a property sink), the
 /// path from a source to it, and the other sources whose data reaches the same site.
-public sealed record Finding(string RuleId, Location Sink, IReadOnlyList<PathStep> Path, IReadOnlyList<Location> OtherSources);
+public sealed record Finding(string RuleId, Location Sink, IReadOnlyList<PathStep> Path, IReadOnlyList<Location> OtherSources)
+{
+    /// Where to report the finding: the sink's mapped file and lines. In generated code with `#line` directives (a Razor
+    /// view's `*_cshtml.g.cs` from the Razor source generator) that is the directive's file and line, the `.cshtml` the
+    /// developer wrote, with the path as the generator wrote it (the build's absolute path, like the recorded sources);
+    /// in a `#line hidden` region or a file without directives, the file's own path and line.
+    public FileLinePositionSpan SinkSpan => Sink.GetMappedLineSpan();
+}
 
 /// What a run found. Complete is false when the run stopped early (a budget, cancellation, an iteration cap); its
 /// findings are then partial and must not replace the OpenGrep rules (R-4).

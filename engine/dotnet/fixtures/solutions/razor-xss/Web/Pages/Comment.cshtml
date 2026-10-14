@@ -1,0 +1,9 @@
+@page
+@model CommentModel
+<h1>Comment</h1>
+@* ruleid: csharp.xss *@
+<div class="preview">@Html.Raw(Model.Text)</div>
+@* ok: csharp.xss *@
+<div class="plain">@Model.Text</div>
+@* ok: csharp.xss *@
+@Html.Raw("<hr />")
