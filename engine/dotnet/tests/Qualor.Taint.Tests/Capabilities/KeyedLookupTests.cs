@@ -85,6 +85,65 @@ public sealed class KeyedLookupTests
         """);
 
     [Fact]
+    public void An_interface_constraint_that_text_satisfies_still_carries() => Expect("""
+        public sealed class Sorted<T> where T : IComparable { private readonly Dictionary<string, T> _byKey = new(); public T Find(string key) => _byKey[key]; }
+        public sealed class Equatable<T> where T : IEquatable<T> { private readonly Dictionary<string, T> _byKey = new(); public T Find(string key) => _byKey[key]; }
+        public sealed class Convertible<T> where T : IConvertible { private readonly Dictionary<string, T> _byKey = new(); public T Find(string key) => _byKey[key]; }
+        public sealed class Ordered<T> where T : class, IComparable<T> { private readonly Dictionary<string, T> _byKey = new(); public T Find(string key) => _byKey[key]; }
+        public interface IModule { string Name { get; } }
+        public sealed class Modules<T> where T : class, IModule { private readonly Dictionary<string, T> _byKey = new(); public T Find(string key) => _byKey[key]; }
+        public sealed class Module : IModule { public string Name { get; set; } = ""; }
+        public class LabelsController : ControllerBase
+        {
+            private static readonly Sorted<string> A = new();
+            private static readonly Equatable<string> B = new();
+            private static readonly Convertible<string> C = new();
+            private static readonly Ordered<string> D = new();
+            private static readonly Modules<Module> M = new();
+            private readonly SqlConnection _c = new();
+            public IActionResult Show(string k)
+            {
+                _c.Execute("SELECT * FROM " + A.Find(k)); /*sink*/
+                _c.Execute("SELECT * FROM " + B.Find(k)); /*sink*/
+                _c.Execute("SELECT * FROM " + C.Find(k)); /*sink*/
+                _c.Execute("SELECT * FROM " + D.Find(k)); /*sink*/
+                _c.Execute("SELECT * FROM " + M.Find(k).Name);
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void A_key_that_also_reaches_the_return_another_way_is_kept_by_a_factory_call() => Expect("""
+        public sealed class Store<T> where T : class
+        {
+            private readonly Dictionary<string, T> _items = new();
+            public T OrKey(string key, Func<T> make) => _items.TryGetValue(key, out var hit) ? hit : (T)(object)key;
+            public T Joined(string key, Func<T> make) => _items.TryGetValue(key, out var hit) ? (T)(object)(key + hit) : make();
+            public T ReadAndReturn(string region, Func<T> make, HttpContext context)
+            {
+                var asked = context.Request.Query["page"].ToString();
+                return _items.TryGetValue(asked, out var hit) ? hit : (T)(object)asked;
+            }
+            public T ReadOnlyAsKey(string region, Func<T> make, HttpContext context) =>
+                _items.TryGetValue(context.Request.Query["page"].ToString(), out var hit) ? hit : make();
+        }
+        public class PagesController : ControllerBase
+        {
+            private static readonly Store<string> Pages = new();
+            private readonly SqlConnection _c = new();
+            public IActionResult Show(string k)
+            {
+                _c.Execute("SELECT * FROM " + Pages.OrKey(k, () => "x")); /*sink*/
+                _c.Execute("SELECT * FROM " + Pages.Joined(k, () => "x")); /*sink*/
+                _c.Execute("SELECT * FROM " + Pages.ReadAndReturn("r", () => "x", HttpContext)); /*sink*/
+                _c.Execute("SELECT * FROM " + Pages.ReadOnlyAsKey("r", () => "x", HttpContext));
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
     public void Text_and_sequences_of_text_found_by_a_request_key_are_request_data() => Expect("""
         public class LabelsController : ControllerBase
         {

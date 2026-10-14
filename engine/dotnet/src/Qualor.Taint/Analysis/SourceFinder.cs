@@ -315,7 +315,7 @@ internal sealed class SourceFinder
         var t = UnwrapNullable(type);
         bool result;
         if (t is ITypeParameterSymbol parameter)
-            result = typeParameters && (depth >= 3 || parameter.ConstraintTypes.All(c => CanCarryInjection(c, depth + 1, typeParameters)));
+            result = typeParameters && (depth >= 3 || !parameter.ConstraintTypes.Any(c => ExcludesCarriers(c, depth)));
         else if (t.TypeKind is TypeKind.Dynamic or TypeKind.Error) result = true;
         else if (StringLike.Contains(SymbolMatch.MetadataName(t)) || IsScalar(t) || t.TypeKind == TypeKind.Enum || IsJsonValue(t)) result = true;
         else if (depth >= 3) result = false;
@@ -327,6 +327,26 @@ internal sealed class SourceFinder
             result = Sequences(t).Any(e => CanCarryInjection(e, depth + 1, typeParameters));
         _injectionCache[(type, typeParameters)] = result;
         return result;
+    }
+
+    /// Whether a constraint type rules out every type that can carry an injection (fix round 2 of Task 23, R1-I1): a
+    /// class other than string, object, ValueType and Enum (every carrier is sealed or a struct, so none derives from
+    /// it), or an interface declared outside the System namespaces (string and the scalars implement only System ones:
+    /// IComparable, IEquatable<T>, IConvertible, ...). A type parameter constraint is as that type parameter.
+    private bool ExcludesCarriers(ITypeSymbol constraint, int depth) => constraint switch
+    {
+        ITypeParameterSymbol other => !CanCarryInjection(other, depth + 1, typeParameters: true),
+        { TypeKind: TypeKind.Interface } => !InSystemNamespace(constraint),
+        { TypeKind: TypeKind.Class } => constraint.SpecialType is not (SpecialType.System_String or SpecialType.System_Object
+            or SpecialType.System_ValueType or SpecialType.System_Enum) && !CanCarryInjection(constraint, depth + 1, typeParameters: true),
+        _ => false,
+    };
+
+    private static bool InSystemNamespace(ITypeSymbol type)
+    {
+        var ns = type.ContainingNamespace;
+        while (ns is { IsGlobalNamespace: false, ContainingNamespace.IsGlobalNamespace: false }) ns = ns.ContainingNamespace;
+        return ns is { IsGlobalNamespace: false, Name: "System" };
     }
 
     private static bool IsJsonValue(ITypeSymbol type)

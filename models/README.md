@@ -392,7 +392,9 @@ unmodelled-external: string-or-collection-return
   `out` value only when that value's type can carry an injection by itself (ruling R-E18): a string-like type, a scalar
   of `sources.yml` (a number, bool, char), a JSON value (`JToken`, `JsonNode`, `JsonElement`), an array or
   `IEnumerable<T>` of those (`StringValues`, `List<string>`, `string[]`), also a Task's result; `dynamic` and a type
-  parameter count (it may be one), unless a constraint of the type parameter cannot (`where T : Entity`). An object
+  parameter count (it may be one), unless a constraint rules every carrier out: a class other than `string`, `object`,
+  `ValueType` and `Enum` (`where T : Entity`), or an interface declared outside the System namespaces (`where T :
+  IPlugin`; `IComparable`, `IEquatable<T>`, `IConvertible` do not, string implements them). An object
   found by a request key (a settings or tenant record, an entity, a content item, `object`) is not request data, nor are
   its members. A key that reaches a value typed by a type parameter is marked (ruling R-E23): a call of a value-factory
   shaped method drops it from its result (below), any other call keeps it.
