@@ -14,12 +14,14 @@ namespace Qualor.Taint;
 /// language API and its MVC extensions, into C# that joins the project's compilation like the Razor source generator's.
 ///
 /// - The views are the project's recorded `razor-view=` files (CompilationInput.RazorViews) under its directory, but the
-///   `_ViewImports.cshtml` files, which are imports, not views.
+///   `_ViewImports.cshtml` files, which are imports, not views. A recorded view outside the directory (a linked item) is
+///   counted unless the build compiled it.
 /// - A view has a generated class when a tree of the compilation maps a `#line` to its file, or names its project-relative
 ///   path (`/Views/Home/Index.cshtml`) in a `RazorCompiledItem`, `RazorCompiledItemMetadata("Identifier", …)` or
 ///   `RazorSourceChecksum` attribute (as EntryPoints identifies a view). Such views are left alone.
 /// - The others are compiled only when the project references ASP.NET Core MVC's Razor views
-///   (`Microsoft.AspNetCore.Mvc.Razor.RazorPage`): a `.cshtml` elsewhere is no MVC view.
+///   (`Microsoft.AspNetCore.Mvc.Razor.RazorPage`, defined by one reference or several): a `.cshtml` elsewhere is no MVC
+///   view, and nothing is reported for it.
 /// - The Razor language version follows the referenced ASP.NET Core (2.0, 2.1, 3.0, 5.0, else the latest this API knows);
 ///   the code is MVC's (RazorExtensions), with the project's C# language version, `_ViewImports.cshtml` up the view's
 ///   folders (MVC's import feature), the project's tag helpers (`@addTagHelper`, discovered once per project in its own
@@ -33,6 +35,9 @@ namespace Qualor.Taint;
 internal static class RazorViews
 {
     private const string RazorPage = "Microsoft.AspNetCore.Mvc.Razor.RazorPage";
+
+    /// Test hook: tag helper discovery throws for the compilations it returns true for.
+    internal static Func<Compilation, bool>? FailTagHelperDiscovery { get; set; }
 
     /// A view compiled here: its recorded path, its generated tree, and its Razor errors.
     internal sealed record View(string Path, SyntaxTree Tree, IReadOnlyList<string> RazorErrors);
@@ -51,6 +56,7 @@ internal static class RazorViews
         var dirKey = SolutionLoader.PathKey(projectDir).TrimEnd('/') + "/";
 
         var candidates = new List<(string Path, string Identifier)>();
+        var outside = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var failed = new List<string>();
         foreach (var view in input.RazorViews)
@@ -59,22 +65,30 @@ internal static class RazorViews
             if (!seen.Add(key) || IsImports(view)) continue;
             if (!key.StartsWith(dirKey, StringComparison.Ordinal) && !key.StartsWith(dirKey, StringComparison.OrdinalIgnoreCase))
             {
-                failed.Add($"{view}: outside the project directory {projectDir}");
+                outside.Add(view);
                 continue;
             }
             candidates.Add((view, "/" + view.Replace('\\', '/')[(projectDir.Replace('\\', '/').TrimEnd('/').Length + 1)..]));
         }
-        if (candidates.Count == 0) return new Batch(Array.Empty<View>(), failed);
-        if (compilation.GetTypeByMetadataName(RazorPage) == null) return Batch.None;
+        if (candidates.Count == 0 && outside.Count == 0) return Batch.None;
+        // A project that does not reference MVC's Razor views has no views: its .cshtml files are something else (mail
+        // templates, documentation), and nothing is reported for them, not even those outside its directory.
+        if (!Has(compilation, RazorPage)) return Batch.None;
 
         var compiled = CompiledViews(compilation, ct);
         candidates.RemoveAll(c => compiled.Paths.Contains(SolutionLoader.PathKey(c.Path)) || compiled.Identifiers.Contains(c.Identifier));
+        // A view outside the project directory (a linked item) that the build compiled is no failure; one it did not
+        // compile cannot be placed in the project's folders and is counted.
+        foreach (var view in outside)
+            if (!compiled.Paths.Contains(SolutionLoader.PathKey(view))) failed.Add($"{view}: outside the project directory {projectDir}");
         if (candidates.Count == 0) return new Batch(Array.Empty<View>(), failed);
 
         RazorProjectEngine engine;
+        ProjectTagHelpers tagHelpers;
         try
         {
-            engine = CreateEngine(projectDir, compilation, parseOptions);
+            tagHelpers = new ProjectTagHelpers(compilation);
+            engine = CreateEngine(projectDir, compilation, parseOptions, tagHelpers);
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
@@ -106,6 +120,7 @@ internal static class RazorViews
                 failed.Add($"{path}: {e.GetType().Name}: {e.Message}");
             }
         }
+        if (tagHelpers.Failure is { } failure) failed.Add($"{input.ProjectPath}: tag helper discovery failed: {failure}");
         return new Batch(views, failed);
     }
 
@@ -130,10 +145,13 @@ internal static class RazorViews
 
         bool Known(string name)
         {
-            if (!known.TryGetValue(name, out var found)) known[name] = found = compilation.GetTypeByMetadataName(name) != null;
+            if (!known.TryGetValue(name, out var found)) known[name] = found = Has(compilation, name);
             return found;
         }
     }
+
+    /// Whether the compilation or a reference defines the type (also when several do, where GetTypeByMetadataName gives null).
+    private static bool Has(Compilation compilation, string metadataName) => compilation.GetTypesByMetadataName(metadataName).Length > 0;
 
     private static bool IsImports(string path) =>
         System.IO.Path.GetFileName(path.Replace('\\', '/')).Equals("_ViewImports.cshtml", StringComparison.OrdinalIgnoreCase);
@@ -184,9 +202,9 @@ internal static class RazorViews
         };
     }
 
-    private static RazorProjectEngine CreateEngine(string projectDir, CSharpCompilation compilation, CSharpParseOptions parseOptions)
+    private static RazorProjectEngine CreateEngine(string projectDir, CSharpCompilation compilation, CSharpParseOptions parseOptions, ProjectTagHelpers tagHelpers)
     {
-        var version = LanguageVersionOf(compilation);
+        var version = LanguageVersionOf(compilation.ReferencedAssemblyNames.FirstOrDefault(a => a.Name == "Microsoft.AspNetCore.Mvc.Razor")?.Version);
         var configuration = RazorConfiguration.Create(version, "MVC-" + version, Array.Empty<RazorExtension>());
         return RazorProjectEngine.Create(configuration, RazorProjectFileSystem.Create(projectDir), builder =>
         {
@@ -194,17 +212,17 @@ internal static class RazorViews
             if (!builder.Features.OfType<DefaultTagHelperDescriptorProvider>().Any()) builder.Features.Add(new DefaultTagHelperDescriptorProvider());
             if (!builder.Features.OfType<ViewComponentTagHelperDescriptorProvider>().Any()) builder.Features.Add(new ViewComponentTagHelperDescriptorProvider());
             foreach (var feature in builder.Features.OfType<ITagHelperFeature>().ToList()) builder.Features.Remove(feature);
-            builder.Features.Add(new ProjectTagHelpers(compilation));
+            builder.Features.Add(tagHelpers);
             builder.SetCSharpLanguageVersion(parseOptions.LanguageVersion);
         });
     }
 
-    /// The Razor language version of the ASP.NET Core the project references (its Microsoft.AspNetCore.Mvc.Razor).
-    private static RazorLanguageVersion LanguageVersionOf(CSharpCompilation compilation)
+    /// The Razor language version of the ASP.NET Core the project references, by the version of its
+    /// Microsoft.AspNetCore.Mvc.Razor (null: none referenced).
+    internal static RazorLanguageVersion LanguageVersionOf(Version? mvcRazor)
     {
-        var mvc = compilation.ReferencedAssemblyNames.FirstOrDefault(a => a.Name == "Microsoft.AspNetCore.Mvc.Razor");
-        if (mvc == null) return RazorLanguageVersion.Latest;
-        return (mvc.Version.Major, mvc.Version.Minor) switch
+        if (mvcRazor == null) return RazorLanguageVersion.Latest;
+        return (mvcRazor.Major, mvcRazor.Minor) switch
         {
             (1, _) => RazorLanguageVersion.Version_1_1,
             (2, 0) => RazorLanguageVersion.Version_2_0,
@@ -216,10 +234,13 @@ internal static class RazorViews
     }
 
     /// The project's tag helpers, discovered once (the Razor engine asks for them for every view) in the project's own
-    /// compilation and its references; none when discovery fails (the views still compile, tag helpers as markup).
+    /// compilation and its references; none when discovery fails (the views still compile, tag helpers as markup; Failure
+    /// says why, reported once for the project).
     private sealed class ProjectTagHelpers(Compilation compilation) : RazorEngineFeatureBase, ITagHelperFeature
     {
         private IReadOnlyList<TagHelperDescriptor>? _descriptors;
+
+        public string? Failure { get; private set; }
 
         public IReadOnlyList<TagHelperDescriptor> GetDescriptors()
         {
@@ -227,6 +248,7 @@ internal static class RazorViews
             var results = new List<TagHelperDescriptor>();
             try
             {
+                if (FailTagHelperDiscovery?.Invoke(compilation) == true) throw new InvalidOperationException("test failure");
                 var context = TagHelperDescriptorProviderContext.Create(results);
                 context.SetCompilation(compilation);
                 foreach (var provider in Engine.Features.OfType<ITagHelperDescriptorProvider>().OrderBy(p => p.Order)) provider.Execute(context);
@@ -234,6 +256,7 @@ internal static class RazorViews
             catch (Exception e) when (e is not OperationCanceledException)
             {
                 results.Clear();
+                Failure = $"{e.GetType().Name}: {e.Message}";
             }
             return _descriptors = results;
         }

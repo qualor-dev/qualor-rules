@@ -455,7 +455,9 @@ false positives (FP) or misses (FN) there.
   no generated class with the Razor 6.0 language API and MVC's extensions, `_ViewImports.cshtml` and the project's tag
   helpers included. The code is MVC 3.0+'s whatever the project's ASP.NET Core; an attribute of it whose type the
   references lack (ASP.NET Core 2.0 has no `Microsoft.AspNetCore.Razor.Hosting`) is left out. A view whose code has Razor
-  or compiler errors is counted (`engineViewErrors`) and analysed as far as its code binds. Views outside the project's
-  directory (linked items) are not compiled (counted). A view the build compiled into a separate assembly
-  (`*.Views.dll`, ASP.NET Core 2.1/2.2) is compiled here too.
+  or compiler errors is counted (`engineViewErrors`) and analysed as far as its code binds, and so is a project whose tag
+  helpers could not be discovered (its views render them as markup). Views outside the project's directory (linked items)
+  are not compiled (counted unless the build compiled them). A view the build compiled into a separate assembly
+  (`*.Views.dll`, ASP.NET Core 2.1 to 5.0; .NET 6's source generator compiles views into the application assembly) is
+  compiled here too.
 - The taint models have no `test-code:` (as the OpenGrep taint rules): findings in test projects are reported.

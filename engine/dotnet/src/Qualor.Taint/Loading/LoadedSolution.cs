@@ -15,8 +15,10 @@ public sealed record ProjectCompilation(CompilationInput Input, CSharpCompilatio
     /// The recorded views no build compiled that the engine compiled into this compilation (Task 30, R-11: RazorViews).
     public IReadOnlyList<string> EngineViews { get; init; } = Array.Empty<string>();
 
-    /// One line per view the engine could not compile cleanly (`<path>: <first error>`): not read or not generated, or with
-    /// Razor or compiler errors in its code (which is analysed as far as it goes). Never in Errors.
+    /// One line per view the engine could not compile cleanly (`<path>: <first error>`): not read or not generated, outside
+    /// the project directory and not compiled by the build, or with Razor or compiler errors in its code (which is analysed
+    /// as far as it goes); and one line for the project (`<project>: tag helper discovery failed: …`) when its tag helpers
+    /// could not be discovered (its views then render them as markup). Never in Errors.
     public IReadOnlyList<string> EngineViewErrors { get; init; } = Array.Empty<string>();
 }
 
