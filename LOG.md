@@ -24,6 +24,15 @@ Entry format:
   branches left behind.
 ```
 
+## 2026-10-14: Roslyn engine measured (Phase 6B-C# R, Task 18)
+
+- **Request:** the Roslyn engine plan's Task 18 (spec §6): measure the engine on the recall sets and the noise projects and decide acceptance.
+- **Done:** fix b19b4c6 (Razor tag-helper attribute buffer is no raw output; `outside:`/`until:` sink condition); MEASUREMENTS.md 2026-10-13 entry, section "C# engine"; `models/README.md` "Known limits".
+- **Blocked:** acceptance: not met. Recall 18/26 (target 22), firm core 1/7 flows, false positives 512 of 559 on the noise projects (target 3); budgets kept (nopCommerce 56.5 s / 2.59 GiB, eShop 7.1 s). The field-based heap (383 of the false positives) needs the maintainer's design decision (request-scoped heap, persisted types cutting the heap, or no heap for view reads).
+- **Backlog:** none added here; the follow-ups (member guards, helper guards, ViewData/Items, `View(model)`, LINQ lambdas, propagators for `IFileInfo`, framework-callback sources, test-code for taint models) are listed in the controller's `engine-measurement.md`.
+- **Measurement:** recall aspgoat 9/12, vulnerablelightapp 6/8, dvcsharp-api 2/3, murayama-vulnerable-api 1/1, vulnerablecoreapp 0/2; noise eshop 4 (0 TP), eshop-on-web 0, nopcommerce 187 (19 TP), jellyfin 227 (19 TP), orchardcore 141 (9 TP).
+- **Notes:** measurement files in `.tmp/engine-measure/` (git-ignored); Docker volumes `qr-measure-*` and the local image `qr-measure/scanner-dotnet:dev-roslyn-time` kept for re-runs. In the product path, OrchardCore's report lost the engine's findings because the OpenGrep run of the `qualor` analyzer timed out (900 s) and the engine's SARIF is merged in that run (qualor-cc follow-up).
+
 ## 2026-10-13: rules run (`/write-rules 11 csharp`)
 
 - **Request:** Phase 6B-C# (the maintainer's spec of 2026-10-13): the 11 C# rows after the seed csharp.sql-injection. The auto-mode classifier refuses merges into `main`, so this run integrates on branch `csharp` (worktree `E:/Personal/qualor/worktrees/qualor-rules-csharp`) in place of `main`; the maintainer fast-forwards `main` to it.

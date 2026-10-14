@@ -332,3 +332,28 @@ unmodelled-external: string-or-collection-return
 - `unmodelled-external`: what an external member no propagator names does.
   `string-or-collection-return`: its arguments and receiver reach its result when the result is
   string-like or a collection; `none`: nothing passes.
+
+## Known limits (measured 2026-10-14, MEASUREMENTS.md "C# engine")
+
+What the engine does by design or does not model, as measured on the reference projects; each one is a source of
+false positives (FP) or misses (FN) there.
+
+- Heap (spec §5): a field or auto-property is tainted for the whole run, whatever the request that wrote it. Data an
+  administrator or a customer saved in one request (settings, configuration, entities, cache keys, a view model bound
+  in another action) is request data for every reader in every other request (FP, the largest share), and stored XSS is
+  found the same way (FN otherwise).
+- Guards clean a local or a parameter only: `Url.IsLocalUrl(model.ReturnUrl)` (or a not-null check of the IdentityServer
+  context looked up for it) leaves `model.ReturnUrl` tainted (FP). A guard inside a project's own helper
+  (`CheckIsLocalUrl(x)` that calls `IsLocalUrl`) is no guard (FP).
+- Validation in another method or by an attribute is not seen: a filename sanitizer, a child-path or containment check,
+  `[RegularExpression]` on a bound parameter, a hash used as a file name, an allow-list lookup (FP).
+- The fixed-origin prefix (ssrf, open-redirect) is read only where the URL is built in place, not through a helper that
+  builds it; a redirect to the request's own URL (scheme, host, path) is reported (FP).
+- `Enumerable.*` passes its source sequence to the result as well as a lambda's return: an encoder inside
+  `Select(x => ...)` does not clean the result (FP).
+- Not followed (FN): `ViewData`, `ViewBag`, `TempData` and `HttpContext.Items` entries; a model passed to `View()` as the
+  view's `Model` (only its properties, through the heap); callbacks a framework or library makes into the project
+  (static-file providers, tus stores); externals whose result is neither string-like nor a collection and that no
+  propagator names (`IFileProvider.GetFileInfo` → `IFileInfo.PhysicalPath`, Fluid values); a Minimal API body object
+  bound without `[FromBody]`; views that the build does not compile (ASP.NET Core 2.x runtime compilation).
+- The taint models have no `test-code:` (as the OpenGrep taint rules): findings in test projects are reported.
