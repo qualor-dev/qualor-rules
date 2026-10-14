@@ -105,6 +105,43 @@ internal sealed class SourceFinder
     private bool IsHandler(IMethodSymbol method) =>
         _handlers.Count > 0 && method.OriginalDefinition.DeclaringSyntaxReferences.Any(r => _handlers.Contains((r.SyntaxTree, r.Span)));
 
+    /// Whether this syntax (a lambda, a local function, a method declaration) is a handler given to a map method.
+    public bool IsHandlerSyntax(SyntaxNode node) => _handlers.Count > 0 && _handlers.Contains((node.SyntaxTree, node.Span));
+
+    // ---- Entry points (spec §5 "Heap", decision R-6) ----
+
+    /// Whether a method is a request entry point: a controller action (1), a Razor Pages handler (2), a Minimal API
+    /// handler given as a method group (4), or a method with a parameter bound from the request by an attribute (5) —
+    /// the methods whose parameters this model makes request data, whether or not they have parameters.
+    public bool IsEntry(IMethodSymbol method)
+    {
+        method = method.OriginalDefinition;
+        return IsAction(method) || IsPageHandler(method) || IsHandler(method) || method.Parameters.Any(IsSourceParameter);
+    }
+
+    /// A controller action (sources.yml (1)): a public (by the model) instance method of a controller, not marked as no
+    /// action.
+    public bool IsAction(IMethodSymbol method)
+    {
+        if (method.MethodKind != MethodKind.Ordinary || method.IsStatic || method.ContainingType is not { } type) return false;
+        return (!_model.Controllers.PublicMethodsOnly || method.DeclaredAccessibility == Accessibility.Public) && IsController(type)
+            && !NotAction(method);
+    }
+
+    /// A Razor Pages handler (sources.yml (2)): a public (by the model) instance method of a page model whose name starts
+    /// with a handler prefix.
+    public bool IsPageHandler(IMethodSymbol method)
+    {
+        if (method.MethodKind != MethodKind.Ordinary || method.IsStatic || method.ContainingType is not { } type) return false;
+        var p = _model.RazorPages;
+        return (!p.PublicMethodsOnly || method.DeclaredAccessibility == Accessibility.Public)
+            && p.HandlerPrefixes.Any(h => method.Name.StartsWith(h, StringComparison.Ordinal))
+            && IsPageModel(type);
+    }
+
+    /// A class derived from a Razor Pages base (sources.yml (2) `bases`).
+    public bool IsPageModel(INamedTypeSymbol type) => BaseTypes(type).Any(b => _pageBases.Contains(SymbolMatch.MetadataName(b)));
+
     // ---- Parameters ----
 
     /// Whether a parameter is bound from the request: a binding attribute (5), a Minimal API handler's parameter of a
@@ -127,17 +164,7 @@ internal sealed class SourceFinder
         if (method.MethodKind != MethodKind.Ordinary || method.IsStatic || method.ContainingType == null) return false;
         if (IsNeverSourceType(parameter.Type)) return false;
 
-        var type = method.ContainingType;
-        var c = _model.Controllers;
-        if ((!c.PublicMethodsOnly || method.DeclaredAccessibility == Accessibility.Public) && IsController(type)
-            && !NotAction(method))
-            return true;
-        var p = _model.RazorPages;
-        if ((!p.PublicMethodsOnly || method.DeclaredAccessibility == Accessibility.Public)
-            && p.HandlerPrefixes.Any(h => method.Name.StartsWith(h, StringComparison.Ordinal))
-            && BaseTypes(type).Any(b => _pageBases.Contains(SymbolMatch.MetadataName(b))))
-            return true;
-        return false;
+        return IsAction(method) || IsPageHandler(method);
     }
 
     /// A method with a not-action attribute, on itself or on a method it overrides (`[NonAction]` is inherited:

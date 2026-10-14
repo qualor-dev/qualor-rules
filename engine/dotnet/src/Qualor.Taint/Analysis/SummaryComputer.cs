@@ -41,6 +41,7 @@ internal sealed class SummaryComputer
     private readonly CallGraph _graph;
     private readonly Dispatch _dispatch;
     private readonly Heap _heap;
+    private readonly EntryPoints _entries;
     private readonly Budget _budget;
     private readonly Action<IMethodSymbol?>? _beforeBody;
     private readonly Action? _beforeSeed;
@@ -50,9 +51,10 @@ internal sealed class SummaryComputer
     private readonly LinkedList<Unit> _cached = new();
     private readonly Dictionary<int, SummaryBuilder> _builders = new();
 
-    public SummaryComputer(AnalysisContext ctx, CallGraph graph, Dispatch dispatch, Budget budget, Action<IMethodSymbol?>? beforeBody,
-        Action? beforeSeed = null)
+    public SummaryComputer(AnalysisContext ctx, CallGraph graph, Dispatch dispatch, EntryPoints entries, Budget budget,
+        Action<IMethodSymbol?>? beforeBody, Action? beforeSeed = null)
     {
+        _entries = entries;
         _beforeSeed = beforeSeed;
         _ctx = ctx;
         _graph = graph;
@@ -247,7 +249,7 @@ internal sealed class SummaryComputer
             foreach (var (member, symbolic) in summary.Heap.Values)
             {
                 var written = BodySummary.Through(symbolic, body.Id, key.Slot, value);
-                if (written.Request) _heap.Write(member, written);
+                if (written.Request) _heap.Write(member, written, _entries.Of(body));
             }
             foreach (var c in summary.Calls.Values)
                 if (c.Slot == key.Slot) Seed(c.Callee, c.CalleeSlot, value.Extend(c.Path).CleanedFor(c.CleanFor));
@@ -356,7 +358,7 @@ internal sealed class SummaryComputer
                     if (_ctx.Sources.IsSourceParameter(p))
                     {
                         var location = p.Locations.FirstOrDefault(l => l.IsInSource) ?? Location.None;
-                        value = TaintValue.Source(location, $"request data enters here: parameter '{p.Name}' of {_ctx.Name(method)}");
+                        value = TaintValue.Source(location, $"request data enters here: parameter '{p.Name}' of {_ctx.Name(method)}").ScopedTo(run.Reach);
                     }
                     if (body.IsLambda) value = value.Join(seed);
                     else if (p.RefKind != RefKind.Out) value = value.Join(TaintValue.Param(body.Id, p.Ordinal));
@@ -472,7 +474,11 @@ internal sealed class SummaryComputer
             _body = body;
             var root = unit.RootBody;
             This = root.Symbol is { IsStatic: false } ? TaintValue.Param(root.Id, -1) : TaintValue.Clean;
+            Reach = computer._entries.Of(body);
         }
+
+        /// The entry points that reach this body (EntryPoints.Of).
+        public Reach Reach { get; }
 
         /// The value of `this`: the label of the unit root's receiver (a lambda's `this` is its enclosing member's).
         public TaintValue This { get; }
@@ -564,7 +570,7 @@ internal sealed class SummaryComputer
 
         public bool IsHeapMember(ISymbol member) => _computer._heap.IsMember(member);
 
-        public TaintValue HeapRead(ISymbol member) => _computer._heap.Read(member, _unit);
+        public TaintValue HeapRead(ISymbol member) => _computer._heap.Read(member, _unit, Reach);
 
         /// A write to a heap symbol: its request data to the heap, its labels to their owners' summaries.
         public void HeapWrite(ISymbol member, TaintValue value)
@@ -573,7 +579,7 @@ internal sealed class SummaryComputer
             var heap = _computer._heap;
             if (value.Request)
             {
-                heap.Write(member, value);
+                heap.Write(member, value, Reach);
                 _computer.Builder(_body.Id).RequestHeap.TryAdd(heap.Key(member), member);
             }
             if (value.Labels.Length == 0) return;

@@ -94,7 +94,7 @@ internal sealed class AnalysisContext
 ///   captured variable (strong for a local, a parameter, a static field or a field of `this`).
 /// - `this` is the label of the receiver; a field or auto-property read is its instance's value (element-insensitive
 ///   objects: `this` for an own one), its state in this body (strong updates for own and static ones), and the heap's
-///   request data for it (Heap: field-based, across methods and projects). A write of a source field or
+///   request data for it (Heap: field-based, across methods and projects, scoped to the request entry point). A write of a source field or
 ///   auto-property taints its symbol only (its state here, the heap), never the object holding it; other members
 ///   (tuple elements, external structs) are written into their instance.
 /// - Values of a scalar type (sources.yml `scalars`, enums, void) are always clean.
@@ -881,9 +881,9 @@ internal sealed partial class MethodAnalyzer
         var property = operation.Property;
         var result = TaintValue.Clean;
         if (_ctx.Sources.SourceMember(property, Access.Get) != null)
-            result = TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(property)}");
+            result = TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(property)}").ScopedTo(_body.Reach);
         if (_ctx.Sources.IsBoundProperty(property))
-            result = result.Join(TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: bound property {_ctx.Name(property)}"));
+            result = result.Join(TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: bound property {_ctx.Name(property)}").ScopedTo(_body.Reach));
 
         var receiver = Value(operation.Instance, state);
         var isVirtual = Dispatch.IsVirtualAccess(property, operation.Instance);
@@ -1073,7 +1073,7 @@ internal sealed partial class MethodAnalyzer
 
         var result = TaintValue.Clean;
         if (_ctx.Sources.SourceMember(method, Access.Call) != null)
-            result = TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(method)}");
+            result = TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(method)}").ScopedTo(_body.Reach);
 
         // Out arguments are overwritten by the call.
         foreach (var i in inputs) if (i.RefKind == RefKind.Out) Assign(i.Operation, TaintValue.Clean, state, i.Operation);
@@ -1223,16 +1223,16 @@ internal sealed partial class MethodAnalyzer
         var s = callee.Summary;
         if (s.NoLocalEffects) return TaintValue.Clean;
         location ??= site.Syntax.GetLocation();
-        var result = BodySummary.Substitute(s.Return, callee.Id, argument, location, name, _body.Keeps);
+        var result = BodySummary.Substitute(s.Return, callee.Id, argument, location, name, _body.Keeps, _body.Reach);
         if (s.ToThis.Any)
         {
-            var written = BodySummary.Substitute(s.ToThis, callee.Id, argument, location, name, _body.Keeps);
+            var written = BodySummary.Substitute(s.ToThis, callee.Id, argument, location, name, _body.Keeps, _body.Reach);
             if (constructor) result = result.Join(written);
             else if (receiverOperation != null) WriteReceiver(receiverOperation, written, state);
         }
         foreach (var (ordinal, symbolic) in s.Refs)
         {
-            var v = BodySummary.Substitute(symbolic, callee.Id, argument, location, name, _body.Keeps);
+            var v = BodySummary.Substitute(symbolic, callee.Id, argument, location, name, _body.Keeps, _body.Reach);
             foreach (var i in inputs)
                 if (i.Ordinal == ordinal && i.RefKind is RefKind.Ref or RefKind.Out) Assign(i.Operation, v, state, i.Operation);
         }

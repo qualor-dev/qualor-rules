@@ -70,8 +70,7 @@ public sealed class HeapPrecisionTests
         {
             private readonly ReportService _reports;
             public ReportsController(ReportService reports) => _reports = reports;
-            public IActionResult A(string tenant) { _reports.SetTenant(tenant); return Ok(); }
-            public IActionResult B() { _reports.Count(); _reports.CountConn(); _reports.ForTenant(); return Ok(); }
+            public IActionResult A(string tenant) { _reports.SetTenant(tenant); _reports.Count(); _reports.CountConn(); _reports.ForTenant(); return Ok(); }
         }
         """);
 
@@ -97,7 +96,7 @@ public sealed class HeapPrecisionTests
         {
             private readonly OrderService _svc;
             public OrdersController(OrderService svc) => _svc = svc;
-            public IActionResult Post([FromBody] Order o) { _svc.Add(o); return Ok(); }
+            public IActionResult Post([FromBody] Order o) { _svc.Add(o); _svc.Purge(); _svc.Last(); return Ok(); }
             public IActionResult Del() { _svc.Purge(); return Ok(); }
         }
         """);

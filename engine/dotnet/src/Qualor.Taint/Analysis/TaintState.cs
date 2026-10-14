@@ -101,7 +101,16 @@ internal sealed class Label
 /// Join is the union of the request flags and the intersection of CleanFor (over the request values only: a clean
 /// operand does not make a cleaned one dirty); Sources are united; labels are united, CleanFor intersected per label.
 /// Paths do not take part in the order (they are witnesses, the shorter one is kept), so the fixed point ends when
-/// Request, CleanFor, Sources and labels stop changing.
+/// Request, CleanFor, Scope, Sources and labels stop changing.
+///
+/// Scope (Task 20, the request-scoped heap): the entry points the request data is valid for — those that reach the body
+/// that read it from the request (ScopedTo), or, for data read from the heap, the writers' entry points the reading body
+/// shares (Heap.Read); null: every one. A summary's request part reaches a caller only for the entry points that reach
+/// the caller too (BodySummary.Substitute); a heap write records it under those entry points only. Join unites scopes
+/// (null, unscoped, is the top). FromHeap: every part of the data was read from the heap; such data never reaches a
+/// caller no entry point reaches (the spec: that code reads the heap clean), while data a helper read from the request
+/// does (a caller the call graph cannot connect, a typed HTTP client built by DI, still runs in the request that built
+/// it). FromHeap joins by "and".
 internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFor, Trail Path)
 {
     public const int MaxSources = 16;
@@ -111,6 +120,27 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     public ImmutableHashSet<Location> Sources { get; init; } = ImmutableHashSet<Location>.Empty;
 
     public ImmutableArray<Label> Labels { get; init; } = ImmutableArray<Label>.Empty;
+
+    /// The entry points the request data is valid for (null: every one); see the type's documentation.
+    public Reach? Scope { get; init; }
+
+    /// Whether every part of the request data was read from the heap (see the type's documentation).
+    public bool FromHeap { get; init; }
+
+    /// Request data read from the request in a body that `reach` reaches: valid in those requests only (an empty reach,
+    /// which EntryPoints never gives a body that reads the request, leaves it unscoped).
+    public TaintValue ScopedTo(Reach reach) => !Request || reach.IsEmpty ? this : this with { Scope = reach, FromHeap = false };
+
+    /// The request data restricted to the entry points of `reach`: none when it shares no entry point with the scope
+    /// and was read from the heap; unscoped data, and data read from the request that shares none (a caller the call
+    /// graph does not connect), are kept as they are.
+    public TaintValue Within(Reach reach)
+    {
+        if (!Request || Scope == null) return this;
+        var scope = Scope.Intersect(reach);
+        if (scope.IsEmpty) return FromHeap ? LabelPart : this;
+        return ReferenceEquals(scope, Scope) ? this : this with { Scope = scope };
+    }
 
     /// Request data or a parameter label: anything a later step must carry.
     public bool Any => Request || Labels.Length > 0;
@@ -143,9 +173,13 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         ImmutableHashSet<Location> sources;
         Trail path;
         var requestChanged = false;
+        var scope = Scope;
+        var fromHeap = FromHeap;
         if (Request && other.Request)
         {
             request = true;
+            scope = Scope == null || other.Scope == null ? null : Scope.Union(other.Scope);
+            fromHeap = FromHeap && other.FromHeap;
             cleanFor = CleanFor.Count == 0 || other.CleanFor.Count == 0 ? ImmutableHashSet<string>.Empty : CleanFor.Intersect(other.CleanFor);
             sources = Sources;
             foreach (var s in other.Sources)
@@ -154,7 +188,8 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                 sources = sources.Add(s);
             }
             path = other.Path.Count < Path.Count ? other.Path : Path;
-            requestChanged = cleanFor.Count != CleanFor.Count || !ReferenceEquals(sources, Sources) || !ReferenceEquals(path, Path);
+            requestChanged = cleanFor.Count != CleanFor.Count || !ReferenceEquals(sources, Sources) || !ReferenceEquals(path, Path)
+                || !ReferenceEquals(scope, Scope) || fromHeap != FromHeap;
             if (cleanFor.Count == CleanFor.Count) cleanFor = CleanFor;
         }
         else if (other.Request)
@@ -163,6 +198,8 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             cleanFor = other.CleanFor;
             sources = other.Sources;
             path = other.Path;
+            scope = other.Scope;
+            fromHeap = other.FromHeap;
             requestChanged = true;
         }
         else
@@ -174,7 +211,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         }
         var labels = MergeLabels(Labels, other.Labels, out var labelsChanged);
         if (!requestChanged && !labelsChanged) return this;
-        return new TaintValue(request, cleanFor, path) { Sources = sources, Labels = labels };
+        return new TaintValue(request, cleanFor, path) { Sources = sources, Labels = labels, Scope = scope, FromHeap = fromHeap };
     }
 
     /// The union of two sorted label arrays (one label per owner and slot: CleanFor intersected, the shorter path);
@@ -225,13 +262,13 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     /// Equal in the lattice (paths aside).
     public bool SameTaint(TaintValue other) =>
         ReferenceEquals(this, other)
-        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Sources.SetEquals(other.Sources)))
+        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Sources.SetEquals(other.Sources) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap))
             && SameLabels(other));
 
     /// Equal in the lattice, paths and source locations aside: what decides whether a summary or the heap changed.
     public bool SameFlow(TaintValue other) =>
         ReferenceEquals(this, other)
-        || (Request == other.Request && (!Request || CleanFor.SetEquals(other.CleanFor)) && SameLabels(other));
+        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap)) && SameLabels(other));
 
     private bool SameLabels(TaintValue other)
     {

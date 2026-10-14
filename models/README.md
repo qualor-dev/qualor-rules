@@ -338,10 +338,17 @@ unmodelled-external: string-or-collection-return
 What the engine does by design or does not model, as measured on the reference projects; each one is a source of
 false positives (FP) or misses (FN) there.
 
-- Heap (spec §5): a field or auto-property is tainted for the whole run, whatever the request that wrote it. Data an
-  administrator or a customer saved in one request (settings, configuration, entities, cache keys, a view model bound
-  in another action) is request data for every reader in every other request (FP, the largest share), and stored XSS is
-  found the same way (FN otherwise).
+- Heap (spec §5 as amended, decision R-6; since Task 20): request-scoped. A field or auto-property written with request
+  data is request data only where code reachable from the same entry point reads it: controller actions, Razor Pages
+  handlers, Minimal API handlers, and request code the framework invokes (a view or view component no action names, a
+  filter, middleware, tag helper or hub, a body that reads the request itself); an action reaches the view it renders
+  (`View()`, `PartialView()`, `Page()`, resolved as MVC's conventional lookup does; a name chosen at run time reaches
+  every view of the project) and a view its partials and view components. Data saved in one request and read in another
+  (settings, entities, stored XSS) is not followed (FN, as the OpenGrep rules). Within one request the heap stays
+  field-based and the call graph context-insensitive with class-hierarchy dispatch: request data written to one object's
+  member is request data in that member of every object of the type in the requests that reach the write (cache keys
+  built from request values make cached lookups request data), and an interface every action reaches joins most code
+  into one request (FP).
 - Guards clean a local or a parameter only: `Url.IsLocalUrl(model.ReturnUrl)` (or a not-null check of the IdentityServer
   context looked up for it) leaves `model.ReturnUrl` tainted (FP). A guard inside a project's own helper
   (`CheckIsLocalUrl(x)` that calls `IsLocalUrl`) is no guard (FP).

@@ -126,11 +126,14 @@ internal sealed class BodySummary
     /// The value a call gets for a symbolic value of the callee `owner`: its request part (data the callee reads itself),
     /// and for each of the callee's labels the argument at that slot, through the callee's steps and cleaned as the
     /// callee cleans it. A label of another body (a local function's capture of its enclosing body) is kept when
-    /// `keep` accepts its owner.
-    public static TaintValue Substitute(TaintValue symbolic, int owner, Func<int, TaintValue> argument, Location site, string name, Func<int, bool> keep)
+    /// `keep` accepts its owner. Request data the callee read from the heap reaches the call only for the entry points
+    /// that also reach the caller (`caller`; TaintValue.Scope).
+    public static TaintValue Substitute(TaintValue symbolic, int owner, Func<int, TaintValue> argument, Location site, string name, Func<int, bool> keep,
+        Reach caller)
     {
         if (!symbolic.Any) return TaintValue.Clean;
-        var result = symbolic.Request ? symbolic.RequestPart.Step(site, $"returned by {name}") : TaintValue.Clean;
+        var own = symbolic.RequestPart.Within(caller);
+        var result = own.Request ? own.Step(site, $"returned by {name}") : TaintValue.Clean;
         foreach (var label in symbolic.Labels)
         {
             if (label.Owner == owner)

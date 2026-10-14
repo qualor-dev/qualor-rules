@@ -168,6 +168,9 @@ public static class SarifWriter
         w.WriteNumber("unmodelledExternalCalls", stats.UnmodelledExternalCalls);
         w.WriteNumber("elapsedSeconds", Math.Round(stats.Elapsed.TotalSeconds, 3));
         w.WriteNumber("peakMemoryBytes", stats.PeakMemoryBytes);
+        w.WriteNumber("entryPoints", stats.EntryPoints);
+        w.WriteNumber("viewEdges", stats.ViewEdges);
+        w.WriteNumber("unresolvedViews", stats.UnresolvedViews);
         w.WriteEndObject();
         w.WriteEndObject();
 

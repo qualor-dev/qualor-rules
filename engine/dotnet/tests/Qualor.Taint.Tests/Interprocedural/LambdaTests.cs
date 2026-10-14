@@ -127,7 +127,7 @@ public sealed class LambdaTests
         """);
 
     [Fact]
-    public void A_collection_field_written_by_one_action_is_request_data_in_another() => Expect("""
+    public void A_collection_field_written_in_a_request_is_request_data_where_that_request_reads_it() => Expect("""
         public class ItemsController : ControllerBase
         {
             private static readonly List<string> Recent = new();
@@ -135,12 +135,12 @@ public sealed class LambdaTests
             public IActionResult Add(string q)
             {
                 Recent.Add(q);
+                Replay();
                 return Ok();
             }
-            public IActionResult Replay()
+            private void Replay()
             {
                 foreach (var r in Recent) _c.Execute("DELETE FROM t WHERE n = '" + r + "'"); /*sink*/
-                return Ok();
             }
         }
         """);

@@ -27,6 +27,10 @@ public sealed class MultiProjectTests : TempDirs
             int Find(string text);
             int Count(string text);
         }
+        public interface IReportJob
+        {
+            int Run(Order order);
+        }
         public class OrderDto
         {
             public string Name { get; set; } = "";
@@ -51,7 +55,7 @@ public sealed class MultiProjectTests : TempDirs
             }
             public int Count(string text) => new SqlCommand("SELECT COUNT(*) FROM orders", _conn).ExecuteNonQuery();
         }
-        public class ReportJob
+        public class ReportJob : IReportJob
         {
             private readonly SqlConnection _conn = new();
             public int Run(Order order) => new SqlCommand("SELECT * FROM o WHERE c = '" + order.Customer + "'", _conn).ExecuteNonQuery(); /*sink*/
@@ -65,7 +69,8 @@ public sealed class MultiProjectTests : TempDirs
         public class OrdersController : ControllerBase
         {
             private readonly IOrderService _orders;
-            public OrdersController(IOrderService orders) => _orders = orders;
+            private readonly IReportJob _job;
+            public OrdersController(IOrderService orders, IReportJob job) { _orders = orders; _job = job; }
             [HttpGet("find")]
             public IActionResult Find(string q)
             {
@@ -78,6 +83,7 @@ public sealed class MultiProjectTests : TempDirs
             {
                 var order = new Order();
                 order.Customer = dto.Name;
+                _job.Run(order);
                 return Ok(order);
             }
         }

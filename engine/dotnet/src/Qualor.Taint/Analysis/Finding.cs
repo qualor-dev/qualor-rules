@@ -47,4 +47,15 @@ public sealed record AnalysisStats(int Projects, int Methods, int Sccs, int Unmo
     public int FailedMethods { get; init; }
 
     public IReadOnlyList<string> FirstErrors { get; init; } = Array.Empty<string>();
+
+    /// The request entry points the heap is scoped to (spec §5 "Heap", decision R-6; EntryPoints): actions, Razor Pages
+    /// handlers, Minimal API handlers, and bodies that read the request themselves but no entry point reaches.
+    public int EntryPoints { get; init; }
+
+    /// Views rendered by name (`View()`, `PartialView`, `Page()`, partials, view components) resolved to their
+    /// generated classes; UnresolvedViews: those whose name could not be resolved, which reach every view of the
+    /// caller's project instead.
+    public int ViewEdges { get; init; }
+
+    public int UnresolvedViews { get; init; }
 }

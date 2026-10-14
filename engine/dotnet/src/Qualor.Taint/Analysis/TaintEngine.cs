@@ -8,8 +8,9 @@ namespace Qualor.Taint;
 /// - Task 7: intraprocedural, over the control-flow graph;
 /// - Task 8: interprocedural. The call graph over every compilation (CallGraph: units, Dispatch by class hierarchy)
 ///   gives the bottom-up order of its strongly connected components; SummaryComputer computes each body's summary in
-///   its parameters' labels and applies it at the call sites, together with a field-based heap (Heap), to their joint
-///   fixed point; a lambda or local function is analysed with its enclosing body (its captures).
+///   its parameters' labels and applies it at the call sites, together with a field-based heap scoped to the request
+///   entry point (Heap, EntryPoints: Task 20, decision R-6), to their joint fixed point; a lambda or local function is
+///   analysed with its enclosing body (its captures).
 /// Then the misuse rules' checks (MisuseChecks, Task 12) run over every tree. Findings are deduplicated by rule, file and
 /// line (a file compiled in several projects or target frameworks reports once, with the first input's path). A body
 /// whose analysis throws is skipped and counted (AnalysisStats.FailedMethods); above 1 % of the bodies the run is
@@ -51,6 +52,7 @@ public sealed class TaintEngine
         var misuse = new MisuseChecks(_models.Rules);
         SummaryComputer? computer = null;
         CallGraph? graph = null;
+        EntryPoints? entries = null;
         if (budget.Check())
         {
             try
@@ -58,9 +60,10 @@ public sealed class TaintEngine
                 foreach (var project in solution.Projects) ctx.Sources.RegisterHandlers(project.Compilation, ct);
                 var started = budget.Elapsed;
                 var dispatch = new Dispatch(solution.Projects.Select(p => (Compilation)p.Compilation), ct);
-                graph = CallGraph.Build(solution, dispatch, budget.Check, ct);
+                entries = new EntryPoints(ctx.Sources);
+                graph = CallGraph.Build(solution, dispatch, budget.Check, ct, entries);
                 _index = budget.Elapsed - started;
-                computer = new SummaryComputer(ctx, graph, dispatch, budget, BeforeBody, BeforeSeed);
+                computer = new SummaryComputer(ctx, graph, dispatch, entries, budget, BeforeBody, BeforeSeed);
                 if (budget.Check()) computer.Run(ct);
                 if (budget.Check()) misuse.Run(solution, budget, ctx, ct);
             }
@@ -79,6 +82,9 @@ public sealed class TaintEngine
         {
             FailedMethods = (computer?.Failed ?? 0) + misuse.Failed,
             FirstErrors = (computer?.Errors ?? Array.Empty<string>()).Concat(misuse.Errors).Take(AnalysisStats.MaxErrors).ToList(),
+            EntryPoints = entries?.Count ?? 0,
+            ViewEdges = entries?.ViewEdges ?? 0,
+            UnresolvedViews = entries?.UnresolvedViews ?? 0,
         };
         return new AnalysisResult(findings, reason == null, reason, stats);
     }

@@ -110,6 +110,9 @@ internal sealed class CallGraph
     /// The body that runs for a member declared in source with a body (a method, accessor, constructor), or null.
     public Body? BodyOf(IMethodSymbol method) => _bodies.TryGetValue(_dispatch.Key(method), out var body) ? body : null;
 
+    /// The unit of the body with this key (Dispatch.Key of a member), or null.
+    public Unit? UnitOf(object key) => _bodies.TryGetValue(key, out var body) ? body.Unit : null;
+
     /// The body of a lambda or local function of `unit` (created when first met).
     public Body Nested(Unit unit, IMethodSymbol symbol)
     {
@@ -127,8 +130,10 @@ internal sealed class CallGraph
     }
 
     /// Indexes every root of every project (one binding of each), then orders the units. A root that fails to bind
-    /// still gets a unit (its analysis fails and is counted, ruling R-E10). False from `keepGoing` stops early.
-    public static CallGraph Build(LoadedSolution solution, Dispatch dispatch, Func<bool> keepGoing, CancellationToken ct)
+    /// still gets a unit (its analysis fails and is counted, ruling R-E10). False from `keepGoing` stops early. `entries`
+    /// scans each unit (EntryPoints.Scan), adds the view edges before the components are computed (EntryPoints.Connect)
+    /// and computes the reach of each component after (EntryPoints.ComputeReach).
+    public static CallGraph Build(LoadedSolution solution, Dispatch dispatch, Func<bool> keepGoing, CancellationToken ct, EntryPoints? entries = null)
     {
         var graph = new CallGraph(dispatch);
         foreach (var project in solution.Projects)
@@ -139,7 +144,7 @@ internal sealed class CallGraph
                 var model = compilation.GetSemanticModel(tree);
                 foreach (var root in Roots(tree.GetRoot(ct)))
                 {
-                    if (!keepGoing()) return graph.Order();
+                    if (!keepGoing()) return graph.Order(entries);
                     ct.ThrowIfCancellationRequested();
                     IOperation? operation = null;
                     IMethodSymbol? symbol = null;
@@ -164,10 +169,18 @@ internal sealed class CallGraph
                     {
                         // The edges are an ordering aid: SummaryComputer records the calls a body really makes.
                     }
+                    try
+                    {
+                        entries?.Scan(unit, operation, dispatch);
+                    }
+                    catch (Exception e) when (e is not OperationCanceledException)
+                    {
+                        // A unit whose scan fails is no entry point and renders no view (its reach comes from its callers).
+                    }
                 }
             }
         }
-        return graph.Order();
+        return graph.Order(entries);
     }
 
     private Unit AddUnit(Compilation compilation, SyntaxNode root, IMethodSymbol? symbol)
@@ -184,7 +197,7 @@ internal sealed class CallGraph
     }
 
     /// The methods an operation tree may call (invocations, object creations, property accessors, method groups).
-    private static IEnumerable<IMethodSymbol> Callees(IOperation root, Dispatch dispatch)
+    internal static IEnumerable<IMethodSymbol> Callees(IOperation root, Dispatch dispatch)
     {
         foreach (var operation in root.DescendantsAndSelf())
         {
@@ -207,12 +220,38 @@ internal sealed class CallGraph
                 case IMethodReferenceOperation reference:
                     foreach (var t in dispatch.Targets(reference.Method, reference.IsVirtual, reference.Instance?.Type)) yield return t;
                     break;
+                // An object placed into a string built in place runs its ToString() (MethodAnalyzer.ImplicitToString).
+                case IInterpolationOperation interpolation:
+                    foreach (var t in ImplicitToString(interpolation.Expression, dispatch)) yield return t;
+                    break;
+                case IInterpolatedStringAppendOperation { AppendCall: IInvocationOperation { Arguments.Length: > 0 } call }:
+                    foreach (var t in ImplicitToString(call.Arguments[0].Value, dispatch)) yield return t;
+                    break;
+                case IBinaryOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String } concatenation:
+                    foreach (var t in ImplicitToString(concatenation.LeftOperand, dispatch)) yield return t;
+                    foreach (var t in ImplicitToString(concatenation.RightOperand, dispatch)) yield return t;
+                    break;
             }
         }
     }
 
-    /// Resolves the callee keys to units and computes the strongly connected components (Tarjan, iterative).
-    private CallGraph Order()
+    /// The ToString() overrides declared in source that turning this expression's value into text may run.
+    private static IEnumerable<IMethodSymbol> ImplicitToString(IOperation expression, Dispatch dispatch)
+    {
+        while (expression is IConversionOperation { IsImplicit: true, Operand: { } inner } && !SymbolEqualityComparer.Default.Equals(inner.Type, expression.Type)) expression = inner;
+        var type = expression.Type;
+        if (type == null || type.SpecialType != SpecialType.None || type.TypeKind is TypeKind.Enum or TypeKind.Delegate or TypeKind.Dynamic or TypeKind.Array)
+            return Array.Empty<IMethodSymbol>();
+        IMethodSymbol? toString = null;
+        for (var t = type; t != null && toString == null; t = t.BaseType)
+            toString = t.GetMembers("ToString").OfType<IMethodSymbol>().FirstOrDefault(m => m.Parameters.Length == 0 && !m.IsStatic);
+        if (toString == null || toString.ContainingType.SpecialType != SpecialType.None) return Array.Empty<IMethodSymbol>();
+        return dispatch.Targets(toString, true, type);
+    }
+
+    /// Resolves the callee keys to units, adds the view edges (EntryPoints.Connect), computes the strongly connected
+    /// components (Tarjan, iterative), then the entry points' reach.
+    private CallGraph Order(EntryPoints? entries)
     {
         foreach (var unit in Units)
         {
@@ -221,7 +260,14 @@ internal sealed class CallGraph
                 if (_bodies.TryGetValue(key, out var body) && seen.Add(body.Unit)) unit.Callees.Add(body.Unit);
             unit.CalleeKeys.Clear();
         }
+        entries?.Connect();
+        Components();
+        entries?.ComputeReach(this);
+        return this;
+    }
 
+    private void Components()
+    {
         var n = Units.Count;
         var index = new int[n];
         var low = new int[n];
@@ -279,7 +325,6 @@ internal sealed class CallGraph
                 }
             }
         }
-        return this;
     }
 
     public static bool IsGraphRoot(IOperation? operation) => operation is IMethodBodyOperation or IConstructorBodyOperation

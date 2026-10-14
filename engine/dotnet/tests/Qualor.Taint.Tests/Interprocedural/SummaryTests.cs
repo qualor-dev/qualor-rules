@@ -100,7 +100,7 @@ public sealed class SummaryTests
         """);
 
     [Fact]
-    public void A_field_written_in_one_action_is_request_data_in_another_through_a_getter() => Expect("""
+    public void A_field_written_in_a_request_is_request_data_through_a_getter_that_request_runs() => Expect("""
         public class ItemsController : ControllerBase
         {
             private static string _last = "";
@@ -109,12 +109,12 @@ public sealed class SummaryTests
             public IActionResult Remember(string q)
             {
                 _last = q;
+                Replay();
                 return Ok();
             }
-            public IActionResult Replay()
+            private void Replay()
             {
                 _c.Execute("DELETE FROM t WHERE n = '" + Last + "'"); /*sink*/
-                return Ok();
             }
         }
         """);
