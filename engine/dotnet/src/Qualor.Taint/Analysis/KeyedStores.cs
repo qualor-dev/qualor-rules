@@ -142,7 +142,7 @@ internal static class KeyedStores
         return new KeyedLocation(store, text);
     }
 
-    private static string? NamedConstant(IOperation? key)
+    internal static string? NamedConstant(IOperation? key)
     {
         var (symbol, isStatic) = key switch
         {

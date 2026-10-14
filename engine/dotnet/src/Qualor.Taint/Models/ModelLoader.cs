@@ -88,12 +88,22 @@ public static class ModelLoader
         var list = new List<PropagatorModel>();
         foreach (var node in doc.Sequence(top.Required("propagators")))
         {
-            var (pattern, f) = doc.Member(node, new[] { "method", "property-get" }, "from", "to");
+            var (pattern, f) = doc.Member(node, new[] { "method", "property-get" }, "from", "to", "key");
             var from = f.Optional("from") is { } fromNode
                 ? doc.Positions(fromNode, "from", "this", "args")
                 : pattern.Kind switch { MemberKind.Constructor => new[] { "args" }, MemberKind.PropertyGet => new[] { "this" }, _ => new[] { "this", "args" } };
             var to = f.Optional("to") is { } toNode ? doc.Positions(toNode, "to", "return", "this", "out") : new[] { "return" };
-            list.Add(new PropagatorModel(pattern, from, to));
+            IReadOnlyList<int> keys = Array.Empty<int>();
+            if (f.Optional("key") is { } keyNode)
+            {
+                var ordinals = doc.Sequence(keyNode).Select(n => doc.Ordinal(n, "key")).ToList();
+                if (ordinals.Count == 0 || ordinals.Distinct().Count() != ordinals.Count) throw doc.Error(keyNode, "key must be distinct parameter ordinals, at least one");
+                if (from.Contains("args")) throw doc.Error(keyNode, "key needs from without args (args would pass the key whatever the value's type)");
+                var overlap = ordinals.FirstOrDefault(o => from.Contains(o.ToString(CultureInfo.InvariantCulture)), -1);
+                if (overlap >= 0) throw doc.Error(keyNode, $"key: {overlap} is also in from");
+                keys = ordinals;
+            }
+            list.Add(new PropagatorModel(pattern, from, to) { Keys = keys });
         }
         var policyNode = top.Required("unmodelled-external");
         var policy = doc.String(policyNode);

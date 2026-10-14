@@ -288,6 +288,41 @@ internal sealed class SourceFinder
         return type.AllInterfaces.Any(i => Enumerables.Contains(SymbolMatch.MetadataName(i)));
     }
 
+    private readonly Dictionary<ITypeSymbol, bool> _injectionCache = new(SymbolEqualityComparer.Default);
+
+    /// Whether a value of this type can carry an injection by itself (ruling R-E18): a string-like type, a scalar of the
+    /// model (a number, bool, char, ...), or an array or sequence of such values (StringValues, List<string>, string[]),
+    /// also as a Task's or ValueTask's result; a type parameter or `dynamic` counts too (it may be one). Any other type (an
+    /// object such as a settings record, an entity, a content item; `object` itself) cannot.
+    public bool CanCarryInjection(ITypeSymbol? type) => type == null || CanCarryInjection(type, 0);
+
+    private bool CanCarryInjection(ITypeSymbol type, int depth)
+    {
+        if (_injectionCache.TryGetValue(type, out var cached)) return cached;
+        var t = UnwrapNullable(type);
+        bool result;
+        if (t is ITypeParameterSymbol || t.TypeKind is TypeKind.Dynamic or TypeKind.Error) result = true;
+        else if (StringLike.Contains(SymbolMatch.MetadataName(t)) || IsScalar(t) || t.TypeKind == TypeKind.Enum) result = true;
+        else if (depth >= 3) result = false;
+        else if (t is IArrayTypeSymbol array) result = CanCarryInjection(array.ElementType, depth + 1);
+        else if (t is INamedTypeSymbol { TypeArguments.Length: 1 } task
+            && SymbolMatch.MetadataName(task.OriginalDefinition) is "System.Threading.Tasks.Task`1" or "System.Threading.Tasks.ValueTask`1")
+            result = CanCarryInjection(task.TypeArguments[0], depth + 1);
+        else
+            result = Sequences(t).Any(e => CanCarryInjection(e, depth + 1));
+        _injectionCache[type] = result;
+        return result;
+    }
+
+    /// The element types of the IEnumerable<T> a type is or implements.
+    private static IEnumerable<ITypeSymbol> Sequences(ITypeSymbol type)
+    {
+        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Collections_Generic_IEnumerable_T } self)
+            yield return self.TypeArguments[0];
+        foreach (var i in type.AllInterfaces)
+            if (i.OriginalDefinition.SpecialType == SpecialType.System_Collections_Generic_IEnumerable_T) yield return i.TypeArguments[0];
+    }
+
     public static ITypeSymbol UnwrapNullable(ITypeSymbol type) =>
         type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } n ? n.TypeArguments[0] : type;
 

@@ -138,6 +138,39 @@ public sealed class SolutionLoaderTests : TempDirs
         else Assert.Empty(p.Errors);
     }
 
+    [Theory]   // Task 23: the build's StartupObject picks the entry point of a program with two Main methods
+    [InlineData("startup-object=Bench.Program", false)]
+    [InlineData("startup-object=", true)]
+    [InlineData("", true)]
+    public void A_recorded_startup_object_picks_the_entry_point(string line, bool expectCs0017)
+    {
+        var src = TempDir();
+        var program = Write(src, "Program.cs", "namespace Bench { public static class Program { public static void Main() { } } }");
+        var other = Write(src, "Other.cs", "namespace Bench { public static class Runner { public static void Main(string[] args) { } } }");
+        var inputs = Path.Combine(src, "compilations");
+        Directory.CreateDirectory(inputs);
+        File.WriteAllText(Path.Combine(inputs, "b.txt"), string.Join("\n", new[] { "qualor-compilation=1",
+            "project=" + Path.Combine(src, "Bench.csproj"), "tfm=net8.0", "assembly=Bench", "output-kind=Exe", line,
+            "source=" + program, "source=" + other }.Concat(RefPaths.Value.Select(r => "reference=" + r))) + "\n", new UTF8Encoding(false));
+        var read = InputReader.Read(inputs, out var errors);
+        Assert.Empty(errors);
+
+        var p = Assert.Single(SolutionLoader.Load(read, default).Projects);
+
+        if (expectCs0017) Assert.Contains(p.Errors, d => d.Id == "CS0017");
+        else Assert.Empty(p.Errors);
+    }
+
+    [Fact]
+    public void A_startup_object_is_not_applied_to_a_library()
+    {
+        var src = TempDir();
+        var input = Input(src, "L", "net8.0", new[] { Write(src, "L.cs", "public class L { }") }) with { StartupObject = "L" };
+        var p = Assert.Single(SolutionLoader.Load(new[] { input }, default).Projects);
+        Assert.Empty(p.Errors);
+        Assert.Null(p.Compilation.Options.MainTypeName);
+    }
+
     [Fact]
     public void Features_reach_the_parse_options_with_true_for_a_bare_key()
     {

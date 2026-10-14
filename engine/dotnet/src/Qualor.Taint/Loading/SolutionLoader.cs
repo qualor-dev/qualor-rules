@@ -166,6 +166,10 @@ public static class SolutionLoader
         var options = new CSharpCompilationOptions(input.OutputKind,
                 nullableContextOptions: input.Nullable, allowUnsafe: input.AllowUnsafe, concurrentBuild: true)
             .WithAssemblyIdentityComparer(DesktopAssemblyIdentityComparer.Default);
+        // csc's /main (MSBuild's StartupObject): the entry point of an application with more than one Main (CS0017
+        // otherwise); a library has none (csc refuses /main for one: CS2017).
+        if (input.StartupObject != null && input.OutputKind is OutputKind.ConsoleApplication or OutputKind.WindowsApplication)
+            options = options.WithMainTypeName(input.StartupObject);
         var result = CSharpCompilation.Create(input.AssemblyName, trees, references, options);
         // Task 30 (R-11): the recorded views without a generated class, compiled by the engine. Their errors (Razor's and
         // the compiler's in their code) are theirs, not the build's: counted apart, never fatal.

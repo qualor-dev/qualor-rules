@@ -52,6 +52,41 @@ internal sealed class AnalysisContext
 
     public void CountUnmodelled(SyntaxNode site) => _unmodelledSites.Add((site.SyntaxTree, site.Span));
 
+    private readonly Dictionary<IMethodSymbol, int[]?> _factories = new(SymbolEqualityComparer.Default);
+
+    /// The value factory parameters of a project method shaped like a cache's `T Get(key, Func<T> acquire)` (ruling
+    /// R-E18; MethodAnalyzer.Produced): it returns a type parameter T (or a Task or ValueTask of one), takes a delegate
+    /// returning T (or a Task or ValueTask of it) and at least one parameter that is no delegate (the key); null for any
+    /// other method. By the method's definition.
+    public int[]? ValueFactories(IMethodSymbol definition)
+    {
+        if (_factories.TryGetValue(definition, out var cached)) return cached;
+        int[]? result = null;
+        if (definition.MethodKind == MethodKind.Ordinary && SymbolKeys.InSource(definition) && Produces(definition.ReturnType) is ITypeParameterSymbol produced)
+        {
+            var factories = definition.Parameters
+                .Where(p => p.Type is INamedTypeSymbol { DelegateInvokeMethod: { } invoke }
+                    && SymbolEqualityComparer.Default.Equals(Produces(invoke.ReturnType), produced))
+                .Select(p => p.Ordinal).ToArray();
+            // A value of T given besides the factory (`Pick(T fallback, Func<T> make)`) may be returned itself: no factory shape.
+            var others = definition.Parameters.Where(p => p.Type.TypeKind != TypeKind.Delegate).ToList();
+            if (factories.Length > 0 && others.Count > 0 && !others.Any(p => Mentions(p.Type, produced))) result = factories;
+        }
+        _factories[definition] = result;
+        return result;
+
+        static bool Mentions(ITypeSymbol type, ITypeSymbol t) => SymbolEqualityComparer.Default.Equals(type, t)
+            || (type is IArrayTypeSymbol a && Mentions(a.ElementType, t))
+            || (type is INamedTypeSymbol n && n.TypeArguments.Any(x => Mentions(x, t)));
+
+        // The type a value of this type gives: T of Task<T> or ValueTask<T>, else the type itself.
+        static ITypeSymbol Produces(ITypeSymbol type) =>
+            type is INamedTypeSymbol { TypeArguments.Length: 1 } t
+            && SymbolMatch.MetadataName(t.OriginalDefinition) is "System.Threading.Tasks.Task`1" or "System.Threading.Tasks.ValueTask`1"
+                ? t.TypeArguments[0]
+                : type;
+    }
+
     /// One finding per rule and sink site (the site's syntax: an argument or an assignment) of a syntax tree; the first
     /// path is kept. The same file in several compilations (target frameworks) is deduplicated by TaintEngine.
     public void Report(string rule, SyntaxNode site, TaintValue value, ISymbol member)
@@ -161,6 +196,13 @@ internal sealed partial class MethodAnalyzer
     /// The join of the values the body returns (`return x`, an expression body, `yield return x`).
     public TaintValue ReturnValue { get; private set; } = TaintValue.Clean;
 
+    /// Whether ReturnText is kept (a string method's body).
+    public bool TrackReturnText { get; init; }
+
+    /// The text every string the body returns starts with (BodySummary.JoinText of KnownText at each return), null when
+    /// no return was seen.
+    public string? ReturnText { get; private set; }
+
     /// The state at the body's exit (null when the exit is unreachable).
     public TaintState? ExitState { get; private set; }
 
@@ -198,7 +240,11 @@ internal sealed partial class MethodAnalyzer
             if (block.BranchValue != null)
             {
                 var value = Value(block.BranchValue, state);
-                if (block.FallThroughSuccessor?.Semantics == ControlFlowBranchSemantics.Return) ReturnValue = ReturnValue.Join(value);
+                if (block.FallThroughSuccessor?.Semantics == ControlFlowBranchSemantics.Return)
+                {
+                    ReturnValue = ReturnValue.Join(value);
+                    if (TrackReturnText) ReturnText = BodySummary.JoinText(ReturnText, KnownText(block.BranchValue) ?? HoleText);
+                }
                 Feed(handlers, state);
             }
             if (outStates != null) outStates[ordinal] = state;
@@ -574,8 +620,87 @@ internal sealed partial class MethodAnalyzer
             value = value.CleanedFor(ToStringSanitizers(expression.Type));
             if (_ctx.Sinks.HasStringSanitizers) value = value.CleanedFor(_ctx.Sinks.CleanInString(prefix.ToString(), expression.Type));
         }
-        prefix.Append(Hole);
+        // The value's own text when it is known (a constant in all but name, a helper's returned text: Task 23).
+        prefix.Append(_ctx.Sinks.HasStringSanitizers ? KnownText(expression) ?? HoleText : HoleText);
         return value;
+    }
+
+    private static readonly string HoleText = Hole.ToString();
+
+    /// The text a string expression is known to have, a Hole standing for any text (the value of an earlier part), or null
+    /// when nothing is known (Task 23): a constant; a static readonly field or get-only static property initialised with a
+    /// literal (KeyedStores.NamedConstant); a string `+` or an interpolated string of known parts; a call of a method or a
+    /// read of a property declared in source, whose bodies' summaries know the text they return (BodySummary.ReturnText,
+    /// joined over the dispatch targets); a flow capture of known values (`c ? a : b`), an awaited known call.
+    private string? KnownText(IOperation? operation, int depth = 0)
+    {
+        if (operation == null || depth > 16) return null;
+        while (operation is IConversionOperation { OperatorMethod: null } c && c.Type?.SpecialType is SpecialType.System_String or SpecialType.System_Object)
+            operation = c.Operand;
+        if (operation.ConstantValue is { HasValue: true } constant)
+            return constant.Value as string ?? Convert.ToString(constant.Value, System.Globalization.CultureInfo.InvariantCulture) ?? "";
+        switch (operation)
+        {
+            case IBinaryOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String } b:
+                return Known((KnownText(b.LeftOperand, depth + 1) ?? HoleText) + (KnownText(b.RightOperand, depth + 1) ?? HoleText));
+            case IInterpolatedStringOperation interpolated:
+            {
+                var text = new System.Text.StringBuilder();
+                foreach (var part in interpolated.Parts)
+                {
+                    text.Append(part switch
+                    {
+                        IInterpolatedStringTextOperation t => t.Text.ConstantValue.Value as string,
+                        IInterpolationOperation { Alignment: null, FormatString: null } i => KnownText(i.Expression, depth + 1) ?? HoleText,
+                        IInterpolatedStringAppendOperation { AppendCall: IInvocationOperation { TargetMethod.Name: "AppendLiteral" } l } =>
+                            string.Concat(l.Arguments.Select(a => a.Value.ConstantValue.Value as string)),
+                        IInterpolatedStringAppendOperation { AppendCall: IInvocationOperation { Arguments.Length: 1 } f } => KnownText(f.Arguments[0].Value, depth + 1) ?? HoleText,
+                        _ => HoleText,
+                    });
+                }
+                return Known(text.ToString());
+            }
+            case IFlowCaptureReferenceOperation capture when _captured.TryGetValue(capture.Id, out var values):
+            {
+                string? text = null;
+                foreach (var v in values)
+                {
+                    if (KnownText(v, depth + 1) is not { } t) return null;
+                    text = BodySummary.JoinText(text, t);
+                }
+                return Known(text);
+            }
+            case IAwaitOperation await:
+                return KnownText(await.Operation, depth + 1);
+            case IInvocationOperation invocation:
+                return ReturnedText(invocation.TargetMethod, invocation.IsVirtual, invocation.Instance?.Type);
+            case IPropertyReferenceOperation { Property: { IsIndexer: false } property } read:
+                return KeyedStores.NamedConstant(read) is { } named ? named
+                    : property.GetMethod is { } getter ? ReturnedText(getter, Dispatch.IsVirtualAccess(property, read.Instance), read.Instance?.Type) : null;
+            case IFieldReferenceOperation field:
+                return KeyedStores.NamedConstant(field);
+            default:
+                return null;
+        }
+
+        // A text that starts with a Hole tells nothing.
+        static string? Known(string? text) => text is { Length: > 0 } && text[0] == Hole ? null : text;
+    }
+
+    /// The text a member declared in source returns: the join of its targets' ReturnText, null when one of them is no
+    /// body or has none.
+    private string? ReturnedText(IMethodSymbol method, bool isVirtual, ITypeSymbol? receiverType)
+    {
+        if (!SymbolKeys.InSource(method)) return null;
+        string? text = null;
+        foreach (var target in _body.Targets(method, isVirtual, receiverType))
+        {
+            if (target.Kind != TargetKind.Body) return null;
+            _body.Depend(target.Body!);
+            if (target.Body!.Summary.ReturnText is not { } t) return null;
+            text = BodySummary.JoinText(text, t);
+        }
+        return text is { Length: > 0 } && text[0] == Hole ? null : text;
     }
 
     /// The rules a value's text is clean for when an object of this type is turned into text in a string (its
@@ -1091,6 +1216,9 @@ internal sealed partial class MethodAnalyzer
                     if (f == "this") result = result.Join(receiver);
                     else foreach (var i in index) if (f == "args" || IsOrdinal(f, i.Ordinal)) result = result.Join(i.Value);
                 }
+                // A lookup key reaches only an element that can carry an injection by itself (ruling R-E18).
+                if (p.Keys.Count > 0 && _ctx.Sources.CanCarryInjection(operation.Type))
+                    foreach (var i in index) if (p.Keys.Contains(i.Ordinal)) result = result.Join(i.Value);
             }
         }
         else if (_ctx.UnmodelledPasses && _ctx.Sources.IsStringOrCollection(property.Type))
@@ -1222,16 +1350,19 @@ internal sealed partial class MethodAnalyzer
             receiver = value;
             thisOperation = instance;
         }
+        var format = _ctx.Sinks.HasStringSanitizers && method is { Name: "Format", ContainingType.SpecialType: SpecialType.System_String } ? FormatText(arguments) : null;
         foreach (var a in arguments)
         {
             var refKind = a.Parameter?.RefKind ?? RefKind.None;
-            var value = refKind == RefKind.Out ? TaintValue.Clean : Value(a.Value, state);
+            var value = refKind == RefKind.Out ? TaintValue.Clean
+                : format != null && a.ArgumentKind is ArgumentKind.ParamArray or ArgumentKind.ParamCollection ? FormatParams(a.Value, format, state)
+                : Value(a.Value, state);
             var ordinal = (a.Parameter?.Ordinal ?? -2) + (reduced ? 1 : 0);
             var parameter = definition != null && ordinal >= 0 && ordinal < definition.Parameters.Length ? definition.Parameters[ordinal] : null;
             inputs[n++] = new Input(ordinal, parameter, a.Value, a.IsImplicit ? a.Value.Syntax : a.Syntax, value, refKind);
         }
         if (n < inputs.Length) Array.Resize(ref inputs, n);
-        if (_ctx.Sinks.HasStringSanitizers && method is { Name: "Format", ContainingType.SpecialType: SpecialType.System_String }) FormatPlaced(inputs);
+        if (format != null) FormatPlaced(inputs, format);
         if (state.HasFacts) ForgetForCall(instance, inputs, state);
         if (method != null) GuardArguments(operation, method, inputs, state);
         HigherOrder(inputs, instanceValue, state);
@@ -1254,6 +1385,7 @@ internal sealed partial class MethodAnalyzer
         var result = TaintValue.Clean;
         if (_ctx.Sources.SourceMember(method, Access.Call) != null)
             result = TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(method)}").ScopedTo(_body.WriteReach);
+        var sourced = result;
 
         // Out arguments are overwritten by the call.
         foreach (var i in inputs) if (i.RefKind == RefKind.Out) Assign(i.Operation, TaintValue.Clean, state, i.Operation);
@@ -1291,6 +1423,9 @@ internal sealed partial class MethodAnalyzer
                     }
                 }
             }
+            // A LINQ projection gives what its selector returns, a value factory cache what its factory makes (Task 23).
+            if (Produced(definition, inputs) is { } produced)
+                result = sourced.Join(produced.Any ? produced.Step(operation.Syntax.GetLocation(), $"returned by {_ctx.Name(method)}") : produced);
             // `lookup:` sanitizers: what a method the engine cannot see into returns under a lookup's name (a record
             // found by an id) is stored data for those rules; a method with a body is followed instead.
             if (!anyBody && result.Any && method.MethodKind == MethodKind.Ordinary) result = result.CleanedFor(_ctx.Sinks.Lookups(method.Name));
@@ -1330,14 +1465,47 @@ internal sealed partial class MethodAnalyzer
         return result.CleanedFor(rules).Join(fallback);
     }
 
-    /// string.Format with a constant format: each of arg0, arg1 and arg2 is cleaned as a value placed after the format's
-    /// text before its first placeholder (earlier placeholders read as Hole). A params array is left as it is.
-    private void FormatPlaced(Input[] inputs)
+    /// The known text of string.Format's `format` argument (a constant, or a helper's returned text: KnownText), or null.
+    private string? FormatText(ImmutableArray<IArgumentOperation> arguments)
     {
-        string? format = null;
-        foreach (var i in inputs)
-            if (i.Parameter?.Name == "format" && i.Operation.ConstantValue is { HasValue: true, Value: string f }) format = f;
-        if (format == null) return;
+        foreach (var a in arguments)
+            if (a.Parameter?.Name == "format") return KnownText(a.Value);
+        return null;
+    }
+
+    /// The values given to string.Format's params array (`params object[]`, `params ReadOnlySpan<object>`): each element
+    /// cleaned as a value placed after the format's text before its placeholder (as FormatPlaced), joined.
+    private TaintValue FormatParams(IOperation operation, string format, TaintState state)
+    {
+        IEnumerable<IOperation>? elements = operation switch
+        {
+            IArrayCreationOperation { Initializer: { } initializer } => initializer.ElementValues,
+            ICollectionExpressionOperation collection => collection.Elements,
+            _ => null,
+        };
+        if (elements == null) return Value(operation, state);
+        var value = TaintValue.Clean;
+        var index = 0;
+        foreach (var element in elements)
+        {
+            var v = Value(element, state);
+            if (v.Any && FormatPrefix(format, index) is { } prefix)
+            {
+                var expression = element;
+                while (expression is IConversionOperation { IsImplicit: true, Operand: { } inner }) expression = inner;
+                v = v.CleanedFor(_ctx.Sinks.CleanInString(prefix, expression.Type));
+            }
+            value = value.Join(v);
+            index++;
+        }
+        return value;
+    }
+
+    /// string.Format with a known format (a constant, or a helper's text): each of arg0, arg1 and arg2 is cleaned as a
+    /// value placed after the format's text before its first placeholder (earlier placeholders read as Hole); the
+    /// elements of a params array are cleaned likewise (FormatParams).
+    private void FormatPlaced(Input[] inputs, string format)
+    {
         for (var k = 0; k < inputs.Length; k++)
         {
             var i = inputs[k];
@@ -1439,15 +1607,18 @@ internal sealed partial class MethodAnalyzer
                 case IFlowAnonymousFunctionOperation lambda:
                     _body.Seed(lambda.Symbol, others);
                     break;
-                case IMethodReferenceOperation reference when others.Any:
+                case IMethodReferenceOperation reference:
                 {
+                    // Its value is what the method returns given them (also with clean inputs: what it reads itself); an
+                    // external method passes them unless it returns a scalar, cleaned as its sanitizers clean (Task 23).
                     var instance = Value(reference.Instance, state);
                     var value = TaintValue.Clean;
                     foreach (var target in _body.Targets(reference.Method, reference.IsVirtual, reference.Instance?.Type))
                     {
                         value = value.Join(target.Kind == TargetKind.Body
                             ? Apply(target.Body!, inputs[k].Operation, reference.Method, slot => slot == -1 ? instance : others, reference.Instance, Array.Empty<Input>(), false, state)
-                            : _ctx.Sources.IsScalar(reference.Method.ReturnType) ? TaintValue.Clean : others);
+                            : _ctx.Sources.IsScalar(reference.Method.ReturnType) || !others.Any ? TaintValue.Clean
+                            : others.CleanedFor(_ctx.Sinks.Sanitizes(reference.Method, Access.Call)).CleanedFor(_ctx.Sinks.SanitizesByName(reference.Method)));
                     }
                     inputs[k] = inputs[k] with { Value = inputs[k].Value.Join(value) };
                     break;
@@ -1501,15 +1672,74 @@ internal sealed partial class MethodAnalyzer
             }
         }
 
-        // Collection and interpolated-string-handler writes taint their receiver.
+        // Collection and interpolated-string-handler writes taint their receiver. A dictionary's key is not written into
+        // it (as for `d[k] = v`): what a lookup finds is the value stored (ruling R-E18), so a cache keyed by request data
+        // does not make every element it holds request data.
         if (thisOperation != null && all.Any && IsCollectionWrite(method))
         {
+            var dictionary = IsDictionary(method.IsExtensionMethod ? (method.ReducedFrom ?? method).Parameters.FirstOrDefault()?.Type : method.ContainingType);
             var written = TaintValue.Clean;
             foreach (var i in inputs)
-                if (i.RefKind != RefKind.Out && !ReferenceEquals(i.Operation, thisOperation)) written = written.Join(i.Value);
+                if (i.RefKind != RefKind.Out && !ReferenceEquals(i.Operation, thisOperation) && !(dictionary && i.Parameter?.Name == "key")) written = written.Join(i.Value);
             Write(thisOperation, written, state);
         }
         return result;
+    }
+
+    /// A dictionary: a type that is or implements IDictionary<K, V> or IReadOnlyDictionary<K, V>.
+    private static bool IsDictionary(ITypeSymbol? type)
+    {
+        if (type == null) return false;
+        static bool Named(ITypeSymbol t) => SymbolMatch.MetadataName(t.OriginalDefinition) is
+            "System.Collections.Generic.IDictionary`2" or "System.Collections.Generic.IReadOnlyDictionary`2";
+        return Named(type) || type.AllInterfaces.Any(Named);
+    }
+
+    /// What a call gives back when it is a LINQ projection or a cache with a value factory (Task 23): the join of the
+    /// values of its selectors or factories (a lambda's return, a method group's result, a delegate parameter's label),
+    /// or null when it is neither, or when one of them is a delegate the engine does not know (a field, a variable), whose
+    /// return it cannot see.
+    /// - System.Linq.Enumerable's Select (its selector), SelectMany (its result selector, else its collection selector),
+    ///   ToDictionary and ToLookup with an element selector (the key and element selectors); the other operators keep
+    ///   their source's elements and pass the source on (propagators.yml).
+    /// - A project method shaped like a cache's `T Get(key, Func<T> acquire)` (ruling R-E18, by its shape, whatever its
+    ///   name; AnalysisContext.ValueFactories): its result is the factory's, never the key's nor what the method keeps
+    ///   (its global effects, sinks and heap writes, still apply).
+    private TaintValue? Produced(IMethodSymbol definition, Input[] inputs)
+    {
+        var ordinals = LinqSelectors(definition) ?? _ctx.ValueFactories(definition);
+        if (ordinals == null) return null;
+        var value = TaintValue.Clean;
+        var found = false;
+        foreach (var i in inputs)
+        {
+            if (Array.IndexOf(ordinals, i.Ordinal) < 0) continue;
+            if (!KnownDelegate(i.Operation)) return null;
+            value = value.Join(i.Value);
+            found = true;
+        }
+        return found ? value : null;
+    }
+
+    private static int[]? LinqSelectors(IMethodSymbol definition)
+    {
+        if (definition.Name is not ("Select" or "SelectMany" or "ToDictionary" or "ToLookup")) return null;
+        if (definition.ContainingType is not { } type || SymbolMatch.MetadataName(type) != "System.Linq.Enumerable") return null;
+        int Ordinal(string name) => definition.Parameters.FirstOrDefault(p => p.Name == name)?.Ordinal ?? -1;
+        return definition.Name switch
+        {
+            "Select" => new[] { Ordinal("selector") },
+            "SelectMany" => Ordinal("resultSelector") is var r and >= 0 ? new[] { r } : new[] { Ordinal("selector"), Ordinal("collectionSelector") },
+            _ => Ordinal("elementSelector") is var e and >= 0 ? new[] { Ordinal("keySelector"), e } : null,
+        };
+    }
+
+    /// A lambda, a method group, or a delegate parameter of this body (its label: the caller's lambda or method group).
+    private bool KnownDelegate(IOperation operation)
+    {
+        if (DelegateOf(operation) != null) return true;
+        while (operation is IConversionOperation c) operation = c.Operand;
+        return operation is IParameterReferenceOperation { Type.TypeKind: TypeKind.Delegate };
     }
 
     /// One propagator of an external call: the join of its `from` positions reaches its `to` positions.
@@ -1531,28 +1761,37 @@ internal sealed partial class MethodAnalyzer
                     from = from.Join(i.Value);
             }
         }
-        if (!from.Any) return result;
-        from = from.Step(operation.Syntax.GetLocation(), $"passed through {_ctx.Name(method)}");
+        // A lookup key (`key:`) reaches a `return` or `out` value only when that value can carry an injection by itself
+        // (ruling R-E18): an object found by a request key is not request data.
+        var key = TaintValue.Clean;
+        foreach (var i in inputs)
+            if (i.RefKind != RefKind.Out && p.Keys.Contains(i.Ordinal)) key = key.Join(i.Value);
+        if (!from.Any && !key.Any) return result;
+        var site = operation.Syntax.GetLocation();
+        var through = $"passed through {_ctx.Name(method)}";
+        var keyed = key.Any ? from.Join(key).Step(site, through) : TaintValue.Clean;
+        from = from.Any ? from.Step(site, through) : from;
+        TaintValue For(ITypeSymbol? type) => key.Any && _ctx.Sources.CanCarryInjection(type) ? keyed : from;
         foreach (var t in p.To)
         {
             switch (t)
             {
                 case "return":
-                    result = result.Join(from);
+                    result = result.Join(For(operation.Type));
                     break;
                 case "this":
-                    if (thisOperation != null) Write(thisOperation, from, state);
+                    if (thisOperation != null && from.Any) Write(thisOperation, from, state);
                     break;
                 case "out":
                     foreach (var i in inputs)
                     {
-                        if (i.RefKind == RefKind.Out) Assign(i.Operation, from, state, i.Operation);
-                        else if (i.RefKind == RefKind.Ref) Write(i.Operation, from, state);
+                        if (i.RefKind == RefKind.Out) Assign(i.Operation, For(i.Operation.Type), state, i.Operation);
+                        else if (i.RefKind == RefKind.Ref && from.Any) Write(i.Operation, from, state);
                     }
                     break;
                 default:
                     foreach (var i in inputs)
-                        if (IsOrdinal(t, i.Ordinal)) Write(i.Operation, from, state);
+                        if (from.Any && IsOrdinal(t, i.Ordinal)) Write(i.Operation, from, state);
                     break;
             }
         }

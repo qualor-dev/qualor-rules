@@ -133,6 +133,7 @@ public static class InputReader
             Features = SplitList(Get("features")),
             InterceptorsNamespaces = SplitList(Get("interceptors-namespaces")),
             RazorViews = razorViews,
+            StartupObject = Get("startup-object") is { Length: > 0 } startup ? startup : null,
         };
     }
 

@@ -212,8 +212,13 @@ public sealed record SourceModel(
     IReadOnlyList<MemberPattern> Members);
 
 /// How taint passes through a member the engine does not analyse: From (`this`, `args`, or a parameter ordinal) to
-/// To (`return`, `this`, `out`: the out and ref arguments, or a parameter ordinal).
-public sealed record PropagatorModel(MemberPattern Member, IReadOnlyList<string> From, IReadOnlyList<string> To);
+/// To (`return`, `this`, `out`: the out and ref arguments, or a parameter ordinal). Keys: the parameter ordinals of a
+/// lookup key (`key:`), which reach a To position only when the value there can carry an injection by itself (a
+/// string, a number, a sequence of them: ruling R-E18), never an object found by the key.
+public sealed record PropagatorModel(MemberPattern Member, IReadOnlyList<string> From, IReadOnlyList<string> To)
+{
+    public IReadOnlyList<int> Keys { get; init; } = Array.Empty<int>();
+}
 
 /// Every model of models/csharp. UnmodelledExternal is the policy for external members no propagator names.
 public sealed record ModelSet(SourceModel Sources, IReadOnlyList<PropagatorModel> Propagators, string UnmodelledExternal, IReadOnlyList<RuleModel> Rules);

@@ -87,9 +87,14 @@ sanitizers:
 ```
 
 - `string-prefix: R` (with `type: T`): a value built into a string in place (a string `+`, an interpolated string,
-  `string.Format` with a constant format: its `arg0` to `arg2`) is clean when the text before it in that string,
-  from the string's start, matches R; an earlier value in that text reads as U+FFFC (write `\uFFFC` in R). A string held
-  in a variable keeps the value it was built with.
+  `string.Format` with a known format: its `arg0` to `arg2` and the elements of its params array) is clean when the text
+  before it in that string, from the string's start, matches R; an earlier value in that text reads as U+FFFC (write
+  `\uFFFC` in R) unless its text is known. A text is known for a constant, a static readonly field or get-only static
+  property initialised with a literal, and a call or read of a project member whose every return starts with the same
+  text (its summary's returned text: the common start of what each `return` gives, a constant, a literal-initialised
+  static, another such member, a `+` or interpolation of them; joined over the dispatch targets): `Api.Base + "/" + id`
+  with `static string Base => "https://api.example/v1"` reads as written in place (Task 23). A string held in a variable
+  keeps the value it was built with; its text is not followed.
 - `lookup: R`: the result of a call to a method whose name matches R is clean when the engine has no body to analyse
   for it (an external method, an abstract or interface method without an implementation in the solution): a record
   found by an id is stored data. A method with a body is analysed instead. With `awaited: true`, only the awaited
@@ -375,6 +380,7 @@ propagators:
     to: [this, return]
   - method: System.Collections.Generic.IDictionary`2.TryGetValue
     from: [this]
+    key: [0]
     to: [out]
 unmodelled-external: string-or-collection-return
 ```
@@ -382,6 +388,11 @@ unmodelled-external: string-or-collection-return
 - `from`: `this`, `args` (every argument but `out` ones) or parameter ordinals; `to`: `return`,
   `this`, `out` (the `out` and `ref` arguments) or parameter ordinals. Defaults: a method from
   `[this, args]`, a constructor from `[args]`, a property read from `[this]`; to `[return]`.
+- `key`: parameter ordinals of a lookup key (not in `from`, which then has no `args`): the key reaches a `return` or
+  `out` value only when that value's type can carry an injection by itself (ruling R-E18): a string-like type, a scalar
+  of `sources.yml` (a number, bool, char), an array or `IEnumerable<T>` of those (`StringValues`, `List<string>`,
+  `string[]`), also a Task's result; a type parameter or `dynamic` counts (it may be one). An object found by a request
+  key (a settings or tenant record, an entity, a content item, `object`) is not request data, nor are its members.
 - Entries take `method:` or `property-get:`.
 - Element reads of a collection are propagators of its indexer (`property-get: <type>.Item`, from
   `[this]`): `propagators.yml` names those of the dictionary and list interfaces and of the request
@@ -424,8 +435,8 @@ false positives (FP) or misses (FN) there.
   followed. Data saved in one request and read in another
   (settings, entities, stored XSS) is not followed (FN, as the OpenGrep rules). Within one request the heap stays
   field-based and the call graph context-insensitive with class-hierarchy dispatch: request data written to one object's
-  member is request data in that member of every object of the type in the requests that reach the write (cache keys
-  built from request values make cached lookups request data), and an interface every action reaches joins most code
+  member is request data in that member of every object of the type in the requests that reach the write (a cache key
+  built from request values makes every cache key of those requests request data; what is found by it, below), and an interface every action reaches joins most code
   into one request (FP).
 - Guards hold for locals, parameters and members read on them (since Task 21, "Guards on members"); a call given the
   guarded object (or one of a related type, or something that holds one) between the check and the sink, an await of
@@ -437,10 +448,26 @@ false positives (FP) or misses (FN) there.
   a project's own helper (`CheckIsLocalUrl(x)` that calls `IsLocalUrl`) is no guard (FP).
 - Validation in another method or by an attribute is not seen: a filename sanitizer, a child-path or containment check,
   `[RegularExpression]` on a bound parameter, a hash used as a file name, an allow-list lookup (FP).
-- The fixed-origin prefix (ssrf, open-redirect) is read only where the URL is built in place, not through a helper that
-  builds it; a redirect to the request's own URL (scheme, host, path) is reported (FP).
-- `Enumerable.*` passes its source sequence to the result as well as a lambda's return: an encoder inside
-  `Select(x => ...)` does not clean the result (FP).
+- The fixed-origin prefix (ssrf, open-redirect) is read where the URL is built in place and through the text project
+  members return (since Task 23), not through a variable that holds the text, an external member, or a member whose text
+  depends on its arguments (FP). A redirect to the request's own URL (scheme, host, path) is reported (FP): nopCommerce
+  builds it from the Host header (a request header, so request data) and `Uri.SchemeDelimiter`, whose text is not known.
+- LINQ (since Task 23): `Select`, `SelectMany` and the element selectors of `ToDictionary`/`ToLookup` give what their
+  selector returns (a lambda, a method group, a delegate parameter), so an encoder in the selector cleans the result;
+  the other operators (`Where`, `OrderBy`, `Take`, `Distinct`, ...) pass the source on. A selector held in a field or
+  variable, `Queryable`'s operators, and the result selectors of `GroupBy`, `Join`, `Zip` and `Aggregate` keep the
+  source sequence (FP).
+- Lookups by a request key (ruling R-E18, narrowing R-E9; since Task 23): the key's taint reaches what a lookup finds
+  only when it can carry an injection by itself (a string, a number, a sequence of them: `key:` in `propagators.yml`).
+  Cost: a record found by a request key (a settings or tenant object, an entity, a content item) whose string field
+  later reaches a sink is missed (FN), e.g. a request-keyed table of records whose name goes into SQL; a lookup through
+  an external member no propagator names still follows the `unmodelled-external` default. A dictionary's key is not
+  written into it by `Add`, `TryAdd`, `GetOrAdd` or `AddOrUpdate` (as by `d[k] = v`), so its keys enumerated later are
+  not request data (FN). Caches with a value factory give the factory's result, not the key: IMemoryCache's
+  `GetOrCreate*`, `ConcurrentDictionary.GetOrAdd`/`AddOrUpdate`, and a project method shaped like `T Get(key, Func<T>
+  acquire)` (it returns a type parameter or a Task of one, takes a delegate returning it and another parameter that is
+  not of that type; by shape, whatever its name), whose own body is not consulted for the result (FN if such a method
+  returns something else than what the factory or its cache holds). A literal allow-list table still cleans.
 - Not followed (FN): `TempData` entries (another request); a model that is not a collection, statically typed as an
   interface or a library base class and given to a view of a narrower type, whose members are never written in code
   (members written in code still reach the view through the field heap); `ViewData.Model = m` with an `object`/`dynamic` m (a view
@@ -460,4 +487,5 @@ false positives (FP) or misses (FN) there.
   are not compiled (counted unless the build compiled them). A view the build compiled into a separate assembly
   (`*.Views.dll`, ASP.NET Core 2.1 to 5.0; .NET 6's source generator compiles views into the application assembly) is
   compiled here too.
-- The taint models have no `test-code:` (as the OpenGrep taint rules): findings in test projects are reported.
+- The taint models have no `test-code:` (as the OpenGrep taint rules): findings in test projects are reported. The
+  engine measurements count them apart, by the misuse rules' `test-code:` globs, not as false positives (Task 23).

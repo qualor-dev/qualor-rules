@@ -40,6 +40,9 @@ internal sealed record CallEffect(int Slot, Body Callee, int CalleeSlot, Immutab
 /// - ToThis: what is written into the receiver object (a constructor's: the object created);
 /// - Refs: the value of each ref and out parameter at the exit.
 ///
+/// - ReturnText: the text every value the body returns starts with (a string method's; Task 23), for `string-prefix:`
+///   sanitizers at its callers (MethodAnalyzer.KnownText).
+///
 /// Global effects, which request data reaching a parameter triggers (SummaryComputer.Seed), so a summary's size does not
 /// grow with what its callees do (a chain of N calls costs N edges, not N² copied sinks):
 /// - Sinks: the parameters that reach a sink in this body;
@@ -56,6 +59,10 @@ internal sealed class BodySummary
 
     public ImmutableDictionary<int, TaintValue> Refs { get; init; } = ImmutableDictionary<int, TaintValue>.Empty;
 
+    /// The text the body's returned strings are known to have, a Hole (MethodAnalyzer.Hole) standing for any text; a
+    /// lone Hole when nothing is known, null when no return has been seen (or the body returns no string).
+    public string? ReturnText { get; init; }
+
     public ImmutableDictionary<(int Slot, string Rule, SyntaxTree Tree, TextSpan Span), SinkEffect> Sinks { get; init; } =
         ImmutableDictionary<(int, string, SyntaxTree, TextSpan), SinkEffect>.Empty;
 
@@ -71,7 +78,21 @@ internal sealed class BodySummary
     /// No local effect: a call site gets nothing back (a generic helper's view model aside, which the call site writes).
     public bool NoLocalEffects => !Return.Any && !ToThis.Any && Refs.IsEmpty;
 
-    public bool IsEmpty => NoLocalEffects && Sinks.IsEmpty && Calls.IsEmpty && Heap.IsEmpty && RequestHeap.IsEmpty;
+    public bool IsEmpty => NoTaint && ReturnText == null;
+
+    /// No effect on taint at all (the public view lists only the bodies that have one).
+    public bool NoTaint => NoLocalEffects && Sinks.IsEmpty && Calls.IsEmpty && Heap.IsEmpty && RequestHeap.IsEmpty;
+
+    /// The text two sets of strings both start with: the common start of the two texts, followed by a Hole where they
+    /// differ (a Hole in either ends the common part); null is no string at all.
+    public static string? JoinText(string? a, string? b)
+    {
+        if (a == null || a == b) return b;
+        if (b == null) return a;
+        var n = 0;
+        while (n < a.Length && n < b.Length && a[n] == b[n] && a[n] != MethodAnalyzer.Hole) n++;
+        return a[..n] + MethodAnalyzer.Hole;
+    }
 
     /// This summary joined with `other` (a body's summaries only grow, so the fixed point ends).
     public BodySummary Join(BodySummary other)
@@ -101,6 +122,7 @@ internal sealed class BodySummary
             Calls = calls,
             Heap = heap,
             RequestHeap = requestHeap,
+            ReturnText = JoinText(ReturnText, other.ReturnText),
         };
     }
 
@@ -109,6 +131,7 @@ internal sealed class BodySummary
     {
         if (ReferenceEquals(this, other)) return true;
         if (!Return.SameFlow(other.Return) || !ToThis.SameFlow(other.ToThis) || Refs.Count != other.Refs.Count) return false;
+        if (ReturnText != other.ReturnText) return false;
         foreach (var (k, v) in Refs) if (!other.Refs.TryGetValue(k, out var o) || !v.SameFlow(o)) return false;
         // A generic helper's view model is written at its callers (MethodAnalyzer.GenericModels): a change of it is a
         // change of what a call site does (Task 22 fix round 1, I2).
@@ -171,6 +194,7 @@ internal sealed class SummaryBuilder
 {
     public TaintValue Return = TaintValue.Clean;
     public TaintValue ToThis = TaintValue.Clean;
+    public string? ReturnText;
     public readonly Dictionary<int, TaintValue> Refs = new();
     public readonly Dictionary<(int Slot, string Rule, SyntaxTree Tree, TextSpan Span), SinkEffect> Sinks = new();
     public readonly Dictionary<(int Slot, int Callee, int CalleeSlot), CallEffect> Calls = new();
@@ -202,5 +226,6 @@ internal sealed class SummaryBuilder
         Calls = Calls.ToImmutableDictionary(),
         Heap = Heap.ToImmutableDictionary(),
         RequestHeap = RequestHeap.ToImmutableDictionary(),
+        ReturnText = ReturnText,
     };
 }

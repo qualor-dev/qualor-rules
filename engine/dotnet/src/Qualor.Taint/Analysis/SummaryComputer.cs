@@ -148,7 +148,7 @@ internal sealed class SummaryComputer
         var result = new Dictionary<IMethodSymbol, Summary>(SymbolEqualityComparer.Default);
         foreach (var body in _graph.AllBodies)
         {
-            if (body.Symbol == null || body.Summary.IsEmpty) continue;
+            if (body.Symbol == null || body.Summary.NoTaint) continue;
             var s = body.Summary;
             var slots = new SortedSet<int>();
             foreach (var l in s.Return.Labels) if (l.Owner == body.Id) slots.Add(l.Slot);
@@ -366,10 +366,11 @@ internal sealed class SummaryComputer
                 }
             }
 
-            var analyzer = new MethodAnalyzer(_ctx, cfg, run);
+            var analyzer = new MethodAnalyzer(_ctx, cfg, run) { TrackReturnText = !body.IsLambda && body.Symbol is { } m && ReturnsString(m) };
             all = analyzer.Run(entry, collectAll: nested.Count > 0);
             var builder = Builder(body.Id);
             builder.Return = builder.Return.Join(analyzer.ReturnValue);
+            if (analyzer.TrackReturnText) builder.ReturnText = BodySummary.JoinText(builder.ReturnText, analyzer.ReturnText);
             if (analyzer.ExitState is { } exit && body.Symbol != null)
             {
                 foreach (var p in body.Symbol.Parameters)
@@ -413,6 +414,16 @@ internal sealed class SummaryComputer
             }
             AnalyzeGraph(inner, _graph.Nested(unit, symbol), unit, all, ref changed, ct);
         }
+    }
+
+    /// A method that returns a string (also as a Task's or ValueTask's result): its returned text is kept (Task 23).
+    private static bool ReturnsString(IMethodSymbol method)
+    {
+        var type = method.ReturnType;
+        if (type is INamedTypeSymbol { TypeArguments.Length: 1 } t
+            && SymbolMatch.MetadataName(t.OriginalDefinition) is "System.Threading.Tasks.Task`1" or "System.Threading.Tasks.ValueTask`1")
+            type = t.TypeArguments[0];
+        return type.SpecialType == SpecialType.System_String;
     }
 
     /// The lambdas and local functions declared directly in a graph, with a way to get each one's graph.

@@ -19,7 +19,8 @@
 # system.uri, system.uribuilder, system.linq.enumerable, system.collections.generic.idictionary-2,
 # microsoft.extensions.primitives.stringvalues, microsoft.aspnetcore.http.iquerycollection,
 # system.io.streamreader, system.collections.generic.collectionextensions.getvalueordefault,
-# system.collections.generic.ienumerator-1, system.collections.generic.keyvaluepair-2.
+# system.collections.generic.ienumerator-1, system.collections.generic.keyvaluepair-2,
+# system.collections.concurrent.concurrentdictionary-2.
 propagators:
   # Strings: the receiver and the arguments reach the result.
   - method: System.String..ctor
@@ -93,54 +94,99 @@ propagators:
     from: [4, 5, 6]
   - method: Microsoft.AspNetCore.Mvc.UrlHelperExtensions.RouteUrl
     from: [3, 4, 5]
-  # Request collections and their values. Element reads (ruling R-E9): the element of a tainted collection, and
-  # the element found by a tainted key (OpenGrep's taint passes through a lookup by its key; a table of literals that
-  # no code changes is an allow-list: models/README.md "Allow-lists"), so TryGetValue's out value comes from the
-  # dictionary and the key.
+  # Request collections and their values. Element reads (ruling R-E9, narrowed by R-E18): the element of a tainted
+  # collection, and the element found by a tainted key when it can carry an injection by itself (`key:`: a string, a
+  # number, a sequence or array of them; a settings object, an entity or a content item found by a request key is not
+  # request data, nor are its members). OpenGrep's taint passes through a lookup by its key whatever the element; a
+  # table of literals that no code changes is an allow-list: models/README.md "Allow-lists". So TryGetValue's out value
+  # comes from the dictionary, and from the key for such an element.
   - method: System.Collections.Generic.IDictionary`2.TryGetValue
-    from: [this, args]
+    from: [this]
+    key: [0]
     to: [out]
   - method: System.Collections.Generic.IReadOnlyDictionary`2.TryGetValue
-    from: [this, args]
+    from: [this]
+    key: [0]
     to: [out]
   - method: Microsoft.AspNetCore.Http.IQueryCollection.TryGetValue
-    from: [this, args]
+    from: [this]
+    key: [0]
     to: [out]
   - method: Microsoft.AspNetCore.Http.IFormCollection.TryGetValue
-    from: [this, args]
+    from: [this]
+    key: [0]
     to: [out]
   - method: Microsoft.AspNetCore.Http.IRequestCookieCollection.TryGetValue
-    from: [this, args]
+    from: [this]
+    key: [0]
     to: [out]
   - method: Microsoft.Extensions.Primitives.StringValues.op_Implicit
   - method: Microsoft.Extensions.Primitives.StringValues.ToArray
-  # Element reads: an indexer (metadata name Item) gives a tainted element when the collection or the key is
-  # tainted (ruling R-E9, as TryGetValue above; an int index is a scalar and never tainted). The engine needs the
-  # indexers named, since an element of type object (RouteValues["slug"]) or StringValues is neither string-like
-  # nor a collection for `unmodelled-external`. IHeaderDictionary's own indexer, RouteValueDictionary's and
-  # Dictionary's match through the dictionary interfaces; array elements are no member (the engine's own).
+  # Element reads: an indexer (metadata name Item) gives a tainted element when the collection is tainted, or the key
+  # for an element that can carry an injection (R-E9, R-E18, as TryGetValue above; an int index is a scalar and never
+  # tainted). The engine needs the indexers named, since an element of type object (RouteValues["slug"]) or
+  # StringValues is neither string-like nor a collection for `unmodelled-external`. IHeaderDictionary's own indexer,
+  # RouteValueDictionary's and Dictionary's match through the dictionary interfaces; array elements are no member (the
+  # engine's own).
   - property-get: System.Collections.Generic.IDictionary`2.Item
-    from: [this, args]
+    from: [this]
+    key: [0]
   - property-get: System.Collections.Generic.IReadOnlyDictionary`2.Item
-    from: [this, args]
+    from: [this]
+    key: [0]
   - property-get: System.Collections.Generic.IList`1.Item
     from: [this, args]
   - property-get: System.Collections.Generic.IReadOnlyList`1.Item
     from: [this, args]
   - property-get: Microsoft.AspNetCore.Http.IQueryCollection.Item
-    from: [this, args]
+    from: [this]
+    key: [0]
   - property-get: Microsoft.AspNetCore.Http.IFormCollection.Item
-    from: [this, args]
+    from: [this]
+    key: [0]
   - property-get: Microsoft.AspNetCore.Http.IRequestCookieCollection.Item
-    from: [this, args]
+    from: [this]
+    key: [0]
   - property-get: Microsoft.AspNetCore.Http.IHeaderDictionary.Item
-    from: [this, args]
+    from: [this]
+    key: [0]
   - property-get: Microsoft.Extensions.Primitives.StringValues.Item
     from: [this, args]
   # GetValueOrDefault: the dictionary's element, found by the key, or the default value given (an extension
-  # method: the dictionary is ordinal 0, the key 1, the default 2 in the three-parameter overload); R-E9.
+  # method: the dictionary is ordinal 0, the key 1, the default 2 in the three-parameter overload); R-E9, R-E18.
   - method: System.Collections.Generic.CollectionExtensions.GetValueOrDefault
-    from: [0, 1, 2]
+    from: [0, 2]
+    key: [1]
+  # Caches (R-E18). A lookup by key gives the cached element, from the key only as above. A cache with a value factory
+  # gives what is cached or what the factory makes, never the key: the factory's result (a lambda's or method group's
+  # value) and, for ConcurrentDictionary, its elements and the value given (GetOrAdd(key, value), AddOrUpdate).
+  # (learn.microsoft.com: dotnet/api/microsoft.extensions.caching.memory.cacheextensions,
+  # microsoft.extensions.caching.memory.imemorycache, microsoft.extensions.caching.distributed.idistributedcache,
+  # microsoft.extensions.caching.distributed.distributedcacheextensions,
+  # system.collections.concurrent.concurrentdictionary-2.)
+  - method: Microsoft.Extensions.Caching.Memory.CacheExtensions.GetOrCreate*   # GetOrCreate, GetOrCreateAsync
+    from: [2]
+  - method: Microsoft.Extensions.Caching.Memory.CacheExtensions.Get
+    from: [0]
+    key: [1]
+  - method: Microsoft.Extensions.Caching.Memory.CacheExtensions.TryGetValue
+    from: [0]
+    key: [1]
+    to: [out]
+  - method: Microsoft.Extensions.Caching.Memory.IMemoryCache.TryGetValue
+    from: [this]
+    key: [0]
+    to: [out]
+  - method: Microsoft.Extensions.Caching.Distributed.DistributedCacheExtensions.GetString*   # GetString, GetStringAsync
+    from: [0]
+    key: [1]
+  - method: Microsoft.Extensions.Caching.Distributed.IDistributedCache.Get*   # Get, GetAsync
+    from: [this]
+    key: [0]
+  - method: System.Collections.Concurrent.ConcurrentDictionary`2.GetOrAdd
+    from: [this, 1, 2]
+  - method: System.Collections.Concurrent.ConcurrentDictionary`2.AddOrUpdate
+    from: [this, 1, 2, 3]
   # Enumeration (a foreach, lowered by the compiler to GetEnumerator, MoveNext and Current): the enumerator of a
   # tainted collection is a collection for `unmodelled-external`; its Current is an element read, whatever its type
   # (a KeyValuePair of a dictionary too, whose Key and Value are then element reads).

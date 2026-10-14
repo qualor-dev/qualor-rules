@@ -145,6 +145,18 @@ public sealed class InputReaderTests : TempDirs
     }
 
     [Fact]
+    public void Reads_the_startup_object_and_leaves_it_null_when_empty()   // Task 23
+    {
+        var dir = TempDir();
+        File.WriteAllText(Path.Combine(dir, "s.txt"), "qualor-compilation=1\nproject=/w/B.csproj\noutput-kind=Exe\nstartup-object=Bench.Program\n", new UTF8Encoding(false));
+        File.WriteAllText(Path.Combine(dir, "t.txt"), "qualor-compilation=1\nproject=/w/C.csproj\nstartup-object=\n", new UTF8Encoding(false));
+        var read = InputReader.Read(dir, out var errors);
+        Assert.Empty(errors);
+        Assert.Equal("Bench.Program", read[0].StartupObject);
+        Assert.Null(read[1].StartupObject);
+    }
+
+    [Fact]
     public void Features_and_interceptors_namespaces_are_empty_when_not_recorded()
     {
         var dir = TempDir();

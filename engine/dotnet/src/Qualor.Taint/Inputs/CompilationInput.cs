@@ -28,4 +28,8 @@ public sealed record CompilationInput(
     /// not Never; ruling R-E20), as recorded. The views no generated class renders are compiled by the engine
     /// (RazorViews).
     public IReadOnlyList<string> RazorViews { get; init; } = Array.Empty<string>();
+
+    /// MSBuild's StartupObject (`startup-object=`, Task 23): the type whose Main is an application's entry point when
+    /// it has more than one (csc's /main); null when not recorded or empty.
+    public string? StartupObject { get; init; }
 }
