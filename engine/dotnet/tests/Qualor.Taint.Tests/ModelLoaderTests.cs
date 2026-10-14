@@ -344,7 +344,14 @@ public sealed class ModelLoaderTests : TempDirs
         Assert.Equal("System.ComponentModel.DataAnnotations.RegularExpressionAttribute", v.RegularExpression);
         var taint = models.Rules.Where(r => r.Kind == RuleKind.Taint).ToList();
         Assert.Equal(9, taint.Count);
-        Assert.All(taint, r => Assert.NotNull(r.ValidationMetacharacters));
+        // Ruling R-E34: command-injection is never cleaned by validation; the other eight name their metacharacters.
+        var command = taint.Single(r => r.RuleId == "csharp.command-injection");
+        Assert.True(command.ValidationNever);
+        Assert.Null(command.ValidationMetacharacters);
+        Assert.All(taint.Where(r => r != command), r => Assert.True(r.ValidationMetacharacters != null && !r.ValidationNever));
+        Assert.Equal("InvalidModelStateResponseFactory", v.ResponseFactory);
+        Assert.Contains("AddModelError", v.KeepsValidity);
+        Assert.DoesNotContain("Remove", v.KeepsValidity);
         var sql = models.Rules.Single(r => r.RuleId == "csharp.sql-injection").ValidationMetacharacters!;
         Assert.True(sql.IsMatch("'") && sql.IsMatch(" ") && sql.IsMatch("ʼ") && !sql.IsMatch("a") && !sql.IsMatch("_"));
         var path = models.Rules.Single(r => r.RuleId == "csharp.path-traversal").ValidationMetacharacters!;
@@ -356,6 +363,7 @@ public sealed class ModelLoaderTests : TempDirs
     [InlineData("validation:\n  metacharacters: '[a]b]'\n", 7, "character class")]        // more than one character
     [InlineData("validation:\n  metacharacters: '[z-a]'\n", 7, "regular expression")]     // does not parse (a reversed range)
     [InlineData("validation:\n  characters: '[a]'\n", 7, "unknown key")]
+    [InlineData("validation: sometimes\n", 6, "never")]                                     // a scalar other than never
     public void An_invalid_validation_model_throws_with_its_line(string validation, int line, string fragment)
     {
         var dir = WriteModels(("sql-injection.yml", "rule: csharp.sql-injection\nkind: taint\nsinks:\n  - method: A.B\n    args: [0]\n" + validation));

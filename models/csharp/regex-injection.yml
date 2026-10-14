@@ -58,6 +58,7 @@ sanitizers:
 guards: []
 
 # Model validation (Task 31, decision R-12; models/README.md "Model validation"): the pattern's metacharacters
-# (\ * + ? | { } [ ] ( ) ^ $ .) and '#' and whitespace (comments and spacing in the free-spacing mode).
+# (\ * + ? | { } [ ] ( ) ^ $ .), '#' and whitespace (comments and spacing in the free-spacing mode), and control
+# characters.
 validation:
-  metacharacters: '[\\*+?|{}\[\]()^$.#\s]'
+  metacharacters: '[\\*+?|{}\[\]()^$.#\s\p{Cc}]'

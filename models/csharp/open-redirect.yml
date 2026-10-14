@@ -176,7 +176,8 @@ guards:
 
 # Model validation (Task 31, decision R-12; models/README.md "Model validation"): what makes a target leave the site or
 # name another host: / \ : . @ % ? #, whitespace and control characters (browsers drop or fold them), and the Unicode
-# dots and slashes a browser maps to them. A value without them is a relative path segment or a host name of one
-# label, which no outside site owns.
+# dots and slashes a browser maps to them. A value without them is a relative path segment, or in the host position
+# a name of one label (no outside site owns one) or a number. Ruling R-E34 accepts the cost of digits there: a
+# decimal number is an IPv4 address (`https://134744072/` is 8.8.8.8), as an int parameter is already.
 validation:
   metacharacters: '[/\\:.@%?#\s\p{Cc}\u2024\u3002\uFE52\uFF0E\uFF0F\uFF3C\uFF61]'

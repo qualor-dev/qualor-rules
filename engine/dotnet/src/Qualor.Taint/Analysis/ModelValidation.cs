@@ -14,8 +14,11 @@ namespace Qualor.Taint;
 ///
 /// What an attribute cleans (learn.microsoft.com, System.ComponentModel.DataAnnotations), on a member of type string:
 /// - [Range] with a numeric operand ("Specifies the numeric range constraints"; a string is converted to the operand
-///   type first): every rule. A range over another operand type (a date) cleans nothing.
-/// - [EnumDataType] of an enum: every rule.
+///   type first): every rule but those with `validation: never` (command-injection, ruling R-E34). The accepted text is
+///   a number's in a loose sense: surrounding whitespace, a sign, group separators, an exponent, a trailing line break
+///   or NUL, and with a `typeof` operand hex forms (" 5", "-5", "1,000", "1E+2", "0x10"). A range over another operand
+///   type (a date) cleans nothing.
+/// - [EnumDataType] of an enum: the same rules. It accepts names, numbers, spaces and commas ("Top, Middle", "3").
 /// - [RegularExpression]: the rules whose metacharacters (a rule model's `validation:`) the pattern's alphabet
 ///   (RegexAlphabet: the pattern is held to the whole value, "an exact match") does not hold.
 /// - Anything else ([EmailAddress], [Url], [Phone], [StringLength], [MaxLength], [MinLength], [Required], custom
@@ -35,15 +38,19 @@ internal sealed class ModelValidation
     private readonly Dictionary<ISymbol, string[]> _memberRules = new(SymbolEqualityComparer.Default);
     private readonly Dictionary<ITypeSymbol, List<(ImmutableArray<IPropertySymbol> Members, string[] Rules)>> _paths = new(SymbolEqualityComparer.Default);
     private readonly Dictionary<ISymbol, bool> _automatic = new(SymbolEqualityComparer.Default);
-    private readonly HashSet<string> _apiAttributes, _notValidated;
+    private readonly HashSet<string> _apiAttributes, _notValidated, _keepsValidity;
 
     public ModelValidation(ValidationSources? model, IEnumerable<RuleModel> rules, string[] allRules)
     {
         _model = model;
-        _rules = rules.Where(r => r.ValidationMetacharacters != null).Select(r => (r.RuleId, r.ValidationMetacharacters!)).ToList();
-        _allRules = allRules;
+        var ruleList = rules.ToList();
+        _rules = ruleList.Where(r => r.ValidationMetacharacters != null).Select(r => (r.RuleId, r.ValidationMetacharacters!)).ToList();
+        // `validation: never` (ruling R-E34): no attribute cleans the rule, [Range] and [EnumDataType] neither.
+        var never = ruleList.Where(r => r.ValidationNever).Select(r => r.RuleId).ToHashSet(StringComparer.Ordinal);
+        _allRules = allRules.Where(r => !never.Contains(r)).ToArray();
         _apiAttributes = new HashSet<string>(model?.ApiControllerAttributes ?? Array.Empty<string>(), StringComparer.Ordinal);
         _notValidated = new HashSet<string>(model?.NotValidatedAttributes ?? Array.Empty<string>(), StringComparer.Ordinal);
+        _keepsValidity = new HashSet<string>(model?.KeepsValidity ?? Array.Empty<string>(), StringComparer.Ordinal);
     }
 
     public bool Enabled => _model != null;
@@ -51,7 +58,10 @@ internal sealed class ModelValidation
     /// Whether an assignment of the suppress option (other than `= false`) is somewhere in the source (Scan).
     public bool Suppressed { get; private set; }
 
-    /// Looks for `x.SuppressModelStateInvalidFilter = <anything but false>` (an assignment or an object initializer's).
+    /// Looks for what turns the automatic 400 off (by syntax, on the safe side): `x.SuppressModelStateInvalidFilter =
+    /// <anything but false>` (an assignment or an object initializer's); any assignment of
+    /// `InvalidModelStateResponseFactory` (the factory decides the response); and `Configure<ApiBehaviorOptions>(x)` given
+    /// anything but a lambda (options bound from configuration may set the option there). Review M4.
     public void Scan(Compilation compilation, CancellationToken ct)
     {
         if (_model == null || Suppressed) return;
@@ -60,15 +70,22 @@ internal sealed class ModelValidation
             ct.ThrowIfCancellationRequested();
             foreach (var token in tree.GetRoot(ct).DescendantTokens())
             {
-                if (!token.IsKind(SyntaxKind.IdentifierToken) || token.ValueText != _model.SuppressOption) continue;
-                var name = token.Parent;
-                var target = name?.Parent is MemberAccessExpressionSyntax access && access.Name == name ? access : name as ExpressionSyntax;
-                if (target?.Parent is AssignmentExpressionSyntax assignment && assignment.Left == target
-                    && !assignment.Right.IsKind(SyntaxKind.FalseLiteralExpression))
+                if (!token.IsKind(SyntaxKind.IdentifierToken)) continue;
+                if (token.ValueText == _model.SuppressOption || token.ValueText == _model.ResponseFactory)
+                {
+                    var name = token.Parent;
+                    var target = name?.Parent is MemberAccessExpressionSyntax access && access.Name == name ? access : name as ExpressionSyntax;
+                    if (target?.Parent is AssignmentExpressionSyntax assignment && assignment.Left == target
+                        && !assignment.Right.IsKind(SyntaxKind.FalseLiteralExpression))
+                        Suppressed = true;
+                }
+                else if (token.ValueText == _model.OptionsType && token.Parent?.Parent is TypeArgumentListSyntax { Parent: GenericNameSyntax { Identifier.ValueText: "Configure" } generic }
+                    && (generic.Parent is MemberAccessExpressionSyntax m && m.Name == generic ? m.Parent : generic.Parent) is InvocationExpressionSyntax call
+                    && call.ArgumentList.Arguments.Any(a => a.Expression is not LambdaExpressionSyntax and not AnonymousMethodExpressionSyntax))
                 {
                     Suppressed = true;
-                    return;
                 }
+                if (Suppressed) return;
             }
         }
     }
@@ -95,6 +112,20 @@ internal sealed class ModelValidation
             && _model.ModelState.Any(p => SymbolMatch.Matches(p, read.Property));
     }
 
+    /// A read of a ModelStateDictionary (the action's, through any path: `ModelState`, `ViewData.ModelState`) used
+    /// otherwise than by one of the members that keep validity (`keeps-validity`: reads, AddModelError) called or read on
+    /// it in place: removed, cleared, marked, an entry taken, given to a call, held in a variable (review C2).
+    public bool ChangesValidity(IPropertyReferenceOperation read)
+    {
+        if (_model == null || read.Type is not { } type || SymbolMatch.MetadataName(type) != _model.IsValid.TypeName) return false;
+        return read.Parent switch
+        {
+            IPropertyReferenceOperation { Arguments.Length: 0 } use when ReferenceEquals(use.Instance, read) => !_keepsValidity.Contains(use.Property.Name),
+            IInvocationOperation use when ReferenceEquals(use.Instance, read) => !_keepsValidity.Contains(use.TargetMethod.Name),
+            _ => true,
+        };
+    }
+
     /// A TryValidateModel call of the action (on `this`, the framework's method, not an override in the project).
     public bool IsTryValidate(IInvocationOperation call)
     {
@@ -103,17 +134,28 @@ internal sealed class ModelValidation
         return _model.TryValidate.Any(p => SymbolMatch.Matches(p, call.TargetMethod));
     }
 
-    /// Whether a parameter, a property or its type is left out of validation.
+    /// Whether a parameter, a property or its type is left out of validation. [ValidateNever] is inherited
+    /// (`Inherited = true`): a base class's attribute counts, and so does an overridden property's.
     public bool NotValidated(ISymbol symbol)
     {
         if (Has(symbol.GetAttributes(), _notValidated)) return true;
+        if (symbol is IPropertySymbol property)
+            for (var o = property.OverriddenProperty; o != null; o = o.OverriddenProperty)
+                if (Has(o.GetAttributes(), _notValidated)) return true;
         var type = symbol switch
         {
             IParameterSymbol p => p.Type,
             IPropertySymbol p => p.Type,
             _ => null,
         };
-        return type != null && Has(SourceFinder.UnwrapNullable(type).GetAttributes(), _notValidated);
+        return type != null && TypeNotValidated(SourceFinder.UnwrapNullable(type));
+    }
+
+    private bool TypeNotValidated(ITypeSymbol type)
+    {
+        for (var t = type; t != null; t = t.BaseType)
+            if (Has(t.GetAttributes(), _notValidated)) return true;
+        return false;
     }
 
     /// The rules a bound parameter's or property's own attributes clean (empty: none).
@@ -185,7 +227,7 @@ internal sealed class ModelValidation
         type = SourceFinder.UnwrapNullable(type);
         if (_paths.TryGetValue(type, out var cached)) return cached;
         var list = new List<(ImmutableArray<IPropertySymbol>, string[])>();
-        if (!Has(type.GetAttributes(), _notValidated)) Walk(type, ImmutableArray<IPropertySymbol>.Empty, list);
+        if (!TypeNotValidated(type)) Walk(type, ImmutableArray<IPropertySymbol>.Empty, list);
         _paths[type] = list;
         return list;
     }

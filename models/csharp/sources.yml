@@ -182,8 +182,15 @@ members:
 # .phoneattribute, microsoft.aspnetcore.mvc.modelbinding.validation.validateneverattribute.
 # - `model-state`: the action's ModelStateDictionary (read on `this`); `is-valid`: its property; `try-validate`: the
 #   methods that validate a model and return whether the ModelState is valid (their argument 0 is the model).
-# - `api-controller-attributes`: on the controller, a base class or the assembly, validation holds in every action
-#   (the automatic 400), unless an assignment of `suppress-option` (other than `= false`) is anywhere in the source.
+# - `keeps-validity`: the ModelStateDictionary members (by name) whose use leaves what IsValid says about the values
+#   binding validated: reads, and AddModelError (it can only make the state invalid). Any other use of the action's
+#   dictionary (Remove, Clear, ClearValidationState, MarkFieldValid, MarkFieldSkipped, SetModelValue, an entry read
+#   through the indexer or TryGetValue, the dictionary given to a call, held in a variable) ends it: from there on an
+#   IsValid check cleans nothing (review C2).
+# - `api-controller-attributes`: on a controller (not a Razor Pages handler), a base class or the assembly, validation
+#   holds in every action (the automatic 400), unless the source anywhere assigns `suppress-option` (other than
+#   `= false`) or `response-factory`, or configures `options-type` from anything but a lambda (bound from
+#   configuration).
 # - `not-validated-attributes`: a parameter, property or type with one is left out of validation.
 # - `range`, `regular-expression`, `enum-data-type`: the attributes that clean (README); [EmailAddress], [Url], [Phone],
 #   [StringLength], [MaxLength], [MinLength] and [Required] clean nothing (their documentation names no alphabet, or
@@ -197,8 +204,12 @@ validation:
   try-validate:
     - Microsoft.AspNetCore.Mvc.ControllerBase.TryValidateModel
     - Microsoft.AspNetCore.Mvc.RazorPages.PageModel.TryValidateModel
+  keeps-validity: [IsValid, ErrorCount, ValidationState, Count, Keys, HasReachedMaxErrors, MaxAllowedErrors,
+    ContainsKey, GetFieldValidationState, GetValidationState, AddModelError, TryAddModelError]
   api-controller-attributes: [Microsoft.AspNetCore.Mvc.ApiControllerAttribute]
   suppress-option: SuppressModelStateInvalidFilter
+  response-factory: InvalidModelStateResponseFactory
+  options-type: ApiBehaviorOptions
   not-validated-attributes: [Microsoft.AspNetCore.Mvc.ModelBinding.Validation.ValidateNeverAttribute]
   range: System.ComponentModel.DataAnnotations.RangeAttribute
   regular-expression: System.ComponentModel.DataAnnotations.RegularExpressionAttribute

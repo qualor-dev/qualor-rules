@@ -480,6 +480,7 @@ internal sealed partial class MethodAnalyzer
             }
 
             case IPropertyReferenceOperation property:
+                if (_validatedPaths != null && MayChangeModelState(property)) ModelStateTouched(state);
                 return Guarded(property, ReadProperty(property, state), state);
             case IArrayElementReferenceOperation element:
             {
@@ -488,6 +489,7 @@ internal sealed partial class MethodAnalyzer
                 return array;
             }
             case IInvocationOperation invocation:
+                if (_validatedPaths != null && MayChangeModelState(invocation)) ModelStateTouched(state);
                 return Call(invocation, invocation.TargetMethod, invocation.Instance, invocation.Arguments, state, invocation.IsVirtual);
             case IObjectCreationOperation creation:
             {

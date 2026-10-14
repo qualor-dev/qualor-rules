@@ -137,7 +137,7 @@ guards:
         text: '[^\\/:][\\/]$'
 
 # Model validation (Task 31, decision R-12; models/README.md "Model validation"): the separators and the volume mark
-# (/ \ :) and NUL. A value without them is one path segment, as Path.GetFileName leaves it (a sanitizer above): ".." is
-# such a segment too (accepted as for GetFileName).
+# (/ \ :) and control characters (NUL ends a path in native APIs). A value without them is one path segment, as
+# Path.GetFileName leaves it (a sanitizer above): ".." is such a segment too (accepted as for GetFileName).
 validation:
-  metacharacters: '[/\\:\x00]'
+  metacharacters: '[/\\:\p{Cc}]'

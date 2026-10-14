@@ -137,8 +137,8 @@ guards: []
 # Model validation (Task 31, decision R-12; models/README.md "Model validation"): the characters a value needs to
 # change a statement: quotes and backquote (and look-alikes that a best-fit code page conversion may turn into a quote),
 # backslash, comment and statement markers (; # -- /* */), whitespace (a second token), parentheses, operators, commas,
-# brackets and braces, and the placeholder and variable marks @ ? : $. A value of letters, digits, '_' and '.' is one
-# token: it can still name another column or keyword where it is placed without quotes (accepted: one token adds no
-# clause).
+# brackets and braces, the placeholder and variable marks @ ? : $, and control characters (NUL, ^Z truncate). A
+# value of letters, digits, '_' and '.' is one token: it can still name another column or keyword where it is placed
+# without quotes (accepted, ruling R-E33: one token adds no clause).
 validation:
-  metacharacters: '[''"`\\;#/*\-\s(),=<>|&!^~\[\]{}@?:$\u00B4\u02B9\u02BA\u02BC\u2018\u2019\u201B\u201C\u201D\u2032\u2035\uFF02\uFF07]'
+  metacharacters: '[''"`\\;#/*\-\s\p{Cc}(),=<>|&!^~\[\]{}@?:$\u00B4\u02B9\u02BA\u02BC\u2018\u2019\u201B\u201C\u201D\u2032\u2035\uFF02\uFF07]'

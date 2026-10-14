@@ -34,6 +34,24 @@ public sealed class RegexAlphabetTests
         Assert.DoesNotContain("'", Ascii(@"^(?=['a])a$"));
     }
 
+    /// Review I2: an escaped dash before `[` starts no subtraction (`[a-z\-[]` is a class, then `'`, `[0-9]`, `]`); the
+    /// legacy backreference forms `\<name>` and `\'name'` read a group captured in a lookahead; a negated class keeps the
+    /// letters its case-sensitive reading admits (`[^a-z...]` admits upper case). Each pattern is checked against .NET's
+    /// Regex first.
+    [Theory]
+    [InlineData(@"^[a-z\-[]'[0-9]]$", "a'5]", '\'')]
+    [InlineData(@"^(?=(?<q>'))\<q>$", "'", '\'')]
+    [InlineData(@"^(?=(?'q''))\'q'$", "'", '\'')]
+    [InlineData(@"^[^a-z\W_\u0080-\uFFFF]+$", "HOST", 'H')]
+    public void The_alphabet_holds_what_dotnet_accepts(string pattern, string accepted, char character)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(accepted, pattern);
+        Assert.True(match.Success && match.Index == 0 && match.Length == accepted.Length, "not accepted by .NET: " + pattern);
+        var alphabet = RegexAlphabet.Of(pattern);
+        Assert.NotNull(alphabet);
+        Assert.True(alphabet![character], $"alphabet of {pattern} misses {character}");
+    }
+
     [Theory]
     [InlineData("(?x) ^ a $")]          // free-spacing: whitespace and # change meaning
     [InlineData("(?x:a b)")]

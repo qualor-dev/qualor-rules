@@ -49,6 +49,7 @@ sanitizers:
 guards: []
 
 # Model validation (Task 31, decision R-12; models/README.md "Model validation"): the filter specials of RFC 4515
-# (* ( ) \ NUL), the distinguished-name specials of RFC 4514 (, + " \ < > ; = #, spaces), and '/' (an ADsPath).
+# (* ( ) \ NUL), the distinguished-name specials of RFC 4514 (, + " \ < > ; = #, spaces), '/' (an ADsPath), and control
+# characters (NUL among them).
 validation:
-  metacharacters: '[*()\\\x00,+"<>;=#/\s]'
+  metacharacters: '[*()\\,+"<>;=#/\s\p{Cc}]'

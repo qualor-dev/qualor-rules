@@ -171,8 +171,7 @@ sanitizers:
   - allow-list: literal-tables
 guards: []
 
-# Model validation (Task 31, decision R-12; models/README.md "Model validation"): the shell's operators, quotes,
-# expansions and globs (; & | ` $ ( ) < > ' " \ * ? [ ] { } ~ ! # % ^), whitespace and line breaks (another argument
-# or command), and '-', '=' and ',' (an option or an option's value: argument injection), and NUL.
-validation:
-  metacharacters: '[;&|`$()<>''"\\*?\[\]{}~!#%^=,\-\s\x00]'
+# Model validation (Task 31, ruling R-E34; models/README.md "Model validation"): never cleans this rule. A token of
+# letters chosen by the request can name the program to run (`reboot`), and [Range] and [EnumDataType] accept signs,
+# separators and spaces (" 5", "-5", "1E+2", "Top, Middle"): an option or another argument on a command line.
+validation: never

@@ -10,7 +10,9 @@ namespace Qualor.Taint;
 /// whole value, anchored or not, so every character of an accepted value was consumed by one of the pattern's consuming
 /// parts: a literal character, an escape naming one, a character class (`[...]`, `\d`, `\w`, `\s`, `\p{..}` and their
 /// negations) or `.`. The alphabet is the union of what those parts admit, read with .NET's own Regex on each of the
-/// 65,536 UTF-16 code units, case-insensitively (a superset of what the pattern admits under any case option).
+/// 65,536 UTF-16 code units, both case-sensitively and case-insensitively (their union: a superset of what the pattern
+/// admits under either case option; the culture-specific dotted and dotless i of tr/az are not read, and no rule's
+/// metacharacters hold them). A part that matches no single character makes the pattern unread (a misread class).
 ///
 /// - Not consuming: anchors, quantifiers, alternation, group syntax, and the contents of lookarounds (unless the pattern
 ///   also holds a backreference: a group captured inside a lookaround may then be consumed by it); a backreference
@@ -62,18 +64,33 @@ internal static class RegexAlphabet
         if (atoms == null) return null;
         var alphabet = new BitArray(char.MaxValue + 1);
         if (atoms.Count == 0) return alphabet;
-        Regex any;
+        var distinct = atoms.Distinct(StringComparer.Ordinal).ToList();
+        Regex exact, folded;
         try
         {
-            any = new Regex(@"\A(?:" + string.Join("|", atoms.Distinct(StringComparer.Ordinal)) + @")\z",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            // Every part must be one character (a misread class would match none and hide what the pattern admits).
+            foreach (var atom in distinct)
+            {
+                var one = new Regex(@"\A(?:" + atom + @")\z", RegexOptions.CultureInvariant);
+                var any = false;
+                for (var c = 0; c <= char.MaxValue && !any; c++) any = one.IsMatch(((char)c).ToString());
+                if (!any) return null;
+            }
+            var alternation = @"\A(?:" + string.Join("|", distinct) + @")\z";
+            // Both readings: case-insensitive adds the case partners of what a part names; case-sensitive keeps what a
+            // negated class admits that its case-insensitive reading drops (`[^a-z]` admits `L`; review I2 c).
+            exact = new Regex(alternation, RegexOptions.CultureInvariant);
+            folded = new Regex(alternation, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         }
         catch (ArgumentException)
         {
             return null;
         }
         for (var c = 0; c <= char.MaxValue; c++)
-            if (any.IsMatch(((char)c).ToString())) alphabet[c] = true;
+        {
+            var text = ((char)c).ToString();
+            if (exact.IsMatch(text) || folded.IsMatch(text)) alphabet[c] = true;
+        }
         return alphabet;
     }
 
@@ -119,6 +136,14 @@ internal static class RegexAlphabet
                         if (end < 0) return null;
                         backreference = true;
                         i = end + 1;
+                    }
+                    else if (d is '<' or '\'')
+                    {
+                        // `\<name>` and `\'name'`: the legacy forms of a named backreference (review I2 b); read as the
+                        // character too.
+                        backreference = true;
+                        Add(Escape(d));
+                        i += 2;
                     }
                     else if (char.IsAsciiDigit(d))
                     {
@@ -285,21 +310,26 @@ internal static class RegexAlphabet
     };
 
     /// The index of the `]` that ends the class opening at `start`, or -1: a `]` right after `[` or `[^` is literal, an
-    /// escape takes the next character, and a subtraction (`-[...]`) holds a nested class.
+    /// escape takes the next character, and a subtraction (`-[...]`, the `-` not escaped: review I2 a) holds a nested
+    /// class.
     private static int ClassEnd(string p, int start)
     {
         var j = start + 1;
         if (j < p.Length && p[j] == '^') j++;
         if (j < p.Length && p[j] == ']') j++;
+        var dash = false;
         while (j < p.Length)
         {
             var ch = p[j];
             if (ch == '\\')
             {
                 j += 2;
+                dash = false;
                 continue;
             }
-            if (ch == '[' && p[j - 1] == '-')
+            var afterDash = dash;
+            dash = ch == '-';
+            if (ch == '[' && afterDash)
             {
                 var inner = ClassEnd(p, j);
                 if (inner < 0) return -1;

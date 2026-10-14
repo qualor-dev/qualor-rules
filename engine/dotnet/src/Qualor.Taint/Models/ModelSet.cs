@@ -196,6 +196,9 @@ public sealed record RuleModel(
     /// characters a value needs to inject into this rule's sinks; a validated value whose [RegularExpression] admits none
     /// of them is clean for the rule. Null: no pattern cleans the rule.
     public System.Text.RegularExpressions.Regex? ValidationMetacharacters { get; init; }
+
+    /// `validation: never` (ruling R-E34): no validation attribute cleans the rule, [Range] and [EnumDataType] neither.
+    public bool ValidationNever { get; init; }
 }
 
 /// A keyed-read sanitizer: the read of Member (an indexer), or the `out` values of a call of Member (a method such as
@@ -256,11 +259,14 @@ public sealed record SourceModel(
 
 /// Model validation (sources.yml (7), models/README.md "Model validation"): ModelState (the action's
 /// ModelStateDictionary properties) and its IsValid property, the TryValidateModel methods, the [ApiController]
-/// attributes, the option that suppresses the automatic 400 (a property name), the attributes that leave a member out
-/// of validation, and the three attributes that clean.
+/// attributes, what turns the automatic 400 off (the suppress option and the response factory, property names; the
+/// options type, a simple name), the attributes that leave a member out of validation, and the three attributes that
+/// clean. KeepsValidity: the ModelStateDictionary members whose use leaves what IsValid says about binding's values
+/// (reads, AddModelError); any other use of the dictionary ends it.
 public sealed record ValidationSources(
     IReadOnlyList<MemberPattern> ModelState, MemberPattern IsValid, IReadOnlyList<MemberPattern> TryValidate,
-    IReadOnlyList<string> ApiControllerAttributes, string SuppressOption, IReadOnlyList<string> NotValidatedAttributes,
+    IReadOnlyList<string> ApiControllerAttributes, string SuppressOption, string ResponseFactory, string OptionsType,
+    IReadOnlyList<string> KeepsValidity, IReadOnlyList<string> NotValidatedAttributes,
     string Range, string RegularExpression, string EnumDataType);
 
 /// How taint passes through a member the engine does not analyse: From (`this`, `args`, or a parameter ordinal) to

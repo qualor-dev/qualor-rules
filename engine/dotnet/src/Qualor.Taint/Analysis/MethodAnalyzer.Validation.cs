@@ -23,16 +23,25 @@ internal sealed partial class MethodAnalyzer
     /// The validated parameters of the analysed action and the rules each cleans.
     private List<(IParameterSymbol Parameter, string[] Rules)>? _validatedParameters;
 
+    /// The root of the validity fact: while the state holds a fact on Validity pending on the body's root operation,
+    /// ModelState is as validation left it, so an IsValid check speaks for the values binding validated (review C2).
+    private static readonly AccessPath Validity = new(new object(), ImmutableArray<ISymbol>.Empty, ImmutableArray<ITypeSymbol>.Empty);
+
     /// Seeds the entry state of an action's body with its validation facts.
     private void SeedValidation(TaintState entry)
     {
         var validation = _ctx.Validation;
         if (!validation.Enabled || _body.Method is not { } method) return;
         if (!_ctx.Sources.IsAction(method) && !_ctx.Sources.IsPageHandler(method)) return;
-        var automatic = validation.IsAutomatic(method);
+        // The automatic 400 is a controller behaviour: a Razor Pages handler needs the IsValid check, also in a page model
+        // that carries [ApiController] (which the source model would take for a controller; review I1).
+        var automatic = _ctx.Sources.IsAction(method) && !_ctx.Sources.IsPageModel(method.ContainingType) && validation.IsAutomatic(method);
         var pending = ImmutableHashSet.Create(_cfg.OriginalOperation);
         _validatedPaths = new Dictionary<AccessPath, string[]>();
         _validatedParameters = new List<(IParameterSymbol, string[])>();
+        // A lambda or local function of the action that changes ModelState may run before the check: no validity.
+        var validity = !NestedChangesModelState();
+        if (validity) entry.AddFact(new MemberFact(Validity, false, ImmutableHashSet<string>.Empty, pending));
         foreach (var p in method.Parameters)
         {
             if (!_ctx.Sources.IsSourceParameter(p) || validation.NotValidated(p)) continue;
@@ -64,9 +73,8 @@ internal sealed partial class MethodAnalyzer
             if (_validatedPaths!.Count >= MemberFacts.MaxFacts / 2) return;
             if (Path(root, rootType, members) is not { } path || !CanHold(path)) return;
             _validatedPaths![path] = rules;
-            entry.AddFact(automatic
-                ? new MemberFact(path, false, rules.ToImmutableHashSet(), ImmutableHashSet<IOperation>.Empty)
-                : new MemberFact(path, false, ImmutableHashSet<string>.Empty, pending));
+            if (automatic) entry.AddFact(new MemberFact(path, false, rules.ToImmutableHashSet(), ImmutableHashSet<IOperation>.Empty));
+            else if (validity) entry.AddFact(new MemberFact(path, false, ImmutableHashSet<string>.Empty, pending));
         }
     }
 
@@ -99,6 +107,7 @@ internal sealed partial class MethodAnalyzer
     {
         if (_validatedPaths == null || _validatedParameters == null) return;
         var marker = _cfg.OriginalOperation;
+        if ((refined ?? state).Fact(Validity) is not { } validity || !validity.Pending.Contains(marker)) return;
         foreach (var fact in (refined ?? state).Facts)
         {
             if (!fact.Pending.Contains(marker) || !_validatedPaths.TryGetValue(fact.Path, out var rules)) continue;
@@ -156,6 +165,45 @@ internal sealed partial class MethodAnalyzer
         if (_assignments!.ContainsKey(parameter)) return false;
         _nestedEffects ??= NestedEffects();
         return !_nestedEffects.Contains(parameter);
+    }
+
+    /// ModelState used otherwise than by a read or AddModelError (ModelValidation.ChangesValidity), or a call that may
+    /// change it: a project method called on `this` or given it, TryUpdateModel(Async): the validity fact and the pending
+    /// validation facts end (review C2). TryValidateModel's own model facts are made at its check, after this.
+    private void ModelStateTouched(TaintState state)
+    {
+        if (_validatedPaths == null || !state.HasFacts) return;
+        var marker = _cfg.OriginalOperation;
+        HashSet<AccessPath>? ended = null;
+        foreach (var f in state.Facts)
+            if (f.Pending.Contains(marker)) (ended ??= new HashSet<AccessPath>()).Add(f.Path);
+        if (ended != null) state.Forget(ended.Contains);
+    }
+
+    /// Whether an operation evaluated here may change the action's ModelState (see ModelStateTouched).
+    private bool MayChangeModelState(IOperation operation) => operation switch
+    {
+        IPropertyReferenceOperation p => _ctx.Validation.ChangesValidity(p),
+        IInvocationOperation call => (SymbolKeys.InSource(call.TargetMethod) && (IsThis(call.Instance) || call.Arguments.Any(a => IsThis(a.Value))))
+            || (IsThis(call.Instance) && call.TargetMethod.Name.StartsWith("TryUpdateModel", StringComparison.Ordinal)),
+        _ => false,
+    };
+
+    private static bool IsThis(IOperation? op) =>
+        op != null && Unwrapped(op) is IInstanceReferenceOperation { ReferenceKind: InstanceReferenceKind.ContainingTypeInstance };
+
+    /// Whether a lambda or local function of the analysed method may change ModelState.
+    private bool NestedChangesModelState()
+    {
+        var g = _cfg;
+        while (g.Parent != null) g = g.Parent;
+        foreach (var o in g.OriginalOperation.Descendants())
+        {
+            if (o is not (IAnonymousFunctionOperation or ILocalFunctionOperation)) continue;
+            foreach (var n in o.Descendants())
+                if (MayChangeModelState(n)) return true;
+        }
+        return false;
     }
 
     /// `check == c` or `check != c` with a bool constant c and a validity check: the check's outcome on this branch.

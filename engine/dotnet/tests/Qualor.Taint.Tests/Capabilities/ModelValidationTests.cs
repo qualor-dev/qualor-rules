@@ -127,31 +127,66 @@ public sealed class ModelValidationTests
         }
         """);
 
-    /// The metacharacters are the rule's (validation: in its model): a container name of letters, digits and `-._,|`
-    /// holds no path separator, so it is clean for path-traversal, but `|` and `,` keep it request data for
-    /// command-injection; a pattern admitting `/` is not clean for path-traversal.
+    /// The metacharacters are the rule's (validation: in its model): a container name of letters, digits and `._,|-`
+    /// holds no path separator, so it is clean for path-traversal, but `,`, `|` and `-` keep it request data for
+    /// sql-injection; a pattern admitting `/` is not clean for path-traversal.
     [Fact]
     public void Each_rule_has_its_own_metacharacters()
     {
         const string code = """
             public class MediaController : Controller
             {
+                private readonly SqlConnection _db = new("Server=.;Database=media");
                 public IActionResult Play(Basket basket)
                 {
                     if (!ModelState.IsValid) return BadRequest();
                     System.IO.File.ReadAllText("/media/segment." + basket.Container);
                     System.IO.File.ReadAllText("/media/" + basket.Folder); /*sink*/
-                    Process.Start("/usr/bin/" + basket.Container); /*sink*/
-                    Process.Start("/usr/bin/" + basket.Code);
+                    new SqlCommand("SELECT * FROM m WHERE c = '" + basket.Container + "'", _db); /*sink*/
+                    new SqlCommand("SELECT * FROM m WHERE c = '" + basket.Code + "'", _db);
                     return Ok();
                 }
             }
             """;
-        var path = code.Replace("Process.Start(\"/usr/bin/\" + basket.Container); /*sink*/", "Process.Start(\"/usr/bin/\" + basket.Container);");
+        var path = code.Replace("basket.Container + \"'\", _db); /*sink*/", "basket.Container + \"'\", _db);");
         Expect(path, "csharp.path-traversal");
-        var command = code.Replace("System.IO.File.ReadAllText(\"/media/\" + basket.Folder); /*sink*/", "System.IO.File.ReadAllText(\"/media/\" + basket.Folder);");
-        Expect(command, "csharp.command-injection");
+        var sql = code.Replace("System.IO.File.ReadAllText(\"/media/\" + basket.Folder); /*sink*/", "System.IO.File.ReadAllText(\"/media/\" + basket.Folder);");
+        Expect(sql);
     }
+
+    /// Ruling R-E34: validation never cleans command-injection. A token of letters chosen by the request can name the
+    /// program to run (`reboot`), and the values [Range] and [EnumDataType] accept carry signs, separators and spaces
+    /// (" 5", "-5", "1E+2", "Top, Middle"): an option or a second argument where they reach a command line.
+    [Fact]
+    public void Validation_never_cleans_command_injection() => Expect("""
+        public class RunController : Controller
+        {
+            public IActionResult Run([RegularExpression("^[a-z]+$")] string tool, [Range(-100, 100)] string n, [EnumDataType(typeof(Shelf))] string shelf)
+            {
+                if (!ModelState.IsValid) return BadRequest();
+                Process.Start("/usr/bin/" + tool); /*sink*/
+                Process.Start("/bin/sh", "-c \"tool " + n + "\""); /*sink*/
+                Process.Start("/bin/sh", "-c \"shelve " + shelf + "\""); /*sink*/
+                return Ok();
+            }
+        }
+        """, "csharp.command-injection");
+
+    /// Ruling R-E34: a value of ASCII digits cleans ssrf, as an int parameter does (the scalar policy); its cost is a
+    /// host written as one decimal number (`http://2130706433/` is 127.0.0.1) or a chosen port. Letters do not clean.
+    [Fact]
+    public void Only_digits_clean_ssrf() => Expect("""
+        public class FetchController : Controller
+        {
+            public async Task<IActionResult> Get([RegularExpression("^[0-9]+$")] string port, [RegularExpression("^[a-z]+$")] string host)
+            {
+                if (!ModelState.IsValid) return BadRequest();
+                using var client = new HttpClient();
+                await client.GetStringAsync("http://" + host + "/status"); /*sink*/
+                return Ok(await client.GetStringAsync("http://10.0.0.1:" + port + "/status"));
+            }
+        }
+        """, "csharp.ssrf");
 
     /// An enum-typed member holds a named value; [EnumDataType] holds a string to one of the enum's values.
     [Fact]
@@ -449,7 +484,144 @@ public sealed class ModelValidationTests
         }
         """);
 
+    /// The automatic 400 is a controller behaviour ("Create web APIs": the attribute applies to controllers); a Razor
+    /// Pages handler must check ModelState.IsValid even under `[assembly: ApiController]` or the attribute on its class.
+    [Fact]
+    public void An_assembly_api_controller_attribute_does_not_cover_razor_pages() => Expect("""
+        [assembly: ApiController]
+        public class CheckoutModel : PageModel
+        {
+            private readonly SqlConnection _db = new("Server=.;Database=shop");
+            [BindProperty] public Basket Input { get; set; } = new();
+            public IActionResult OnPost([RegularExpression("^[a-z]+$")] string id)
+            {
+                new SqlCommand("UPDATE b SET c = '" + Input.Code + "'", _db); /*sink*/
+                new SqlCommand("SELECT * FROM o WHERE id = '" + id + "'", _db); /*sink*/
+                if (!ModelState.IsValid) return Page();
+                new SqlCommand("UPDATE b SET c = '" + Input.Code + "' WHERE id = '" + id + "'", _db);
+                return Page();
+            }
+        }
+        """);
+
+    [Fact]
+    public void An_api_controller_attribute_on_a_page_model_has_no_effect() => Expect("""
+        [ApiController]
+        public class OrderModel : PageModel
+        {
+            private readonly SqlConnection _db = new("Server=.;Database=shop");
+            public IActionResult OnPost([RegularExpression("^[a-z]+$")] string id)
+            {
+                new SqlCommand("SELECT * FROM o WHERE id = '" + id + "'", _db); /*sink*/
+                return Page();
+            }
+        }
+        """);
+
+    /// The automatic 400 also goes when InvalidModelStateResponseFactory is replaced (the factory decides the response)
+    /// or ApiBehaviorOptions are bound from configuration (SuppressModelStateInvalidFilter may be set there): then only
+    /// the IsValid check counts.
+    [Theory]
+    [InlineData("services.Configure<ApiBehaviorOptions>(o => o.InvalidModelStateResponseFactory = c => new OkResult());")]
+    [InlineData("services.Configure<ApiBehaviorOptions>(configuration.GetSection(\"Api\"));")]
+    public void Other_ways_to_turn_the_automatic_400_off_count(string setup) => Expect($$"""
+        public static class Setup
+        {
+            public static void Api(IServiceCollection services, Microsoft.Extensions.Configuration.IConfiguration configuration)
+            {
+                {{setup}}
+            }
+        }
+        [ApiController]
+        [Route("api/baskets")]
+        public class BasketsController : ControllerBase
+        {
+            private readonly SqlConnection _db = new("Server=.;Database=shop");
+            [HttpPost]
+            public IActionResult Save(Basket basket)
+            {
+                new SqlCommand("UPDATE b SET c = '" + basket.Code + "'", _db); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    /// [ValidateNever] is inherited (AttributeUsage Inherited = true): a form deriving from a class that carries it is
+    /// not validated.
+    [Fact]
+    public void Validate_never_on_a_base_class_is_inherited() => Expect("""
+        [ValidateNever] public class LooseForm { }
+        public class SearchForm : LooseForm { [RegularExpression("^[a-z]+$")] public string Term { get; set; } = ""; }
+        public class SearchController : Controller
+        {
+            private readonly SqlConnection _db = new("Server=.;Database=shop");
+            public IActionResult Find(SearchForm form)
+            {
+                if (!ModelState.IsValid) return BadRequest();
+                new SqlCommand("SELECT * FROM p WHERE t = '" + form.Term + "'", _db); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
     // ---- What ends the fact ----
+
+    /// IsValid speaks for the values binding validated only while ModelState is as validation left it. Removing or
+    /// clearing an entry, marking a field valid or skipped, setting a value, or handing ModelState to other code (which
+    /// may do any of that) makes the later check say nothing; reads and AddModelError (which only makes it invalid) keep
+    /// it.
+    [Fact]
+    public void Changing_model_state_before_the_check_reports() => Expect("""
+        public static class StateFixes { public static void Drop(Microsoft.AspNetCore.Mvc.ModelBinding.ModelStateDictionary s) => s.Remove("Code"); }
+        public class BasketController : Controller
+        {
+            private readonly SqlConnection _db = new("Server=.;Database=shop");
+            public IActionResult Remove(Basket basket)
+            {
+                ModelState.Remove(nameof(Basket.Code));
+                if (!ModelState.IsValid) return View(basket);
+                new SqlCommand("UPDATE b SET c = '" + basket.Code + "'", _db); /*sink*/
+                return Ok();
+            }
+            public IActionResult Clear(Basket basket)
+            {
+                ModelState.Clear();
+                if (!ModelState.IsValid) return View(basket);
+                new SqlCommand("UPDATE b SET c = '" + basket.Code + "'", _db); /*sink*/
+                return Ok();
+            }
+            public IActionResult Mark([RegularExpression("^[a-z]+$")] string id)
+            {
+                ModelState.MarkFieldValid("id");
+                if (!ModelState.IsValid) return BadRequest();
+                new SqlCommand("SELECT * FROM o WHERE id = '" + id + "'", _db); /*sink*/
+                return Ok();
+            }
+            public IActionResult Helper(Basket basket)
+            {
+                StateFixes.Drop(ModelState);
+                if (!ModelState.IsValid) return View(basket);
+                new SqlCommand("UPDATE b SET c = '" + basket.Code + "'", _db); /*sink*/
+                return Ok();
+            }
+            public IActionResult Through(Basket basket)
+            {
+                ViewData.ModelState.Remove("Code");
+                if (!ModelState.IsValid) return View(basket);
+                new SqlCommand("UPDATE b SET c = '" + basket.Code + "'", _db); /*sink*/
+                return Ok();
+            }
+            public IActionResult Reads(Basket basket, [RegularExpression("^[a-z]+$")] string id)
+            {
+                if (basket.Plain.Length == 0) ModelState.AddModelError("Plain", "required");
+                if (ModelState.ErrorCount > 10 || ModelState.ContainsKey("x")) return BadRequest();
+                if (!ModelState.IsValid) return View(basket);
+                new SqlCommand("UPDATE b SET c = '" + basket.Code + "' WHERE id = '" + id + "'", _db);
+                ModelState.Clear();
+                return Ok();
+            }
+        }
+        """);
 
     /// The value validated is the one bound: a member written after the check (or before it), or given to a call that
     /// may change it (the guard rules of Task 21), is request data again.

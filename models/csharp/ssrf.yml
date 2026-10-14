@@ -106,6 +106,8 @@ guards: []
 
 # Model validation (Task 31, decision R-12; models/README.md "Model validation"): every character but an ASCII digit.
 # Letters alone can name another host where the value is placed in the host ("localhost", an internal service's
-# name); only a value of digits cleans the rule, as a number does (sources.yml's scalars).
+# name); only a value of digits cleans the rule, as a number does (sources.yml's scalars). Ruling R-E34 accepts the
+# cost: digits in the host can still name a host as one decimal number (`http://2130706433/` is 127.0.0.1) or choose
+# a port (`http://internal:` + value).
 validation:
   metacharacters: '[^0-9]'

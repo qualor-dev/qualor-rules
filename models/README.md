@@ -245,14 +245,15 @@ body, closed over its calls) could end the facts of the members a call may write
 
 ### Model validation
 
-Task 31, decision R-12: a value model binding validated is clean for the rules its validation attributes leave no
-character for, where validation is known to hold. From Microsoft's documentation only (learn.microsoft.com:
-System.ComponentModel.DataAnnotations, ASP.NET Core "Model validation" and "Create web APIs"); `sources.yml` (7) names
-the types, each taint rule's `validation: metacharacters:` its characters.
+Task 31, decision R-12, rulings R-E33 and R-E34: a value model binding validated is clean for the rules its validation
+attributes leave no character for, where validation is known to hold. From Microsoft's documentation only
+(learn.microsoft.com: System.ComponentModel.DataAnnotations, ASP.NET Core "Model validation" and "Create web APIs");
+`sources.yml` (7) names the types, each taint rule's `validation:` its characters.
 
 ```yaml
 validation:                      # optional, a taint rule
-  metacharacters: '[/\:\x00]'   # one .NET character class: the characters a value needs to inject into the sinks
+  metacharacters: '[/\\:\p{Cc}]' # one .NET character class: the characters a value needs to inject into the sinks
+validation: never                # or: no validation attribute cleans the rule ([Range] and enums neither)
 ```
 
 What an attribute on a bound member of type string cleans (several attributes on one member all hold; their rules are
@@ -260,36 +261,48 @@ united). Members of enum and number types are clean already (`scalars`).
 
 | attribute | cleans | why (documentation) |
 |---|---|---|
-| `[Range]` with a numeric operand (`int`, `double`, or `typeof` a number type) | every rule | "Specifies the numeric range constraints"; a string value is converted to the operand type first: a number's text. A range over another type (a date) cleans nothing. |
-| `[EnumDataType(typeof(E))]` | every rule | the value names one of the enum's values. |
-| `[RegularExpression]` | the rules whose metacharacters its alphabet does not hold | "The regular expression searches for an exact match, not using `^` before and `$` at the end of the pattern produces the same results as using it": the whole value is matched, anchored or not, so its characters are the ones the pattern's consuming parts admit (below). |
+| `[Range]` with a numeric operand (`int`, `double`, or `typeof` a number type) | every rule but `validation: never` | "Specifies the numeric range constraints"; a string value is converted to the operand type first. The accepted text is a number's in a loose sense: surrounding whitespace, a sign, group separators, an exponent, a trailing line break or NUL, hex forms with a `typeof` operand (" 5", "-5", "1,000", "1E+2", "0x10"); no quote, no letter run. A range over another type (a date) cleans nothing. |
+| `[EnumDataType(typeof(E))]` | every rule but `validation: never` | the value names the enum's values: names, numbers, spaces and commas ("Top, Middle", "3"). |
+| `[RegularExpression]` | the rules whose metacharacters its alphabet does not hold | "The regular expression searches for an exact match, not using `^` before and `$` at the end of the pattern produces the same results as using it" (ruling R-E33): the whole value is matched, anchored or not, so its characters are the ones the pattern's consuming parts admit (below). |
 | `[EmailAddress]`, `[Url]`, `[Phone]` | nothing | the documentation says only that the value "has an email format" (a URL, a telephone number format) and names no alphabet. |
 | `[StringLength]`, `[MaxLength]`, `[MinLength]`, `[Required]` | nothing | length and presence only. |
 
 A pattern's alphabet (RegexAlphabet): the union of what its consuming parts match (literal characters, escapes naming
-one, character classes and class escapes, `.` as any character), read with .NET's Regex on each UTF-16 code unit and
-case-insensitively (a superset under any case option). Anchors, quantifiers, alternation and the contents of
-lookarounds consume nothing (a lookaround's parts count when the pattern holds a backreference). A pattern in the
-free-spacing mode (`(?x)`), a conditional or a pattern that does not parse cleans nothing. Only the attribute classes
-themselves count (a derived attribute may validate otherwise).
+one, character classes and class escapes, `.` as any character), read with .NET's Regex on each UTF-16 code unit, both
+case-sensitively and case-insensitively (the union: a negated class keeps what its case-insensitive reading drops, a
+named letter brings its case partners; the tr/az dotted and dotless i are not read, and no set holds them). Anchors,
+quantifiers, alternation and the contents of lookarounds consume nothing (a lookaround's parts count when the pattern
+holds a backreference: `\1`, `\k<name>`, or the legacy `\<name>` and `\'name'`). A class subtraction needs an unescaped
+`-` before its `[`. A pattern in the free-spacing mode (`(?x)`), a conditional, a pattern that does not parse, or one
+with a part that matches no single character (a misread) cleans nothing. Only the attribute classes themselves count (a
+derived attribute may validate otherwise).
 
-The metacharacters, per rule (each model file says why): sql-injection: quotes and backquote with the Unicode
-apostrophe look-alikes a best-fit code page conversion may map to a quote, backslash, comment and statement markers,
-whitespace, parentheses, operators, commas, brackets, braces, `@ ? : $`; command-injection: the shell's operators,
-quotes, expansions and globs, whitespace and line breaks, `- = ,` (argument injection), NUL; path-traversal: `/ \ :`
-and NUL (a value without them is one segment, as Path.GetFileName leaves it, `..` included); ssrf: everything but an
-ASCII digit (letters can name an internal host); open-redirect: `/ \ : . @ % ? #`, whitespace and control characters
-and the Unicode dots and slashes browsers map to them; xss: angle brackets, quotes and the backquote,
-`& = ( ) [ ] { } : ; \`, whitespace, control characters, U+2028/U+2029; ldap-injection: the specials of RFC 4515 and RFC 4514 and `/`; xpath-injection: quotes,
-brackets, parentheses, `/ | = < > @ * : , . ! $` and whitespace; regex-injection: the pattern metacharacters, `#` and
-whitespace. A rule without `validation:` (the misuse rules' taint forms) is cleaned by `[Range]` and enums only.
+The metacharacters, per rule (each model file says why):
+
+- sql-injection: quotes and backquote with the Unicode apostrophe look-alikes a best-fit code page conversion may map to
+  a quote, backslash, comment and statement markers, whitespace and control characters, parentheses, operators, commas,
+  brackets, braces, `@ ? : $`;
+- command-injection: `validation: never` (ruling R-E34): a token of letters can name the program to run, and the text
+  [Range] and [EnumDataType] accept carries signs, separators and spaces (an option or another argument);
+- path-traversal: `/ \ :` and control characters (a value without them is one segment, as Path.GetFileName leaves it,
+  `..` included);
+- ssrf: everything but an ASCII digit (letters can name an internal host);
+- open-redirect: `/ \ : . @ % ? #`, whitespace and control characters and the Unicode dots and slashes browsers map to
+  them;
+- xss: angle brackets, quotes and the backquote, `& = ( ) [ ] { } : ; \`, whitespace, control characters, U+2028/U+2029;
+- ldap-injection: the specials of RFC 4515 and RFC 4514, `/`, control characters;
+- xpath-injection: quotes, brackets, parentheses, `/ | = < > @ * : , . ! $`, whitespace and control characters;
+- regex-injection: the pattern metacharacters, `#`, whitespace and control characters.
+
+A rule without `validation:` (the misuse rules' taint forms) is cleaned by `[Range]` and enums only.
 
 Which values are validated: in a controller action or a Razor Pages handler, its source parameters (their own
 attributes: "Model-bound top-level nodes are validated"), the member paths below them ("ValidationVisitor traverses the
 object graph": public properties of the project's classes and structs, recursively, up to four members and 32 paths;
 not into collections, whose elements the documentation does not say are validated member by member), and the bound
 properties of the controller or page model and the paths below them; at most 32 paths per action (half the member facts
-a state holds, so the body's own guards keep room). `[ValidateNever]` on a parameter, property or type leaves it out.
+a state holds, so the body's own guards keep room). `[ValidateNever]` on a parameter, a property (or one it overrides)
+or a type (or a base class: the attribute is inherited) leaves it out.
 
 Where validation holds:
 
@@ -300,23 +313,39 @@ Where validation holds:
   and the check ends the fact, so the check does not clean it. A validated parameter is cleaned only if the body assigns
   it nowhere. TryValidateModel's model (a parameter, a local built in the action, a property of `this`) gets the facts of
   its own paths at the check.
-- Throughout an action of an `[ApiController]` (on the class, a base class, or `[assembly: ApiController]`): "model
-  validation errors automatically trigger an HTTP 400 response", so the action runs only with a valid model. Its
-  validated parameters are clean at the entry and its validated paths start with cleaning facts. Not when an
-  assignment of `SuppressModelStateInvalidFilter` (other than `= false`) is anywhere in the source ("To disable the
-  automatic 400 behavior"): then only the IsValid check counts.
+- Only while ModelState is as validation left it (a validity fact from the entry, review C2): the check cleans nothing
+  after the action's ModelStateDictionary (`ModelState`, `ViewData.ModelState`, ...) is used otherwise than by a member
+  of `keeps-validity` (reads, AddModelError, which can only make it invalid): `Remove`, `Clear`,
+  `ClearValidationState`, `MarkFieldValid`, `MarkFieldSkipped`, `SetModelValue`, an entry taken through the indexer or
+  `TryGetValue`, the dictionary given to a call or held in a variable. A project method called on `this` (or given it)
+  and `TryUpdateModel(Async)` end it too, and a lambda or local function of the action that does any of this keeps it
+  from the start. `await` of earlier work ends it as it ends every member fact.
+- Throughout an action of an `[ApiController]` controller (on the class, a base class, or `[assembly: ApiController]`):
+  "model validation errors automatically trigger an HTTP 400 response", so the action runs only with a valid model. Its
+  validated parameters are clean at the entry and its validated paths start with cleaning facts. Not for a Razor Pages
+  handler (the attribute is a controller behaviour; a page model carrying it too), and not when the source anywhere
+  assigns `SuppressModelStateInvalidFilter` (other than `= false`, "To disable the automatic 400 behavior") or
+  `InvalidModelStateResponseFactory` (the factory decides the response), or binds `Configure<ApiBehaviorOptions>(...)`
+  from anything but a lambda (configuration may set the option): then only the IsValid check counts.
 
 After validation the facts follow the rules of Guards on members: a write of the member (or of its root), a ref or out
 use, or a call that may change the object ends them.
 
 Not covered (the values stay request data, the safe side): IValidatableObject, custom ValidationAttributes,
 FluentValidation and other validation libraries; [ModelMetadataType] buddy classes; Minimal API handlers (no automatic
-validation in ASP.NET Core 8); the 400 turned off another way than SuppressModelStateInvalidFilter (the invalid-model
-filter removed by hand); a validated member read in a callee given the model (the facts are the action's own: the
+validation in ASP.NET Core 8); a validated member read in a callee given the model (the facts are the action's own: the
 model object passed on is whole-object request data); elements of collection members; the check held in a local.
+
+Not covered (FN side): the automatic 400 turned off another way: the option set in a referenced binary or through
+another configuration API than `Configure<ApiBehaviorOptions>`, the invalid-model filter removed by hand, or a filter
+that rewrites the action's arguments after it; a project method that changes ModelState without being called on
+`this` or given it (a static helper reaching the controller through the heap).
+
 Known cost: a value of one token (letters, digits, `_`) placed into a statement without quotes may still name another
-column or keyword; the alphabet does not see sequences (`^-?\d+$` holds `-`, so it does not clean sql-injection,
-whose `--` needs two).
+column, keyword or node (`//user[id=id]`; ruling R-E33); digits clean ssrf and open-redirect as an int parameter does,
+though a host can be written as one decimal number (`http://2130706433/` is 127.0.0.1) and digits can choose a port
+(ruling R-E34); the alphabet does not see sequences (`^-?\d+$` holds `-`, so it does not clean sql-injection, whose
+`--` needs two).
 
 ### Allow-lists
 
@@ -764,3 +793,6 @@ false positives (FP) or misses (FN) there.
   compiled here too.
 - The taint models have no `test-code:` (as the OpenGrep taint rules): findings in test projects are reported. The
   engine measurements count them apart, by the misuse rules' `test-code:` globs, not as false positives (Task 23).
+- Witness paths are not stable from run to run (seen in Task 31's measurement, from before it: the same code gave
+  OrchardCore 30 and Jellyfin 10 results whose codeFlows differ, by alternative but equivalent paths). The finding set
+  is stable: compare measurements by rule, file and line, not by the reported path.

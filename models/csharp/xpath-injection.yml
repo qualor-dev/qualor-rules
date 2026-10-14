@@ -58,6 +58,8 @@ guards: []
 
 # Model validation (Task 31, decision R-12; models/README.md "Model validation"): string delimiters, predicates and
 # groups, steps and axes, unions, operators, attributes, wildcards, prefixes, variables, '.' (the self and parent
-# steps) and whitespace ("or" and "and" need it).
+# steps), whitespace ("or" and "and" need it) and control characters. A value of letters, digits and '_' is one
+# token: placed without quotes it can still name another node and make a tautology (`//user[id=id]`; accepted, ruling
+# R-E33: one token adds no step or predicate).
 validation:
-  metacharacters: '[''"\[\]()/|=<>@*:,.!$\s]'
+  metacharacters: '[''"\[\]()/|=<>@*:,.!$\s\p{Cc}]'

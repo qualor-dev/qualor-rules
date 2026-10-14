@@ -93,8 +93,8 @@ public static class ModelLoader
     /// sources.yml (7) `validation:` (Task 31).
     private static ValidationSources ReadValidation(Doc doc, YamlNode node)
     {
-        var v = doc.Fields(node, "model-state", "is-valid", "try-validate", "api-controller-attributes", "suppress-option",
-            "not-validated-attributes", "range", "regular-expression", "enum-data-type");
+        var v = doc.Fields(node, "model-state", "is-valid", "try-validate", "keeps-validity", "api-controller-attributes", "suppress-option",
+            "response-factory", "options-type", "not-validated-attributes", "range", "regular-expression", "enum-data-type");
         var modelState = doc.Sequence(v.Required("model-state")).Select(n => doc.Pattern(n, MemberKind.PropertyGet)).ToList();
         var tryValidate = doc.Sequence(v.Required("try-validate")).Select(n => doc.Pattern(n, MemberKind.Method)).ToList();
         foreach (var p in modelState.Concat(tryValidate))
@@ -103,7 +103,8 @@ public static class ModelLoader
         var isValid = doc.Pattern(isValidNode, MemberKind.PropertyGet);
         if (isValid.Prefix) throw doc.Error(isValidNode, $"{isValid}: is-valid names a whole property");
         return new ValidationSources(modelState, isValid, tryValidate, doc.Types(v.Required("api-controller-attributes")),
-            doc.Name(v.Required("suppress-option")), doc.Types(v.Required("not-validated-attributes")), doc.Type(v.Required("range")),
+            doc.Name(v.Required("suppress-option")), doc.Name(v.Required("response-factory")), doc.Name(v.Required("options-type")),
+            doc.Names(v.Required("keeps-validity")), doc.Types(v.Required("not-validated-attributes")), doc.Type(v.Required("range")),
             doc.Type(v.Required("regular-expression")), doc.Type(v.Required("enum-data-type")));
     }
 
@@ -364,7 +365,9 @@ public static class ModelLoader
             NamedSanitizers = namedSanitizers,
             AllowLists = allowLists,
             KeySanitizers = keySanitizers,
-            ValidationMetacharacters = top.Optional("validation") is { } vn ? ReadMetacharacters(doc, vn) : null,
+            ValidationMetacharacters = top.Optional("validation") is { } vn and not YamlScalarNode ? ReadMetacharacters(doc, vn) : null,
+            ValidationNever = top.Optional("validation") is YamlScalarNode never
+                && (doc.String(never) == "never" ? true : throw doc.Error(never, "validation is never or a mapping with metacharacters")),
             Sources = ruleSources,
         };
     }
