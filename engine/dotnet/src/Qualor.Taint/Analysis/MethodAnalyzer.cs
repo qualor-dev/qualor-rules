@@ -360,7 +360,13 @@ internal sealed class MethodAnalyzer
             }
 
             case IBinaryOperation binary:
-                return Value(binary.LeftOperand, state).Join(Value(binary.RightOperand, state));
+            {
+                var left = Value(binary.LeftOperand, state);
+                var right = Value(binary.RightOperand, state);
+                if (binary.OperatorKind == BinaryOperatorKind.Add && binary.Type?.SpecialType == SpecialType.System_String)
+                    return left.Join(ImplicitToString(binary.LeftOperand, left, state)).Join(right).Join(ImplicitToString(binary.RightOperand, right, state));
+                return left.Join(right);
+            }
             case IUnaryOperation unary:
                 return Value(unary.Operand, state);
             case IConversionOperation conversion:
@@ -389,7 +395,7 @@ internal sealed class MethodAnalyzer
                 {
                     value = value.Join(part switch
                     {
-                        IInterpolationOperation i => Value(i.Expression, state).Join(Value(i.Alignment, state)),
+                        IInterpolationOperation i => InterpolatedValue(i, state).Join(Value(i.Alignment, state)),
                         // A handler's AppendFormatted(x): the formatted values reach the string.
                         IInterpolatedStringAppendOperation { AppendCall: IInvocationOperation call } => JoinArguments(call.Arguments, state),
                         _ => Value(part, state),
@@ -433,6 +439,33 @@ internal sealed class MethodAnalyzer
                 return value;
             }
         }
+    }
+
+    private TaintValue InterpolatedValue(IInterpolationOperation i, TaintState state)
+    {
+        var value = Value(i.Expression, state);
+        return value.Join(ImplicitToString(i.Expression, value, state));
+    }
+
+    /// The text of an object used where a string is built (`$"{t}"`, `"x" + t`) is its ToString() result: for a value whose
+    /// type declares a ToString override with a body, that body's summary applied to the object (Task 8 review N1). The value
+    /// of the expression itself is joined by the caller.
+    private TaintValue ImplicitToString(IOperation expression, TaintValue value, TaintState state)
+    {
+        // `"x" + t` converts t to object first: the type that matters is the operand's own.
+        while (expression is IConversionOperation { IsImplicit: true, Operand: { } inner } && !SymbolEqualityComparer.Default.Equals(inner.Type, expression.Type)) expression = inner;
+        var type = expression.Type;
+        if (type == null || type.SpecialType != SpecialType.None || type.TypeKind is TypeKind.Enum or TypeKind.Delegate or TypeKind.Dynamic or TypeKind.Array) return TaintValue.Clean;
+        if (type.SpecialType == SpecialType.System_String) return TaintValue.Clean;
+        IMethodSymbol? toString = null;
+        for (var t = type; t != null && toString == null; t = t.BaseType)
+            toString = t.GetMembers("ToString").OfType<IMethodSymbol>().FirstOrDefault(m => m.Parameters.Length == 0 && !m.IsStatic);
+        if (toString == null || toString.ContainingType.SpecialType != SpecialType.None) return TaintValue.Clean;
+        var result = TaintValue.Clean;
+        foreach (var target in _body.Targets(toString, true, type))
+            if (target.Kind == TargetKind.Body)
+                result = result.Join(Apply(target.Body!, expression, toString, slot => slot == -1 ? value : TaintValue.Clean, null, Array.Empty<Input>(), false, state));
+        return result;
     }
 
     private TaintValue JoinArguments(ImmutableArray<IArgumentOperation> arguments, TaintState state)
