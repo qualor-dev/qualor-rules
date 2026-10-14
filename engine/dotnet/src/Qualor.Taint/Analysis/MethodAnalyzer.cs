@@ -984,10 +984,41 @@ internal sealed partial class MethodAnalyzer
         return (heap.Any ? heap.Step(location, message, StepKind.HeapRead) : heap).Join(labels.Any ? labels.Step(location, message) : labels);
     }
 
-    /// The kind of a read of a strong update this body holds for `path` (Task 27): an own or static member's, which this
-    /// body tracks as its own state, is plain; a member through any other object is a heap read (R-9, R-E29).
-    private static StepKind HoldsKind(AccessPath path) =>
-        path.Members.Length == 1 && (path.Root == AccessPath.This || path.Root == AccessPath.Static) ? StepKind.Plain : StepKind.HeapRead;
+    /// The kind of a read of a strong update this body holds for `path` (Task 27; ruling R-E35): exact within this method
+    /// is plain (an own or static member, or a path rooted at a local whose objects this method allocates); a member
+    /// through any other object is a heap read (R-9, R-E29). A strong update a callee's exit gave the caller carries its
+    /// own heap-read step (Apply), so a read after such a call stays medium.
+    private StepKind HoldsKind(AccessPath path, TaintState state)
+    {
+        if (path.Members.Length == 1 && (path.Root == AccessPath.This || path.Root == AccessPath.Static)) return StepKind.Plain;
+        return path.Root is ILocalSymbol && AllocatedHere(state.PointsTo(path.Root)) ? StepKind.Plain : StepKind.HeapRead;
+    }
+
+    /// The kind of a read of a member the instance holds exactly (Task 27; ruling R-E35): plain through `this` or a local
+    /// whose objects this method allocates; a heap read through any other instance (a parameter, a field's object, a view's
+    /// model, a factory's result).
+    private StepKind ExactKind(IOperation operation, TaintValue instance)
+    {
+        var receiver = operation switch
+        {
+            IFieldReferenceOperation f => f.Instance,
+            IPropertyReferenceOperation p => p.Instance,
+            _ => null,
+        };
+        while (receiver is IConversionOperation { Operand: { } inner }) receiver = inner;
+        if (IsOwn(receiver)) return StepKind.Plain;
+        return receiver is ILocalReferenceOperation && AllocatedHere(instance.Objects) ? StepKind.Plain : StepKind.HeapRead;
+    }
+
+    /// Whether every object of a set is an allocation site in the analysed method (ruling R-E35).
+    private bool AllocatedHere(ObjSet? objects)
+    {
+        if (objects is not { IsEmpty: false }) return false;
+        var body = _cfg.OriginalOperation.Syntax;
+        foreach (var o in objects.Ids)
+            if (!_ctx.Objects.AllocatedIn(o, body)) return false;
+        return true;
+    }
 
     /// A view's known model members joined with what is written into those members of the model's objects.
     private MemberMap? KnownLater(MemberMap known, ObjSet? objects, IOperation at)
@@ -1023,9 +1054,9 @@ internal sealed partial class MethodAnalyzer
         var definition = member.OriginalDefinition;
         // (All: nothing known yet, e.g. a view's model no write has reached: read as unknown.)
         if (!member.IsStatic && instance.Members is { IsAll: false } known && known.TryGet(definition, out var exact))
-            return exact.Any ? exact.Step(operation.Syntax.GetLocation(), $"read from {_ctx.Name(member)}", StepKind.HeapRead) : exact;
+            return exact.Any ? exact.Step(operation.Syntax.GetLocation(), $"read from {_ctx.Name(member)}", ExactKind(operation, instance)) : exact;
         if (state.HasFacts && PathOf(operation, true) is { } path && state.Fact(path)?.Holds is { } holds)
-            return holds.Any ? holds.Step(operation.Syntax.GetLocation(), $"read from {_ctx.Name(member)}", HoldsKind(path)) : holds;
+            return holds.Any ? holds.Step(operation.Syntax.GetLocation(), $"read from {_ctx.Name(member)}", HoldsKind(path, state)) : holds;
         var neverSource = member is IFieldSymbol or IPropertySymbol && !member.IsStatic
             && _ctx.Sources.IsNeverSourceType(member is IFieldSymbol f ? f.Type : ((IPropertySymbol)member).Type);
         var heapMember = _body.IsHeapMember(member);
@@ -1980,7 +2011,13 @@ internal sealed partial class MethodAnalyzer
         {
             foreach (var (slot, fixedMembers) in paramExit)
             {
-                var substituted = fixedMembers.Select(v => BodySummary.Substitute(v, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach, false, _ctx.Objects, kind));
+                // What the callee's exit leaves in the caller's members is a heap read there (ruling R-E35, as MemberArg).
+                var exitAt = location;
+                var substituted = fixedMembers.Select(v =>
+                {
+                    var x = BodySummary.Substitute(v, callee.Id, argument, exitAt, name, _body.Keeps, _body.WriteReach, false, _ctx.Objects, kind);
+                    return x.Any ? x.Step(exitAt, $"written by {name}", StepKind.HeapRead) : x;
+                });
                 if (substituted is not { IsAll: false } known) continue;
                 if (slot == -1 && constructor && site is IObjectCreationOperation)
                 {

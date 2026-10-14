@@ -300,6 +300,86 @@ public sealed class ConfidenceTests
             }
             """, "csharp.xss"));
 
+    // ---- Fix round 4 (RR3, ruling R-E35): a member exact within one method is high ----
+
+    [Fact]
+    public void V1_an_own_field_written_and_read_in_one_method_is_high() => Expect("""
+        public class V1Controller : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            private string _own = "";
+            public IActionResult Run(string q) { _own = q; _c.Execute("SELECT '" + _own + "'"); return Ok(); } /*high*/
+        }
+        """);
+
+    [Fact]
+    public void V2_an_own_auto_property_written_and_read_in_one_method_is_high() => Expect("""
+        public class V2Controller : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            private string Own { get; set; } = "";
+            public IActionResult Run(string q) { Own = q; _c.Execute("SELECT '" + Own + "'"); return Ok(); } /*high*/
+        }
+        """);
+
+    [Fact]
+    public void H1_a_member_of_an_object_allocated_and_written_in_one_method_is_high() => Expect("""
+        public class Note { public string Text { get; set; } = ""; public Note? Inner { get; set; } }
+        public class H1Controller : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            public IActionResult Run(string q)
+            {
+                var n = new Note();
+                n.Text = q;
+                _c.Execute("SELECT '" + n.Text + "'"); /*high*/
+                var m = new Note { Inner = new Note() };
+                m.Inner.Text = q;
+                _c.Execute("SELECT '" + m.Inner.Text + "'"); /*high*/
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void V5_an_own_field_a_callee_wrote_is_medium_after_the_call() => Expect("""
+        public class V5Controller : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            private string _own = "";
+            public IActionResult Run(string q) { Init(q); _c.Execute("SELECT '" + _own + "'"); return Ok(); } /*medium*/
+            private void Init(string s) { _own = s; }
+        }
+        """);
+
+    [Fact]
+    public void V6_an_own_field_the_caller_wrote_is_medium_in_the_callee() => Expect("""
+        public class V6Controller : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            private string _own = "";
+            public IActionResult Set(string q) { _own = q; Use(); return Ok(); }
+            private void Use() => _c.Execute("SELECT '" + _own + "'"); /*medium*/
+        }
+        """);
+
+    [Fact]
+    public void H2_a_member_written_through_an_alias_is_medium() => Expect("""
+        public class Note { public string Text { get; set; } = ""; }
+        public class H2Controller : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            public IActionResult Run(string q)
+            {
+                var n = new Note();
+                var m = n;
+                m.Text = q;
+                _c.Execute("SELECT '" + n.Text + "'"); /*medium*/
+                return Ok();
+            }
+        }
+        """);
+
     [Fact]
     public void An_element_found_by_a_request_key_is_medium_and_the_tables_own_data_high() => Expect("""
         public class LookupController : ControllerBase

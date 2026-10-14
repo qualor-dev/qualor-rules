@@ -318,7 +318,12 @@ internal sealed class BodySummary
             if (body == owner) return argument(slot).Objects;
             return keep(body) ? objects.Single(id) : null;
         });
-        var members = symbolic.Members?.Select(v => Substitute(v, owner, argument, site, name, keep, caller, false, objects, kind));
+        // A member of an object a callee gives back is a heap read where the caller reads it (ruling R-E35).
+        var members = symbolic.Members?.Select(v =>
+        {
+            var x = Substitute(v, owner, argument, site, name, keep, caller, false, objects, kind);
+            return x.Any ? x.Step(site, $"returned by {name}", StepKind.HeapRead) : x;
+        });
         return result with { Objects = objs, Members = members };
     }
 

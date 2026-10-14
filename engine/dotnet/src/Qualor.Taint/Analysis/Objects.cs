@@ -203,8 +203,20 @@ internal sealed class ObjectTable
 
     public int MemberSlotCount => _slots.Count;
 
+    private readonly Dictionary<int, SiteKey> _sites = new();
+
     /// The allocation site of an expression.
-    public int Site(SyntaxNode syntax) => Intern(new SiteKey(syntax.SyntaxTree, syntax.Span), ObjKind.Site, -1, 0);
+    public int Site(SyntaxNode syntax)
+    {
+        var key = new SiteKey(syntax.SyntaxTree, syntax.Span);
+        var id = Intern(key, ObjKind.Site, -1, 0);
+        _sites.TryAdd(id, key);
+        return id;
+    }
+
+    /// Whether an object is an allocation site inside `body`'s syntax (the method that allocates it; ruling R-E35).
+    public bool AllocatedIn(int id, SyntaxNode body) =>
+        _sites.TryGetValue(id, out var site) && site.Tree == body.SyntaxTree && body.Span.Contains(site.Span);
 
     /// The object the binder makes for parameter `ordinal` of the entry body `body`.
     public int Bound(int body, int ordinal) => Intern(("bound", body, ordinal), ObjKind.Bound, body, ordinal);

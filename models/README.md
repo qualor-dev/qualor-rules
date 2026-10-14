@@ -489,7 +489,7 @@ key (`ViewData["k"]`, `ViewBag.K`, `HttpContext.Items["k"]`). A path is medium w
 
 | step kind (SARIF `threadFlowLocations[].properties.kind`) | what |
 |---|---|
-| `heap-read` | a field or auto-property read from the heap (written elsewhere in the request): at its field location or at an object's (R-8), a member a callee reads that its caller wrote into a known object, a member of a known object read where it is held exactly, and a strong update of a member through another object; a body's own and static members it tracks itself, and a bound parameter's members (what the binder put there), stay plain |
+| `heap-read` | a field or auto-property read from the heap (written elsewhere in the request): at its field location or at an object's (R-8); a member a callee reads that its caller wrote into a known object; a member a callee's exit or returned object gives the caller; a member read through another object (a field's object, an alias, a parameter, a view's model). A member exact within one method stays plain (ruling R-E35): the body's own or static member written in it, or a member of an object the method allocates, written and read there (also nested, `n.Inner.Text`); so does a bound parameter's member (what the binder put there) |
 | `any-key-entry` | a keyed store entry written or read with a key that is not a constant, or a view model of type object |
 | `key-lookup` | an element found by a request key (R-E9/R-E18: a dictionary or JSON lookup, `GetValueOrDefault`, a `key:` propagator) |
 | `view-fallback` | a keyed entry or view model a view shares with its writer only through an unresolved view name (every view of the project) |
