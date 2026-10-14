@@ -58,7 +58,11 @@ internal sealed class SinkConditions
         // A receiver condition first: it moves the object of the property conditions to the receiver's owner.
         foreach (var c in sink.When.Where(c => c.Kind == SinkConditionKind.Receiver))
         {
-            if (BodyFacts.Initialized(Unwrap(receiver)) is not IPropertyReferenceOperation property || !SymbolMatch.Matches(c.Member!, property.Property))
+            // A receiver held in a local assigned once in the body (`var input = p.StandardInput;`, `using (var input =
+            // p.StandardInput)`) is the property it was assigned (fix round 1 of Task 29, M3).
+            var held = Unwrap(receiver);
+            if (held is ILocalReferenceOperation local && facts.LocalValues(local.Local) is [var only]) held = Unwrap(only);
+            if (BodyFacts.Initialized(held) is not IPropertyReferenceOperation property || !SymbolMatch.Matches(c.Member!, property.Property))
                 return SinkDecision.No;
             self = facts.Key(property.Instance);
         }
@@ -75,7 +79,12 @@ internal sealed class SinkConditions
                 case SinkConditionKind.Property:
                 {
                     var key = c.Arg >= 0 ? facts.Key(ArgumentValue(original, c.Arg)) : self;
-                    if (key == null || !AnyMatch(c.Pattern!, facts.PropertyConstants(key, c.Property!))) return SinkDecision.No;
+                    if (key == null) return SinkDecision.No;
+                    // A path (`StartInfo.FileName`): the last name is the property of the object the rest leads to.
+                    var dot = c.Property!.LastIndexOf('.');
+                    if (dot > 0) key += "." + c.Property[..dot];
+                    var matches = AnyMatch(c.Pattern!, facts.PropertyConstants(key, c.Property[(dot + 1)..]));
+                    if (matches == c.Negated) return SinkDecision.No;
                     break;
                 }
                 case SinkConditionKind.LiteralText:
@@ -296,6 +305,7 @@ internal sealed class BodyFacts
     private readonly Dictionary<ILocalSymbol, List<IOperation>> _locals = new(SymbolEqualityComparer.Default);
     private readonly Dictionary<string, List<string>> _aliases = new(StringComparer.Ordinal);
     private readonly HashSet<ILocalSymbol> _otherWrites = new(SymbolEqualityComparer.Default);
+    private readonly List<(ILocalSymbol Local, IInvocationOperation Start)> _started = new();
 
     public BodyFacts(IOperation root)
     {
@@ -308,12 +318,17 @@ internal sealed class BodyFacts
                     var target = SinkConditions.Unwrap(assignment.Target);
                     if (target is IPropertyReferenceOperation { Arguments.Length: 0 } p && Key(p) is { } owner)
                         _properties.Add((owner[..owner.LastIndexOf('.')], p.Property.Name, assignment.Value));
-                    if (target is ILocalReferenceOperation l) Local(l.Local, assignment.Value);
+                    if (target is ILocalReferenceOperation l)
+                    {
+                        Local(l.Local, assignment.Value);
+                        Started(l.Local, assignment.Value);
+                    }
                     if (target != null) Alias(target, assignment.Value);
                     break;
                 }
                 case IVariableDeclaratorOperation { Initializer: { } init } declarator:
                     Local(declarator.Symbol, init.Value);
+                    Started(declarator.Symbol, init.Value);
                     if (SinkConditions.Unwrap(init.Value) is IObjectCreationOperation created && Key(created) is { } c) AddAlias("L" + Id(declarator.Symbol), c);
                     break;
                 case IObjectCreationOperation creation when Key(creation) is { } key:
@@ -332,7 +347,41 @@ internal sealed class BodyFacts
         // A variable is the object it was created as only when it is assigned one object creation in the body (a
         // variable reused for a second object keeps the two apart: neither creation's properties are its).
         foreach (var (variable, creations) in _aliases)
-            if (creations.Count == 1) Union(variable, creations[0]);
+            if (creations.Count == 1 && Resolved(creations[0]) is { } creation) Union(variable, creation);
+        // A process a local holds from `Process.Start(info)` or `Process.Start(fileName, ...)` (Task 29, shell stdin): its
+        // StartInfo is that info object, or has that FileName, when the local is assigned nothing else in the body.
+        foreach (var (local, start) in _started)
+        {
+            if (_otherWrites.Contains(local) || !_locals.TryGetValue(local, out var values) || values.Count != 1) continue;
+            var owner = "L" + Id(local) + ".StartInfo";
+            foreach (var a in start.Arguments)
+            {
+                if (a.Parameter == null || a.ArgumentKind == ArgumentKind.DefaultValue) continue;
+                if (a.Parameter.Name == "fileName") _properties.Add((owner, "FileName", a.Value));
+                else if (a.Parameter.Name == "startInfo" && Key(a.Value) is { } info) Union(owner, info);
+                else if (a.Parameter.Name == "arguments") _properties.Add((owner, "Arguments", a.Value));
+            }
+        }
+    }
+
+    /// An alias's object: a creation's key, or for a local the one creation the local holds (assigned once in the body,
+    /// written no other way); null otherwise.
+    private string? Resolved(string alias)
+    {
+        if (!_marked.TryGetValue(alias, out var local)) return alias;
+        var key = "L" + alias[LocalMark.Length..];
+        if (_otherWrites.Contains(local) || !_locals.TryGetValue(local, out var values) || values.Count != 1) return null;
+        return _aliases.TryGetValue(key, out var creations) && creations.Count == 1 && !creations[0].StartsWith(LocalMark, StringComparison.Ordinal)
+            ? creations[0] : null;
+    }
+
+    private const string ProcessType = "System.Diagnostics.Process";
+
+    private void Started(ILocalSymbol local, IOperation value)
+    {
+        if (SinkConditions.Unwrap(value) is IInvocationOperation { TargetMethod: { Name: "Start", IsStatic: true } start } call
+            && start.ContainingType is { } t && SymbolMatch.MetadataName(t) == ProcessType)
+            _started.Add((local, call));
     }
 
     private void Local(ILocalSymbol local, IOperation value)
@@ -343,8 +392,25 @@ internal sealed class BodyFacts
 
     private void Alias(IOperation target, IOperation value)
     {
-        if (SinkConditions.Unwrap(value) is IObjectCreationOperation creation && Key(target) is { } t && Key(creation) is { } c) AddAlias(t, c);
+        if (Key(target) is not { } t) return;
+        switch (SinkConditions.Unwrap(value))
+        {
+            case IObjectCreationOperation creation when Key(creation) is { } c:
+                AddAlias(t, c);
+                break;
+            // A local (`p.StartInfo = psi`, `new Process { StartInfo = psi }`; fix round 1 of Task 29, I2): resolved to the
+            // one creation that local holds, after the body is read.
+            case ILocalReferenceOperation local:
+                var mark = LocalMark + Id(local.Local);
+                _marked[mark] = local.Local;
+                AddAlias(t, mark);
+                break;
+        }
     }
+
+    /// The prefix of an alias to a local's key (resolved to the creation it holds, or dropped), and the marked locals.
+    private const string LocalMark = "@";
+    private readonly Dictionary<string, ILocalSymbol> _marked = new(StringComparer.Ordinal);
 
     private void AddAlias(string variable, string creation)
     {
@@ -501,12 +567,19 @@ internal sealed class BodyFacts
 
     /// A key with its longest aliased prefix replaced by that alias's representative (`x.StartInfo` of a local x
     /// assigned `new Process()` is that creation's StartInfo).
-    private string Canonical(string key)
+    private string Canonical(string key) => Canonical(key, 0);
+
+    private string Canonical(string key, int depth)
     {
         for (var end = key.Length; end > 0; end = key.LastIndexOf('.', end - 1))
         {
             var prefix = key[..end];
-            if (_union.ContainsKey(prefix)) return Find(prefix) + key[end..];
+            if (_union.ContainsKey(prefix))
+            {
+                // The member of an aliased object may be aliased itself (`p` is a creation whose StartInfo is `psi`).
+                var replaced = Find(prefix) + key[end..];
+                return replaced == key || depth > 8 ? replaced : Canonical(replaced, depth + 1);
+            }
             if (end == 0) break;
         }
         return key;

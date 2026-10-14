@@ -1,0 +1,6 @@
+# Task 29 (R-10, BACKLOG csharp.sql-injection#datatable-select): a DataTable or DataView filter expression built from
+# request data, reported under csharp.sql-injection; the request enters through Minimal API handlers in another project.
+rule: csharp.sql-injection
+projects:
+  - { name: Data, folder: Data }
+  - { name: Web, folder: Web, references: [Data] }

@@ -1,0 +1,6 @@
+# Task 29 (R-10, BACKLOG csharp.command-injection#shell-stdin): request data written to the standard input of a started
+# shell, which runs it as commands.
+rule: csharp.command-injection
+projects:
+  - { name: Tools, folder: Tools }
+  - { name: Web, folder: Web, references: [Tools] }

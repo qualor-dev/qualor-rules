@@ -24,8 +24,12 @@ internal sealed class SourceFinder
     private readonly Dictionary<ITypeSymbol, bool> _scalarCache = new(SymbolEqualityComparer.Default);
     private readonly Dictionary<ITypeSymbol, bool> _stringOrCollectionCache = new(SymbolEqualityComparer.Default);
 
-    public SourceFinder(SourceModel model)
+    private readonly MemberTable<(string Rule, RuleSource Source)> _ruleSources = new();
+
+    public SourceFinder(SourceModel model, IEnumerable<RuleModel> rules)
     {
+        foreach (var rule in rules)
+            foreach (var s in rule.Sources) _ruleSources.Add(s.Member, (rule.RuleId, s));
         _model = model;
         static HashSet<string> Set(IEnumerable<string> items) => new(items, StringComparer.Ordinal);
         var types = model.ParameterTypes;
@@ -53,6 +57,24 @@ internal sealed class SourceFinder
     {
         var hits = _members.Match(member, access);
         return hits.Length == 0 ? null : hits[0];
+    }
+
+    /// The rules whose own source (a rule's `sources:`, Task 29) a call or property read is: the member matches and, with a
+    /// `receiver:`, the read's receiver is a read of that property in place. Rule-own sources do not make a body an entry
+    /// point (EntryPoints reads the shared ones only).
+    public IReadOnlyCollection<string> RuleSourceOf(ISymbol member, Access access, IOperation? instance)
+    {
+        if (_ruleSources.IsEmpty) return Array.Empty<string>();
+        var hits = _ruleSources.Match(member, access);
+        if (hits.Length == 0) return Array.Empty<string>();
+        while (instance is IConversionOperation c) instance = c.Operand;
+        List<string>? rules = null;
+        foreach (var (rule, source) in hits)
+        {
+            if (source.Receiver != null && !(instance is IPropertyReferenceOperation r && SymbolMatch.Matches(source.Receiver, r.Property))) continue;
+            (rules ??= new List<string>()).Add(rule);
+        }
+        return (IReadOnlyCollection<string>?)rules ?? Array.Empty<string>();
     }
 
     // ---- Minimal API handlers ----

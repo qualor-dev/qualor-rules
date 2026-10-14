@@ -1,0 +1,6 @@
+# Task 29 (ruling R-E22): the request's own origin (scheme, the Host header, PathBase) is no source of
+# csharp.open-redirect; a site helper in another project builds it with Uri's scheme constants.
+rule: csharp.open-redirect
+projects:
+  - { name: Core, folder: Core }
+  - { name: Web, folder: Web, references: [Core] }

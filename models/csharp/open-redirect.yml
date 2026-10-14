@@ -108,9 +108,11 @@ sanitizers:
   # (a request-chosen scheme or host), so the text only needs the shape `scheme://host`.
   # Difference: OpenGrep requires the literal "http(s)://" or Request.Scheme and Request.Host written in place; the
   # engine checks the scheme and the host as values, so a held Request.Host counts too.
-  - string-prefix: '^(https?|￼)://￼+$'
+  # A scheme chosen between known texts (`secure ? Uri.UriSchemeHttps : Uri.UriSchemeHttp`) reads as their common
+  # start and a hole ("http￼"), Task 29.
+  - string-prefix: '^(https?￼?|￼)://￼+$'
     type: Microsoft.AspNetCore.Http.PathString
-  - string-prefix: '^(https?|￼)://￼+$'
+  - string-prefix: '^(https?￼?|￼)://￼+$'
     type: Microsoft.AspNetCore.Http.QueryString
   # Percent-encoding leaves no ':' or '/' to form a scheme or a host. Only the returned value is clean.
   # UrlEncoder.Encode is TextEncoder.Encode (declared there): `receiver-type` keeps it to a UrlEncoder (HtmlEncoder and
@@ -123,6 +125,24 @@ sanitizers:
   # The request's PathBase is the path base the application configured (UsePathBase, the server's virtual
   # directory), not a value the client chooses.
   - property-get: Microsoft.AspNetCore.Http.HttpRequest.PathBase
+  # The request's own origin (ruling R-E22, Task 29): the Host header (Headers.Host, Headers["Host"] in any case,
+  # Headers[HeaderNames.Host], the typed RequestHeaders.Host, Headers.TryGetValue("Host", out v)) names the host the client reached; a redirect to it keeps
+  # the client on the site it asked for. Request.Host and Request.Scheme are no source of this rule (Host is
+  # csharp.ssrf's own). Cost: an application that forwards an attacker-set X-Forwarded-Host into the Host is not
+  # followed. Difference: the OpenGrep rule takes Request.Headers as a whole for request data, the Host header too.
+  - property-get: Microsoft.AspNetCore.Http.IHeaderDictionary.Host
+  - property-get: Microsoft.AspNetCore.Http.IHeaderDictionary.Item
+    key: '(?i)^host$'
+  - property-get: Microsoft.AspNetCore.Http.IHeaderDictionary.Item
+    key-is: Microsoft.Net.Http.Headers.HeaderNames.Host
+  - property-get: Microsoft.AspNetCore.Http.Headers.RequestHeaders.Host
+  # The same entry read through TryGetValue on the request's headers (its out value; fix round 1 of Task 29, M1).
+  - method: System.Collections.Generic.IDictionary`2.TryGetValue
+    receiver-type: Microsoft.AspNetCore.Http.IHeaderDictionary
+    key: '(?i)^host$'
+  - method: System.Collections.Generic.IDictionary`2.TryGetValue
+    receiver-type: Microsoft.AspNetCore.Http.IHeaderDictionary
+    key-is: Microsoft.Net.Http.Headers.HeaderNames.Host
   # The value of an awaited lookup (GetXxx, FindXxx, LoadXxx, with or without Async, also with ConfigureAwait: a stored
   # record found by an id) is stored data, not request data.
   # Difference: OpenGrep takes any awaited call of these names on another object for a lookup, so a helper that hands

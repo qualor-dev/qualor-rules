@@ -1,0 +1,6 @@
+# Task 29 (R-10, BACKLOG csharp.sql-injection#null-conditional-request): request members read through
+# `HttpContext?.Request` in a service of one project reach the SQL text of a repository in another.
+projects:
+  - { name: Services, folder: Services }
+  - { name: Data, folder: Data, references: [Services] }
+  - { name: Web, folder: Web, references: [Services, Data] }

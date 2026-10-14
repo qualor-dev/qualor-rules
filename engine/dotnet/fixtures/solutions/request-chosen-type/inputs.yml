@@ -1,0 +1,6 @@
+# Task 29 (R-10, BACKLOG csharp.unsafe-deserialization#request-chosen-type): an XmlSerializer or DataContractSerializer
+# built for a type named in the request body, the taint form of the misuse rule csharp.unsafe-deserialization.
+rule: csharp.unsafe-deserialization
+projects:
+  - { name: Import, folder: Import }
+  - { name: Web, folder: Web, references: [Import] }

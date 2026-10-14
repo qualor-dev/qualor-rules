@@ -5,9 +5,10 @@
 #
 # Sources (learn.microsoft.com): dotnet/api/system.diagnostics.process.start,
 # dotnet/api/system.diagnostics.processstartinfo, dotnet/api/system.diagnostics.processstartinfo.argumentlist,
-# windows-server/administration/windows-commands/cmd, powershell/module/microsoft.powershell.core/about/about_pwsh,
+# windows-server/administration/windows-commands/cmd, dotnet/api/system.diagnostics.process.standardinput,
+# dotnet/api/system.diagnostics.processstartinfo.redirectstandardinput, powershell/module/microsoft.powershell.core/about/about_pwsh,
 # powershell/module/microsoft.powershell.core/about/about_powershell_exe; www.gnu.org/software/bash/manual
-# (Invoking Bash).
+# (Invoking Bash); pubs.opengroup.org/onlinepubs/9799919799/utilities/sh.html (sh).
 #
 # The patterns the conditions use, as in the OpenGrep rule:
 # - a shell: cmd, sh, bash, dash, zsh, ksh, mksh, ash, pwsh or powershell, with a path and .exe;
@@ -108,6 +109,51 @@ sinks:
       - property: FileName
         matches: '(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$'
       - after: '(?i)^(/[ck]|-c|-command)$'
+  # A shell's standard input (Task 29, decision R-10; BACKLOG csharp.command-injection#shell-stdin): text written
+  # (TextWriter Write, WriteLine, WriteAsync, WriteLineAsync) to the StandardInput of a Process whose StartInfo starts a
+  # shell that reads its standard input as commands. Per shell, from its documentation:
+  # - cmd (windows-commands/cmd): `/c` carries out one command and stops; without it, `/k` included, cmd keeps reading
+  #   commands.
+  # - pwsh, powershell (about_pwsh, about_powershell_exe): `-Command`/`-c`, `-File`/`-f`, `-CommandWithArgs`/`-cwa` run
+  #   their value, except the value `-`, which reads the commands from standard input; `-EncodedCommand`/`-e`/`-ec` runs
+  #   its value; a value with no parameter name is a script (`-File` is the default parameter). The values of the
+  #   value-taking parameters (`-ExecutionPolicy Bypass`, `-WindowStyle Hidden`, ...) are no script. With `-NoExit` the
+  #   session keeps reading after its command.
+  # - sh (pubs.opengroup.org utilities/sh: "-s Read commands from the standard input"; with no operand and no -c, -s is
+  #   assumed) and bash (Invoking Bash): `-c` (also bundled: `-ec`) runs its command string; an operand is a command file,
+  #   except with `-s`; the values of `-o`/`+o` (and bash's `-O`/`+O`, `--rcfile`, `--init-file`) are no operand.
+  # The process is told apart by access path: `p.StartInfo`, `new Process { StartInfo = { FileName = "sh" } }`, a
+  # ProcessStartInfo local given as `StartInfo` (assigned or in the initializer), or a local assigned
+  # `Process.Start(info)` / `Process.Start("bash", arguments)` once. The writer is `p.StandardInput` in place or a local
+  # assigned it once (`using (var input = p.StandardInput)`).
+  # Not followed (FN): bytes written to `StandardInput.BaseStream`; a shell started through a launcher (`env bash`,
+  # `busybox sh`: FileName env or busybox); other shells (dash, zsh, ksh, fish, csh, ...: not in the cited documents);
+  # arguments given through ArgumentList (not read: the shell counts as reading its input).
+  # Difference: the OpenGrep rule has no stdin sink (BACKLOG row kept open for it).
+  - method: System.IO.TextWriter.Write*
+    args: [0]
+    when:
+      - receiver: System.Diagnostics.Process.StandardInput
+      - property: StartInfo.FileName
+        matches: '(?i)^(.*[\\/])?cmd(\.exe)?$'
+      - property: StartInfo.Arguments
+        unless: '(?i)(^|\s)/c(\s|$)'
+  - method: System.IO.TextWriter.Write*
+    args: [0]
+    when:
+      - receiver: System.Diagnostics.Process.StandardInput
+      - property: StartInfo.FileName
+        matches: '(?i)^(.*[\\/])?(pwsh|powershell)(\.exe)?$'
+      - property: StartInfo.Arguments
+        unless: '(?i)^(?!(.*\s)?-noe(xit)?(\s|$)).*((^|\s)-(c|command|f|file|cwa|commandwithargs)\s+(?!-(\s|$))\S|(^|\s)-(e|ec|encodedcommand)(\s|$)|(^|\s)(?<!(^|\s)-(executionpolicy|ex|ep|windowstyle|w|inputformat|inp|if|outputformat|o|of|workingdirectory|wd|wo|configurationname|config|configurationfile|settingsfile|settings|custompipename|version|v)\s+)[^\s-]\S*)'
+  - method: System.IO.TextWriter.Write*
+    args: [0]
+    when:
+      - receiver: System.Diagnostics.Process.StandardInput
+      - property: StartInfo.FileName
+        matches: '^(.*[\\/])?(sh|bash)$'
+      - property: StartInfo.Arguments
+        unless: '(^|\s)-[a-zA-Z]*c[a-zA-Z]*(\s|$)|^(?!(.*\s)?-[a-zA-Z]*s[a-zA-Z]*(\s|$)).*(^|\s)(?<!(^|\s)([-+][oO]|--rcfile|--init-file)\s+)[^\s+-]\S*'
 # Shared C# sanitizers (as in every taint model; see sql-injection.yml) and the shared allow-lists. The rule has none of
 # its own.
 sanitizers:

@@ -99,8 +99,11 @@ public class ModelNameResolutionTests
         foreach (var n in pt.Scalars.Concat(pt.ScalarCollections).Concat(pt.NotScalarElements).Concat(pt.NotSourceTypes).Concat(pt.SourceInterfaces)) yield return (n, "parameter-types");
         foreach (var (p, w) in Members(m)) yield return (p.TypeName, w);
         foreach (var (p, w) in Values(m)) yield return (p.TypeName, w);
+        foreach (var p in m.Propagators)
+            foreach (var n in p.ParamTypes) yield return (n, p.Member + " propagators param-types");
         foreach (var rule in m.Rules)
         {
+            foreach (var k in rule.KeySanitizers.Where(k => k.ReceiverType != null)) yield return (k.ReceiverType!, rule.RuleId + " key receiver-type");
             foreach (var sink in rule.Sinks)
                 foreach (var n in sink.ParamTypes) yield return (n, rule.RuleId + " param-types");
             foreach (var (_, receiverType) in rule.ReceiverSanitizers) yield return (receiverType, rule.RuleId + " receiver-type");
@@ -114,11 +117,14 @@ public class ModelNameResolutionTests
         }
     }
 
-    /// The fields and properties the `is:` conditions read.
+    /// The fields and properties the `is:` conditions and the `key-is:` sanitizers read, and the `known-text:` members
+    /// (Task 29).
     private static IEnumerable<(MemberPattern Pattern, string Where)> Values(ModelSet m) =>
         m.Rules.SelectMany(rule => rule.Sinks.SelectMany(s => s.When)
             .Where(c => c.Kind == SinkConditionKind.Argument && c.Member != null)
-            .Select(c => (c.Member!, rule.RuleId + " when is")));
+            .Select(c => (c.Member!, rule.RuleId + " when is"))
+            .Concat(rule.KeySanitizers.Where(k => k.Is != null).Select(k => (k.Is!, rule.RuleId + " key-is"))))
+        .Concat(m.KnownTexts.Keys.Select(k => (new MemberPattern(k[..k.LastIndexOf('.')], k[(k.LastIndexOf('.') + 1)..], false, MemberKind.PropertyGet), "known-text")));
 
     private static IEnumerable<(MemberPattern Pattern, string Where)> Members(ModelSet m)
     {
@@ -130,6 +136,12 @@ public class ModelNameResolutionTests
             foreach (var s in rule.Sinks) yield return (s.Member, rule.RuleId + " sinks");
             foreach (var c in rule.Sinks.SelectMany(s => s.When).Where(c => c.Kind == SinkConditionKind.Receiver)) yield return (c.Member!, rule.RuleId + " when receiver");
             foreach (var s in rule.Sanitizers) yield return (s, rule.RuleId + " sanitizers");
+            foreach (var k in rule.KeySanitizers) yield return (k.Member, rule.RuleId + " sanitizers key");
+            foreach (var src in rule.Sources)
+            {
+                yield return (src.Member, rule.RuleId + " sources");
+                if (src.Receiver != null) yield return (src.Receiver, rule.RuleId + " sources receiver");
+            }
             foreach (var (s, _) in rule.ReceiverSanitizers) yield return (s, rule.RuleId + " sanitizers");
             foreach (var g in rule.Guards) yield return (g.Member, rule.RuleId + " guards");
             foreach (var c in rule.Guards.SelectMany(g => g.When).Where(c => c.Member != null)) yield return (c.Member!, rule.RuleId + " guards assigned-from");

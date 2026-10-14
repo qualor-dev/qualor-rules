@@ -3,8 +3,9 @@ using Qualor.Taint.Tests.Intraprocedural;
 
 namespace Qualor.Taint.Tests.Capabilities;
 
-/// The shipped shared models (sources.yml, propagators.yml) with one probe rule `csharp.probe` written from YAML, so a
-/// capability is tested apart from the shipped rule models; and the lines a snippet reports for the probe rule.
+/// The shipped models (the shared ones and the rules) with one probe rule `csharp.probe` written from YAML, so a capability
+/// is tested apart from the shipped rule models (only the probe rule's findings are read); and the lines a snippet
+/// reports for the probe rule.
 public abstract class ProbeModels : TempDirs
 {
     protected const string Rule = "csharp.probe";
@@ -12,8 +13,9 @@ public abstract class ProbeModels : TempDirs
     protected ModelSet Probe(string ruleYaml)
     {
         var dir = TempDir();
-        foreach (var name in new[] { ModelLoader.SourcesFile, ModelLoader.PropagatorsFile })
-            File.Copy(Path.Combine(ModelLoaderTests.ShippedModels(), name), Path.Combine(dir, name));
+        // Every shipped model (propagators.yml's `only-for:` names shipped rules); the tests read the probe rule's findings.
+        foreach (var file in Directory.GetFiles(ModelLoaderTests.ShippedModels(), "*.yml"))
+            File.Copy(file, Path.Combine(dir, Path.GetFileName(file)));
         File.WriteAllText(Path.Combine(dir, "probe.yml"), "rule: csharp.probe\nkind: taint\n" + ruleYaml, new UTF8Encoding(false));
         return ModelLoader.Load(dir);
     }

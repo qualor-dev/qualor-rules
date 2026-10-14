@@ -5,7 +5,9 @@
 # Sources: learn.microsoft.com dotnet/api/microsoft.data.sqlclient.sqlcommand,
 # dotnet/api/system.data.common.dbcommand.commandtext, dotnet/api/system.data.common.dbdatasource.createcommand,
 # dotnet/standard/data/sqlite/parameters, ef/core/querying/sql-queries,
-# ef/core/what-is-new/ef-core-3.x/breaking-changes; www.npgsql.org/doc/basic-usage.html;
+# ef/core/what-is-new/ef-core-3.x/breaking-changes, dotnet/api/system.data.datatable.select,
+# dotnet/api/system.data.dataview.rowfilter, dotnet/api/system.data.dataview.-ctor, dotnet/api/system.data.datatable.compute,
+# dotnet/api/system.data.datacolumn.expression; www.npgsql.org/doc/basic-usage.html;
 # mysqlconnector.net/tutorials/basic-api/; github.com/DapperLib/Dapper/blob/main/Readme.md.
 rule: csharp.sql-injection
 kind: taint
@@ -89,6 +91,26 @@ sinks:
     param-types: [System.String]
   - method: Dapper.CommandDefinition..ctor
     args: [0]
+  # A DataTable or DataView filter expression (Task 29, decision R-10; BACKLOG csharp.sql-injection#datatable-select):
+  # DataTable.Select's filterExpression, DataView.RowFilter (set, or given to DataView's constructor) and
+  # DataTable.Compute's filter. The filter is the DataColumn expression language, not SQL, but a quote in request data
+  # changes the condition the same way (`User = '' or '1' = '1'`); the finding says so (`message:`). The sort
+  # expression and Compute's aggregate expression are not modelled.
+  # Difference: the OpenGrep rule has no DataTable sink (BACKLOG row kept open for it).
+  - method: System.Data.DataTable.Select
+    args: [0]
+    param-names: [filterExpression]
+    message: "request data reaches a DataTable or DataView filter expression (the DataColumn expression language, not SQL: it can still change which rows match)"
+  - property-set: System.Data.DataView.RowFilter
+    message: "request data reaches a DataTable or DataView filter expression (the DataColumn expression language, not SQL: it can still change which rows match)"
+  - method: System.Data.DataView..ctor
+    args: [1]
+    param-names: [RowFilter]
+    message: "request data reaches a DataTable or DataView filter expression (the DataColumn expression language, not SQL: it can still change which rows match)"
+  - method: System.Data.DataTable.Compute
+    args: [1]
+    param-names: [filter]
+    message: "request data reaches a DataTable or DataView filter expression (the DataColumn expression language, not SQL: it can still change which rows match)"
 # Shared C# sanitizers (the same in every taint model, as the OpenGrep rules' shared region up to "End of the
 # shared C# sanitizers"): conversions to numbers, GUIDs, dates and enums. The result of the call is clean.
 # (A TryParse out value, a ternary or a switch expression of constants needs none: the engine never carries

@@ -243,4 +243,50 @@ propagators:
   # LINQ: the source sequence (an extension method's `this` is its first argument) and the other arguments
   # (a second sequence, a seed) reach the result.
   - method: System.Linq.Enumerable.*
+  # XML loaded from a stream, a reader or text holds that data (Task 29; learn.microsoft.com dotnet/api/
+  # system.xml.xmldocument.load, system.xml.xmlreader.create): XmlDocument.Load of a Stream, TextReader or
+  # XmlReader and LoadXml (void) write it into the document; its nodes, attributes and text are then read through the
+  # string-or-collection default (XmlNode is enumerable). Load of a file name reads the file, not the name (no
+  # propagator).
+  - method: System.Xml.XmlDocument.Load
+    from: [0]
+    to: [this]
+    param-types: [System.IO.Stream, System.IO.TextReader, System.Xml.XmlReader]
+  - method: System.Xml.XmlDocument.LoadXml
+    from: [0]
+    to: [this]
+  # An XmlReader created over a Stream or a TextReader reads that data (its attributes and content are then read
+  # through the string-or-collection default); one created from a URI reads that resource, not the name.
+  - method: System.Xml.XmlReader.Create
+    from: [0]
+    param-types: [System.IO.Stream, System.IO.TextReader]
+  # A type found by a name (Task 29, csharp.unsafe-deserialization's taint form): Type.GetType and Assembly.GetType give
+  # a Type the name chose. It is request data for that rule only (`only-for:`): a type name is no free text for the
+  # other rules (a real type's name holds no quote, '<' or path separator).
+  - method: System.Type.GetType
+    from: [0]
+    only-for: [csharp.unsafe-deserialization]
+  - method: System.Reflection.Assembly.GetType
+    from: [0]
+    only-for: [csharp.unsafe-deserialization]
 unmodelled-external: string-or-collection-return
+# The text of external static strings (Task 29, ruling R-E22; learn.microsoft.com dotnet/api/system.uri.schemedelimiter,
+# system.uri.urischemehttp and the other UriScheme fields): the string-prefix fact reads them as written in place.
+known-text:
+  - { member: System.Uri.SchemeDelimiter, text: "://" }
+  - { member: System.Uri.UriSchemeHttp, text: "http" }
+  - { member: System.Uri.UriSchemeHttps, text: "https" }
+  - { member: System.Uri.UriSchemeWs, text: "ws" }
+  - { member: System.Uri.UriSchemeWss, text: "wss" }
+  - { member: System.Uri.UriSchemeFtp, text: "ftp" }
+  - { member: System.Uri.UriSchemeFtps, text: "ftps" }
+  - { member: System.Uri.UriSchemeSftp, text: "sftp" }
+  - { member: System.Uri.UriSchemeFile, text: "file" }
+  - { member: System.Uri.UriSchemeMailto, text: "mailto" }
+  - { member: System.Uri.UriSchemeNews, text: "news" }
+  - { member: System.Uri.UriSchemeNntp, text: "nntp" }
+  - { member: System.Uri.UriSchemeGopher, text: "gopher" }
+  - { member: System.Uri.UriSchemeSsh, text: "ssh" }
+  - { member: System.Uri.UriSchemeTelnet, text: "telnet" }
+  - { member: System.Uri.UriSchemeNetTcp, text: "net.tcp" }
+  - { member: System.Uri.UriSchemeNetPipe, text: "net.pipe" }

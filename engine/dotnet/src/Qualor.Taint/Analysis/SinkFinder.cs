@@ -1,4 +1,5 @@
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace Qualor.Taint;
 
@@ -64,12 +65,19 @@ internal sealed class SinkFinder
     private readonly MemberTable<(string Rule, string ReceiverType)> _receiverSanitizers = new();
     private readonly List<(string Rule, string Type, string Method)> _named = new();
     private readonly Dictionary<ISymbol, string[]> _namedCache = new(SymbolEqualityComparer.Default);
+    private readonly MemberTable<(string Rule, KeySanitizer Sanitizer)> _keySanitizers = new();
 
     public SinkFinder(IEnumerable<RuleModel> rules)
     {
         var allowLists = new List<string>();
-        foreach (var rule in rules.Where(r => r.Kind == RuleKind.Taint))
+        // Taint rules, and the taint form of a misuse rule (its `sinks:`, Task 29).
+        foreach (var rule in rules.Where(r => r.Kind == RuleKind.Taint || r.Sinks.Count > 0))
         {
+            foreach (var k in rule.KeySanitizers)
+            {
+                _keySanitizers.Add(k.Member, (rule.RuleId, k));
+                HasKeyCalls |= k.Member.Kind == MemberKind.Method;
+            }
             foreach (var sink in rule.Sinks) _sinks.Add(sink.Member, new SinkHit(rule.RuleId, sink));
             foreach (var sanitizer in rule.Sanitizers) _sanitizers.Add(sanitizer, rule.RuleId);
             foreach (var s in rule.StringSanitizers) _stringSanitizers.Add((rule.RuleId, s));
@@ -163,6 +171,65 @@ internal sealed class SinkFinder
 
     /// The rules whose sanitizers this call or property read is (its result is clean for them).
     public string[] Sanitizes(ISymbol member, Access access) => _sanitizers.Match(member, access);
+
+    /// The rules whose keyed sanitizers (`key:`, `key-is:`) this indexer read is: its key is a constant matching the
+    /// expression, or a read of the named field or property.
+    public IReadOnlyCollection<string> SanitizesKey(IPropertySymbol indexer, IOperation key) =>
+        _keySanitizers.IsEmpty ? Array.Empty<string>() : KeyRules(_keySanitizers.Match(indexer, Access.Get), key, null);
+
+    /// Whether any rule has a keyed sanitizer on a method (`method: T.TryGetValue` with `key:`/`key-is:`).
+    public bool HasKeyCalls { get; private set; }
+
+    /// The rules whose keyed method sanitizers this call is (M1 of the Task 29 review: `Headers.TryGetValue("Host", out
+    /// v)`): its key (argument 0) matches and its receiver's static type is the sanitizer's `receiver-type` (or derives
+    /// from it or implements it); the call's `out` values are clean for them.
+    public IReadOnlyCollection<string> SanitizesKeyCall(IMethodSymbol method, ITypeSymbol? receiverType, IOperation key) =>
+        !HasKeyCalls ? Array.Empty<string>() : KeyRules(_keySanitizers.Match(method, Access.Call), key, receiverType);
+
+    private static IReadOnlyCollection<string> KeyRules((string Rule, KeySanitizer Sanitizer)[] hits, IOperation key, ITypeSymbol? receiverType)
+    {
+        if (hits.Length == 0) return Array.Empty<string>();
+        while (key is IConversionOperation c) key = c.Operand;
+        List<string>? rules = null;
+        foreach (var (rule, s) in hits)
+        {
+            if (s.ReceiverType != null && !IsOfType(receiverType, s.ReceiverType)) continue;
+            var match = s.Matches != null
+                ? key.ConstantValue is { HasValue: true, Value: string text } && s.Matches.IsMatch(text)
+                : key switch
+                {
+                    IFieldReferenceOperation f => f.Field.Name == s.Is!.MemberName && SymbolMatch.MetadataName(f.Field.ContainingType) == s.Is.TypeName,
+                    IPropertyReferenceOperation p => SymbolMatch.Matches(s.Is!, p.Property),
+                    _ => false,
+                };
+            if (match) (rules ??= new List<string>()).Add(rule);
+        }
+        return (IReadOnlyCollection<string>?)rules ?? Array.Empty<string>();
+    }
+
+    /// A type that is `name`, derives from it or implements it.
+    private static bool IsOfType(ITypeSymbol? type, string name)
+    {
+        if (type == null) return false;
+        for (var t = type; t != null; t = t.BaseType)
+            if (SymbolMatch.MetadataName(t) == name) return true;
+        return type.AllInterfaces.Any(i => SymbolMatch.MetadataName(i) == name);
+    }
+
+    private readonly Dictionary<(string, ISymbol), string?> _messages = new();
+
+    /// The message of the sink of `rule` this member is (`message:`, Task 29), or null.
+    public string? MessageFor(string rule, ISymbol member)
+    {
+        var key = (rule, MemberTable<SinkHit>.Definition(member));
+        if (_messages.TryGetValue(key, out var cached)) return cached;
+        string? message = null;
+        foreach (var access in new[] { Access.Call, Access.Set })
+            foreach (var hit in _sinks.Match(member, access))
+                if (hit.RuleId == rule && hit.Sink.Message != null) message ??= hit.Sink.Message;
+        _messages[key] = message;
+        return message;
+    }
 
     /// Whether an argument is a sink's argument: the ordinal of its parameter in the member's definition (an extension
     /// method's `this` is 0) is one of the sink's, that parameter's type one of `param-types` and its name one of

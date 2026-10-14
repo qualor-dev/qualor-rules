@@ -8,6 +8,13 @@
 # system.net.webutility.urlencode, system.web.httputility.urlencode; aspnet/core/fundamentals/http-requests.
 rule: csharp.ssrf
 kind: taint
+# The rule's own source (Task 29, decision R-10; BACKLOG csharp.ssrf#request-host-source): the request's Host, which
+# the client sends, used to build the address of an outgoing request (host-header SSRF). Request data for this rule
+# only: for open-redirect and xss it is the request's own origin (ruling R-E22), and the other rules never took it.
+# The Host header read through Request.Headers is a shared source already (sources.yml). Difference: OpenGrep's shared
+# source block has no Host (BACKLOG row kept open for it).
+sources:
+  - property-get: Microsoft.AspNetCore.Http.HttpRequest.Host
 sinks:
   # HttpClient's request methods and the System.Net.Http.Json extensions: the URL (a string or a Uri). A request
   # message given to SendAsync is checked where its URL is set.

@@ -249,6 +249,37 @@ public sealed class CliTests : TempDirs
         Assert.Equal("Tls.cs", result.GetProperty("locations")[0].GetProperty("physicalLocation").GetProperty("artifactLocation").GetProperty("uri").GetString());
     }
 
+    /// Task 29: a sink with its own `message:` names what was reached (a DataTable filter under csharp.sql-injection, a
+    /// request-chosen type under the misuse rule csharp.unsafe-deserialization); the others keep the generic text.
+    [Fact]
+    public void A_sink_with_its_own_message_names_it_in_the_sarif_result()
+    {
+        var (inputs, root) = AppInputs("""
+            public class ShelfController : Microsoft.AspNetCore.Mvc.ControllerBase
+            {
+                public object Find(string shelf, System.Data.DataTable stock, Microsoft.Data.SqlClient.SqlConnection c)
+                {
+                    new Microsoft.Data.SqlClient.SqlCommand($"SELECT Code FROM Shelves WHERE Code = '{shelf}'", c);
+                    new System.Xml.Serialization.XmlSerializer(System.Type.GetType("Stock." + shelf)!);
+                    return stock.Select($"Shelf = '{shelf}'");
+                }
+            }
+            """);
+        var sarif = Path.Combine(root, "r.sarif");
+
+        Assert.Equal(0, Qualor.Taint.Cli.Program.Run(
+            new[] { "analyze", "--inputs", inputs, "--models", Models, "--sarif", sarif, "--root", root }, TextWriter.Null));
+
+        using var doc = ReadSarif(sarif);
+        var texts = doc.RootElement.GetProperty("runs")[0].GetProperty("results").EnumerateArray()
+            .Where(r => r.GetProperty("locations")[0].GetProperty("physicalLocation").GetProperty("artifactLocation").GetProperty("uri").GetString() == "Tls.cs")
+            .Select(r => r.GetProperty("message").GetProperty("text").GetString()!).OrderBy(t => t, StringComparer.Ordinal).ToList();
+        Assert.Equal(3, texts.Count);
+        Assert.Equal("csharp.sql-injection: request data reaches a DataTable or DataView filter expression (the DataColumn expression language, not SQL: it can still change which rows match)", texts[0]);
+        Assert.Equal("csharp.sql-injection: request data reaches the sql-injection sink", texts[1]);
+        Assert.StartsWith("csharp.unsafe-deserialization: request data chooses the type to deserialize: the type comes from the request", texts[2]);
+    }
+
     [Fact]
     public void A_crash_exits_1_with_the_exception_on_stderr()
     {

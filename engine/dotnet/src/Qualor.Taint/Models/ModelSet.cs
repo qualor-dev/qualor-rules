@@ -26,6 +26,10 @@ public sealed record SinkModel(MemberPattern Member, IReadOnlyList<int> Args)
 
     /// A conditional sink (`when:`): the sink applies only where every condition holds at the call or assignment.
     public IReadOnlyList<SinkCondition> When { get; init; } = Array.Empty<SinkCondition>();
+
+    /// What the sink is, for the finding's message (`message:`, Task 29), when the rule's generic text would mislead (a
+    /// DataTable filter under csharp.sql-injection); null: the generic text.
+    public string? Message { get; init; }
 }
 
 /// The kinds of a conditional sink's conditions (models/README.md, `when:`).
@@ -38,6 +42,8 @@ public enum SinkConditionKind
 
     /// `property: P [of: N], matches: R`: the object the sink acts on (or argument N) has its property P set in the
     /// body (an assignment, an initializer, a constructor parameter named P) to a constant one of whose values matches R.
+    /// P may be a path (`StartInfo.FileName`: property FileName of the object's StartInfo). With `unless: R` instead
+    /// (Negated): no constant P is set to matches R (also when P is never set).
     Property,
 
     /// `literal-text: R`: the sink argument is no collection written in place, and its literal text (the strings it
@@ -73,6 +79,9 @@ public sealed record SinkCondition(SinkConditionKind Kind)
     public bool Next { get; init; }
 
     public MemberPattern? Member { get; init; }
+
+    /// A Property condition written `unless: R`: it holds when none of the property's constants matches.
+    public bool Negated { get; init; }
 }
 
 /// What a guard's call tells (`clean-when:`): its boolean result (true or false), or whether its awaited result, held in a
@@ -174,6 +183,30 @@ public sealed record RuleModel(
 
     /// `allow-list: literal-tables`: the shared allow-lists (models/README.md, "Allow-lists") apply to this rule.
     public bool AllowLists { get; init; }
+
+    /// Sanitizers of a keyed read (`property-get:` with `key:` or `key-is:`, Task 29): the read of an indexer whose key
+    /// is a constant matching the expression, or reads the named field or property (`Headers["Host"]`,
+    /// `Headers[HeaderNames.Host]`), is clean.
+    public IReadOnlyList<KeySanitizer> KeySanitizers { get; init; } = Array.Empty<KeySanitizer>();
+
+    /// The rule's own sources (`sources:`, Task 29): request data for this rule only (clean for every other rule).
+    public IReadOnlyList<RuleSource> Sources { get; init; } = Array.Empty<RuleSource>();
+}
+
+/// A keyed-read sanitizer: the read of Member (an indexer), or the `out` values of a call of Member (a method such as
+/// TryGetValue), whose argument 0 is a constant matching Matches or reads the field or property Is.
+public sealed record KeySanitizer(MemberPattern Member, System.Text.RegularExpressions.Regex? Matches, MemberPattern? Is)
+{
+    /// A method's keyed sanitizer only (`TryGetValue` with `receiver-type:`): the call's receiver is of this type or
+    /// derives from it or implements it; the call's `out` values are clean.
+    public string? ReceiverType { get; init; }
+}
+
+/// A rule's own source: a read of the property (or the value of the method) Member, and with Receiver only where the
+/// read's receiver is a read of that property in place (`HttpRequest.PathBase` for `PathString.Value`).
+public sealed record RuleSource(MemberPattern Member)
+{
+    public MemberPattern? Receiver { get; init; }
 }
 
 /// A `string-prefix:` sanitizer: a value built into a string (concatenation, interpolation, string.Format with a
@@ -218,10 +251,23 @@ public sealed record SourceModel(
 public sealed record PropagatorModel(MemberPattern Member, IReadOnlyList<string> From, IReadOnlyList<string> To)
 {
     public IReadOnlyList<int> Keys { get; init; } = Array.Empty<int>();
+
+    /// `only-for:` (Task 29): the request data the propagator passes stays request data for these rules only (a type
+    /// found by a request-chosen name is no free text for the other rules); empty: for every rule.
+    public IReadOnlyList<string> OnlyFor { get; init; } = Array.Empty<string>();
+
+    /// `param-types:` (Task 29): the propagator applies only to the overloads whose parameters at its `from` ordinals
+    /// have one of these types (XmlDocument.Load of a Stream holds its data; Load of a file name does not).
+    public IReadOnlyList<string> ParamTypes { get; init; } = Array.Empty<string>();
 }
 
 /// Every model of models/csharp. UnmodelledExternal is the policy for external members no propagator names.
-public sealed record ModelSet(SourceModel Sources, IReadOnlyList<PropagatorModel> Propagators, string UnmodelledExternal, IReadOnlyList<RuleModel> Rules);
+public sealed record ModelSet(SourceModel Sources, IReadOnlyList<PropagatorModel> Propagators, string UnmodelledExternal, IReadOnlyList<RuleModel> Rules)
+{
+    /// The text of external static string fields and properties (`known-text:` of propagators.yml, Task 29), by
+    /// `Type.Member`: the string-prefix fact reads them as written in place (`Uri.SchemeDelimiter` is "://").
+    public IReadOnlyDictionary<string, string> KnownTexts { get; init; } = new Dictionary<string, string>(StringComparer.Ordinal);
+}
 
 /// An invalid model file: Message is `<file>:<line>: <message>` (line 1-based).
 public sealed class ModelException : Exception

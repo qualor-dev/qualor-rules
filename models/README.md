@@ -63,6 +63,12 @@ sinks:                           # a taint rule needs at least one
     param-names: [pattern]       # optional (method sinks): only parameters of one of these names
   - property-set: System.Data.Common.DbCommand.CommandText   # the assigned value; no args
                                  # optional on any sink: `when:` (conditional sinks, below)
+  - method: System.Data.DataTable.Select
+    args: [0]
+    message: "request data reaches a DataTable or DataView filter expression ..."
+                                 # optional on any sink: the finding's message (below)
+sources:                         # optional: the rule's own sources (below)
+  - property-get: Microsoft.AspNetCore.Http.HttpRequest.Host
 sanitizers:                      # optional: the member's result is clean
   - method: System.Int32.Parse
 guards:                          # optional: the checked argument is clean on the branch where the
@@ -71,7 +77,19 @@ guards:                          # optional: the checked argument is clean on th
     clean-when: true
 ```
 
-A rule of `kind: misuse` has `misuse:` (below) and no `sinks`, `sanitizers` or `guards`.
+A rule of `kind: misuse` has `misuse:` (below) and no `guards`. It may also have a taint form (Task 29): `sinks:` (with
+`sanitizers:` and `sources:` of its own), whose findings carry the misuse rule's id (`csharp.unsafe-deserialization`
+reports a serializer built for a type the request names). Like the taint rules, the taint form skips no test code.
+
+- `sources:` (Task 29, decision R-10): the rule's own sources, `property-get:` or `method:` entries as in
+  `sources.yml`'s `members`. What they read is request data for this rule only: clean for every other rule, so it is
+  reported only where it reaches this rule's sinks (joined with other request data, that data still counts for every
+  rule). With `receiver: T.P`, only a read whose receiver is a read of property P of T in place
+  (`Request.PathBase.Value`, not a PathString held in a variable first). A rule's own sources do not make a body an
+  implicit entry point (EntryPoints reads `sources.yml` only).
+- `message:` on a sink: the finding's SARIF message, `<rule id>: <message>`, instead of the rule's generic one, where the
+  generic one would mislead (a DataTable filter is reported under csharp.sql-injection, a request-chosen type under a
+  misuse rule).
 
 `sanitizers` take `method:` or `property-get:` (the member's result is clean), or one of the kinds below. A `method:`
 sanitizer may add `receiver-type: T`: the result is clean only when the receiver (its static type) is T or derives
@@ -95,6 +113,15 @@ sanitizers:
   static, another such member, a `+` or interpolation of them; joined over the dispatch targets): `Api.Base + "/" + id`
   with `static string Base => "https://api.example/v1"` reads as written in place (Task 23). A string held in a variable
   keeps the value it was built with; its text is not followed.
+  An external static string the models know (`known-text:` of `propagators.yml`: `Uri.SchemeDelimiter`,
+  `Uri.UriSchemeHttps`, ...) is known too (Task 29, ruling R-E22), and a value chosen between known texts (`c ? a : b`)
+  reads as their common start and a hole (`secure ? Uri.UriSchemeHttps : Uri.UriSchemeHttp` is "http" + U+FFFC).
+- `property-get: T.Item` with `key: R` or `key-is: T.F` (Task 29): the read of the indexer whose key (argument 0) is a
+  constant matching R, or reads the field or property T.F, is clean (`Request.Headers["Host"]`,
+  `Request.Headers[HeaderNames.Host]`: the request's own origin for open-redirect and xss, ruling R-E22). A key held in a
+  variable is not read. `method: T.M` with `key:` or `key-is:` and `receiver-type: D` (required): a call of M (argument 0
+  the key) on a receiver whose static type is D, derives from it or implements it leaves its `out` values clean
+  (`Request.Headers.TryGetValue("Host", out var h)` with `IDictionary`2.TryGetValue` and `IHeaderDictionary`).
 - `lookup: R`: the result of a call to a method whose name matches R is clean when the engine has no body to analyse
   for it (an external method, an abstract or interface method without an implementation in the solution): a record
   found by an id is stored data. A method with a body is analysed instead. With `awaited: true`, only the awaited
@@ -274,7 +301,7 @@ A sink with `when:` applies only where every condition of its list holds (each i
 |---|---|
 | `arg: N`, `matches: R` | argument N (parameter ordinal) may be a constant that matches R: a literal or a const, a local assigned constants in the body, both branches of `?:` and `??`. A value that is no constant (a parameter, a call) matches nothing. On a property-set sink that is an indexer, N is the indexer's argument (`headers["Location"] = x`). |
 | `arg: N`, `is: T.F` | argument N reads the field or property T.F (`HeaderNames.Location`, a `static readonly` field whose value the engine cannot read). |
-| `property: P`, `matches: R` (`of: N`) | the object the sink acts on has its property P set to a constant that matches R anywhere in the body, before or after the sink: an assignment `x.P = c`, an object initializer `{ P = c }`, or a constructor parameter named P (ignoring case: `new ProcessStartInfo("sh")` sets FileName). The object of a property-set sink is the object written to; of a method sink its receiver (an extension method's `this`), the created object for a constructor; `of: N` takes argument N instead. Objects are told apart by access path (`psi`, `p.StartInfo`, `this.Response`, `context.Response`); a variable assigned exactly one object creation in the body is that object (one reused for a second object is neither). |
+| `property: P`, `matches: R` (`of: N`) | the object the sink acts on has its property P set to a constant that matches R anywhere in the body, before or after the sink: an assignment `x.P = c`, an object initializer `{ P = c }`, or a constructor parameter named P (ignoring case: `new ProcessStartInfo("sh")` sets FileName). P may be a path (`StartInfo.FileName`: FileName of the object's StartInfo, Task 29); a local assigned `Process.Start(info)` or `Process.Start(fileName, ...)` once in the body has that info as its StartInfo, or that FileName (and arguments); a member assigned a local that holds one object creation (`p.StartInfo = psi`, `new Process { StartInfo = psi }`) is that object. A `receiver:` held in a local assigned once in the body (`using (var input = p.StandardInput)`) is the property it was assigned. With `unless: R` instead of `matches`: no constant P is set to matches R (also when P is never set; a value that is no constant matches nothing). The object of a property-set sink is the object written to; of a method sink its receiver (an extension method's `this`), the created object for a constructor; `of: N` takes argument N instead. Objects are told apart by access path (`psi`, `p.StartInfo`, `this.Response`, `context.Response`); a variable assigned exactly one object creation in the body is that object (one reused for a second object is neither). |
 | `literal-text: R` | the sink argument is no collection written in place, and its literal text matches R or it has none (a variable or a call's result, whose text the engine does not follow). The literal text is the strings the argument is built from in place: constants, both sides of a string `+`, the text and holes of an interpolated string, both branches of `?:` and `??`, the arguments of `string.Format`, `Concat` and `Join`; each string is matched by itself. |
 | `after: R` (`next: true`) | for a sink argument written in place as a collection (an array or a collection initializer, `new[] { "-c", x }`, `new List<string> { ... }`, a collection expression): the sink is each element after one that may be a constant matching R (with `next`: the element right after it), reported where that element is; the sink does not apply when no element qualifies. For an `Add` call: the earlier Adds to the same collection (an access path, also the Adds of a collection initializer `ArgumentList = { "-c", x }`), in source order, must hold such an element. Otherwise the condition does not hold. |
 | `receiver: T.P` | the call's receiver (for a property-set sink: the object written to) is property P of T (also through a nested collection initializer); the object of `property:` conditions is then the object that holds P. |
@@ -399,12 +426,59 @@ unmodelled-external: string-or-collection-return
   its members. A key that reaches a value typed by a type parameter is marked (ruling R-E23): a call of a value-factory
   shaped method drops it from its result (below), any other call keeps it.
 - Entries take `method:` or `property-get:`.
+- `only-for: [rule ids]` (Task 29): what the propagator returns stays request data for these rules only (clean for the
+  others). `System.Type.GetType` and `Assembly.GetType` pass a type name on to the Type for
+  `csharp.unsafe-deserialization` only: a real type's name holds no quote, `<` or path separator, so it is no free text
+  for the other rules.
+- `param-types: [types]` (Task 29, a method propagator whose `from` names parameter ordinals only): it applies only to
+  the overloads whose parameters at those ordinals have one of these types (`XmlDocument.Load` of a Stream, TextReader or
+  XmlReader holds the data it reads; `Load(string fileName)` does not).
+- `known-text:` (Task 29, a list of `{ member: T.M, text: "..." }`): the text of an external static string field or
+  property, which the `string-prefix:` sanitizers read as written in place (learn.microsoft.com gives each value:
+  `Uri.SchemeDelimiter` is "://", `Uri.UriSchemeHttps` "https").
 - Element reads of a collection are propagators of its indexer (`property-get: <type>.Item`, from
   `[this]`): `propagators.yml` names those of the dictionary and list interfaces and of the request
   collections. An array element read is no member call; it is the engine's own.
 - `unmodelled-external`: what an external member no propagator names does.
   `string-or-collection-return`: its arguments and receiver reach its result when the result is
   string-like or a collection; `none`: nothing passes.
+
+## Sources and sinks beyond the OpenGrep rules (Task 29, decision R-10, ruling R-E22)
+
+The engine closes five BACKLOG rows the OpenGrep rules keep open (each row says "Closed by the engine (Task 29)"), and
+treats the request's own origin apart. Compared with the OpenGrep shared C# source block (rules/csharp/sql/
+sql-injection.yml up to "End of the shared C# source block") and the rules' own items, the differences are:
+
+| item | engine | OpenGrep |
+|---|---|---|
+| `HttpContext?.Request.Query` (null-conditional) | a source: request members are matched by type (`sources.yml` (6)), whatever the receiver | not a source: the block matches `$CTX.Request.$PART` written without `?.` |
+| `Request.Host` | csharp.ssrf's own source (`ssrf.yml` `sources:`); no source of any other rule | no source of any rule |
+| the Host header (`Headers.Host`, `Headers["Host"]` in any case, `Headers[HeaderNames.Host]`, `RequestHeaders.Host`, `Headers.TryGetValue("Host", out v)`) | request data (it is a header), except for csharp.open-redirect and csharp.xss, where keyed sanitizers make it the request's own origin (R-E22) | request data for every rule (`Headers` is a source as a whole) |
+| `Request.PathBase` | a shared source; for csharp.open-redirect a sanitizer (as OpenGrep), for csharp.xss a sanitizer except its unescaped `Value` read on it in place (xss.yml `sources:` with `receiver:`; OpenGrep's xss.cs:193) | a shared source; open-redirect cleans the read; xss cleans the read except `PathBase.Value` in place |
+| `Request.Scheme` | no source | no source |
+| `Uri.SchemeDelimiter`, `Uri.UriScheme*` | known text for the string-prefix fact (`known-text:`) | a fixed origin must be a literal written in place |
+| DataTable filter (`DataTable.Select`, `DataView.RowFilter` and its constructor, `DataTable.Compute`'s filter) | a csharp.sql-injection sink with its own message | no sink |
+| a shell's standard input (`p.StandardInput.WriteLine(x)`) | a csharp.command-injection sink when the process's StartInfo is cmd, pwsh/powershell, sh or bash started so that it reads its standard input as commands (per shell, from cmd's reference, about_pwsh, the POSIX sh utility and bash's Invoking Bash: no `/c`; `-Command -`/`-File -` or no command or script; no `-c` and no command file, or `-s`), option values not taken for a script | no sink |
+| a serializer built for a request-chosen type (`new XmlSerializer(Type.GetType(name))`, its `extraTypes`, DataContractSerializer and DataContractJsonSerializer with their `knownTypes`, XmlSerializerFactory.CreateSerializer, XmlSerializer.FromTypes) | the taint form of csharp.unsafe-deserialization, with its own message and the shared allow-lists | a fixed-type serializer is safe; the type is not followed |
+
+A rule's own source is request data like any other for the request scope (TaintValue.Scope is one per value, not per
+rule): joined with heap data from other requests and written to the heap, it widens that data's scope to its own
+request, for every rule (Jellyfin: the request Host joined with a stored media path in one call; FP, measured 2 on
+Jellyfin, a case of the heap's precision limits below).
+
+R-E22's cost: an application that forwards an attacker-set `X-Forwarded-Host` or `X-Forwarded-Prefix` into the Host or
+PathBase (the forwarded-headers middleware behind a proxy that passes them on) is not followed for open-redirect and xss.
+
+Shell standard input, not followed (FN): bytes written to `StandardInput.BaseStream`; a shell started through a launcher
+(`env bash`, `busybox sh`); shells the cited documents do not cover (dash, zsh, ksh, fish, csh, ...); arguments given
+through `ArgumentList` (not read: the shell counts as reading its input). The conditions read the body flow-insensitively,
+so a process variable whose program or arguments differ by branch takes every constant of them together.
+
+A framework or library callback whose parameter the library fills from the request (OrchardCore's tus store,
+`ITusStore.*(string fileId, ...)` called by tusdotnet with the upload id from the request URL) is no source: neither
+learn.microsoft.com nor tusdotnet's documentation (its wiki's "Custom data store" and "Custom file id provider" pages)
+says where the store's `fileId` comes from or whether it is validated before the store is called (a file id provider has
+a `ValidateId`), and the models are written from documentation only (Task 29; a recall loss, see Known limits).
 
 ## Known limits (measured 2026-10-14, MEASUREMENTS.md "C# engine")
 
@@ -493,8 +567,11 @@ false positives (FP) or misses (FN) there.
   `[RegularExpression]` on a bound parameter, a hash used as a file name, an allow-list lookup (FP).
 - The fixed-origin prefix (ssrf, open-redirect) is read where the URL is built in place and through the text project
   members return (since Task 23), not through a variable that holds the text, an external member, or a member whose text
-  depends on its arguments (FP). A redirect to the request's own URL (scheme, host, path) is reported (FP): nopCommerce
-  builds it from the Host header (a request header, so request data) and `Uri.SchemeDelimiter`, whose text is not known.
+  depends on its arguments (FP). Since Task 29 (ruling R-E22) the Host header is no source of open-redirect and xss, and
+  `Uri.SchemeDelimiter` and the `Uri.UriScheme*` fields have known text, so `$"{scheme}{Uri.SchemeDelimiter}{host}{path}"`
+  built in one place is quiet; a redirect to the request's own URL whose origin part goes through a local assigned
+  several times, `TrimEnd`, or a helper that may also return `""` or a stored URL is still reported (FP): nopCommerce's
+  `GetThisPageUrl` (`GetStoreLocation(...).TrimEnd('/')` + Request.Path; 5 findings).
 - LINQ (since Task 23): `Select`, `SelectMany` and the element selectors of `ToDictionary`/`ToLookup` give what their
   selector returns when it is a lambda or a method group given there, so an encoder in the selector cleans the result;
   `SelectMany`'s result selector also gets the collection selector's elements (two `from` clauses); the other operators
@@ -522,7 +599,7 @@ false positives (FP) or misses (FN) there.
   engine's own plumbing, which every view goes through); `HttpContext.Items` held in a local that is assigned again or
   in a field; a layout reads none of an action's heap data (it is an entry
   point of its own); a view model given as a model expression (`<partial for>`, editor and display templates); callbacks a framework or library makes into the project
-  (static-file providers, tus stores); externals whose result is neither string-like nor a collection and that no
+  (static-file providers, tus stores: no documentation says the store's file id is unvalidated request data, Task 29); externals whose result is neither string-like nor a collection and that no
   propagator names (`IFileProvider.GetFileInfo` → `IFileInfo.PhysicalPath`, Fluid values); a Minimal API body object
   bound without `[FromBody]`.
 - Views no build compiles (ASP.NET Core 2.x compiles views at run time, plugins copy theirs as Content; since Task 30,

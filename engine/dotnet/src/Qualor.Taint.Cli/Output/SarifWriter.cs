@@ -90,7 +90,10 @@ public static class SarifWriter
             w.WriteString("level", "error");
             w.WriteStartObject("message");
             var name = f.RuleId[(f.RuleId.IndexOf('.') + 1)..];
-            w.WriteString("text", kinds.TryGetValue(f.RuleId, out var k) && k == RuleKind.Misuse
+            // A sink's own message (Task 29: a DataTable filter, a request-chosen type) names what was reached.
+            w.WriteString("text", f.Message != null
+                ? $"{f.RuleId}: {f.Message}"
+                : kinds.TryGetValue(f.RuleId, out var k) && k == RuleKind.Misuse
                 ? $"{f.RuleId}: insecure configuration ({name})"
                 : $"{f.RuleId}: request data reaches the {name} sink");
             w.WriteEndObject();

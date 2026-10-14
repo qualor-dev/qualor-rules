@@ -2,11 +2,50 @@
 # rules/csharp/deserialization/unsafe-deserialization.yml with types in place of names.
 #
 # Sources (learn.microsoft.com): dotnet/standard/serialization/binaryformatter-security-guide,
-# binaryformatter-migration-guide, dotnet/api/system.web.script.serialization.javascriptserializer.-ctor; Json.NET:
+# binaryformatter-migration-guide, dotnet/api/system.web.script.serialization.javascriptserializer.-ctor,
+# dotnet/api/system.xml.serialization.xmlserializer.-ctor, dotnet/api/system.runtime.serialization.datacontractserializer.-ctor,
+# dotnet/api/system.runtime.serialization.json.datacontractjsonserializer.-ctor, dotnet/api/system.type.gettype,
+# dotnet/api/system.xml.serialization.xmlserializerfactory.createserializer, dotnet/api/system.xml.serialization.xmlserializer.fromtypes,
+# dotnet/api/system.reflection.assembly.gettype; Json.NET:
 # www.newtonsoft.com/json/help/html/SerializeTypeNameHandling.htm, T_Newtonsoft_Json_TypeNameHandling.htm;
 # cheatsheetseries.owasp.org Deserialization_Cheat_Sheet.
 rule: csharp.unsafe-deserialization
 kind: misuse
+# The taint form of the rule (Task 29, decision R-10; BACKLOG csharp.unsafe-deserialization#request-chosen-type): a
+# serializer that is safe for a fixed type is unsafe for a type the request names. Request data in a type given to
+# XmlSerializer, XmlSerializerFactory, DataContractSerializer or DataContractJsonSerializer (below) is a finding under
+# this rule's id; a Type carries request data only from Type.GetType or Assembly.GetType of a request value (propagators.yml,
+# `only-for:` this rule). Sources and propagators: sources.yml and propagators.yml (shared). Like the taint rules, the
+# taint form skips no test code. Difference: the OpenGrep rule treats these serializers as safe (BACKLOG row kept open
+# for it).
+sinks:
+  # The type to create (`type`), and the other types the serializer may create from the data: XmlSerializer's
+  # `extraTypes`, DataContractSerializer's and DataContractJsonSerializer's `knownTypes`, XmlSerializerFactory's
+  # CreateSerializer, XmlSerializer.FromTypes. A type passed through DataContractSerializerSettings.KnownTypes is not
+  # followed.
+  - method: System.Xml.Serialization.XmlSerializer..ctor
+    args: [0, 1, 2]
+    param-names: [type, extraTypes]
+    message: "request data chooses the type to deserialize: the type comes from the request (Type.GetType of a request value), so the serializer creates whatever type the client names"
+  - method: System.Xml.Serialization.XmlSerializerFactory.CreateSerializer
+    args: [0, 1, 2]
+    param-names: [type, extraTypes]
+    message: "request data chooses the type to deserialize: the type comes from the request (Type.GetType of a request value), so the serializer creates whatever type the client names"
+  - method: System.Xml.Serialization.XmlSerializer.FromTypes
+    args: [0]
+    param-names: [types]
+    message: "request data chooses the type to deserialize: the type comes from the request (Type.GetType of a request value), so the serializer creates whatever type the client names"
+  - method: System.Runtime.Serialization.DataContractSerializer..ctor
+    args: [0, 1, 3]
+    param-names: [type, knownTypes]
+    message: "request data chooses the type to deserialize: the type comes from the request (Type.GetType of a request value), so the serializer creates whatever type the client names"
+  - method: System.Runtime.Serialization.Json.DataContractJsonSerializer..ctor
+    args: [0, 1, 2]
+    param-names: [type, knownTypes]
+    message: "request data chooses the type to deserialize: the type comes from the request (Type.GetType of a request value), so the serializer creates whatever type the client names"
+# The taint form's sanitizers: the shared allow-lists (a type name read from a table of constants is one of them).
+sanitizers:
+  - allow-list: literal-tables
 misuse:
   # The rule's `paths: exclude` (COVERAGE.md "Test code").
   test-code: ['test/', 'tests/', '*.Tests/', '*.UnitTests/', '*.IntegrationTests/', '*.Test/', '*.Specs/', '*Tests.cs', '*Test.cs']

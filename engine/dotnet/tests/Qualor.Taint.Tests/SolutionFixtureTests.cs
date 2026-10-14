@@ -22,7 +22,7 @@ public sealed class SolutionFixtureTests : TempDirs
         Directory.GetDirectories(SolutionsDir).OrderBy(d => d, StringComparer.Ordinal).Select(d => new object[] { Path.GetFileName(d) });
 
     [Fact]
-    public void There_are_seven_solution_fixtures() => Assert.Equal(7, Fixtures().Count());
+    public void There_are_thirteen_solution_fixtures() => Assert.Equal(13, Fixtures().Count());
 
     private sealed record Loaded(LoadedSolution Solution, IReadOnlyList<Annotation> Annotations, int Projects, string Rule);
 

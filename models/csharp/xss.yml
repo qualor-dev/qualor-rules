@@ -32,6 +32,11 @@
 # that object anywhere in the method (an initializer, an assignment, before or after).
 rule: csharp.xss
 kind: taint
+# The rule's own source (ruling R-E22, Task 29): the request's PathBase is no source of this rule (sanitizers below),
+# but its unescaped Value read on it in place (`Request.PathBase.Value`) is, as in the OpenGrep rule (xss.cs:193).
+sources:
+  - property-get: Microsoft.AspNetCore.Http.PathString.Value
+    receiver: Microsoft.AspNetCore.Http.HttpRequest.PathBase
 sinks:
   # Results/TypedResults.Content and .Text, a controller's or page's Content, with an HTML content type.
   - method: Microsoft.AspNetCore.Http.Results.Content
@@ -151,4 +156,25 @@ sanitizers:
   - method: Microsoft.AspNetCore.Http.PathString.ToString
   - method: Microsoft.AspNetCore.Http.PathString.ToUriComponent
   - method: Microsoft.AspNetCore.Http.PathString.op_Implicit
+  # The request's own origin (ruling R-E22, Task 29): its PathBase (the path base the application configured) and the
+  # Host header (Headers.Host, Headers["Host"] in any case, Headers[HeaderNames.Host], the typed RequestHeaders.Host, Headers.TryGetValue("Host", out v))
+  # are no source of this rule; Request.Host and Request.Scheme are none either (Host is csharp.ssrf's own). The
+  # PathBase's unescaped Value read in place stays one (`sources:` above). Cost: an application that forwards an
+  # attacker-set X-Forwarded-Host or X-Forwarded-Prefix into these values is not followed.
+  # Differences: the OpenGrep rule cleans the PathBase read the same way (a PathString held in a variable whose .Value
+  # is read later is missed by both), but takes the Host header for request data.
+  - property-get: Microsoft.AspNetCore.Http.HttpRequest.PathBase
+  - property-get: Microsoft.AspNetCore.Http.IHeaderDictionary.Host
+  - property-get: Microsoft.AspNetCore.Http.IHeaderDictionary.Item
+    key: '(?i)^host$'
+  - property-get: Microsoft.AspNetCore.Http.IHeaderDictionary.Item
+    key-is: Microsoft.Net.Http.Headers.HeaderNames.Host
+  - property-get: Microsoft.AspNetCore.Http.Headers.RequestHeaders.Host
+  # The same entry read through TryGetValue on the request's headers (its out value; fix round 1 of Task 29, M1).
+  - method: System.Collections.Generic.IDictionary`2.TryGetValue
+    receiver-type: Microsoft.AspNetCore.Http.IHeaderDictionary
+    key: '(?i)^host$'
+  - method: System.Collections.Generic.IDictionary`2.TryGetValue
+    receiver-type: Microsoft.AspNetCore.Http.IHeaderDictionary
+    key-is: Microsoft.Net.Http.Headers.HeaderNames.Host
 guards: []

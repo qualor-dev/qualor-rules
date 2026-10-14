@@ -24,7 +24,8 @@ public static class ModelLoader
         var sourcesFile = Path.Combine(modelsDir, SourcesFile);
         var sources = ReadSources(Doc.Open(sourcesFile));
         var propagatorsFile = Path.Combine(modelsDir, PropagatorsFile);
-        var (propagators, unmodelled) = ReadPropagators(Doc.Open(propagatorsFile));
+        var propagatorsDoc = Doc.Open(propagatorsFile);
+        var (propagators, unmodelled, knownTexts, onlyForNodes) = ReadPropagators(propagatorsDoc);
 
         string[] files;
         try
@@ -45,7 +46,11 @@ public static class ModelLoader
             if (!name.EndsWith(".yml", StringComparison.Ordinal)) continue;
             rules.Add(ReadRule(Doc.Open(file), RulePrefix + name[..^4]));
         }
-        return new ModelSet(sources, propagators, unmodelled, rules);
+        // `only-for:` names rules of these models (a misspelt id would clean the propagator's result for every rule).
+        var ruleIds = rules.Select(r => r.RuleId).ToHashSet(StringComparer.Ordinal);
+        foreach (var (node, id) in onlyForNodes)
+            if (!ruleIds.Contains(id)) throw propagatorsDoc.Error(node, $"only-for: {id} is no rule of these models");
+        return new ModelSet(sources, propagators, unmodelled, rules) { KnownTexts = knownTexts };
     }
 
     private static SourceModel ReadSources(Doc doc)
@@ -82,13 +87,14 @@ public static class ModelLoader
             doc.Types(top.Required("not-source-attributes")), types, members);
     }
 
-    private static (IReadOnlyList<PropagatorModel>, string) ReadPropagators(Doc doc)
+    private static (IReadOnlyList<PropagatorModel>, string, IReadOnlyDictionary<string, string>, List<(YamlNode Node, string Id)>) ReadPropagators(Doc doc)
     {
-        var top = doc.Fields(doc.Root, "propagators", "unmodelled-external");
+        var top = doc.Fields(doc.Root, "propagators", "unmodelled-external", "known-text");
         var list = new List<PropagatorModel>();
+        var onlyForNodes = new List<(YamlNode Node, string Id)>();
         foreach (var node in doc.Sequence(top.Required("propagators")))
         {
-            var (pattern, f) = doc.Member(node, new[] { "method", "property-get" }, "from", "to", "key");
+            var (pattern, f) = doc.Member(node, new[] { "method", "property-get" }, "from", "to", "key", "only-for", "param-types");
             var from = f.Optional("from") is { } fromNode
                 ? doc.Positions(fromNode, "from", "this", "args")
                 : pattern.Kind switch { MemberKind.Constructor => new[] { "args" }, MemberKind.PropertyGet => new[] { "this" }, _ => new[] { "this", "args" } };
@@ -103,17 +109,48 @@ public static class ModelLoader
                 if (overlap >= 0) throw doc.Error(keyNode, $"key: {overlap} is also in from");
                 keys = ordinals;
             }
-            list.Add(new PropagatorModel(pattern, from, to) { Keys = keys });
+            IReadOnlyList<string> onlyFor = Array.Empty<string>();
+            if (f.Optional("only-for") is { } onlyNode)
+            {
+                var ids = doc.Sequence(onlyNode).Select(n => (Node: n, Id: doc.String(n))).ToList();
+                if (ids.Count == 0) throw doc.Error(onlyNode, "only-for must name at least one rule");
+                foreach (var (n, id) in ids)
+                    if (!id.StartsWith(RulePrefix, StringComparison.Ordinal)) throw doc.Error(n, $"only-for: {id} is no rule id (csharp.<name>)");
+                onlyFor = ids.Select(x => x.Id).ToList();
+                onlyForNodes.AddRange(ids);
+            }
+            IReadOnlyList<string> paramTypes = Array.Empty<string>();
+            if (f.Optional("param-types") is { } ptNode)
+            {
+                if (pattern.Kind == MemberKind.PropertyGet || f.Optional("from") is null || from.Any(x => x is "this" or "args"))
+                    throw doc.Error(ptNode, "param-types needs a method propagator whose from names parameter ordinals only");
+                paramTypes = doc.Types(ptNode, arrays: true);
+                if (paramTypes.Count == 0) throw doc.Error(ptNode, "param-types must not be empty");
+            }
+            list.Add(new PropagatorModel(pattern, from, to) { Keys = keys, OnlyFor = onlyFor, ParamTypes = paramTypes });
         }
         var policyNode = top.Required("unmodelled-external");
         var policy = doc.String(policyNode);
         if (!UnmodelledPolicies.Contains(policy)) throw doc.Error(policyNode, $"unmodelled-external must be one of {string.Join(", ", UnmodelledPolicies)}");
-        return (list, policy);
+        var texts = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (top.Optional("known-text") is { } kn)
+        {
+            foreach (var item in doc.Sequence(kn))
+            {
+                var k = doc.Fields(item, "member", "text");
+                var memberNode = k.Required("member");
+                var member = ValuePattern(doc, memberNode);
+                var textNode = k.Required("text");
+                if (textNode is not YamlScalarNode { Value: { } text }) throw doc.Error(textNode, "text is a string");
+                if (!texts.TryAdd(member.ToString(), text)) throw doc.Error(memberNode, $"{member}: duplicate known-text");
+            }
+        }
+        return (list, policy, texts, onlyForNodes);
     }
 
     private static RuleModel ReadRule(Doc doc, string expectedId)
     {
-        var top = doc.Fields(doc.Root, "rule", "kind", "sinks", "sanitizers", "guards", "misuse");
+        var top = doc.Fields(doc.Root, "rule", "kind", "sources", "sinks", "sanitizers", "guards", "misuse");
         var idNode = top.Required("rule");
         var id = doc.String(idNode);
         if (id != expectedId) throw doc.Error(idNode, $"rule must be {expectedId} (the file's name)");
@@ -131,7 +168,7 @@ public static class ModelLoader
         {
             foreach (var node in doc.Sequence(sinksNode))
             {
-                var (pattern, f) = doc.Member(node, new[] { "method", "property-set" }, "args", "param-types", "param-names", "when");
+                var (pattern, f) = doc.Member(node, new[] { "method", "property-set" }, "args", "param-types", "param-names", "when", "message");
                 var argsNode = f.Optional("args");
                 IReadOnlyList<int> args;
                 if (pattern.Kind == MemberKind.PropertySet)
@@ -150,7 +187,8 @@ public static class ModelLoader
                 if (pattern.Kind == MemberKind.PropertySet && f.Optional("param-names") is { } pnNode) throw doc.Error(pnNode, "param-names belong to a method sink");
                 var paramNames = f.Optional("param-names") is { } pn ? doc.Names(pn) : Array.Empty<string>();
                 var when = f.Optional("when") is { } wn ? ReadConditions(doc, wn, pattern) : Array.Empty<SinkCondition>();
-                sinks.Add(new SinkModel(pattern, args) { ParamTypes = paramTypes, ParamNames = paramNames, When = when });
+                var message = f.Optional("message") is { } messageNode ? doc.String(messageNode) : null;
+                sinks.Add(new SinkModel(pattern, args) { ParamTypes = paramTypes, ParamNames = paramNames, When = when, Message = message });
             }
             if (kind == RuleKind.Taint && sinks.Count == 0) throw doc.Error(sinksNode, "a taint rule needs at least one sink");
         }
@@ -161,13 +199,14 @@ public static class ModelLoader
         var awaitedLookups = new List<Regex>();
         var receiverSanitizers = new List<(MemberPattern, string)>();
         var namedSanitizers = new List<(string, string)>();
+        var keySanitizers = new List<KeySanitizer>();
         var allowLists = false;
         if (top.Optional("sanitizers") is { } sn)
         {
             var sanitizerKinds = new[] { "method", "property-get", "string-prefix", "lookup", "by-name", "allow-list" };
             foreach (var n in doc.Sequence(sn))
             {
-                var f = doc.Fields(n, "method", "property-get", "string-prefix", "type", "lookup", "awaited", "receiver-type", "by-name", "allow-list");
+                var f = doc.Fields(n, "method", "property-get", "string-prefix", "type", "lookup", "awaited", "receiver-type", "by-name", "allow-list", "key", "key-is");
                 var present = sanitizerKinds.Where(k => f.Optional(k) != null).ToList();
                 if (present.Count != 1) throw doc.Error(n, $"a sanitizer names exactly one of {string.Join(", ", sanitizerKinds)}");
                 var sanitizerKind = present[0];
@@ -175,10 +214,11 @@ public static class ModelLoader
                 {
                     "string-prefix" => new[] { "type" },
                     "lookup" => new[] { "awaited" },
-                    "method" => new[] { "receiver-type" },
+                    "method" => new[] { "receiver-type", "key", "key-is" },
+                    "property-get" => new[] { "key", "key-is" },
                     _ => Array.Empty<string>(),
                 };
-                foreach (var key in new[] { "type", "awaited", "receiver-type" })
+                foreach (var key in new[] { "type", "awaited", "receiver-type", "key", "key-is" })
                     if (f.Optional(key) is { } extra && Array.IndexOf(allowed, key) < 0) throw doc.Error(extra, $"{key} does not belong to a {sanitizerKind} sanitizer");
                 switch (sanitizerKind)
                 {
@@ -204,6 +244,22 @@ public static class ModelLoader
                         allowLists = true;
                         break;
                     }
+                    case "property-get" or "method" when f.Optional("key") != null || f.Optional("key-is") != null:
+                    {
+                        // A keyed read: an indexer (`property-get: T.Item`), or a method whose `out` values are the entry
+                        // read (`method: T.TryGetValue`, with `receiver-type:` naming the dictionary's type).
+                        if (f.Optional("key") != null && f.Optional("key-is") != null) throw doc.Error(n, "a keyed sanitizer has key or key-is (one of them)");
+                        if (sanitizerKind == "method" && f.Optional("receiver-type") == null)
+                            throw doc.Error(n, "a keyed method sanitizer names its receiver-type (the dictionary's type)");
+                        var pattern = doc.Member(n, new[] { "property-get", "method" }, "key", "key-is", "receiver-type").Pattern;
+                        keySanitizers.Add(new KeySanitizer(pattern,
+                            f.Optional("key") is { } kr ? doc.Regex(kr) : null,
+                            f.Optional("key-is") is { } ki ? ValuePattern(doc, ki) : null)
+                        {
+                            ReceiverType = f.Optional("receiver-type") is { } krt ? doc.Type(krt) : null,
+                        });
+                        break;
+                    }
                     default:
                     {
                         var pattern = doc.Member(n, new[] { "method", "property-get" }, "receiver-type").Pattern;
@@ -213,6 +269,17 @@ public static class ModelLoader
                     }
                 }
             }
+        }
+
+        var ruleSources = new List<RuleSource>();
+        if (top.Optional("sources") is { } srcNode)
+        {
+            foreach (var node in doc.Sequence(srcNode))
+            {
+                var (pattern, f) = doc.Member(node, new[] { "method", "property-get" }, "receiver");
+                ruleSources.Add(new RuleSource(pattern) { Receiver = f.Optional("receiver") is { } rn ? ReceiverPattern(doc, rn) : null });
+            }
+            if (ruleSources.Count == 0) throw doc.Error(srcNode, "sources must not be empty");
         }
 
         var guards = new List<GuardModel>();
@@ -243,10 +310,14 @@ public static class ModelLoader
         {
             throw doc.Error(doc.Root, "a misuse rule needs misuse: (its checks)");
         }
-        if (kind == RuleKind.Misuse)
+        // A misuse rule may also have a taint form (Task 29: `sinks:`, with sanitizers and sources of its own): request data
+        // reaching them is reported under the misuse rule's id. Guards stay a taint rule's.
+        if (kind == RuleKind.Misuse && top.Optional("guards") is { } misuseGuards)
+            throw doc.Error(misuseGuards, "guards belong to a taint rule (a misuse rule's taint form has sinks and sanitizers only)");
+        if (kind == RuleKind.Misuse && sinks.Count == 0)
         {
-            foreach (var key in new[] { "sinks", "sanitizers", "guards" })
-                if (top.Optional(key) is { } extra) throw doc.Error(extra, $"{key} belong to a taint rule (a misuse rule has misuse: only)");
+            foreach (var key in new[] { "sanitizers", "sources" })
+                if (top.Optional(key) is { } extra) throw doc.Error(extra, $"{key} need sinks: (a misuse rule's taint form)");
         }
         return new RuleModel(id, kind, sinks, sanitizers, guards, misuse)
         {
@@ -256,6 +327,8 @@ public static class ModelLoader
             ReceiverSanitizers = receiverSanitizers,
             NamedSanitizers = namedSanitizers,
             AllowLists = allowLists,
+            KeySanitizers = keySanitizers,
+            Sources = ruleSources,
         };
     }
 
@@ -375,32 +448,34 @@ public static class ModelLoader
         var kinds = new[] { "arg", "property", "literal-text", "after", "receiver", "outside" };
         foreach (var item in doc.Sequence(node))
         {
-            var f = doc.Fields(item, "arg", "property", "of", "matches", "is", "literal-text", "after", "next", "receiver", "outside", "until");
+            var f = doc.Fields(item, "arg", "property", "of", "matches", "unless", "is", "literal-text", "after", "next", "receiver", "outside", "until");
             var present = kinds.Where(k => f.Optional(k) != null).ToList();
             if (present.Count != 1) throw doc.Error(item, $"a condition names exactly one of {string.Join(", ", kinds)}");
             var kind = present[0];
             string[] allowed = kind switch
             {
                 "arg" => new[] { "arg", "matches", "is" },
-                "property" => new[] { "property", "of", "matches" },
+                "property" => new[] { "property", "of", "matches", "unless" },
                 "after" => new[] { "after", "next" },
                 "outside" => new[] { "outside", "until" },
                 _ => new[] { kind },
             };
-            foreach (var key in new[] { "of", "matches", "is", "next", "until" })
+            foreach (var key in new[] { "of", "matches", "unless", "is", "next", "until" })
                 if (f.Optional(key) is { } extra && Array.IndexOf(allowed, key) < 0) throw doc.Error(extra, $"{key} does not belong to a {kind} condition");
             if (kind == "after" && sink.Kind == MemberKind.PropertySet) throw doc.Error(item, "an after condition needs a method sink");
             if (kind == "receiver" && sink.Kind == MemberKind.Constructor) throw doc.Error(item, "a receiver condition needs a method sink that is no constructor, or a property-set sink");
             if (kind == "arg" && (f.Optional("matches") == null) == (f.Optional("is") == null)) throw doc.Error(item, "an arg condition has matches or is (one of them)");
+            if (kind == "property" && (f.Optional("matches") == null) == (f.Optional("unless") == null)) throw doc.Error(item, "a property condition has matches or unless (one of them)");
             list.Add(kind switch
             {
                 "arg" when f.Optional("is") is { } isNode => new SinkCondition(SinkConditionKind.Argument) { Arg = doc.Ordinal(f.Required("arg"), "arg"), Member = ValuePattern(doc, isNode) },
                 "arg" => new SinkCondition(SinkConditionKind.Argument) { Arg = doc.Ordinal(f.Required("arg"), "arg"), Pattern = doc.Regex(f.Required("matches")) },
                 "property" => new SinkCondition(SinkConditionKind.Property)
                 {
-                    Property = doc.Name(f.Required("property")),
+                    Property = PropertyPath(doc, f.Required("property")),
                     Arg = f.Optional("of") is { } of ? doc.Ordinal(of, "of") : -1,
-                    Pattern = doc.Regex(f.Required("matches")),
+                    Pattern = doc.Regex(f.Optional("matches") ?? f.Required("unless")),
+                    Negated = f.Optional("unless") != null,
                 },
                 "literal-text" => new SinkCondition(SinkConditionKind.LiteralText) { Pattern = doc.Regex(f.Required("literal-text")) },
                 "after" => new SinkCondition(SinkConditionKind.After)
@@ -418,6 +493,15 @@ public static class ModelLoader
         }
         if (list.Count == 0) throw doc.Error(node, "when must not be empty");
         return list;
+    }
+
+    /// A property name or a path of them (`FileName`, `StartInfo.FileName`).
+    private static string PropertyPath(Doc doc, YamlNode node)
+    {
+        var text = doc.String(node);
+        foreach (var part in text.Split('.'))
+            if (!SimpleName.IsMatch(part)) throw doc.Error(node, $"{text}: not a name");
+        return text;
     }
 
     /// A field or property read (`is:`): one member, written Type.Member.

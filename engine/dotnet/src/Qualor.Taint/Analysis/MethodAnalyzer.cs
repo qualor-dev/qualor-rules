@@ -16,10 +16,31 @@ internal sealed class AnalysisContext
     public AnalysisContext(ModelSet models, TaintEngineOptions options)
     {
         Options = options;
-        Sources = new SourceFinder(models.Sources);
+        Sources = new SourceFinder(models.Sources, models.Rules);
         Sinks = new SinkFinder(models.Rules);
         foreach (var p in models.Propagators) Propagators.Add(p.Member, p);
         UnmodelledPasses = models.UnmodelledExternal == "string-or-collection-return";
+        RuleIds = models.Rules.Select(r => r.RuleId).ToArray();
+        KnownTexts = models.KnownTexts;
+    }
+
+    /// Every rule id of the models.
+    public string[] RuleIds { get; }
+
+    /// The text of external static string members (`known-text:`, Task 29), by `Type.Member`.
+    public IReadOnlyDictionary<string, string> KnownTexts { get; }
+
+    private readonly Dictionary<string, string[]> _allBut = new(StringComparer.Ordinal);
+
+    /// Every rule id but `rules`: what request data that is request data for `rules` only is clean for (a rule's own
+    /// source, an `only-for:` propagator).
+    public string[] AllBut(IReadOnlyCollection<string> rules)
+    {
+        var key = string.Join(",", rules.OrderBy(r => r, StringComparer.Ordinal));
+        if (_allBut.TryGetValue(key, out var hit)) return hit;
+        hit = RuleIds.Where(r => !rules.Contains(r)).ToArray();
+        _allBut[key] = hit;
+        return hit;
     }
 
     public TaintEngineOptions Options { get; }
@@ -96,7 +117,7 @@ internal sealed class AnalysisContext
         var sink = site.GetLocation();
         var path = value.Path.Add(new PathStep(sink, $"reaches the {rule} sink {Name(member)}")).ToList();
         var others = value.Sources.Where(s => !s.Equals(path[0].Location)).OrderBy(s => s.SourceSpan.Start).ToList();
-        _findings[key] = new Finding(rule, sink, path, others);
+        _findings[key] = new Finding(rule, sink, path, others) { Message = Sinks.MessageFor(rule, member) };
     }
 
     /// A misuse rule's finding at `at` (in source), its one path step saying what was found there.
@@ -676,15 +697,24 @@ internal sealed partial class MethodAnalyzer
                 return ReturnedText(invocation.TargetMethod, invocation.IsVirtual, invocation.Instance?.Type);
             case IPropertyReferenceOperation { Property: { IsIndexer: false } property } read:
                 return KeyedStores.NamedConstant(read) is { } named ? named
+                    : ExternalText(property) is { } external ? external
                     : property.GetMethod is { } getter ? ReturnedText(getter, Dispatch.IsVirtualAccess(property, read.Instance), read.Instance?.Type) : null;
             case IFieldReferenceOperation field:
-                return KeyedStores.NamedConstant(field);
+                return KeyedStores.NamedConstant(field) ?? ExternalText(field.Field);
             default:
                 return null;
         }
 
         // A text that starts with a Hole tells nothing.
         static string? Known(string? text) => text is { Length: > 0 } && text[0] == Hole ? null : text;
+    }
+
+    /// The text of an external static string field or property the models know (`known-text:` of propagators.yml, Task 29:
+    /// `Uri.SchemeDelimiter` is "://"), or null.
+    private string? ExternalText(ISymbol member)
+    {
+        if (!member.IsStatic || SymbolKeys.InSource(member) || _ctx.KnownTexts.Count == 0 || member.ContainingType == null) return null;
+        return _ctx.KnownTexts.TryGetValue(SymbolMatch.MetadataName(member.ContainingType) + "." + member.Name, out var text) ? text : null;
     }
 
     /// The text a member declared in source returns: the join of its targets' ReturnText, null when one of them is no
@@ -1163,6 +1193,7 @@ internal sealed partial class MethodAnalyzer
             result = TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(property)}").ScopedTo(_body.WriteReach);
         if (_ctx.Sources.IsBoundProperty(property))
             result = result.Join(TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: bound property {_ctx.Name(property)}").ScopedTo(_body.WriteReach));
+        var ownSource = RuleSource(property, Access.Get, operation.Instance, operation);
 
         var receiver = Value(operation.Instance, state);
         var isVirtual = Dispatch.IsVirtualAccess(property, operation.Instance);
@@ -1197,7 +1228,20 @@ internal sealed partial class MethodAnalyzer
         // An element of an allow-list table is one of its constants (`allow-list: literal-tables`).
         if (property.IsIndexer && result.Any && _ctx.Sinks.AllowListRules.Length > 0 && _ctx.AllowLists.IsTable(operation.Instance, Model()?.Compilation))
             result = result.CleanedFor(_ctx.Sinks.AllowListRules);
-        return result.CleanedFor(_ctx.Sinks.Sanitizes(property, Access.Get));
+        // A keyed read the rule takes for no request data (`key:`/`key-is:` sanitizers: the request's Host header, R-E22).
+        if (property.IsIndexer && result.Any && operation.Arguments.Length > 0)
+            result = result.CleanedFor(_ctx.Sinks.SanitizesKey(property, operation.Arguments[0].Value));
+        return result.CleanedFor(_ctx.Sinks.Sanitizes(property, Access.Get)).Join(ownSource);
+    }
+
+    /// The request data a read or call is for the rules whose own source it is (a rule's `sources:`, Task 29): request
+    /// data clean for every other rule, or clean when it is no rule's own source.
+    private TaintValue RuleSource(ISymbol member, Access access, IOperation? instance, IOperation operation)
+    {
+        var rules = _ctx.Sources.RuleSourceOf(member, access, instance);
+        if (rules.Count == 0) return TaintValue.Clean;
+        return TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(member)}")
+            .ScopedTo(_body.WriteReach).CleanedFor(_ctx.AllBut(rules));
     }
 
     /// A read of an external property: its `Get` propagators (from this, args or an index ordinal), else the
@@ -1388,6 +1432,7 @@ internal sealed partial class MethodAnalyzer
         var result = TaintValue.Clean;
         if (_ctx.Sources.SourceMember(method, Access.Call) != null)
             result = TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(method)}").ScopedTo(_body.WriteReach);
+        var ownSource = RuleSource(method, Access.Call, instance, operation);
         var sourced = result;
 
         // Out arguments are overwritten by the call.
@@ -1440,6 +1485,19 @@ internal sealed partial class MethodAnalyzer
             && _ctx.AllowLists.IsTable(thisOperation, Model()?.Compilation))
             result = TableLookup(method, inputs, result, state);
 
+        // A keyed read through a method (`Headers.TryGetValue("Host", out v)`): its out values are clean for the rules
+        // whose keyed method sanitizers it is (R-E22, M1 of the Task 29 review).
+        var keyIndex = _ctx.Sinks.HasKeyCalls && instance != null && !reduced ? Array.FindIndex(inputs, i => i.Ordinal == 0 && i.RefKind != RefKind.Out) : -1;
+        if (keyIndex >= 0)
+        {
+            var receiverOperation = instance;
+            while (receiverOperation is IConversionOperation { Operand: { } inner }) receiverOperation = inner;
+            var rules = _ctx.Sinks.SanitizesKeyCall(method, receiverOperation!.Type, inputs[keyIndex].Operation);
+            if (rules.Count > 0)
+                foreach (var i in inputs)
+                    if (i.RefKind == RefKind.Out && Value(i.Operation, state) is { Any: true } v) Assign(i.Operation, v.CleanedFor(rules), state, i.Operation);
+        }
+
         KeyedCall(operation, method, instance, inputs, state);
         result = result.CleanedFor(_ctx.Sinks.Sanitizes(method, Access.Call));
         if (result.Any)
@@ -1449,7 +1507,7 @@ internal sealed partial class MethodAnalyzer
             while (receiverOperation is IConversionOperation { Operand: { } inner }) receiverOperation = inner;
             result = result.CleanedFor(_ctx.Sinks.SanitizesOnReceiver(method, receiverOperation?.Type));
         }
-        return result;
+        return result.Join(ownSource);
     }
 
     /// A lookup in an allow-list table: GetValueOrDefault gives one of its constants or the default value given (the
@@ -1673,7 +1731,14 @@ internal sealed partial class MethodAnalyzer
         var propagators = _ctx.Propagators.Match(method, Access.Call);
         if (propagators.Length > 0)
         {
-            foreach (var p in propagators) result = Propagate(p, operation, method, inputs, receiver, thisOperation, reducedThis, result, state);
+            foreach (var p in propagators)
+            {
+                if (!OverloadFits(p, method)) continue;
+                // `only-for:` (Task 29): what the propagator returns stays request data for those rules only.
+                result = p.OnlyFor.Count == 0
+                    ? Propagate(p, operation, method, inputs, receiver, thisOperation, reducedThis, result, state)
+                    : result.Join(Propagate(p, operation, method, inputs, receiver, thisOperation, reducedThis, TaintValue.Clean, state).CleanedFor(_ctx.AllBut(p.OnlyFor)));
+            }
         }
         else
         {
@@ -1697,6 +1762,20 @@ internal sealed partial class MethodAnalyzer
             Write(thisOperation, written, state);
         }
         return result;
+    }
+
+    /// Whether a propagator's `param-types:` (Task 29) admit this overload: each of its `from` ordinals names a parameter
+    /// of one of those types (in the method's definition; an extension method's `this` is 0).
+    private static bool OverloadFits(PropagatorModel p, IMethodSymbol method)
+    {
+        if (p.ParamTypes.Count == 0) return true;
+        var parameters = (method.ReducedFrom ?? method).OriginalDefinition.Parameters;
+        foreach (var f in p.From)
+        {
+            if (!int.TryParse(f, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var ordinal)
+                || ordinal >= parameters.Length || !p.ParamTypes.Contains(SymbolMatch.MetadataName(parameters[ordinal].Type))) return false;
+        }
+        return true;
     }
 
     /// A dictionary: a type that is or implements IDictionary<K, V> or IReadOnlyDictionary<K, V>.

@@ -1,0 +1,6 @@
+# Task 29 (R-10, BACKLOG csharp.ssrf#request-host-source): the request's Host, a source of csharp.ssrf only, used to build
+# the address of an outgoing request in another project.
+rule: csharp.ssrf
+projects:
+  - { name: Clients, folder: Clients }
+  - { name: Web, folder: Web, references: [Clients] }

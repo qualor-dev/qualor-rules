@@ -24,6 +24,10 @@ public sealed record PathStep(Location Location, string Message)
 /// path from a source to it, and the other sources whose data reaches the same site.
 public sealed record Finding(string RuleId, Location Sink, IReadOnlyList<PathStep> Path, IReadOnlyList<Location> OtherSources)
 {
+    /// What the sink is, when its model says more than the rule's generic text (a sink's `message:`, Task 29): the SARIF
+    /// result's message then names it. Null: the rule's generic message.
+    public string? Message { get; init; }
+
     /// Where to report the finding: the sink's mapped file and lines. In generated code with `#line` directives (a Razor
     /// view's `*_cshtml.g.cs` from the Razor source generator) that is the directive's file and line, the `.cshtml` the
     /// developer wrote, with the path as the generator wrote it (the build's absolute path, like the recorded sources);
