@@ -844,4 +844,139 @@ public sealed class RequestScopedHeapTests
         Assert.Equal(1, result.Stats.UncompiledViews);
         Assert.Equal(0, result.Stats.UnresolvedViews);
     }
+
+    // ---- Fix round 2 (task-20-review.md "Re-review 1") ----
+
+    /// RR1 (Q1): a setter a filter calls with a header and one action calls too: what the filter writes is request data
+    /// in every request, so another action reads it.
+    [Fact]
+    public void A_setter_a_filter_and_one_action_share_writes_request_data_every_action_reads() => Expect("""
+        public class LangCtx { public string Lang { get; set; } = "en"; }
+        public class LangService
+        {
+            private readonly LangCtx _ctx;
+            public LangService(LangCtx ctx) => _ctx = ctx;
+            public void Set(string lang) => _ctx.Lang = lang;
+        }
+        public class LangFilter : Microsoft.AspNetCore.Mvc.Filters.IActionFilter
+        {
+            private readonly LangService _lang;
+            public LangFilter(LangService lang) => _lang = lang;
+            public void OnActionExecuting(Microsoft.AspNetCore.Mvc.Filters.ActionExecutingContext context) =>
+                _lang.Set(context.HttpContext.Request.Headers["Accept-Language"].ToString());
+            public void OnActionExecuted(Microsoft.AspNetCore.Mvc.Filters.ActionExecutedContext context) { }
+        }
+        public class CommonController : ControllerBase
+        {
+            private readonly LangService _lang;
+            public CommonController(LangService lang) => _lang = lang;
+            public IActionResult SetLanguage(string lang) { _lang.Set(lang); return Ok(); }
+        }
+        public class OrdersController : ControllerBase
+        {
+            private readonly LangCtx _ctx;
+            private readonly SqlConnection _c = new();
+            public OrdersController(LangCtx ctx) => _ctx = ctx;
+            public IActionResult List()
+            {
+                _c.Execute("SELECT * FROM orders WHERE lang = '" + _ctx.Lang + "'"); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    /// RR1 (Q6): a helper that reads the request itself, called by a middleware and by one action: what it stores is
+    /// request data in every request.
+    [Fact]
+    public void A_request_reading_helper_a_middleware_and_one_action_share_stores_request_data_every_action_reads() => Expect("""
+        public class Ctx { public string Ip { get; set; } = ""; }
+        public class SiteLinks
+        {
+            private readonly IHttpContextAccessor _http;
+            private readonly Ctx _ctx;
+            public SiteLinks(IHttpContextAccessor http, Ctx ctx) { _http = http; _ctx = ctx; }
+            public void Remember() => _ctx.Ip = _http.HttpContext!.Request.Headers["X-Forwarded-For"].ToString();
+        }
+        public class IpMiddleware
+        {
+            private readonly RequestDelegate _next;
+            public IpMiddleware(RequestDelegate next) => _next = next;
+            public async Task InvokeAsync(HttpContext context, SiteLinks links)
+            {
+                links.Remember();
+                await _next(context);
+            }
+        }
+        public class DebugController : ControllerBase
+        {
+            private readonly SiteLinks _links;
+            public DebugController(SiteLinks links) => _links = links;
+            public IActionResult Refresh() { _links.Remember(); return Ok(); }
+        }
+        public class AuditController : ControllerBase
+        {
+            private readonly Ctx _ctx;
+            private readonly SqlConnection _c = new();
+            public AuditController(Ctx ctx) => _ctx = ctx;
+            public IActionResult Log()
+            {
+                _c.Execute("INSERT INTO audit VALUES ('" + _ctx.Ip + "')"); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    /// RR1 (Q7): an admin action saves a setting through a service a filter also calls (with a constant): the admin's
+    /// data keeps its own scope, so the public action's read stays quiet.
+    [Fact]
+    public void An_admin_setting_saved_through_a_service_a_filter_also_calls_stays_out_of_the_public_action() => Expect("""
+        public class SiteSettings { public string Theme { get; set; } = "default"; }
+        public class SettingService
+        {
+            private readonly SiteSettings _settings;
+            public SettingService(SiteSettings settings) => _settings = settings;
+            public void SetTheme(string theme) => _settings.Theme = theme;
+        }
+        public class ThemeFilter : Microsoft.AspNetCore.Mvc.Filters.IActionFilter
+        {
+            private readonly SettingService _service;
+            public ThemeFilter(SettingService service) => _service = service;
+            public void OnActionExecuting(Microsoft.AspNetCore.Mvc.Filters.ActionExecutingContext context) => _service.SetTheme("default");
+            public void OnActionExecuted(Microsoft.AspNetCore.Mvc.Filters.ActionExecutedContext context) { }
+        }
+        public class AdminController : ControllerBase
+        {
+            private readonly SettingService _service;
+            public AdminController(SettingService service) => _service = service;
+            public IActionResult SaveTheme(string theme) { _service.SetTheme(theme); return Ok(); }
+        }
+        public class ShopController : ControllerBase
+        {
+            private readonly SiteSettings _settings;
+            private readonly SqlConnection _c = new();
+            public ShopController(SiteSettings settings) => _settings = settings;
+            public IActionResult Home()
+            {
+                _c.Execute("SELECT * FROM themes WHERE name = '" + _settings.Theme + "'");
+                return Ok();
+            }
+        }
+        """);
+
+    /// RR3 (Q3): a constructor DI builds (its type is injected into another constructor) is around code even when an
+    /// action also builds it with `new`.
+    [Fact]
+    public void An_injected_types_constructor_is_around_code_even_when_an_action_also_news_it() => Expect(CurrentTenantAction + """
+        public class CurrentTenant
+        {
+            public string Name { get; }
+            public CurrentTenant(IHttpContextAccessor http) => Name = http.HttpContext!.Request.Headers["X-Tenant"].ToString();
+        }
+        public class ToolsController : ControllerBase
+        {
+            private readonly IHttpContextAccessor _http;
+            public ToolsController(IHttpContextAccessor http) => _http = http;
+            public IActionResult Probe() => Ok(new CurrentTenant(_http) != null);
+        }
+        """);
 }

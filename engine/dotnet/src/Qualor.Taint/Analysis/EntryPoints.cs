@@ -16,8 +16,8 @@ namespace Qualor.Taint;
 ///   - each view and view component class (a layout, a view no action names), each tag helper and hub class: an entry
 ///     point of its own;
 ///   - code "around" every action (fix round 1, I1): filter, endpoint-filter and middleware classes (a controller's
-///     filter overrides included), conventional middleware `Invoke(HttpContext, …)`, constructors no `new` reaches (DI
-///     builds them) and units that read the request themselves: one shared entry point, Around. What around code writes
+///     filter overrides included), conventional middleware `Invoke(HttpContext, …)`, constructors DI builds (no `new`
+///     reaches them, or their type, a base or an interface is a constructor parameter) and units that read the request themselves: one shared entry point, Around. What around code writes
 ///     or reads from the request runs in every request, so its writes and its request data are widened to every entry
 ///     point (WriteReach, SourceScope); its reads keep its own bit (data an admin action saved stays out of it).
 /// - Reach: from each entry point over the call graph (CallGraph: invocations, object creations, property accessors,
@@ -92,6 +92,7 @@ internal sealed class EntryPoints
     private readonly HashSet<Unit> _readsRequest = new();
     private readonly Dictionary<Unit, (object Key, bool Around)> _frameworkClass = new();
     private readonly HashSet<Unit> _constructors = new();
+    private readonly HashSet<object> _injected = new();
     private readonly Dictionary<object, List<Unit>> _constructorsOf = new();
     private readonly Dictionary<object, List<Unit>> _initializersOf = new();
     private readonly List<(Unit Caller, object Type)> _implicitNews = new();
@@ -112,7 +113,6 @@ internal sealed class EntryPoints
     private int _words;
     private int _aroundBit = -1;
     private Reach _all = Reach.None;
-    private Reach _explicit = Reach.None;
 
     public EntryPoints(SourceFinder sources) => _sources = sources;
 
@@ -154,10 +154,12 @@ internal sealed class EntryPoints
             {
                 _frameworkClass[unit] = (typeKey, around);
             }
-            if (unit.Symbol is { MethodKind: MethodKind.Constructor, IsStatic: false })
+            if (unit.Symbol is { MethodKind: MethodKind.Constructor, IsStatic: false } constructor)
             {
                 _constructors.Add(unit);
                 Add(_constructorsOf, typeKey, unit);
+                foreach (var p in constructor.Parameters)
+                    if (p.Type is INamedTypeSymbol injected) _injected.Add(SymbolKeys.Of(injected.OriginalDefinition));
             }
             if (operation is IFieldInitializerOperation { InitializedFields: [{ IsStatic: false }, ..] }
                 or IPropertyInitializerOperation { InitializedProperties: [{ IsStatic: false }, ..] })
@@ -729,7 +731,13 @@ internal sealed class EntryPoints
         var around = new List<Unit>();
         foreach (var unit in graph.Units)
         {
-            if (reach[unit.Scc] != null) continue;
+            // A constructor DI builds (its type, a base or an interface of it is a constructor parameter somewhere) runs
+            // around the actions even when an action also builds the type with `new` (fix round 2, RR3).
+            if (reach[unit.Scc] != null)
+            {
+                if (_constructors.Contains(unit) && IsInjected(unit.Symbol!.ContainingType)) around.Add(unit);
+                continue;
+            }
             if (_frameworkClass.TryGetValue(unit, out var framework))
             {
                 if (framework.Around) around.Add(unit);
@@ -753,9 +761,6 @@ internal sealed class EntryPoints
         var all = new ulong[_words];
         for (var i = 0; i < entries.Count; i++) all[i >> 6] |= 1UL << (i & 63);
         _all = _table.Of(all);
-        var explicitBits = new ulong[_words];
-        for (var i = 0; i < explicitCount; i++) explicitBits[i >> 6] |= 1UL << (i & 63);
-        _explicit = _table.Of(explicitBits);
         _sccReach = new Reach[graph.Sccs.Count];
         for (var s = 0; s < reach.Length; s++) _sccReach[s] = reach[s] == null ? Reach.None : _table.Of(reach[s]!);
         for (var i = 0; i < entries.Count; i++)
@@ -765,6 +770,10 @@ internal sealed class EntryPoints
             list.Add((handler.Spans, i));
         }
     }
+
+    private bool IsInjected(INamedTypeSymbol type) =>
+        SelfAndBases(type).Any(t => _injected.Contains(SymbolKeys.Of(t.OriginalDefinition)))
+        || type.AllInterfaces.Any(i => _injected.Contains(SymbolKeys.Of(i.OriginalDefinition)));
 
     /// An entry point: units it starts in, or a Minimal API handler (its unit and spans) with its callees' keys.
     private sealed record Entry(List<Unit>? Units, List<object>? Callees, (Unit Owner, List<TextSpan> Spans)? Handler);
@@ -825,7 +834,7 @@ internal sealed class EntryPoints
     }
 
     /// The entry points a body writes the heap under and scopes the request data it reads under: its reach, widened to
-    /// every entry point for code only the Around entry point reaches (code around every action runs in every request).
+    /// every entry point for code the Around entry point reaches (code around every action runs in every request).
     public Reach WriteReach(Body body)
     {
         if (_bodyWriteReach.TryGetValue(body.Id, out var cached)) return cached;
@@ -834,10 +843,10 @@ internal sealed class EntryPoints
         return reach;
     }
 
-    /// Every entry point when `reach` holds Around and no explicit entry point (code that only runs around the actions:
-    /// code an action reaches too writes under its own reach, so what an admin action saves through a shared service
-    /// stays scoped to the requests that reach that service), else `reach`.
-    public Reach Widen(Reach reach) => _aroundBit >= 0 && reach.Has(_aroundBit) && !reach.Intersects(_explicit) ? _all : reach;
+    /// Every entry point when `reach` holds Around (ruling R-E17 as revised: code that runs around the actions, alone or
+    /// shared with some actions, runs in every request), else `reach`. Heap.Write still narrows each write to the
+    /// written data's scope, so what an admin action saves through a service a filter also calls keeps the admin's scope.
+    public Reach Widen(Reach reach) => _aroundBit >= 0 && reach.Has(_aroundBit) ? _all : reach;
 
     /// The interned Reach sets of the run.
     public int ReachSets => _table.Count;
