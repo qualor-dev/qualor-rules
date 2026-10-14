@@ -798,11 +798,61 @@ internal sealed partial class MethodAnalyzer
             if (unwrapped.Type?.TypeKind != TypeKind.Delegate && op.Type?.TypeKind != TypeKind.Delegate) return false;
             return DelegateOf(op) switch
             {
-                IFlowAnonymousFunctionOperation => false,
-                IMethodReferenceOperation { Method.MethodKind: MethodKind.LocalFunction } => false,
+                IFlowAnonymousFunctionOperation lambda => CallsUnknown(BodyOf(lambda.Symbol)),
+                IMethodReferenceOperation { Method: { MethodKind: MethodKind.LocalFunction } local } => CallsUnknown(BodyOf(local)),
                 _ => true,
             };
         }
+    }
+
+    private Dictionary<IOperation, bool>? _callsUnknown;
+
+    /// Whether a lambda's or local function's body calls anything but external methods that keep members (fix round 2,
+    /// R1-I1): a project method it calls may write a member of what the core library hands it (`ForEach(x =>
+    /// Fill(x, q))`), so such a delegate is as foreign as a method group. Unknown when the body cannot be found.
+    private bool CallsUnknown(IOperation? body)
+    {
+        if (body == null) return true;
+        _callsUnknown ??= new Dictionary<IOperation, bool>();
+        if (_callsUnknown.TryGetValue(body, out var known)) return known;
+        var result = false;
+        foreach (var o in body.DescendantsAndSelf())
+        {
+            switch (o)
+            {
+                case IInvocationOperation call:
+                    if (call.TargetMethod.MethodKind == MethodKind.DelegateInvoke
+                        || _body.Targets(call.TargetMethod, call.IsVirtual, call.Instance?.Type).Any(t => t.Kind != TargetKind.External || !KeepsMembers(t.Method)))
+                        result = true;
+                    break;
+                case IObjectCreationOperation { Constructor: { } constructor } when SymbolKeys.InSource(constructor):
+                    result = true;
+                    break;
+                case IPropertyReferenceOperation { Property: { } property, Parent: IAssignmentOperation assignment } p
+                    when ReferenceEquals(assignment.Target, p) && SymbolKeys.InSource(property) && !_body.IsHeapMember(property):
+                    result = true;
+                    break;
+                case IDynamicInvocationOperation or IDynamicObjectCreationOperation or IFunctionPointerInvocationOperation:
+                    result = true;
+                    break;
+            }
+            if (result) break;
+        }
+        _callsUnknown[body] = result;
+        return result;
+    }
+
+    /// The operation tree of a lambda's or local function's body, or null.
+    private IOperation? BodyOf(IMethodSymbol function)
+    {
+        if (function.DeclaringSyntaxReferences.FirstOrDefault()?.GetSyntax() is not { } syntax || Model() is not { } model || model.SyntaxTree != syntax.SyntaxTree)
+            return null;
+        return model.GetOperation(syntax) switch
+        {
+            IAnonymousFunctionOperation lambda => lambda.Body,
+            ILocalFunctionOperation local => local.Body,
+            _ => null,
+        };
     }
 
     /// A callee's parameter `slot` escapes: what the call gives it escapes from this body.

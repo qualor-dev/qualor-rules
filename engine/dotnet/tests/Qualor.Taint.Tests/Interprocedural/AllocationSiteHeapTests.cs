@@ -937,6 +937,11 @@ public sealed class AllocationSiteHeapTests
         }
         """);
 
+    [Fact]
+    public void A_lambda_given_to_List_ForEach_that_calls_a_project_writer_ends_a_strong_update() =>
+        Expect(AfterCall("var renamer = new Renamer(); new List<Contact> { c }.ForEach(x => renamer.Apply(x, name));",
+            "public class Renamer { public void Apply(Contact x, string value) { x.Name = value; } }\n"));
+
     // ---- Ruling R-E31 ----
 
     [Fact]
@@ -1010,6 +1015,24 @@ public sealed class AllocationSiteHeapTests
         var ssrf = code.Split('\n').Select((l, i) => (l, i)).Where(x => x.l.Contains("/*ssrf*/")).Select(x => x.i + 1).ToList();
         Assert.Equal(ssrf, Snippet.Findings(code, "csharp.ssrf"));
     }
+
+    [Fact]
+    public void TryUpdateModelAsync_in_a_helper_fills_the_callers_model() => Expect("""
+        public class Contact { public string Name { get; set; } = ""; }
+        public class ContactsController : Controller
+        {
+            private readonly SqlConnection _c = new();
+            private async Task Bind(Contact contact) { await TryUpdateModelAsync(contact); }
+            public async Task<IActionResult> Edit()
+            {
+                var c = new Contact();
+                c.Name = "anonymous";
+                await Bind(c);
+                _c.Execute("SELECT * FROM t WHERE n = '" + c.Name + "'"); /*sink*/
+                return Ok();
+            }
+        }
+        """);
 
     // ---- Helpers ----
 

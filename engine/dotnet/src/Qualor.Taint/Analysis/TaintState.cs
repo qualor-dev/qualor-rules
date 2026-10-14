@@ -157,6 +157,11 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     /// This value with `other`'s request data and labels joined in, keeping this value's objects and members: what adds a
     /// source to a value without changing which object it is (Task 27 at the rebase onto Task 29: a rule's own source joined
     /// into a call's result; Clean added nothing, and a plain Join with Clean would make the result's objects unknown).
+    ///
+    /// Exact members are kept beside the added taint (fix round 2, R1-M3): a member read of the result then gives the
+    /// member's exact value without the added whole-value taint. Rule sources are external members whose results carry
+    /// no identity, so this does not arise today; if a source ever adds taint to a value that knows members, drop
+    /// `Members` here when `other.Any`.
     public TaintValue WithTaintOf(TaintValue other)
     {
         if (!other.Any) return this;

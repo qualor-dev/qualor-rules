@@ -1968,7 +1968,10 @@ internal sealed partial class MethodAnalyzer
         && method.ContainingType is { } type && SymbolMatch.MetadataName(type.OriginalDefinition) is
             "Microsoft.AspNetCore.Mvc.ControllerBase" or "Microsoft.AspNetCore.Mvc.RazorPages.PageModel";
 
-    /// The model given to the binder (its first argument) holds request data in every member, as a bound parameter does.
+    /// The model given to the binder (its first argument) holds request data in every member, as a bound parameter does:
+    /// the variable as a whole, and each instance field and auto-property of its type declared in source through its
+    /// known objects (fix round 2, R1-M1: in a helper that is a write into its parameter's objects, which its callers
+    /// get; unknown objects are not written member by member, which would reach every object of the type).
     private void UpdateModel(IOperation operation, IMethodSymbol method, Input[] inputs, TaintState state)
     {
         foreach (var i in inputs)
@@ -1976,6 +1979,11 @@ internal sealed partial class MethodAnalyzer
             if (i.Ordinal != 0 || i.RefKind == RefKind.Out) continue;
             var bound = TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(method)}").ScopedTo(_body.WriteReach);
             Write(i.Operation, bound, state);
+            if (i.Value.Objects is not { IsEmpty: false } objects || StaticType(i.Operation) is not INamedTypeSymbol type) continue;
+            for (var t = type; t != null && SymbolKeys.InSource(t); t = t.BaseType)
+                foreach (var member in t.GetMembers())
+                    if (member is IFieldSymbol or IPropertySymbol && !member.IsStatic && _body.IsHeapMember(member))
+                        _body.HeapWrite(member, bound, objects);
         }
     }
 
