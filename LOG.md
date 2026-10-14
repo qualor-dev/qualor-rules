@@ -24,6 +24,15 @@ Entry format:
   branches left behind.
 ```
 
+## 2026-10-15: Roslyn engine re-measured (Phase 6B-C# R, Task 25)
+
+- **Request:** the Roslyn engine plan's Task 25: Task 18's measurement again after Stages 6b and 6c, through the real product path (`qualor dotnet begin`, `dotnet build`, `qualor dotnet end`) in a local dev image, with acceptance per spec §6 as amended (noise counts high-confidence false positives).
+- **Done:** MEASUREMENTS.md 2026-10-13 entry, section "C# engine, re-measured (Task 25)". No engine change.
+- **Blocked:** acceptance: not met. Noise: 75 high-confidence false positives (target 3); medium false-positive rate 88.7 %. Firm core: 2 of 7 flows. Met: tests 733/733, fidelity 352/352, recall 23/26, budgets (nopCommerce engine 1:14.7 / 3.19 GiB, eShop 9.7 s). The maintainer decides on the levers and on the noise criterion. A confidence defect found, not fixed: a view and component cycle that only unresolved-view fallback edges close shares one precise reach, which makes 33 nopCommerce findings high instead of medium.
+- **Backlog:** none added here; the levers per false-positive group (fallback-cycle fix, fixed-point and local-held containment guards, membership guards, span overloads of the Path sanitizers, guard summaries for project wrappers) are in the controller's `engine-measurement-25.md`.
+- **Measurement:** recall aspgoat 10/12, vulnerablelightapp 8/8, dvcsharp-api 3/3, murayama-vulnerable-api 1/1, vulnerablecoreapp 1/2; noise (high T/F, medium T/F) eshop 0, eshop-on-web 1/0, nopcommerce 17/41, 7/47, jellyfin 10/19, 9/85, orchardcore 2/15, 6/40. Finding sets equal Task 31's on all 11 sets.
+- **Notes:** measurement files in `.tmp/t25-measure/` (git-ignored); local images `qualor/scanner:dev-roslyn-25`, `qualor/scanner-dotnet:dev-roslyn-25`, `qr-measure/scanner-dotnet:dev-roslyn-25-time` and volumes `qr-t25-work-*` kept for re-runs. Seven findings judged false before were re-judged true (a posted model written back raw in the same response). OrchardCore's OpenGrep run of the `qualor` analyzer still times out at 900 s; the report now keeps the engine's findings (Task 24).
+
 ## 2026-10-14: Roslyn engine measured (Phase 6B-C# R, Task 18)
 
 - **Request:** the Roslyn engine plan's Task 18 (spec §6): measure the engine on the recall sets and the noise projects and decide acceptance.

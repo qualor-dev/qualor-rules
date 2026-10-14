@@ -153,6 +153,24 @@ The engine (`engine/dotnet`, branch `csharp` at b19b4c6, with the models of `mod
 - **Time and memory** (`/usr/bin/time -v`, analysis only): eShop 7.1 s / 317 MiB, eShopOnWeb 5.3 s / 283 MiB, nopCommerce 56.5 s / 2.59 GiB, Jellyfin 40.8 s / 1.23 GiB, OrchardCore 60.2 s / 2.40 GiB, recall sets under 2 s; budgets (nopCommerce 10 min / 4 GB, eShop 1 min) kept. Rebuild fidelity 345 of 346 projects with 0 errors (OrchardCore.Benchmarks: two entry points, `StartupObject` not recorded).
 - **Acceptance: not met** (noise, recall, firm core). The field-based heap is the main cause and a design question for the maintainer, recorded in `models/README.md` "Known limits".
 
+### C# engine, re-measured (Task 25, by hand, 2026-10-15)
+
+The engine after Stages 6b and 6c (`csharp` at f9aacf1: request-scoped heap, member guards, ViewData and view models, DI-aware dispatch, allocation-site objects, confidence levels, backlog sources and sinks, engine-compiled views, model validation) on the same sets, this time through the real product path. A local image `qualor/scanner-dotnet:dev-roslyn-25` (qualor-cc `phase-6b-csharp` 0c6f0068 with this branch's pack) ran `qualor dotnet begin`, `dotnet build` and `qualor dotnet end --dry-run` on a copy of each clone; the hook recorded the views. The engine's SARIF and its time were taken from the `end` run itself. Every report carried the engine's findings with their confidence, and no run fell back to OpenGrep (on OrchardCore the OpenGrep part of the `qualor` analyzer timed out after 900 s, as in Task 18, and the report still carries all of the engine's findings). The finding sets equal Task 31's by rule, file, line and confidence on all 11 sets. Details, the per-finding analysis and the judged list are in the controller's ledger `engine-measurement-25.md` (Phase 6B-C# R, Task 25).
+
+- **Recall: 23 of 26** (target 22, met; OpenGrep 17). Missed: aspgoat StoredXSS and vulnerablecoreapp DemoTypeI (stored in one request, shown in another: out of scope by the request-scoped heap), aspgoat DomXSS (client-side). Every recall-set finding is high confidence.
+- **Sink inventory:** firm core 2 of 7 flows (nopCommerce store HTTP client, OrchardCore workflow form redirect). The misses are a Minimal API body object without `[FromBody]`, the tus upload id, a framework callback, `IFileInfo.PhysicalPath` and Fluid values. Unconstrained (a) sites 4 of 4 (eShop's consent redirect re-classed as constrained: the same IdentityServer check as its neighbours). (b) sites 63 of 112 (30 of 56 unconstrained), fewer than Task 18 because data stored in another request no longer counts.
+- **Noise: 299 findings on the noise projects; high confidence 30 true and 75 false (target: at most 3 false), medium 22 true and 172 false (88.7 % false).** Seven findings judged false before are true on re-reading: a posted model written back raw in the same response, six of them self-only behind antiforgery. The high false positives by cause:
+  - 33 view links that exist only through unresolved-view fallback edges. A confidence defect: a cycle of views and components closed by such an edge shares one "precise" reach, so these read high instead of medium. Recorded, not fixed.
+  - 24 containment and single-segment checks inside project helpers (OrchardCore file store, Jellyfin child-path helper).
+  - 5 redirects to the request's own URL.
+  - 3 a project filename sanitizer.
+  - 3 a registered-key lookup that throws on a miss.
+  - 2 an extension taken from a span, 2 an allow-list set checked with a comparer, 2 a guard inside a project helper.
+  - 1 view link not yet explained.
+- With the defect fixed and the guard and model levers listed in the ledger (about six engine tasks), about 9 high false positives would remain. Eight of them rest on project invariants: the filename sanitizer and the own-URL redirects.
+- **Time and memory** (the engine process inside `qualor dotnet end`, `/usr/bin/time -v`): nopCommerce 1:14.7 / 3.19 GiB (the whole `end` 7:10), OrchardCore 1:26.4 / 3.11 GiB, Jellyfin 55.0 s / 1.32 GiB, eShop 9.7 s / 0.32 GiB, eShopOnWeb 7.2 s / 0.29 GiB, recall sets under 3 s. Budgets kept (nopCommerce 10 min / 4 GB, eShop 1 min). Rebuild fidelity 352 of 352 projects with 0 errors (OrchardCore.Benchmarks included).
+- **Acceptance: not met** (noise, firm core); fixtures and tests (733 of 733), fidelity, recall and budgets met.
+
 ## 2026-10-12 rules f8b01fae64a77dfcd6d4f3b52bb483f94e244460 (js, python, java, go)
 
 OpenGrep 1.30.0 with --taint-intrafile; 4 rule directories; results in `.tmp/probe/2026-10-12T17-23-59-970Z`.
