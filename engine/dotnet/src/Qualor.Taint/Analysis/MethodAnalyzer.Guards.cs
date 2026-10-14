@@ -22,7 +22,11 @@ namespace Qualor.Taint;
 /// leave the method) the join is the unchecked value again.
 internal sealed partial class MethodAnalyzer
 {
-    private Dictionary<ILocalSymbol, List<IOperation>?>? _assignments;
+    private Dictionary<ISymbol, List<IOperation>?>? _assignments;
+
+    /// The values the arguments of a call that has guards had when it was evaluated (a guard's `arg ... text` condition
+    /// reads them instead of evaluating the argument again).
+    private readonly Dictionary<IOperation, TaintValue> _guardArguments = new();
 
     /// The state on the successor of a block whose condition `condition` had this outcome.
     private TaintState Refine(IOperation condition, bool outcome, TaintState state)
@@ -50,8 +54,12 @@ internal sealed partial class MethodAnalyzer
                 Facts(either.RightOperand, false, state, ref refined, depth + 1);
                 break;
             case IBinaryOperation { OperatorKind: BinaryOperatorKind.Equals or BinaryOperatorKind.NotEquals } equality:
-                Equality(equality.LeftOperand, equality.RightOperand, (equality.OperatorKind == BinaryOperatorKind.Equals) == outcome, state, ref refined);
+            {
+                // Only the built-in equality (or string's operator): a user-defined `==` may compare anything (ruling R-E13).
+                var builtIn = equality.OperatorMethod == null || equality.OperatorMethod.ContainingType?.SpecialType == SpecialType.System_String;
+                Equality(equality.LeftOperand, equality.RightOperand, (equality.OperatorKind == BinaryOperatorKind.Equals) == outcome, builtIn, state, ref refined);
                 break;
+            }
             case IIsPatternOperation pattern:
                 Pattern(pattern.Value, pattern.Pattern, outcome, state, ref refined);
                 break;
@@ -64,13 +72,14 @@ internal sealed partial class MethodAnalyzer
         }
     }
 
-    /// `left == right` holds (equal) or does not.
-    private void Equality(IOperation left, IOperation right, bool equal, TaintState state, ref TaintState? refined)
+    /// `left == right` holds (equal) or does not. With `cleans` (a built-in equality, string's), a string, char, number,
+    /// boolean or enum equal to a constant is that constant.
+    private void Equality(IOperation left, IOperation right, bool equal, bool cleans, TaintState state, ref TaintState? refined)
     {
-        if (equal)
+        if (equal && cleans)
         {
-            if (IsConstant(right)) CleanAll(left, state, ref refined);
-            if (IsConstant(left)) CleanAll(right, state, ref refined);
+            if (IsConstant(right) && IsEqualityType(left)) CleanAll(left, state, ref refined);
+            if (IsConstant(left) && IsEqualityType(right)) CleanAll(right, state, ref refined);
         }
         if (IsNull(right)) NullCheck(left, !equal, state, ref refined);
         else if (IsNull(left)) NullCheck(right, !equal, state, ref refined);
@@ -100,14 +109,15 @@ internal sealed partial class MethodAnalyzer
         };
     }
 
-    /// A call in a condition: `x.Equals(c)` and `string.Equals(x, c)`, the model's guards, the allow-lists' membership.
+    /// A call in a condition: `x.Equals(c)` and `string.Equals(x, c)` (System.String's and the primitives' Equals only, not an
+    /// override: ruling R-E13), the model's guards, the allow-lists' membership.
     private void Call(IInvocationOperation call, bool outcome, TaintState state, ref TaintState? refined)
     {
         var method = call.TargetMethod;
-        if (outcome && method.Name == "Equals")
+        if (outcome && method.Name == "Equals" && method.ContainingType is { SpecialType: not (SpecialType.None or SpecialType.System_Object) })
         {
-            if (call.Instance != null && call.Arguments.Length >= 1) Equality(call.Instance, call.Arguments[0].Value, true, state, ref refined);
-            else if (method.IsStatic && call.Arguments.Length >= 2) Equality(call.Arguments[0].Value, call.Arguments[1].Value, true, state, ref refined);
+            if (call.Instance != null && call.Arguments.Length >= 1) Equality(call.Instance, call.Arguments[0].Value, true, true, state, ref refined);
+            else if (method.IsStatic && call.Arguments.Length >= 2) Equality(call.Arguments[0].Value, call.Arguments[1].Value, true, true, state, ref refined);
         }
 
         foreach (var (rule, guard) in _ctx.Sinks.Guards.Match(method, Access.Call))
@@ -117,12 +127,14 @@ internal sealed partial class MethodAnalyzer
             if (checkedValue != null && Holds(guard, call, checkedValue, state)) Clean(checkedValue, new[] { rule }, state, ref refined);
         }
 
-        if (outcome && _ctx.Sinks.AllowListRules.Length > 0 && method.Name is "Contains" or "ContainsKey")
+        if (outcome && _ctx.Sinks.AllowListRules.Length > 0 && method.Name is "Contains" or "ContainsKey" && !SymbolKeys.InSource(method))
         {
-            var (table, value) = call.Instance != null
-                ? (call.Instance, call.Arguments.Length > 0 ? call.Arguments[0].Value : null)
-                : (call.Arguments.Length > 1 ? call.Arguments[0].Value : null, call.Arguments.Length > 1 ? call.Arguments[1].Value : null);
-            if (value != null && _ctx.AllowLists.IsTable(table, Model()?.Compilation)) Clean(value, _ctx.Sinks.AllowListRules, state, ref refined);
+            var first = call.Instance != null ? 0 : 1;
+            var table = call.Instance ?? (call.Arguments.Length > 1 ? call.Arguments[0].Value : null);
+            var value = call.Arguments.Length > first ? call.Arguments[first].Value : null;
+            // Any further argument is a comparer: only one of .NET's own (a project's comparer may say anything is equal).
+            var comparers = call.Arguments.Skip(first + 1).All(a => a.ArgumentKind == ArgumentKind.DefaultValue || AllowLists.IsNetComparer(Unwrapped(a.Value)));
+            if (value != null && comparers && _ctx.AllowLists.IsTable(table, Model()?.Compilation)) Clean(value, _ctx.Sinks.AllowListRules, state, ref refined);
         }
     }
 
@@ -137,9 +149,52 @@ internal sealed partial class MethodAnalyzer
         foreach (var (rule, guard) in _ctx.Sinks.Guards.Match(call.TargetMethod, Access.Call))
         {
             if (guard.Kind != GuardKind.NotNull) continue;
-            if (SinkConditions.ArgumentValue(call, guard.Arg) is { } checkedValue && Holds(guard, call, checkedValue, state))
+            if (SinkConditions.ArgumentValue(call, guard.Arg) is { } checkedValue && UnchangedAfter(checkedValue, call) && Holds(guard, call, checkedValue, state))
                 Clean(checkedValue, new[] { rule }, state, ref refined);
         }
+    }
+
+    /// Whether the variable a checked argument is (a local or a parameter) is assigned nowhere after the call in the body
+    /// (written in no other way either), so the value the null check speaks of is still the one it holds.
+    private bool UnchangedAfter(IOperation checkedValue, IOperation call)
+    {
+        var value = Unwrapped(checkedValue);
+        ISymbol? symbol = value switch
+        {
+            ILocalReferenceOperation l => l.Local,
+            IParameterReferenceOperation p => p.Parameter,
+            _ => null,
+        };
+        if (symbol == null) return false;
+        if (_assignments == null) Assignments(symbol);
+        if (!_assignments!.TryGetValue(symbol, out var writes)) return true;
+        return writes != null && writes.All(w => w.Syntax.SpanStart < call.Syntax.SpanStart);
+    }
+
+    private static IOperation Unwrapped(IOperation op)
+    {
+        while (op is IConversionOperation c) op = c.Operand;
+        return op;
+    }
+
+    /// A type whose equality to a constant makes a value that constant: string, char, a number, bool, an enum (or
+    /// Nullable of one).
+    private static bool IsEqualityType(IOperation value)
+    {
+        var type = Unwrapped(value).Type;
+        if (type == null) return false;
+        type = SourceFinder.UnwrapNullable(type);
+        return type.TypeKind == TypeKind.Enum || type.SpecialType is SpecialType.System_String or SpecialType.System_Char or SpecialType.System_Boolean
+            or SpecialType.System_SByte or SpecialType.System_Byte or SpecialType.System_Int16 or SpecialType.System_UInt16 or SpecialType.System_Int32
+            or SpecialType.System_UInt32 or SpecialType.System_Int64 or SpecialType.System_UInt64 or SpecialType.System_Decimal or SpecialType.System_Single
+            or SpecialType.System_Double;
+    }
+
+    /// Records the values of a call's arguments when the call is a guard's (for Holds).
+    private void GuardArguments(IMethodSymbol method, Input[] inputs)
+    {
+        if (_ctx.Sinks.Guards.IsEmpty || _ctx.Sinks.Guards.Match(method, Access.Call).Length == 0) return;
+        foreach (var i in inputs) _guardArguments[i.Operation] = i.Value;
     }
 
     /// The call a value comes from: through conversions, an await and ConfigureAwait.
@@ -185,7 +240,7 @@ internal sealed partial class MethodAnalyzer
                 case GuardConditionKind.ArgumentText:
                 {
                     if (SinkConditions.ArgumentValue(call, c.Arg) is not { } argument) return false;
-                    if (Value(argument, state.Clone()).Request) return false;
+                    if (!_guardArguments.TryGetValue(argument, out var argumentValue) || argumentValue.Request) return false;
                     var text = new System.Text.StringBuilder();
                     GuardText(argument, text, 0);
                     if (!c.Pattern!.IsMatch(text.ToString())) return false;
@@ -232,11 +287,11 @@ internal sealed partial class MethodAnalyzer
 
     /// What a local is assigned in this body (its declaration's initializer too); null when it is also written otherwise
     /// (a `ref` or `out` argument, a compound assignment, a deconstruction, an increment).
-    private List<IOperation>? Assignments(ILocalSymbol local)
+    private List<IOperation>? Assignments(ISymbol local)
     {
         if (_assignments == null)
         {
-            _assignments = new Dictionary<ILocalSymbol, List<IOperation>?>(SymbolEqualityComparer.Default);
+            _assignments = new Dictionary<ISymbol, List<IOperation>?>(SymbolEqualityComparer.Default);
             foreach (var block in _cfg.Blocks)
             {
                 foreach (var root in block.Operations.Append(block.BranchValue))
@@ -255,6 +310,18 @@ internal sealed partial class MethodAnalyzer
                 case ISimpleAssignmentOperation { Target: ILocalReferenceOperation l } a:
                     Add(l.Local, a.Value);
                     break;
+                case ISimpleAssignmentOperation { Target: IParameterReferenceOperation p } a:
+                    Add(p.Parameter, a.Value);
+                    break;
+                case IAssignmentOperation { Target: IParameterReferenceOperation p }:
+                    Spoil(p.Parameter);
+                    break;
+                case IIncrementOrDecrementOperation { Target: IParameterReferenceOperation p }:
+                    Spoil(p.Parameter);
+                    break;
+                case IArgumentOperation { Value: IParameterReferenceOperation p, Parameter.RefKind: RefKind.Ref or RefKind.Out }:
+                    Spoil(p.Parameter);
+                    break;
                 case IVariableDeclaratorOperation { Initializer: { } init } d:
                     Add(d.Symbol, init.Value);
                     break;
@@ -272,17 +339,18 @@ internal sealed partial class MethodAnalyzer
                     break;
                 case IDeconstructionAssignmentOperation deconstruction:
                     foreach (var l in deconstruction.Target.DescendantsAndSelf().OfType<ILocalReferenceOperation>()) Spoil(l.Local);
+                    foreach (var p in deconstruction.Target.DescendantsAndSelf().OfType<IParameterReferenceOperation>()) Spoil(p.Parameter);
                     break;
             }
         }
 
-        void Add(ILocalSymbol l, IOperation value)
+        void Add(ISymbol l, IOperation value)
         {
             if (!_assignments!.TryGetValue(l, out var list)) _assignments[l] = list = new List<IOperation>();
             list?.Add(value);
         }
 
-        void Spoil(ILocalSymbol l) => _assignments![l] = null;
+        void Spoil(ISymbol l) => _assignments![l] = null;
     }
 
     private static bool IsConstant(IOperation op)

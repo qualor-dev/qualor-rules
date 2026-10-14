@@ -121,8 +121,9 @@ sanitizers:
 # failing check that always leaves the method, an if branch), when every assignment of the local `full` in the method
 # is a Path.GetFullPath call and the prefix carries no request data and ends with a directory separator: a string
 # ending in / or \ (a literal, a constant, base + "/") or base + Path.DirectorySeparatorChar, AltDirectorySeparatorChar,
-# '/' or '\' ("/srv/files" alone also admits the sibling "/srv/files-old"). Inside the failing branch the path is the
-# one that failed.
+# '/' or '\' ("/srv/files" alone also admits the sibling "/srv/files-old"), after a folder name: a root alone ("/",
+# "\", "C:\") admits every path (ruling R-E13). A base held in a value (a field, a configuration value) counts as a
+# folder (U+FFFC). Inside the failing branch the path is the one that failed.
 # Differences: OpenGrep needs the check written as `if (!full.StartsWith(prefix))` before the use; the engine reads the
 # condition on the control-flow graph, so a positive check guarding its then-branch and a separator added by
 # interpolation count too; a check on a GetFullPath result written in the condition itself (no local) does not.
@@ -133,5 +134,5 @@ guards:
     when:
       - assigned-from: System.IO.Path.GetFullPath
       - arg: 0
-        text: '[\\/]$'
+        text: '[^\\/:][\\/]$'
 

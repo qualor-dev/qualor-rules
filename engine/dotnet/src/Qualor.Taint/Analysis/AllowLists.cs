@@ -4,25 +4,47 @@ using Microsoft.CodeAnalysis.Operations;
 
 namespace Qualor.Taint;
 
-/// The allow-list tables of the shared allow-lists (models/README.md, "Allow-lists"): a `static readonly` field declared
-/// in source whose initializer is a collection of constants written in place (an array, a collection expression, a
-/// collection or dictionary initializer of a `new` whose constructor takes at most a comparer or a constant capacity),
-/// and that no code of its compilation changes: no Add, TryAdd, AddRange, Insert, InsertRange, UnionWith,
-/// SymmetricExceptWith, Push, Enqueue, AddOrUpdate or GetOrAdd call on it, no write of an element or the field, no
-/// `ref` or `out` passing, anywhere in its compilation; a field of another project (no tree of the analysed compilation)
-/// is no table. The places that could change a collection (the receiver of a call so named, an argument of such a call,
-/// an assignment or increment target, a `ref` or `out` argument) are indexed by name once per compilation; only those
-/// that name the field are bound. The answer is cached per field.
+/// The allow-list tables of the shared allow-lists (models/README.md, "Allow-lists"). A table is a `static readonly` field
+/// declared in source that no code outside its assembly can reach (it, or a type holding it, is private or internal),
+/// - whose type and initializer type are .NET's own collections (an array, or a type of System.Collections.Generic,
+///   System.Collections.Frozen or System.Collections.Immutable; not a project's subclass, whose Contains may mean
+///   something else), initialized in place with constants (comparer arguments: .NET's own comparers), and
+/// - every use of which in its class's files (a private field) or its compilation's files is a known read: the receiver
+///   of a read-only member (Contains, ContainsKey, TryGetValue, an indexer or element read, Count, Keys, ...), argument 0
+///   of a read-only static method (System.Linq.Enumerable, Array.IndexOf, string.Join, ...), a foreach collection,
+///   `nameof`. Any other use (an alias, an argument of another method, a cast, a span, a write, `ref`) may change it: the
+///   field is no table.
+/// A field of another project is no table. The answer is cached per field.
 internal sealed class AllowLists
 {
-    private static readonly HashSet<string> Mutators = new(StringComparer.Ordinal)
+    /// Members of .NET collections that only read them.
+    private static readonly HashSet<string> ReadMembers = new(StringComparer.Ordinal)
     {
-        "Add", "TryAdd", "AddRange", "Insert", "InsertRange", "UnionWith", "SymmetricExceptWith", "Push", "Enqueue", "AddOrUpdate",
-        "GetOrAdd",
+        "Contains", "ContainsKey", "ContainsValue", "TryGetValue", "GetValueOrDefault", "IndexOf", "LastIndexOf", "BinarySearch",
+        "Exists", "Find", "FindIndex", "FindLast", "FindLastIndex", "FindAll", "TrueForAll", "GetEnumerator", "ToArray", "ToList",
+        "IsSubsetOf", "IsSupersetOf", "IsProperSubsetOf", "IsProperSupersetOf", "Overlaps", "SetEquals", "Equals", "GetHashCode",
+        "ToString", "GetType", "Count", "Length", "LongLength", "Keys", "Values", "Comparer", "IsReadOnly", "Rank", "Item",
+    };
+
+    /// Static types whose methods only read the collection given as their first argument (by name, ReadStatics).
+    private static readonly HashSet<string> ReadStaticTypes = new(StringComparer.Ordinal)
+    {
+        "System.Linq.Enumerable", "System.String", "System.Array", "System.Collections.Generic.CollectionExtensions",
+    };
+
+    /// Methods of ReadStaticTypes that read (Enumerable's are all reads; Array's and CollectionExtensions' are not).
+    private static readonly HashSet<string> ReadStatics = new(StringComparer.Ordinal)
+    {
+        "Join", "Concat", "IndexOf", "LastIndexOf", "BinarySearch", "Exists", "Find", "FindIndex", "FindAll", "TrueForAll",
+        "GetValueOrDefault",
+    };
+
+    private static readonly string[] CollectionNamespaces =
+    {
+        "System.Collections.Generic.", "System.Collections.Frozen.", "System.Collections.Immutable.",
     };
 
     private readonly Dictionary<IFieldSymbol, bool> _tables = new(SymbolEqualityComparer.Default);
-    private readonly Dictionary<Compilation, Dictionary<string, List<IdentifierNameSyntax>>> _sites = new();
 
     /// Whether `op` reads an allow-list table (also its Keys or Values).
     public bool IsTable(IOperation? op, Compilation? compilation)
@@ -37,9 +59,9 @@ internal sealed class AllowLists
         return result;
     }
 
-    private bool Compute(IFieldSymbol field, Compilation compilation)
+    private static bool Compute(IFieldSymbol field, Compilation compilation)
     {
-        if (field.DeclaringSyntaxReferences.Length != 1) return false;
+        if (field.DeclaringSyntaxReferences.Length != 1 || !IsNetCollection(field.Type) || VisibleOutside(field)) return false;
         var reference = field.DeclaringSyntaxReferences[0];
         if (!compilation.ContainsSyntaxTree(reference.SyntaxTree)) return false;
         if (reference.GetSyntax() is not VariableDeclaratorSyntax { Initializer.Value: { } value }) return false;
@@ -51,137 +73,90 @@ internal sealed class AllowLists
         }
         if (!IsLiteralCollection(Model(reference.SyntaxTree).GetOperation(value))) return false;
 
-        if (!Sites(compilation).TryGetValue(field.Name, out var names)) return true;
-        foreach (var name in names)
+        var trees = field.DeclaredAccessibility == Accessibility.Private
+            ? field.ContainingType.DeclaringSyntaxReferences.Select(r => r.SyntaxTree).Where(compilation.ContainsSyntaxTree).Distinct()
+            : compilation.SyntaxTrees;
+        foreach (var tree in trees)
         {
-            var model = Model(name.SyntaxTree);
-            if (!SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(name).Symbol?.OriginalDefinition, field)) continue;
-            SyntaxNode node = name;
-            if (name.Parent is MemberAccessExpressionSyntax access && access.Name == name) node = access;
-            else if (name.Parent is MemberBindingExpressionSyntax binding && binding.Name == name) node = binding;
-            if (model.GetOperation(node) is not { } operation || Mutates(operation)) return false;
+            foreach (var name in tree.GetRoot().DescendantNodes().OfType<IdentifierNameSyntax>())
+            {
+                if (name.Identifier.ValueText != field.Name) continue;
+                var model = Model(tree);
+                if (!SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(name).Symbol?.OriginalDefinition, field)) continue;
+                SyntaxNode node = name;
+                if (name.Parent is MemberAccessExpressionSyntax access && access.Name == name) node = access;
+                else if (name.Parent is MemberBindingExpressionSyntax binding && binding.Name == name) node = binding;
+                if (model.GetOperation(node) is not { } operation || !IsRead(operation)) return false;
+            }
         }
         return true;
     }
 
-    /// The names (by their text) at the places of a compilation that could change a collection they name.
-    private Dictionary<string, List<IdentifierNameSyntax>> Sites(Compilation compilation)
+    /// A field no code of another assembly can reach: it or a type that holds it is private, internal or private
+    /// protected.
+    private static bool VisibleOutside(ISymbol field)
     {
-        if (_sites.TryGetValue(compilation, out var known)) return known;
-        var sites = new Dictionary<string, List<IdentifierNameSyntax>>(StringComparer.Ordinal);
-        foreach (var tree in compilation.SyntaxTrees)
-        {
-            foreach (var node in tree.GetRoot().DescendantNodes())
-            {
-                switch (node)
-                {
-                    case InvocationExpressionSyntax call when Mutators.Contains(InvokedName(call.Expression)):
-                        if (call.Expression is MemberAccessExpressionSyntax member) Record(member.Expression);
-                        else if (call.Expression is MemberBindingExpressionSyntax && call.Parent is ConditionalAccessExpressionSyntax conditional) Record(conditional.Expression);
-                        foreach (var a in call.ArgumentList.Arguments) Record(a.Expression);
-                        break;
-                    case AssignmentExpressionSyntax assignment:
-                        Record(assignment.Left);
-                        break;
-                    case PrefixUnaryExpressionSyntax { RawKind: (int)Microsoft.CodeAnalysis.CSharp.SyntaxKind.PreIncrementExpression or (int)Microsoft.CodeAnalysis.CSharp.SyntaxKind.PreDecrementExpression } prefix:
-                        Record(prefix.Operand);
-                        break;
-                    case PostfixUnaryExpressionSyntax postfix:
-                        Record(postfix.Operand);
-                        break;
-                    case ArgumentSyntax { RefKindKeyword.RawKind: not 0 } byRef:
-                        Record(byRef.Expression);
-                        break;
-                }
-            }
-        }
-        _sites[compilation] = sites;
-        return sites;
-
-        void Record(ExpressionSyntax? expression)
-        {
-            for (var depth = 0; expression != null && depth < 16; depth++)
-            {
-                switch (expression)
-                {
-                    case ParenthesizedExpressionSyntax p:
-                        expression = p.Expression;
-                        continue;
-                    case ElementAccessExpressionSyntax e:
-                        expression = e.Expression;
-                        continue;
-                    case PostfixUnaryExpressionSyntax { RawKind: (int)Microsoft.CodeAnalysis.CSharp.SyntaxKind.SuppressNullableWarningExpression } bang:
-                        expression = bang.Operand;
-                        continue;
-                    case TupleExpressionSyntax tuple:
-                        foreach (var a in tuple.Arguments) Record(a.Expression);
-                        return;
-                    case MemberAccessExpressionSyntax { Name: IdentifierNameSyntax name }:
-                        Add(name);
-                        return;
-                    case IdentifierNameSyntax name:
-                        Add(name);
-                        return;
-                    default:
-                        return;
-                }
-            }
-        }
-
-        void Add(IdentifierNameSyntax name)
-        {
-            if (!sites.TryGetValue(name.Identifier.ValueText, out var list)) sites[name.Identifier.ValueText] = list = new List<IdentifierNameSyntax>();
-            list.Add(name);
-        }
+        for (ISymbol? s = field; s is not null and not INamespaceSymbol; s = s.ContainingSymbol)
+            if (s.DeclaredAccessibility is Accessibility.Private or Accessibility.Internal or Accessibility.ProtectedAndInternal) return false;
+        return true;
     }
 
-    private static string InvokedName(ExpressionSyntax expression) => expression switch
+    /// Whether this use of the table only reads it.
+    private static bool IsRead(IOperation use)
     {
-        MemberAccessExpressionSyntax m => m.Name.Identifier.ValueText,
-        MemberBindingExpressionSyntax b => b.Name.Identifier.ValueText,
-        SimpleNameSyntax n => n.Identifier.ValueText,
-        _ => "",
-    };
-
-    /// Whether this read of the table changes it: a mutating call on it, a write of one of its elements or of the field
-    /// itself, a `ref` or `out` argument.
-    private static bool Mutates(IOperation read)
-    {
-        var current = read;
-        while (current.Parent is IConversionOperation conversion) current = conversion;
+        var current = use;
+        while (current.Parent is IConversionOperation { IsImplicit: true } conversion && conversion.Type is { } target
+               && (IsNetCollection(target) || SymbolMatch.MetadataName(target) == "System.Collections.IEnumerable"))
+            current = conversion;
         switch (current.Parent)
         {
             case IInvocationOperation call when ReferenceEquals(call.Instance, current):
-                return Mutators.Contains(call.TargetMethod.Name);
-            case IArgumentOperation argument:
-                if (argument.Parameter?.RefKind is RefKind.Ref or RefKind.Out) return true;
-                return argument.Parent is IInvocationOperation { TargetMethod.IsExtensionMethod: true } extension
-                    && argument.Parameter?.Ordinal == 0 && Mutators.Contains(extension.TargetMethod.Name);
-            case IPropertyReferenceOperation { Property.IsIndexer: true } element when ReferenceEquals(element.Instance, current):
-                return IsWritten(element);
+                return ReadMembers.Contains(call.TargetMethod.Name) && !SymbolKeys.InSource(call.TargetMethod);
+            case IArgumentOperation { Parameter.Ordinal: 0, Parameter.RefKind: RefKind.None, Parent: IInvocationOperation call }
+                when call.TargetMethod is { IsStatic: true, ContainingType: { } holder } && ReadStaticTypes.Contains(SymbolMatch.MetadataName(holder)):
+                return SymbolMatch.MetadataName(holder) == "System.Linq.Enumerable" || ReadStatics.Contains(call.TargetMethod.Name);
+            case IArgumentOperation { Parameter.RefKind: RefKind.None, Parent: IInvocationOperation { TargetMethod: { IsStatic: true, Name: "Join" or "Concat", ContainingType.SpecialType: SpecialType.System_String } } }:
+                return true;
+            case IPropertyReferenceOperation property when ReferenceEquals(property.Instance, current):
+                return ReadMembers.Contains(property.Property.MetadataName) && !SymbolKeys.InSource(property.Property) && !IsWritten(property);
             case IArrayElementReferenceOperation element when ReferenceEquals(element.ArrayReference, current):
-                return IsWritten(element);
+                return !IsWritten(element);
+            case IForEachLoopOperation loop when ReferenceEquals(loop.Collection, current):
+                return true;
+            case INameOfOperation:
+                return true;
             default:
-                return IsWritten(current);
+                return false;
         }
     }
 
+    /// A write of an element (an assignment, an increment, a `ref` or `out` argument) or a `ref` taken to it.
     private static bool IsWritten(IOperation target)
     {
+        if (target.Syntax.Parent is RefExpressionSyntax) return true;
         var parent = target.Parent;
         while (parent is ITupleOperation or IConversionOperation) parent = parent.Parent;
         return parent switch
         {
             IAssignmentOperation assignment => ReferenceEquals(assignment.Target, target) || assignment is IDeconstructionAssignmentOperation,
             IIncrementOrDecrementOperation => true,
-            IArgumentOperation argument => argument.Parameter?.RefKind is RefKind.Ref or RefKind.Out,
+            IArgumentOperation argument => argument.Parameter?.RefKind is not RefKind.None,
             _ => false,
         };
     }
 
+    /// .NET's own collection: an array, or a type of System.Collections.Generic, Frozen or Immutable declared in metadata.
+    private static bool IsNetCollection(ITypeSymbol type)
+    {
+        if (type is IArrayTypeSymbol) return true;
+        if (type is not INamedTypeSymbol named || SymbolKeys.InSource(named)) return false;
+        var name = SymbolMatch.MetadataName(named);
+        return CollectionNamespaces.Any(n => name.StartsWith(n, StringComparison.Ordinal));
+    }
+
     /// A collection of constants written in place: an array (also an initializer alone), a collection expression, or a
-    /// `new` whose arguments are comparers or constants and whose initializer holds constant elements, Add calls of
-    /// constants or indexer assignments of constants.
+    /// `new` of .NET's own collection whose arguments are constants or .NET's own comparers and whose initializer holds
+    /// constant elements, Add calls of constants or indexer assignments of constants.
     internal static bool IsLiteralCollection(IOperation? op)
     {
         switch (Unwrap(op))
@@ -193,8 +168,8 @@ internal sealed class AllowLists
             case ICollectionExpressionOperation collection:
                 return collection.Elements.All(Constant);
             case IObjectCreationOperation creation:
-                if (creation.Type is not { } type || !IsCollection(type)) return false;
-                if (!creation.Arguments.All(a => Constant(a.Value) || IsComparer(Unwrap(a.Value)?.Type))) return false;
+                if (creation.Type is not { } type || !IsNetCollection(type)) return false;
+                if (!creation.Arguments.All(a => Constant(a.Value) || IsNetComparer(Unwrap(a.Value)))) return false;
                 return creation.Initializer == null || creation.Initializer.Initializers.All(i => i switch
                 {
                     IInvocationOperation add => add.Arguments.All(a => Constant(a.Value)),
@@ -209,15 +184,22 @@ internal sealed class AllowLists
 
     private static bool Constant(IOperation? op) => op != null && (op.ConstantValue.HasValue || (Unwrap(op)?.ConstantValue.HasValue ?? false));
 
-    private static bool IsCollection(ITypeSymbol type) =>
-        type.AllInterfaces.Any(i => i.SpecialType == SpecialType.System_Collections_IEnumerable);
-
-    private static bool IsComparer(ITypeSymbol? type)
+    /// One of .NET's own comparers (StringComparer.Ordinal, EqualityComparer<T>.Default, ...): a value of a type declared
+    /// in metadata that is an equality comparer or a comparer.
+    internal static bool IsNetComparer(IOperation? op)
     {
-        if (type == null) return false;
+        if (op?.Type is not { } type || SymbolKeys.InSource(type)) return false;
         static bool Named(ITypeSymbol t) => SymbolMatch.MetadataName(t) is "System.Collections.Generic.IEqualityComparer`1" or "System.Collections.Generic.IComparer`1"
             or "System.Collections.IEqualityComparer" or "System.Collections.IComparer";
-        return Named(type) || type.AllInterfaces.Any(Named);
+        if (!Named(type) && !type.AllInterfaces.Any(Named)) return false;
+        // A value typed by the interface may be anything: only a member of .NET's own types gives one of its comparers.
+        return op switch
+        {
+            IPropertyReferenceOperation p => !SymbolKeys.InSource(p.Property),
+            IFieldReferenceOperation f => !SymbolKeys.InSource(f.Field),
+            IInvocationOperation i => !SymbolKeys.InSource(i.TargetMethod),
+            _ => false,
+        };
     }
 
     private static IOperation? Unwrap(IOperation? op)

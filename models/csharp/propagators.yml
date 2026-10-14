@@ -81,15 +81,18 @@ propagators:
   # (ordinal 0) reaches the result's scheme, host and path.
   - method: Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString
     from: [0]
-  # URLs generated from routes on this site (UrlHelperExtensions.Action, Page and RouteUrl): the route values and names
-  # are encoded into a path of this application; only a protocol and a host given to them (Action and Page: ordinals 4
-  # and 5, RouteUrl: 3 and 4, an extension's `this` being 0) make an absolute URL elsewhere.
+  # URLs generated from routes on this site (UrlHelperExtensions.Action, Page and RouteUrl): the action, controller, page
+  # and route names and the route values are encoded into a path of this application. A protocol and a host given to
+  # them make an absolute URL elsewhere, and the fragment is appended as it is (not encoded): those reach the result.
+  # In every overload (learn.microsoft.com: microsoft.aspnetcore.mvc.urlhelperextensions; an extension's `this` is 0)
+  # Action and Page take protocol, host and fragment at ordinals 4, 5 and 6, RouteUrl at 3, 4 and 5; the overloads
+  # with fewer parameters stop before them (a test checks the names against the reference assemblies).
   - method: Microsoft.AspNetCore.Mvc.UrlHelperExtensions.Action
-    from: [4, 5]
+    from: [4, 5, 6]
   - method: Microsoft.AspNetCore.Mvc.UrlHelperExtensions.Page
-    from: [4, 5]
+    from: [4, 5, 6]
   - method: Microsoft.AspNetCore.Mvc.UrlHelperExtensions.RouteUrl
-    from: [3, 4]
+    from: [3, 4, 5]
   # Request collections and their values. Element reads (ruling R-E9): the element of a tainted collection, and
   # the element found by a tainted key (OpenGrep's taint passes through a lookup by its key; a table of literals that
   # no code changes is an allow-list: models/README.md "Allow-lists"), so TryGetValue's out value comes from the

@@ -144,30 +144,42 @@ two successors the state as the condition leaves it on that branch.
   string, `Path.DirectorySeparatorChar` and `Path.AltDirectorySeparatorChar` as `/`, any other value as U+FFFC.
 - `clean-when: not-null`: where a null check (`x != null`, `x == null`, `x is null`, `x is not null`) says that a local
   x is not null, and x is assigned once in the body, from the (awaited) result of a call of the guard's member, that
-  call's argument `arg` is clean for the rule.
+  call's argument `arg` is clean for the rule, when it is a local or a parameter assigned nowhere after the call.
 
 The engine's own guard, for every rule: where a value is equal to a constant (`x == c`, `x != c` on its false branch,
 `x.Equals(c)`, `string.Equals(x, c, ...)`, `x is c`, `x is c1 or c2`; `c` a literal, a `const` or `null`), the local or
 parameter x is that constant: clean for every rule (`if (dir != "ASC" && dir != "DESC") return;` leaves dir clean).
+Only for a string, char, number, bool or enum (or Nullable of one), with the built-in `==` (or System.String's) and
+System.String's or a primitive's `Equals`: a user-defined `==` or an overridden `Equals` may compare anything and is no
+guard (ruling R-E13).
 
 ### Allow-lists
 
 `allow-list: literal-tables` (the shared C# allow-lists of the OpenGrep rules) makes these clean for the rule:
 
-- a **table** is a `static readonly` field declared in source whose initializer is a collection of constants written
-  in place: an array (`{ "eu", "us" }`, `new[] { ... }`), a collection expression, or a `new` of a collection type
-  whose constructor arguments are comparers or constants and whose initializer holds constants (`{ "ASC", "DESC" }`,
-  `{ ["name"] = "name" }`, `{ { "a", "b" } }`); its elements may be literals or `const`s, verbatim or not. A table is
-  no table when any code of its compilation changes it: an Add, TryAdd, AddRange, Insert, InsertRange, UnionWith,
-  SymmetricExceptWith, Push, Enqueue, AddOrUpdate or GetOrAdd call on it, a write of an element or of the field, a
-  `ref` or `out` argument. A private field is looked for in its class's files, any other in every file of its project;
-  a field of another project is no table. (A table passed to a method that changes it, or reached through an alias,
-  is not followed: a known false negative.)
+- a **table** is a `static readonly` field declared in source that no other assembly can reach (it, or a type that
+  holds it, is private or internal), of .NET's own collection type (an array, or a type of System.Collections.Generic,
+  System.Collections.Frozen or System.Collections.Immutable: not a project's subclass, whose Contains may mean
+  something else; not a concurrent collection), whose initializer is a collection of constants written in place: an
+  array (`{ "eu", "us" }`, `new[] { ... }`), a collection expression, or a `new` of such a type whose constructor
+  arguments are constants or .NET's own comparers (`StringComparer.OrdinalIgnoreCase`) and whose initializer holds
+  constants (`{ "ASC", "DESC" }`, `{ ["name"] = "name" }`, `{ { "a", "b" } }`); its elements may be literals or
+  `const`s, verbatim or not.
+- and **every use** of the field in its class's files (a private field) or its project's files is a known read: the
+  receiver of a member of .NET's collections that only reads (Contains, ContainsKey, ContainsValue, TryGetValue,
+  GetValueOrDefault, IndexOf, BinarySearch, Exists, Find*, TrueForAll, GetEnumerator, ToArray, ToList, the set
+  comparisons, Count, Length, Keys, Values, an indexer or element read that is not written or taken by `ref`),
+  argument 0 of System.Linq.Enumerable's methods, of Array.IndexOf/LastIndexOf/BinarySearch/Exists/Find*/TrueForAll,
+  of CollectionExtensions.GetValueOrDefault, an argument of string.Join or Concat, a `foreach` collection, `nameof`.
+  Any other use (assigned to a variable or a field, passed to another method, cast, `AsSpan()`, written, `ref` or
+  `out`) may change it, and the field is no table (ruling of the Task 11 review, I2). A field of another project is no
+  table.
 - **lookups**: an element read by the table's indexer; `GetValueOrDefault(key)` and `GetValueOrDefault(key, d)` (the
   value of `d` itself still counts); the `out` value of `TryGetValue`.
 - **membership**: where `T.Contains(x)` or `T.ContainsKey(x)` holds (the extension method, also called as a static
-  `Enumerable.Contains(T, x)`, and on the table's `Keys` or `Values`), x is clean, as a guard (above): the branch of an
-  `if`, the code after `if (!T.Contains(x)) return/throw ...;`, a ternary `T.Contains(x) ? x : "fallback"`.
+  `Enumerable.Contains(T, x)`, and on the table's `Keys` or `Values`; a comparer given to it must be one of .NET's
+  own), x is clean, as a guard (above): the branch of an `if`, the code after `if (!T.Contains(x)) return/throw ...;`,
+  a ternary `T.Contains(x) ? x : "fallback"`.
 
 ### Conditional sinks (`when:`)
 

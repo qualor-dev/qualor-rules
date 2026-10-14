@@ -1043,6 +1043,7 @@ internal sealed partial class MethodAnalyzer
         }
         if (n < inputs.Length) Array.Resize(ref inputs, n);
         if (_ctx.Sinks.HasStringSanitizers && method is { Name: "Format", ContainingType.SpecialType: SpecialType.System_String }) FormatPlaced(inputs);
+        if (method != null) GuardArguments(method, inputs);
         HigherOrder(inputs, instanceValue, state);
 
         var all = JoinInputs(inputs);
