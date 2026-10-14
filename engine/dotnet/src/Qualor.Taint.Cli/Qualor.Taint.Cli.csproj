@@ -4,6 +4,9 @@
     <RootNamespace>Qualor.Taint.Cli</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Qualor.Taint.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\Qualor.Taint\Qualor.Taint.csproj" />
   </ItemGroup>
 </Project>

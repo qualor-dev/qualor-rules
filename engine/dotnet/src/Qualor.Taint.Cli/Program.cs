@@ -22,6 +22,9 @@ public static class Program
     public const int DefaultTimeLimitSeconds = 600;
     public const int DefaultMemoryLimitMb = 4096;
 
+    /// Test hook: called after the arguments are accepted, before the command runs (an exception thrown here is a crash).
+    internal static Action? BeforeCommand { get; set; }
+
     public static int Main(string[] args) => Run(args, Console.Error);
 
     public static int Run(string[] args, TextWriter log)
@@ -31,6 +34,7 @@ public static class Program
             if (args.Length == 0 || args[0] is not ("rebuild" or "analyze")) return Invalid(log, "unknown or missing command");
             var options = ParseOptions(args, out var problem);
             if (problem != null) return Invalid(log, problem);
+            BeforeCommand?.Invoke();
             return args[0] == "rebuild" ? Rebuild(options, log) : Analyze(options, log);
         }
         catch (Exception e) when (e is not OutOfMemoryException)

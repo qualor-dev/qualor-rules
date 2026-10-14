@@ -106,8 +106,11 @@ public static class SarifWriter
                 w.WriteStartArray("locations");
                 foreach (var step in f.Path)
                 {
+                    // a threadFlowLocation: the location sits under its "location" property
                     w.WriteStartObject();
+                    w.WriteStartObject("location");
                     WriteLocationBody(w, mapper, step.Span, null, step.Message);
+                    w.WriteEndObject();
                     w.WriteEndObject();
                 }
                 w.WriteEndArray();

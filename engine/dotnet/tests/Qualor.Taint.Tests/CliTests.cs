@@ -126,19 +126,22 @@ public sealed class CliTests : TempDirs
 
     /// A one-project inputs directory whose view sits at `<root>\Views\Profile\Show.cshtml` (the path form the build
     /// recorded, with this OS's separators), the Razor view written as its generated C#.
-    private (string Inputs, string Root) AppInputs()
+    private (string Inputs, string Root) AppInputs(string? extra = null)
     {
         var root = TempDir();
         var cshtml = Path.Combine(root, "Views", "Profile", "Show.cshtml");
         var src = Path.Combine(root, "obj", "Views_Profile_Show_cshtml.g.cs");
         Directory.CreateDirectory(Path.GetDirectoryName(src)!);
         File.WriteAllText(src, AppCode.Replace("@CSHTML@", cshtml), new UTF8Encoding(false));
+        var extraPath = Path.Combine(root, "Tls.cs");
+        if (extra != null) File.WriteAllText(extraPath, extra, new UTF8Encoding(false));
         var usings = Path.Combine(root, "obj", "GlobalUsings.g.cs");
         File.WriteAllText(usings, FixtureRunner.ImplicitUsings, new UTF8Encoding(false));
         var inputs = Path.Combine(root, "compilations");
         Directory.CreateDirectory(inputs);
         var lines = new List<string> { "qualor-compilation=1", "project=" + Path.Combine(root, "App.csproj"), "tfm=net8.0", "assembly=App",
             "output-kind=Library", "source=" + src, "source=" + usings };
+        if (extra != null) lines.Add("source=" + extraPath);
         lines.AddRange(FixtureReferences.All.Select(r => "reference=" + ((PortableExecutableReference)r).FilePath));
         File.WriteAllText(Path.Combine(inputs, "app.txt"), string.Join("\n", lines) + "\n", new UTF8Encoding(false));
         return (inputs, root);
@@ -178,9 +181,15 @@ public sealed class CliTests : TempDirs
         Assert.Equal(3, location.GetProperty("region").GetProperty("startLine").GetInt32());
         var flow = result.GetProperty("codeFlows")[0].GetProperty("threadFlows")[0].GetProperty("locations").EnumerateArray().ToList();
         Assert.True(flow.Count >= 2);
-        Assert.Equal("obj/Views_Profile_Show_cshtml.g.cs", flow[0].GetProperty("physicalLocation").GetProperty("artifactLocation").GetProperty("uri").GetString());
-        Assert.Equal("Views/Profile/Show.cshtml", flow[^1].GetProperty("physicalLocation").GetProperty("artifactLocation").GetProperty("uri").GetString());
-        Assert.All(flow, l => Assert.False(string.IsNullOrEmpty(l.GetProperty("message").GetProperty("text").GetString())));
+        // SARIF 2.1.0: a threadFlowLocation holds its location (physicalLocation, message) under "location".
+        Assert.All(flow, l =>
+        {
+            Assert.Equal(new[] { "location" }, l.EnumerateObject().Select(p => p.Name).ToArray());
+            Assert.Equal(new[] { "message", "physicalLocation" }, l.GetProperty("location").EnumerateObject().Select(p => p.Name).OrderBy(x => x, StringComparer.Ordinal).ToArray());
+            Assert.False(string.IsNullOrEmpty(l.GetProperty("location").GetProperty("message").GetProperty("text").GetString()));
+        });
+        Assert.Equal("obj/Views_Profile_Show_cshtml.g.cs", flow[0].GetProperty("location").GetProperty("physicalLocation").GetProperty("artifactLocation").GetProperty("uri").GetString());
+        Assert.Equal("Views/Profile/Show.cshtml", flow[^1].GetProperty("location").GetProperty("physicalLocation").GetProperty("artifactLocation").GetProperty("uri").GetString());
 
         var invocation = run.GetProperty("invocations")[0];
         Assert.True(invocation.GetProperty("executionSuccessful").GetBoolean());
@@ -211,6 +220,67 @@ public sealed class CliTests : TempDirs
         Assert.False(artifact.TryGetProperty("uriBaseId", out _));
         var notes = run.GetProperty("invocations")[0].GetProperty("toolExecutionNotifications").EnumerateArray().Select(n => n.GetProperty("message").GetProperty("text").GetString());
         Assert.Contains(notes, n => n!.Contains("outside --root"));
+    }
+
+    [Fact]
+    public void A_misuse_finding_says_insecure_configuration_not_request_data()
+    {
+        var (inputs, root) = AppInputs("""
+            public class Tls
+            {
+                public void M()
+                {
+                    var h = new System.Net.Http.HttpClientHandler();
+                    h.ServerCertificateCustomValidationCallback = System.Net.Http.HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+                }
+            }
+            """);
+        var sarif = Path.Combine(root, "r.sarif");
+
+        Assert.Equal(0, Qualor.Taint.Cli.Program.Run(
+            new[] { "analyze", "--inputs", inputs, "--models", Models, "--sarif", sarif, "--root", root }, TextWriter.Null));
+
+        using var doc = ReadSarif(sarif);
+        var result = doc.RootElement.GetProperty("runs")[0].GetProperty("results").EnumerateArray()
+            .Single(r => r.GetProperty("ruleId").GetString() == "csharp.tls-verification-disabled");
+        var text = result.GetProperty("message").GetProperty("text").GetString()!;
+        Assert.Equal("csharp.tls-verification-disabled: insecure configuration (tls-verification-disabled)", text);
+        Assert.DoesNotContain("request data", text);
+        Assert.Equal("Tls.cs", result.GetProperty("locations")[0].GetProperty("physicalLocation").GetProperty("artifactLocation").GetProperty("uri").GetString());
+    }
+
+    [Fact]
+    public void A_crash_exits_1_with_the_exception_on_stderr()
+    {
+        var (inputs, root) = AppInputs();
+        var log = new StringWriter();
+        Qualor.Taint.Cli.Program.BeforeCommand = () => throw new InvalidOperationException("boom from the hook");
+        try
+        {
+            Assert.Equal(1, Qualor.Taint.Cli.Program.Run(
+                new[] { "analyze", "--inputs", inputs, "--models", Models, "--sarif", Path.Combine(root, "r.sarif") }, log));
+        }
+        finally { Qualor.Taint.Cli.Program.BeforeCommand = null; }
+        Assert.Contains("crash:", log.ToString());
+        Assert.Contains("boom from the hook", log.ToString());
+    }
+
+    [Theory]
+    [InlineData("/work/repo", @"C:\repo\x.cs", "file:///C:/repo/x.cs", false)]               // Windows-recorded path, posix root
+    [InlineData(@"C:\repo", "/work/repo/a.cs", "file:///work/repo/a.cs", false)]              // posix-recorded path, Windows root
+    [InlineData(@"C:\repo", @"c:\REPO\Views\a b.cshtml", "Views/a%20b.cshtml", true)]       // drive root: case-insensitive
+    [InlineData("/work/repo", "/work/repo/Views/a.cshtml", "Views/a.cshtml", true)]
+    [InlineData("/work/repo", "/work/Repo/a.cs", "file:///work/Repo/a.cs", false)]             // posix root: case-sensitive
+    [InlineData("/work/repo", "/work/repository/a.cs", "file:///work/repository/a.cs", false)] // a sibling with the root as prefix
+    public void Paths_are_relative_under_the_root_and_absolute_file_uris_with_a_note_otherwise(string root, string path, string uri, bool relative)
+    {
+        var mapper = new Qualor.Taint.Cli.Output.SarifWriter.PathMapper(root);
+
+        var (actual, isRelative) = mapper.Map(path);
+
+        Assert.Equal(uri, actual);
+        Assert.Equal(relative, isRelative);
+        Assert.Equal(relative ? 0 : 1, mapper.Outside.Count);
     }
 
     [Fact]
