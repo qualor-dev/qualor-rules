@@ -276,7 +276,9 @@ internal sealed class EntryPoints
             (ViewComponentBase, "View") => Kind.ComponentView,
             ("Microsoft.AspNetCore.Mvc.Rendering.HtmlHelperPartialExtensions" or "Microsoft.AspNetCore.Mvc.Rendering.IHtmlHelper",
                 "Partial" or "PartialAsync" or "RenderPartial" or "RenderPartialAsync") => Kind.Partial,
-            ("Microsoft.AspNetCore.Mvc.IViewComponentHelper" or "Microsoft.AspNetCore.Mvc.ViewComponentHelperExtensions", "InvokeAsync") => Kind.Component,
+            // The helper's own InvokeAsync(name or type, arguments) and the extensions without arguments (Task 22: the
+            // extensions are in the Rendering namespace).
+            ("Microsoft.AspNetCore.Mvc.IViewComponentHelper" or "Microsoft.AspNetCore.Mvc.Rendering.ViewComponentHelperExtensions", "InvokeAsync") => Kind.Component,
             _ => null,
         };
         if (kind == null) return;

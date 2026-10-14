@@ -8,10 +8,12 @@
 # HTML-encoded, an IHtmlContent is written as it is), an attribute value `title="@expr"` is `WriteAttributeValue(...)`
 # (encoded), and markup is `WriteLiteral("...")` (written as it is). So the raw output is an IHtmlContent made from a
 # string, `@Html.Raw(expr)` or `new HtmlString(expr)` (sinks below), or a WriteLiteral call written in a code block;
-# Write and WriteAttributeValue are not sinks. Model data reaches a view through the view model's properties (the
-# field-based heap: `model.Bio = q` in a controller taints every read of `Bio`, also `Model.Bio` in the view) or a page's
-# bound properties (sources.yml). Not followed: ViewData/ViewBag entries (the controller's and the view's dictionaries
-# are different objects), and Blazor components (.razor; MarkupString is out of scope, spec §9).
+# Write and WriteAttributeValue are not sinks. Request data reaches a view through the view model's properties (the
+# request-scoped heap: `model.Bio = q` in an action is request data in `Model.Bio` of the views it renders), the view
+# model itself (`View(list)` and `@foreach (var x in Model)`), ViewData and ViewBag entries (keyed heap locations of the
+# request), or a page's bound properties (sources.yml); models/README.md "Known limits". `@Html.Raw(ViewBag.K)` is a call
+# bound at run time: the engine checks the sinks of its candidates (Raw). Not followed: TempData (another request), and
+# Blazor components (.razor; MarkupString is out of scope, spec §9).
 #
 # Sources (learn.microsoft.com): dotnet/api/microsoft.aspnetcore.http.results.content, .results.text,
 # microsoft.aspnetcore.http.typedresults, microsoft.aspnetcore.mvc.controllerbase.content,

@@ -456,6 +456,21 @@ internal sealed partial class MethodAnalyzer
                 return value;
             }
 
+            case IDynamicMemberReferenceOperation member when KeyedStores.IsViewBag(member.Instance):
+                Value(member.Instance, state);
+                return Keyed(KeyedStores.ViewBagLocation(member.MemberName), member);
+            case IDynamicInvocationOperation dynamic:
+            {
+                // A call bound at run time (an argument is dynamic: `Html.Raw(ViewBag.K)`): the join of its parts, the
+                // sinks of its candidate members (Task 22), and every member fact ends (fix round 1 of Task 21, M2).
+                var value = Value(dynamic.Operation, state);
+                var arguments = new TaintValue[dynamic.Arguments.Length];
+                for (var k = 0; k < arguments.Length; k++) value = value.Join(arguments[k] = Value(dynamic.Arguments[k], state));
+                DynamicSinks(dynamic, arguments);
+                state.ForgetAll();
+                return value;
+            }
+
             case IReturnOperation ret:
             {
                 var value = Value(ret.ReturnedValue, state);
@@ -737,6 +752,11 @@ internal sealed partial class MethodAnalyzer
             case IConversionOperation conversion:
                 Assign(conversion.Operand, value, state, assignment);
                 break;
+            case IDynamicMemberReferenceOperation member when KeyedStores.IsViewBag(member.Instance):
+                // `ViewBag.K = v` sets the ViewData entry K (Task 22); it runs no code of the application.
+                Value(member.Instance, state);
+                _body.KeyedWrite(KeyedStores.ViewBagLocation(member.MemberName), Named(value, assignment, "ViewBag." + member.MemberName));
+                break;
             default:
                 // A target the engine does not follow (a dynamic member, an event): what it changes is unknown.
                 state.ForgetAll();
@@ -849,6 +869,104 @@ internal sealed partial class MethodAnalyzer
     private static IOperation? ThisOperation(IInvocationOperation invocation) =>
         invocation.Instance ?? (invocation.TargetMethod.IsExtensionMethod && invocation.Arguments.Length > 0 ? invocation.Arguments[0].Value : null);
 
+    // ---- Keyed request stores (Task 22) ----
+
+    /// The request data of a keyed store entry for this body, with a path step at the read.
+    private TaintValue Keyed(KeyedLocation location, IOperation read)
+    {
+        var value = _body.KeyedRead(location);
+        return value.Any ? value.Step(read.Syntax.GetLocation(), $"read from {Describe(location)}") : value;
+    }
+
+    /// A callee that gives a type-parameter-typed parameter to a view as its model (KeyedLocation.Generic in its summary):
+    /// the argument is written as the view model under the argument's own static type.
+    private void GenericModels(BodySummary summary, Body callee, IOperation site, string name, Input[] inputs)
+    {
+        if (!summary.Heap.TryGetValue(KeyedLocation.Generic, out var entry)) return;
+        foreach (var label in entry.Value.Labels)
+        {
+            if (label.Owner != callee.Id) continue;
+            foreach (var i in inputs)
+            {
+                if (i.Ordinal != label.Slot || i.RefKind == RefKind.Out || !i.Value.Any) continue;
+                var value = i.Value.Step(site.Syntax.GetLocation(), $"passed to {name}").Extend(label.Path).CleanedFor(label.CleanFor);
+                if (!value.Any) continue;
+                foreach (var model in KeyedStores.ModelWrites(StaticType(i.Operation))) _body.KeyedWrite(model, value);
+            }
+        }
+    }
+
+    /// The static type of a value before its implicit conversions (a model given to `View(object model)`).
+    private static ITypeSymbol? StaticType(IOperation? operation)
+    {
+        while (operation is IConversionOperation { IsImplicit: true, Operand: { } inner }) operation = inner;
+        return operation?.Type;
+    }
+
+    private static string Describe(KeyedLocation location) => location.Store switch
+    {
+        KeyedStore.ViewData => location.Key == null ? "ViewData (a key built at run time)" : $"ViewData[\"{location.Key}\"]",
+        KeyedStore.Items => location.Key == null ? "HttpContext.Items (a key built at run time)" : $"HttpContext.Items[\"{location.Key}\"]",
+        _ => "the view's model",
+    };
+
+    /// The keyed-store effects of a call: the model a view is rendered with (`View(model)`, `PartialView(model)`, a view
+    /// component's `View(model)`, `Html.Partial*(name, model)`) is the view model; a dictionary method of ViewData or
+    /// HttpContext.Items (`Add`, `TryAdd`: the value is written under the key; `TryGetValue`: the entry reaches the out
+    /// value, joined after the call has overwritten it).
+    private void KeyedCall(IOperation operation, IMethodSymbol method, IOperation? instance, Input[] inputs, TaintState state)
+    {
+        var model = KeyedStores.ModelParameter(method);
+        if (model >= 0)
+        {
+            foreach (var i in inputs)
+            {
+                if (i.Ordinal != model || !i.Value.Any) continue;
+                var named = Named(i.Value, operation, "the view's model");
+                foreach (var entry in KeyedStores.ModelWrites(StaticType(i.Operation))) _body.KeyedWrite(entry, named);
+            }
+            return;
+        }
+        if (KeyedStores.MethodStore(method, instance) is not { } store) return;
+        IOperation? key = null;
+        foreach (var i in inputs) if (i.Ordinal == 0) key = i.Operation;
+        var location = KeyedStores.Location(store, key);
+        foreach (var i in inputs)
+        {
+            if (i.Ordinal != 1) continue;
+            if (method.Name == "TryGetValue")
+            {
+                if (i.RefKind == RefKind.Out && Keyed(location, operation) is { Any: true } read) Assign(i.Operation, Value(i.Operation, state).Join(read), state, operation);
+            }
+            else if (i.Value.Any)
+            {
+                _body.KeyedWrite(location, Named(i.Value, operation, Describe(location)));
+            }
+        }
+    }
+
+    /// The sinks of a call bound at run time: Roslyn's candidate members of the call (late bound) whose sink argument at
+    /// the same position is given request data. Only unconditional sinks (a `when:` condition reads the call's own
+    /// operation tree); an argument passed by name is not matched.
+    private void DynamicSinks(IDynamicInvocationOperation operation, TaintValue[] arguments)
+    {
+        if (!Array.Exists(arguments, a => a.Any)) return;
+        var candidates = Model()?.GetSymbolInfo(operation.Syntax).CandidateSymbols ?? ImmutableArray<ISymbol>.Empty;
+        foreach (var candidate in candidates.OfType<IMethodSymbol>())
+        {
+            foreach (var hit in _ctx.Sinks.Sinks(candidate, Access.Call))
+            {
+                if (hit.Sink.When.Count > 0) continue;
+                for (var k = 0; k < arguments.Length; k++)
+                {
+                    if (!arguments[k].Any || operation.GetArgumentName(k) != null) continue;
+                    if (k < candidate.Parameters.Length && SinkFinder.IsSinkArgument(hit.Sink, candidate.Parameters[k]))
+                        SinkReached(hit.RuleId, operation.Arguments[k].Syntax, arguments[k], candidate);
+                }
+            }
+        }
+    }
+
     // ---- Sinks ----
 
     /// A value reaches a sink: its request data is a finding, each label tainted for the rule a sink of its body.
@@ -928,6 +1046,11 @@ internal sealed partial class MethodAnalyzer
         {
             result = result.Join(ExternalRead(property, operation, receiver, IndexInputs(operation, state, null)));
         }
+        // A keyed request store entry (ViewData, HttpContext.Items) or the view's model (Task 22).
+        if (KeyedStores.IndexerStore(operation) is { } store)
+            result = result.Join(Keyed(KeyedStores.Location(store, operation.Arguments[0].Value), operation));
+        else if (KeyedStores.IsViewModel(property))
+            result = result.Join(Keyed(KeyedStores.ModelRead(operation.Type), operation));
         // An element of an allow-list table is one of its constants (`allow-list: literal-tables`).
         if (property.IsIndexer && result.Any && _ctx.Sinks.AllowListRules.Length > 0 && _ctx.AllowLists.IsTable(operation.Instance, Model()?.Compilation))
             result = result.CleanedFor(_ctx.Sinks.AllowListRules);
@@ -979,6 +1102,17 @@ internal sealed partial class MethodAnalyzer
         var property = operation.Property;
         var receiver = Value(operation.Instance, state);
         var inputs = IndexInputs(operation, state, (value, assignment));
+        if (KeyedStores.IndexerStore(operation) is { } store)
+        {
+            var location = KeyedStores.Location(store, operation.Arguments[0].Value);
+            _body.KeyedWrite(location, Named(value, assignment, Describe(location)));
+        }
+        else if (KeyedStores.IsPartialModel(property) && value.Any)
+        {
+            var named = Named(value, assignment, "the partial view's model");
+            var model = assignment is ISimpleAssignmentOperation simple ? simple.Value : null;
+            foreach (var location in KeyedStores.ModelWrites(StaticType(model))) _body.KeyedWrite(location, named);
+        }
         // A setter other than an auto-property's runs code on its receiver: as a call given the receiver (Task 21).
         if (state.HasFacts && !(SymbolKeys.InSource(property) && _body.IsHeapMember(property))) ForgetForCall(operation.Instance, inputs, state);
         foreach (var hit in _ctx.Sinks.Sinks(property, Access.Set))
@@ -1142,6 +1276,7 @@ internal sealed partial class MethodAnalyzer
             && _ctx.AllowLists.IsTable(thisOperation, Model()?.Compilation))
             result = TableLookup(method, inputs, result, state);
 
+        KeyedCall(operation, method, instance, inputs, state);
         result = result.CleanedFor(_ctx.Sinks.Sanitizes(method, Access.Call));
         if (result.Any)
         {
@@ -1242,6 +1377,7 @@ internal sealed partial class MethodAnalyzer
             }
         }
         var s = callee.Summary;
+        if (!s.Heap.IsEmpty) GenericModels(s, callee, site, name, inputs);
         if (s.NoLocalEffects) return TaintValue.Clean;
         location ??= site.Syntax.GetLocation();
         var result = BodySummary.Substitute(s.Return, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach);

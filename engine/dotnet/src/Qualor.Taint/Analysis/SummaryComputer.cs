@@ -181,8 +181,8 @@ internal sealed class SummaryComputer
             if (!seen.Add((b.Id, k))) continue;
             foreach (var e in b.Summary.Sinks.Values)
                 if (e.Slot == k && !cleanFor.Contains(e.RuleId)) sinks.Add((e.RuleId, e.Site.GetLocation(), path.Concat(e.Path).ToList()));
-            foreach (var (member, v) in b.Summary.Heap.Values)
-                if (v.Labels.Any(l => l.Owner == b.Id && l.Slot == k) && !heap.Contains(member, SymbolEqualityComparer.Default)) heap.Add(member);
+            foreach (var (location, v) in b.Summary.Heap.Values)
+                if (location is ISymbol member && v.Labels.Any(l => l.Owner == b.Id && l.Slot == k) && !heap.Contains(member, SymbolEqualityComparer.Default)) heap.Add(member);
             foreach (var c in b.Summary.Calls.Values)
                 if (c.Slot == k) work.Push((c.Callee, c.CalleeSlot, path.Concat(c.Path), cleanFor.Union(c.CleanFor)));
         }
@@ -246,10 +246,10 @@ internal sealed class SummaryComputer
                 if (e.Slot != key.Slot || !value.TaintedFor(e.RuleId)) continue;
                 _ctx.Report(e.RuleId, e.Site, value.WitnessFor(_entries.Of(body)).Extend(e.Path), e.Member);
             }
-            foreach (var (member, symbolic) in summary.Heap.Values)
+            foreach (var (location, symbolic) in summary.Heap.Values)
             {
                 var written = BodySummary.Through(symbolic, body.Id, key.Slot, value);
-                if (written.Request) _heap.Write(member, written, _entries.WriteReach(body));
+                if (written.Request) _heap.Write(location, written, _entries.WriteReach(body));
             }
             foreach (var c in summary.Calls.Values)
                 if (c.Slot == key.Slot) Seed(c.Callee, c.CalleeSlot, value.Extend(c.Path).CleanedFor(c.CleanFor));
@@ -584,25 +584,45 @@ internal sealed class SummaryComputer
             return ReferenceEquals(widened, scope) ? value : value with { Scope = widened };
         }
 
+        /// The request data of a keyed store entry (ViewData, HttpContext.Items, the view model; Task 22), as HeapRead.
+        public TaintValue KeyedRead(KeyedLocation location)
+        {
+            var value = _computer._heap.Read(location, _unit, Reach);
+            if (value.Scope is not { } scope) return value;
+            var widened = _computer._entries.Widen(scope);
+            return ReferenceEquals(widened, scope) ? value : value with { Scope = widened };
+        }
+
         /// A write to a heap symbol: its request data to the heap, its labels to their owners' summaries.
         public void HeapWrite(ISymbol member, TaintValue value)
         {
             if (!value.Any || !IsHeapMember(member)) return;
+            Store(member, value);
+        }
+
+        /// A write to a keyed store entry, as HeapWrite.
+        public void KeyedWrite(KeyedLocation location, TaintValue value)
+        {
+            if (value.Any) Store(location, value);
+        }
+
+        private void Store(object location, TaintValue value)
+        {
             var heap = _computer._heap;
             if (value.Request)
             {
-                heap.Write(member, value, WriteReach);
-                _computer.Builder(_body.Id).RequestHeap.TryAdd(heap.Key(member), member);
+                heap.Write(location, value, WriteReach);
+                if (location is ISymbol member) _computer.Builder(_body.Id).RequestHeap.TryAdd(heap.Key(member), member);
             }
             if (value.Labels.Length == 0) return;
-            var key = heap.Key(member);
+            var key = heap.Key(location);
             var labels = value.LabelPart;
             int? last = null;
             foreach (var l in value.Labels)
             {
                 if (l.Owner == last || !Keeps(l.Owner)) continue;
                 last = l.Owner;
-                _computer.Builder(l.Owner).AddHeap(key, member, labels);
+                _computer.Builder(l.Owner).AddHeap(key, location, labels);
             }
         }
 

@@ -12,6 +12,11 @@ namespace Qualor.Taint;
 /// body's own; a body's summary records where its parameters reach the heap, and the call site writes what it
 /// substitutes for them, under the callee's Reach).
 ///
+/// Besides fields and properties, a location is an entry of a keyed request store (KeyedLocation, Task 22: ViewData and
+/// ViewBag, HttpContext.Items, the view model), scoped the same way. A constant key is its own location; a key that is not
+/// a constant writes the store's "any key" location, which a read of a constant key joins; a read whose key is not a
+/// constant joins every location of the store.
+///
 /// The heap grows during the run; each symbol records the units that read it (with their Reach), and a write that
 /// changes a symbol's value under some Reach (in the lattice, paths and source locations aside) makes the readers that
 /// share an entry point with it dirty: SummaryComputer analyses them again, so the run ends at the joint fixed point of
@@ -22,6 +27,7 @@ internal sealed class Heap
     private readonly Dictionary<object, HashSet<(Unit Unit, Reach Reach)>> _readers = new();
     private readonly HashSet<(object Key, Reach Writer)> _changed = new();
     private readonly Dictionary<ISymbol, bool> _members = new(SymbolEqualityComparer.Default);
+    private readonly Dictionary<KeyedStore, HashSet<KeyedLocation>> _stores = new();
     private readonly Dispatch _dispatch;
 
     public Heap(Dispatch dispatch) => _dispatch = dispatch;
@@ -60,14 +66,27 @@ internal sealed class Heap
         };
     }
 
-    public object Key(ISymbol member) => _dispatch.Key(SymbolKeys.Definition(member));
+    /// The key of a location: a member's by its definition (Dispatch), a keyed store entry itself.
+    public object Key(object location) => location is ISymbol member ? _dispatch.Key(SymbolKeys.Definition(member)) : location;
 
     /// The request data written to `member` so far under a Reach that shares an entry point with `reach` (the reading
     /// body's); `reader` is analysed again when that grows.
-    public TaintValue Read(ISymbol member, Unit reader, Reach reach)
+    public TaintValue Read(ISymbol member, Unit reader, Reach reach) => reach.IsEmpty ? TaintValue.Clean : ReadKey(Key(member), reader, reach);
+
+    /// The request data of a keyed store entry for a reader (as Read): a constant key's entry joined with the store's
+    /// "any key" entry; for a key that is not a constant, every entry of the store.
+    public TaintValue Read(KeyedLocation location, Unit reader, Reach reach)
     {
         if (reach.IsEmpty) return TaintValue.Clean;
-        var key = Key(member);
+        if (location.Key != null) return ReadKey(location, reader, reach).Join(ReadKey(location.Any, reader, reach));
+        var value = ReadKey(location.All, reader, reach);
+        if (_stores.TryGetValue(location.Store, out var entries))
+            foreach (var entry in entries) value = value.Join(ReadKey(entry, reader, reach));
+        return value;
+    }
+
+    private TaintValue ReadKey(object key, Unit reader, Reach reach)
+    {
         if (!_readers.TryGetValue(key, out var readers)) _readers[key] = readers = new HashSet<(Unit, Reach)>();
         readers.Add((reader, reach));
         if (!_values.TryGetValue(key, out var writes)) return TaintValue.Clean;
@@ -86,7 +105,7 @@ internal sealed class Heap
     /// Joins the request data of `value` into `member` under `writer` (the writing body's WriteReach), narrowed to the
     /// value's own Scope. A writer no entry point reaches (fix round 1, I1: a constructor or initializer the call graph
     /// cannot connect) writes data it did not read from the heap under that data's Scope, the requests it came from.
-    public void Write(ISymbol member, TaintValue value, Reach writer)
+    public void Write(object location, TaintValue value, Reach writer)
     {
         if (!value.Request) return;
         if (writer.IsEmpty)
@@ -103,11 +122,17 @@ internal sealed class Heap
             if (!narrowed.IsEmpty) writer = narrowed;
         }
         value = value.RequestPart.Narrowed(writer) with { FromHeap = false };
-        var key = Key(member);
+        var key = Key(location);
+        if (location is KeyedLocation keyed && (!_stores.TryGetValue(keyed.Store, out var entries) || !entries.Contains(keyed)))
+        {
+            // A new entry of a store: the readers of every entry (a key that is not a constant) read it too.
+            if (entries == null) _stores[keyed.Store] = entries = new HashSet<KeyedLocation>();
+            entries.Add(keyed);
+        }
         if (!_values.TryGetValue(key, out var writes))
         {
             _values[key] = new Writes(writer, value);
-            _changed.Add((key, writer));
+            Changed(key, writer);
             return;
         }
         TaintValue old;
@@ -115,14 +140,21 @@ internal sealed class Heap
         else if (writes.More == null || !writes.More.TryGetValue(writer, out old!))
         {
             (writes.More ??= new Dictionary<Reach, TaintValue>())[writer] = value;
-            _changed.Add((key, writer));
+            Changed(key, writer);
             return;
         }
         var joined = old.Join(value);
         if (ReferenceEquals(joined, old)) return;
         if (ReferenceEquals(writes.Writer, writer)) writes.Value = joined;
         else writes.More![writer] = joined;
-        if (!joined.SameFlow(old)) _changed.Add((key, writer));
+        if (!joined.SameFlow(old)) Changed(key, writer);
+    }
+
+    /// A location's value changed under `writer`: its readers, and for a store entry the readers of every entry.
+    private void Changed(object key, Reach writer)
+    {
+        _changed.Add((key, writer));
+        if (key is KeyedLocation keyed) _changed.Add((keyed.All, writer));
     }
 
     /// The writes of one heap symbol: the first writer's inline (most symbols have one), the others in More.

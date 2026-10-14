@@ -44,7 +44,8 @@ internal sealed record CallEffect(int Slot, Body Callee, int CalleeSlot, Immutab
 /// grow with what its callees do (a chain of N calls costs N edges, not N² copied sinks):
 /// - Sinks: the parameters that reach a sink in this body;
 /// - Calls: the parameters passed on to a callee's parameters;
-/// - Heap: the label part this body writes to each heap symbol (the request part goes to the Heap at once).
+/// - Heap: the label part this body writes to each heap location, a member or a keyed store entry (the request part goes
+///   to the Heap at once).
 internal sealed class BodySummary
 {
     public static readonly BodySummary Empty = new();
@@ -61,8 +62,8 @@ internal sealed class BodySummary
     public ImmutableDictionary<(int Slot, int Callee, int CalleeSlot), CallEffect> Calls { get; init; } =
         ImmutableDictionary<(int, int, int), CallEffect>.Empty;
 
-    public ImmutableDictionary<object, (ISymbol Member, TaintValue Value)> Heap { get; init; } =
-        ImmutableDictionary<object, (ISymbol, TaintValue)>.Empty;
+    public ImmutableDictionary<object, (object Location, TaintValue Value)> Heap { get; init; } =
+        ImmutableDictionary<object, (object, TaintValue)>.Empty;
 
     /// Heap symbols the body writes request data of its own to (for the public view).
     public ImmutableDictionary<object, ISymbol> RequestHeap { get; init; } = ImmutableDictionary<object, ISymbol>.Empty;
@@ -88,7 +89,7 @@ internal sealed class BodySummary
             else if (!old.CleanFor.IsSubsetOf(v.CleanFor)) calls = calls.SetItem(k, old with { CleanFor = old.CleanFor.Intersect(v.CleanFor) });
         }
         var heap = Heap;
-        foreach (var (k, v) in other.Heap) heap = heap.SetItem(k, heap.TryGetValue(k, out var old) ? (old.Member, old.Value.Join(v.Value)) : v);
+        foreach (var (k, v) in other.Heap) heap = heap.SetItem(k, heap.TryGetValue(k, out var old) ? (old.Location, old.Value.Join(v.Value)) : v);
         var requestHeap = RequestHeap;
         foreach (var (k, v) in other.RequestHeap) if (!requestHeap.ContainsKey(k)) requestHeap = requestHeap.Add(k, v);
         return new BodySummary
@@ -169,7 +170,7 @@ internal sealed class SummaryBuilder
     public readonly Dictionary<int, TaintValue> Refs = new();
     public readonly Dictionary<(int Slot, string Rule, SyntaxTree Tree, TextSpan Span), SinkEffect> Sinks = new();
     public readonly Dictionary<(int Slot, int Callee, int CalleeSlot), CallEffect> Calls = new();
-    public readonly Dictionary<object, (ISymbol Member, TaintValue Value)> Heap = new();
+    public readonly Dictionary<object, (object Location, TaintValue Value)> Heap = new();
     public readonly Dictionary<object, ISymbol> RequestHeap = new();
 
     public void AddSink(int slot, string rule, SyntaxNode site, ISymbol member, Trail path) =>
@@ -182,10 +183,10 @@ internal sealed class SummaryBuilder
         else if (!old.CleanFor.IsSubsetOf(cleanFor)) Calls[key] = old with { CleanFor = old.CleanFor.Intersect(cleanFor) };
     }
 
-    public void AddHeap(object key, ISymbol member, TaintValue labels)
+    public void AddHeap(object key, object location, TaintValue labels)
     {
         if (!labels.Any) return;
-        Heap[key] = Heap.TryGetValue(key, out var old) ? (old.Member, old.Value.Join(labels)) : (member, labels);
+        Heap[key] = Heap.TryGetValue(key, out var old) ? (old.Location, old.Value.Join(labels)) : (location, labels);
     }
 
     public BodySummary Build() => new()

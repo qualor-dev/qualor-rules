@@ -152,11 +152,23 @@ internal sealed class Dispatch
                 {
                     if (member is not IMethodSymbol m || !Equals(Key(m.OriginalDefinition), defKey)) continue;
                     var impl = type.FindImplementationForInterfaceMember(m) as IMethodSymbol ?? AccessorImplementation(type, m);
+                    // The interface map names the method that implements the member, possibly a base class's virtual or
+                    // abstract one; on this type its most derived override runs (Task 22).
+                    if (impl is { IsVirtual: true } or { IsAbstract: true } or { IsOverride: true } && impl.ContainingType.TypeKind != TypeKind.Interface)
+                        impl = Override(type, (IMethodSymbol)SymbolKeys.Definition(impl));
                     return impl is { IsAbstract: false } ? impl : null;
                 }
             }
             return null;
         }
+        return Override(type, def);
+    }
+
+    /// The most derived override of class method `def` (or `def` itself) up the base chain from `type`; null when it is
+    /// abstract there.
+    private IMethodSymbol? Override(INamedTypeSymbol type, IMethodSymbol def)
+    {
+        var defKey = Key(def);
         for (var t = type; t != null; t = t.BaseType)
         {
             foreach (var member in t.GetMembers(def.Name))

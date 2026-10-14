@@ -402,7 +402,19 @@ false positives (FP) or misses (FN) there.
   request themselves — whose request data and writes count in every request); an action reaches the view it renders
   (`View()`, `PartialView()`, `Page()`, resolved as MVC's conventional lookup does, areas included; a name chosen at run
   time reaches every view of the project and of the projects referencing it) and a view its partials, view components
-  and tag helpers. Data saved in one request and read in another
+  and tag helpers. Keyed request stores are heap locations scoped the same way (since Task 22): each `ViewData` entry
+  (`ViewData["k"]`, `Add`, `TryGetValue`; `ViewBag.K` is the entry "K"; keys compared without case), each
+  `HttpContext.Items` entry, and the view model (what `View(model)`, `PartialView(model)`, a view component's
+  `View(model)`, `Html.Partial*(name, model)` or `<partial model>` give, read as the view's `Model`, a list iterated in
+  the view included). A key that is not a constant writes the store's "any key" entry, which every read joins, and a read
+  with such a key joins every entry; a static property returning a string literal or a static readonly field initialised
+  with one counts as its constant. The view model is keyed by type: a model is written under its static type (generic
+  arguments included), its base classes and its interfaces, and a view reads its own model type, so a view of another
+  model type in the same request does not read it; an `object`/`dynamic` model is read by every view, an
+  `object`/`dynamic` view reads only such models (FN: a typed model in a `dynamic` view, covariant
+  `IEnumerable<Base>`), and a generic helper's type-parameter model is written at each call under the argument's type
+  (only callers analysed after the helper's summary has it: bottom-up order). A call bound at run time (`Html.Raw(ViewBag.K)`) reports the unconditional sinks of
+  its candidate members. `TempData` crosses requests and is not followed. Data saved in one request and read in another
   (settings, entities, stored XSS) is not followed (FN, as the OpenGrep rules). Within one request the heap stays
   field-based and the call graph context-insensitive with class-hierarchy dispatch: request data written to one object's
   member is request data in that member of every object of the type in the requests that reach the write (cache keys
@@ -422,8 +434,8 @@ false positives (FP) or misses (FN) there.
   builds it; a redirect to the request's own URL (scheme, host, path) is reported (FP).
 - `Enumerable.*` passes its source sequence to the result as well as a lambda's return: an encoder inside
   `Select(x => ...)` does not clean the result (FP).
-- Not followed (FN): `ViewData`, `ViewBag`, `TempData` and `HttpContext.Items` entries; a model passed to `View()` as the
-  view's `Model` (only its properties, through the heap); callbacks a framework or library makes into the project
+- Not followed (FN): `TempData` entries (another request); a layout reads none of an action's heap data (it is an entry
+  point of its own); a view model given as a model expression (`<partial for>`, editor and display templates); callbacks a framework or library makes into the project
   (static-file providers, tus stores); externals whose result is neither string-like nor a collection and that no
   propagator names (`IFileProvider.GetFileInfo` → `IFileInfo.PhysicalPath`, Fluid values); a Minimal API body object
   bound without `[FromBody]`; views that the build does not compile (ASP.NET Core 2.x runtime compilation).

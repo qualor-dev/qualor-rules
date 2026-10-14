@@ -351,6 +351,43 @@ public sealed class SummaryTests
         }
         """);
 
+    /// Task 22: an interface member implemented by a virtual (or abstract) method of a base class runs the derived class's
+    /// override (the interface map names the base's method; the override replaces it in the derived type).
+    [Fact]
+    public void An_interface_call_reaches_the_overrides_of_a_base_classes_virtual_implementation() => Expect("""
+        public interface IStep { string Run(string input); }
+        public abstract class StepBase : IStep
+        {
+            public virtual string Run(string input) => "none";
+        }
+        public abstract class Abstract : IStep
+        {
+            public abstract string Run(string input);
+        }
+        public class DeleteStep : StepBase
+        {
+            private readonly SqlConnection _c = new();
+            public override string Run(string input) { _c.Execute("DELETE FROM t WHERE n = '" + input + "'"); /*sink*/ return "done"; }
+        }
+        public class InsertStep : Abstract
+        {
+            private readonly SqlConnection _c = new();
+            public override string Run(string input) { _c.Execute("INSERT INTO t VALUES ('" + input + "')"); /*sink*/ return "done"; }
+        }
+        public class SealedStep : StepBase
+        {
+        }
+        public class StepsController : ControllerBase
+        {
+            private readonly List<IStep> _steps = new();
+            public IActionResult Go(string q)
+            {
+                foreach (var s in _steps) s.Run(q);
+                return Ok();
+            }
+        }
+        """);
+
     [Fact]
     public void An_explicit_interface_implementation_and_an_extension_method_in_source_are_followed() => Expect("""
         public interface IStore { int Delete(string name); }
