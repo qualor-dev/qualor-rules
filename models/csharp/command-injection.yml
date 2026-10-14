@@ -117,11 +117,15 @@ sinks:
   # - pwsh, powershell (about_pwsh, about_powershell_exe): `-Command`/`-c`, `-File`/`-f`, `-CommandWithArgs`/`-cwa` run
   #   their value, except the value `-`, which reads the commands from standard input; `-EncodedCommand`/`-e`/`-ec` runs
   #   its value; a value with no parameter name is a script (`-File` is the default parameter). The values of the
-  #   value-taking parameters (`-ExecutionPolicy Bypass`, `-WindowStyle Hidden`, ...) are no script. With `-NoExit` the
-  #   session keeps reading after its command.
+  #   value-taking parameters (`-ExecutionPolicy Bypass`, `-WindowStyle Hidden`, `-PSConsoleFile f`, `-EncodedArguments
+  #   a`, ...; a double-quoted value with spaces is one value) are no script. Parameter names are case-insensitive and may
+  #   be shortened to a prefix that names one parameter (`-exec`, `-nop`); powershell.exe also takes `/` before a
+  #   parameter (`/NoProfile`; a `/` token holding another `/` or a `.` is a path). With `-NoExit` the session keeps
+  #   reading after its command.
   # - sh (pubs.opengroup.org utilities/sh: "-s Read commands from the standard input"; with no operand and no -c, -s is
   #   assumed) and bash (Invoking Bash): `-c` (also bundled: `-ec`) runs its command string; an operand is a command file,
   #   except with `-s`; the values of `-o`/`+o` (and bash's `-O`/`+O`, `--rcfile`, `--init-file`) are no operand.
+  #   The program name is matched in any case and with `.exe` (Git for Windows ships `bash.exe` and `sh.exe`).
   # The process is told apart by access path: `p.StartInfo`, `new Process { StartInfo = { FileName = "sh" } }`, a
   # ProcessStartInfo local given as `StartInfo` (assigned or in the initializer), or a local assigned
   # `Process.Start(info)` / `Process.Start("bash", arguments)` once. The writer is `p.StandardInput` in place or a local
@@ -145,13 +149,13 @@ sinks:
       - property: StartInfo.FileName
         matches: '(?i)^(.*[\\/])?(pwsh|powershell)(\.exe)?$'
       - property: StartInfo.Arguments
-        unless: '(?i)^(?!(.*\s)?-noe(xit)?(\s|$)).*((^|\s)-(c|command|f|file|cwa|commandwithargs)\s+(?!-(\s|$))\S|(^|\s)-(e|ec|encodedcommand)(\s|$)|(^|\s)(?<!(^|\s)-(executionpolicy|ex|ep|windowstyle|w|inputformat|inp|if|outputformat|o|of|workingdirectory|wd|wo|configurationname|config|configurationfile|settingsfile|settings|custompipename|version|v)\s+)[^\s-]\S*)'
+        unless: '(?i)^(?!(.*\s)?[-/](noexit|noexi|noex|noe)(\s|$)).*((^|\s)[-/](commandwithargs|commandwitharg|commandwithar|commandwitha|commandwith|commandwit|commandwi|commandw|command|comman|comma|comm|file|com|cwa|fil|fi|c|f)\s+(?!-(\s|$))\S|(^|\s)[-/](encodedcommand|encodedcomman|encodedcomma|encodedcomm|encodedcom|encodedco|encodedc|encoded|encode|encod|enco|enc|ec|e)(\s|$)|(^|\s)(?<!(^|\s)[-/](configurationfile|configurationname|configurationfil|configurationnam|encodedarguments|workingdirectory|configurationfi|configurationna|encodedargument|executionpolicy|workingdirector|configurationf|configurationn|custompipename|encodedargumen|executionpolic|workingdirecto|custompipenam|encodedargume|executionpoli|psconsolefile|workingdirect|custompipena|encodedargum|executionpol|outputformat|psconsolefil|settingsfile|workingdirec|custompipen|encodedargu|executionpo|inputformat|outputforma|psconsolefi|settingsfil|windowstyle|workingdire|custompipe|encodedarg|executionp|inputforma|outputform|psconsolef|settingsfi|windowstyl|workingdir|custompip|encodedar|execution|inputform|outputfor|psconsole|settingsf|windowsty|workingdi|custompi|encodeda|executio|inputfor|outputfo|psconsol|settings|windowst|workingd|customp|executi|inputfo|outputf|psconso|setting|version|windows|working|config|custom|execut|inputf|output|pscons|settin|versio|window|workin|custo|execu|input|outpu|pscon|setti|versi|windo|worki|cust|exec|inpu|outp|psco|sett|vers|wind|work|cus|exe|inp|out|psc|set|ver|win|wor|cu|ea|ep|ex|if|of|ou|ps|se|ve|wd|wi|wo|o|v|w)\s+("[^"]*)?)("[^"]+"?|[^\s/"-]\S*|/\S*[/.]\S*))'
   - method: System.IO.TextWriter.Write*
     args: [0]
     when:
       - receiver: System.Diagnostics.Process.StandardInput
       - property: StartInfo.FileName
-        matches: '^(.*[\\/])?(sh|bash)$'
+        matches: '(?i)^(.*[\\/])?(sh|bash)(\.exe)?$'
       - property: StartInfo.Arguments
         unless: '(^|\s)-[a-zA-Z]*c[a-zA-Z]*(\s|$)|^(?!(.*\s)?-[a-zA-Z]*s[a-zA-Z]*(\s|$)).*(^|\s)(?<!(^|\s)([-+][oO]|--rcfile|--init-file)\s+)[^\s+-]\S*'
 # Shared C# sanitizers (as in every taint model; see sql-injection.yml) and the shared allow-lists. The rule has none of

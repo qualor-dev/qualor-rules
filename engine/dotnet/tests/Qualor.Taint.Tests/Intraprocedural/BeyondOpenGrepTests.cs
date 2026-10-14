@@ -332,6 +332,95 @@ public sealed class BeyondOpenGrepTests
                 p.StandardInput.WriteLine(line); /*sink*/
             }
 
+            public void PowerShellConsoleFile(string line)
+            {
+                var p = new Process();
+                p.StartInfo.FileName = "powershell.exe";
+                p.StartInfo.Arguments = "-NoLogo -PSConsoleFile agent.psc1";
+                p.Start();
+                p.StandardInput.WriteLine(line); /*sink*/
+            }
+
+            public void PowerShellEncodedArguments(string line)
+            {
+                var p = new Process();
+                p.StartInfo.FileName = "powershell.exe";
+                p.StartInfo.Arguments = "-EncodedArguments YQBnAGUAbgB0AA==";
+                p.Start();
+                p.StandardInput.WriteLine(line); /*sink*/
+            }
+
+            public void PwshAbbreviatedPolicy(string line)
+            {
+                var p = new Process();
+                p.StartInfo.FileName = "pwsh";
+                p.StartInfo.Arguments = "-nop -execution RemoteSigned -windows Minimized";
+                p.Start();
+                p.StandardInput.WriteLine(line); /*sink*/
+            }
+
+            public void PwshQuotedDirectory(string line)
+            {
+                var p = new Process();
+                p.StartInfo.FileName = "pwsh";
+                p.StartInfo.Arguments = "-WorkingDirectory \"C:/Agent Jobs/build 7\" -NoProfile";
+                p.Start();
+                p.StandardInput.WriteLine(line); /*sink*/
+            }
+
+            public void PowerShellSlashSwitches(string line)
+            {
+                var p = new Process();
+                p.StartInfo.FileName = "powershell";
+                p.StartInfo.Arguments = "/NoLogo /NoProfile /InputFormat Text";
+                p.Start();
+                p.StandardInput.WriteLine(line); /*sink*/
+            }
+
+            public void GitBashOnWindows(string line)
+            {
+                var p = new Process();
+                p.StartInfo.FileName = @"D:\Tools\Git\bin\BASH.EXE";
+                p.Start();
+                p.StandardInput.WriteLine(line); /*sink*/
+            }
+
+            public void PowerShellSlashCommand(string line)
+            {
+                var p = new Process();
+                p.StartInfo.FileName = "powershell.exe";
+                p.StartInfo.Arguments = "/NoProfile /Command Get-ChildItem";
+                p.Start();
+                p.StandardInput.WriteLine(line);
+            }
+
+            public void PwshQuotedScript(string line)
+            {
+                var p = new Process();
+                p.StartInfo.FileName = "pwsh";
+                p.StartInfo.Arguments = "-NoProfile \"C:/Agent Jobs/collect.ps1\"";
+                p.Start();
+                p.StandardInput.WriteLine(line);
+            }
+
+            public void PwshAbsoluteScript(string line)
+            {
+                var p = new Process();
+                p.StartInfo.FileName = "pwsh";
+                p.StartInfo.Arguments = "/opt/agent/collect.ps1 -Verbose";
+                p.Start();
+                p.StandardInput.WriteLine(line);
+            }
+
+            public void GitBashCommand(string line)
+            {
+                var p = new Process();
+                p.StartInfo.FileName = @"C:\Program Files\Git\usr\bin\sh.exe";
+                p.StartInfo.Arguments = "-c \"cat > out.txt\"";
+                p.Start();
+                p.StandardInput.WriteLine(line);
+            }
+
             public void PwshNoExit(string line)
             {
                 var p = new Process();
