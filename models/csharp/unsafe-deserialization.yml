@@ -1,0 +1,44 @@
+# The engine's model of csharp.unsafe-deserialization (format v1, models/README.md): the misuse checks of
+# rules/csharp/deserialization/unsafe-deserialization.yml with types in place of names.
+#
+# Sources (learn.microsoft.com): dotnet/standard/serialization/binaryformatter-security-guide,
+# binaryformatter-migration-guide, dotnet/api/system.web.script.serialization.javascriptserializer.-ctor; Json.NET:
+# www.newtonsoft.com/json/help/html/SerializeTypeNameHandling.htm, T_Newtonsoft_Json_TypeNameHandling.htm;
+# cheatsheetseries.owasp.org Deserialization_Cheat_Sheet.
+rule: csharp.unsafe-deserialization
+kind: misuse
+misuse:
+  # The rule's `paths: exclude` (COVERAGE.md "Test code").
+  test-code: ['test/', 'tests/', '*.Tests/', '*.UnitTests/', '*.IntegrationTests/', '*.Test/', '*.Specs/', '*Tests.cs', '*Test.cs']
+  calls:
+    # The formatters that read the type to create from the data. Differences: OpenGrep recognises the formatter by
+    # the type written for its receiver in the same file (a local, field or parameter declared with it, or `new` in
+    # place), so one returned by a helper or kept in a member of another file is missed (Known limit); the engine
+    # knows the receiver's type wherever it comes from. Deserialize* also takes the .NET Framework overloads
+    # (DeserializeMethodResponse); BinaryFormatter's UnsafeDeserialize* (.NET Framework) too. A formatter used
+    # through IFormatter is not looked at (as OpenGrep: its implementations include safe ones).
+    - method: System.Runtime.Serialization.Formatters.Binary.BinaryFormatter.Deserialize*
+    - method: System.Runtime.Serialization.Formatters.Binary.BinaryFormatter.UnsafeDeserialize*
+    - method: System.Runtime.Serialization.Formatters.Soap.SoapFormatter.Deserialize*
+    - method: System.Runtime.Serialization.NetDataContractSerializer.Deserialize*
+    - method: System.Runtime.Serialization.NetDataContractSerializer.ReadObject
+    - method: System.Web.UI.LosFormatter.Deserialize*
+    - method: System.Web.UI.ObjectStateFormatter.Deserialize*
+  enum-values:
+    # Json.NET's TypeNameHandling set to anything but None: an assignment, an object initializer, a named argument
+    # of an attribute ([JsonProperty(TypeNameHandling = ...)], [JsonObject(ItemTypeNameHandling = ...)]), a field or
+    # property initializer; on Json.NET's settings, serializer, attributes and contracts, or a property of the
+    # project's own of that type (the value is Json.NET's setting all the same). Differences: OpenGrep reads the
+    # enum member's text (Auto, All, Objects, Arrays) and the attribute form as text, also in a comment or string
+    # (Known limit); the engine takes the constant's value, so a const or a cast holding one counts too, and a
+    # comment never does. A value held in a variable or a parameter is not known (as OpenGrep). A
+    # SerializationBinder next to it is not looked at (as OpenGrep).
+    - type: Newtonsoft.Json.TypeNameHandling
+      safe: [None]
+  values:
+    # JavaScriptSerializer created with a SimpleTypeResolver (it writes and reads the type names). Difference:
+    # OpenGrep needs `new SimpleTypeResolver()` in the constructor call (a resolver kept in a variable is a Known
+    # limit); the engine also takes a local assigned such a creation in the same body.
+    - method: System.Web.Script.Serialization.JavaScriptSerializer..ctor
+      args: [0]
+      created: [System.Web.Script.Serialization.SimpleTypeResolver]

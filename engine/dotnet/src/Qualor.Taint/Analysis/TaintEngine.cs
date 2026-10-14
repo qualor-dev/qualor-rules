@@ -10,9 +10,10 @@ namespace Qualor.Taint;
 ///   gives the bottom-up order of its strongly connected components; SummaryComputer computes each body's summary in
 ///   its parameters' labels and applies it at the call sites, together with a field-based heap (Heap), to their joint
 ///   fixed point; a lambda or local function is analysed with its enclosing body (its captures).
-/// Findings are deduplicated by rule and sink site (a file compiled in several projects or target frameworks reports
-/// once). A body whose analysis throws is skipped and counted (AnalysisStats.FailedMethods); above 1 % of the bodies
-/// the run is incomplete (ruling R-E10).
+/// Then the misuse rules' checks (MisuseChecks, Task 12) run over every tree. Findings are deduplicated by rule, file and
+/// line (a file compiled in several projects or target frameworks reports once, with the first input's path). A body
+/// whose analysis throws is skipped and counted (AnalysisStats.FailedMethods); above 1 % of the bodies the run is
+/// incomplete (ruling R-E10).
 public sealed class TaintEngine
 {
     private readonly ModelSet _models;
@@ -47,6 +48,7 @@ public sealed class TaintEngine
     {
         var budget = new Budget(_options, ct);
         var ctx = new AnalysisContext(_models, _options);
+        var misuse = new MisuseChecks(_models.Rules);
         SummaryComputer? computer = null;
         CallGraph? graph = null;
         if (budget.Check())
@@ -60,6 +62,7 @@ public sealed class TaintEngine
                 _index = budget.Elapsed - started;
                 computer = new SummaryComputer(ctx, graph, dispatch, budget, BeforeBody, BeforeSeed);
                 if (budget.Check()) computer.Run(ct);
+                if (budget.Check()) misuse.Run(solution, budget, ctx, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -68,15 +71,45 @@ public sealed class TaintEngine
         }
         _last = computer;
         budget.Sample();
-        var reason = budget.Exceeded ?? computer?.Incomplete ?? computer?.FailureReason();
-        var findings = ctx.Findings
+        var reason = budget.Exceeded ?? computer?.Incomplete ?? computer?.FailureReason() ?? MisuseFailure(misuse);
+        var findings = Deduplicate(solution, ctx.Findings)
             .OrderBy(f => f.Sink.SourceTree?.FilePath, StringComparer.Ordinal).ThenBy(f => f.Sink.SourceSpan.Start).ThenBy(f => f.RuleId, StringComparer.Ordinal)
             .ToList();
         var stats = new AnalysisStats(solution.Projects.Count, computer?.Methods ?? 0, graph?.Sccs.Count ?? 0, ctx.UnmodelledExternalCalls, budget.Elapsed, budget.PeakMemoryBytes)
         {
-            FailedMethods = computer?.Failed ?? 0,
-            FirstErrors = computer?.Errors ?? Array.Empty<string>(),
+            FailedMethods = (computer?.Failed ?? 0) + misuse.Failed,
+            FirstErrors = (computer?.Errors ?? Array.Empty<string>()).Concat(misuse.Errors).Take(AnalysisStats.MaxErrors).ToList(),
         };
         return new AnalysisResult(findings, reason == null, reason, stats);
+    }
+
+    /// Ruling R-E10 for the misuse checks: trees whose check threw are skipped; above 1 % of the trees checked the run is
+    /// incomplete.
+    private static string? MisuseFailure(MisuseChecks misuse)
+    {
+        var total = misuse.Checked + misuse.Failed;
+        return misuse.Failed > 0 && misuse.Failed > 0.01 * total
+            ? $"{misuse.Failed} of {total} files failed the misuse checks (more than 1 %); first: {misuse.Errors[0]}"
+            : null;
+    }
+
+    /// One finding per rule, file and line (Review Focus 2: a project of several target frameworks is analysed once
+    /// per framework; two sinks of a rule on one line are one finding), by the mapped location (`#line`, generated
+    /// views), keeping the finding of the first compilation input in the solution's order, then the first on the line.
+    private static IEnumerable<Finding> Deduplicate(LoadedSolution solution, IEnumerable<Finding> findings)
+    {
+        var order = new Dictionary<SyntaxTree, int>();
+        for (var i = 0; i < solution.Projects.Count; i++)
+            foreach (var tree in solution.Projects[i].Compilation.SyntaxTrees) order.TryAdd(tree, i);
+        return findings
+            .GroupBy(f =>
+            {
+                var span = f.Sink.GetMappedLineSpan();
+                return (f.RuleId, span.Path, span.StartLinePosition.Line);
+            })
+            .Select(g => g
+                .OrderBy(f => f.Sink.SourceTree is { } t && order.TryGetValue(t, out var i) ? i : int.MaxValue)
+                .ThenBy(f => f.Sink.SourceSpan.Start)
+                .First());
     }
 }

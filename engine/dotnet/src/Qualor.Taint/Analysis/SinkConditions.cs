@@ -264,6 +264,7 @@ internal sealed class BodyFacts
     private readonly List<(string Key, IOperation Value)> _adds = new();
     private readonly Dictionary<ILocalSymbol, List<IOperation>> _locals = new(SymbolEqualityComparer.Default);
     private readonly Dictionary<string, List<string>> _aliases = new(StringComparer.Ordinal);
+    private readonly HashSet<ILocalSymbol> _otherWrites = new(SymbolEqualityComparer.Default);
 
     public BodyFacts(IOperation root)
     {
@@ -292,6 +293,9 @@ internal sealed class BodyFacts
                     when Key(instance) is { } collection:
                     _adds.Add((collection, add.Arguments[0].Value));
                     break;
+                case ILocalReferenceOperation local when WrittenOtherwise(local):
+                    _otherWrites.Add(local.Local);
+                    break;
             }
         }
         // A variable is the object it was created as only when it is assigned one object creation in the body (a
@@ -315,6 +319,39 @@ internal sealed class BodyFacts
     {
         if (!_aliases.TryGetValue(variable, out var list)) _aliases[variable] = list = new List<string>();
         list.Add(creation);
+    }
+
+    /// A local written other than by an assignment or its initializer: a `ref` or `out` argument (`out var` too), a
+    /// compound or `??=` assignment, `++`/`--`, a deconstruction.
+    private static bool WrittenOtherwise(ILocalReferenceOperation local)
+    {
+        IOperation op = local;
+        if (op.Parent is IDeclarationExpressionOperation declaration) op = declaration;
+        switch (op.Parent)
+        {
+            case IArgumentOperation { Parameter.RefKind: RefKind.Ref or RefKind.Out }:
+            case ICompoundAssignmentOperation compound when compound.Target == op:
+            case ICoalesceAssignmentOperation coalesce when coalesce.Target == op:
+            case IIncrementOrDecrementOperation:
+                return true;
+        }
+        for (var o = op.Parent; o is ITupleOperation or IDeclarationExpressionOperation; o = o.Parent)
+            if (o.Parent is IDeconstructionAssignmentOperation d && d.Target == o) return true;
+        return false;
+    }
+
+    /// The values a local is assigned in the body (its initializer and its simple assignments), or null when it is
+    /// written another way too (WrittenOtherwise) or never assigned.
+    public IReadOnlyList<IOperation>? LocalValues(ILocalSymbol local) =>
+        !_otherWrites.Contains(local) && _locals.TryGetValue(local, out var values) ? values : null;
+
+    /// The values property `property` (or a constructor parameter of that name, ignoring case) of the object `key` is
+    /// set to anywhere in the body.
+    public IEnumerable<IOperation> PropertyValues(string key, string property)
+    {
+        var canonical = Canonical(key);
+        return _properties.Where(p => string.Equals(p.Property, property, StringComparison.OrdinalIgnoreCase) && Canonical(p.Key) == canonical)
+            .Select(p => p.Value);
     }
 
     /// The constants a value may be: a constant, both branches of `?:` and `??`, a local's assigned values (unknown

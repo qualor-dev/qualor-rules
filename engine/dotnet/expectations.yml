@@ -61,6 +61,10 @@ must-find:
   # Uri.MakeRelativeUri passes its argument on (propagators.yml: `from: [0]`), which is the URL itself when its host
   # differs; OpenGrep cleans the whole call (Known limit).
   - { rule: csharp.open-redirect, line: 555, why: "catalog.MakeRelativeUri(new Uri(referrer)): the argument is request data" }
+  # Task 12, misuse rules: a value given through a local assigned it in the same body (OpenGrep needs the creation or
+  # the lambda in place, a Known limit of both rules).
+  - { rule: csharp.unsafe-deserialization, line: 265, why: "new JavaScriptSerializer(resolver) with resolver = new SimpleTypeResolver()" }
+  - { rule: csharp.tls-verification-disabled, line: 408, why: "ServerCertificateCustomValidationCallback = trustAll, a local assigned (m, c, ch, e) => true" }
 must-stay-quiet:
   # Results.File given a stream is no path: the engine goes by the overload (`param-types`), OpenGrep cannot (Known limit).
   - { rule: csharp.path-traversal, line: 367, why: "Results.File(Request.Body, ...): the Stream overload is no sink" }
@@ -147,5 +151,12 @@ unresolved-model-names:
   - { name: "Microsoft.EntityFrameworkCore.RawSqlString", reason: "EF Core 2.x type; removed in EF Core 3.0" }
   - { name: "Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlCommand [Method]", reason: "EF Core 2.x method; removed in EF Core 3.0" }
   - { name: "Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlCommandAsync [Method]", reason: "EF Core 2.x method; removed in EF Core 3.0" }
+  - { name: "System.Runtime.Serialization.Formatters.Binary.BinaryFormatter.UnsafeDeserialize* [Method]", reason: ".NET Framework only (UnsafeDeserialize, UnsafeDeserializeMethodResponse); not in .NET 8" }
+  - { name: "System.Runtime.Serialization.Formatters.Soap.SoapFormatter", reason: ".NET Framework only (System.Runtime.Serialization.Formatters.Soap); the unsafe-deserialization shim declares it" }
+  - { name: "System.Runtime.Serialization.NetDataContractSerializer", reason: ".NET Framework only; the unsafe-deserialization shim declares it" }
+  - { name: "System.Web.Script.Serialization.JavaScriptSerializer", reason: ".NET Framework only (System.Web.Extensions); the unsafe-deserialization shim declares it" }
+  - { name: "System.Web.Script.Serialization.SimpleTypeResolver", reason: ".NET Framework only (System.Web.Extensions); the unsafe-deserialization shim declares it" }
+  - { name: "System.Web.UI.LosFormatter", reason: ".NET Framework only (System.Web); the unsafe-deserialization shim declares it" }
+  - { name: "System.Web.UI.ObjectStateFormatter", reason: ".NET Framework only (System.Web); the unsafe-deserialization shim declares it" }
   - { name: "Duende.IdentityServer.Services.IIdentityServerInteractionService", reason: "Duende IdentityServer (commercial licence) is not a fixture reference; the open-redirect shim declares the interface the fixture uses" }
   - { name: "System.Text.RegularExpressions.Regex.EnumerateSplits [Method]", reason: "added in .NET 9; the fixture references are .NET 8 (a project on .NET 9 or later has it)" }

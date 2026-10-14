@@ -105,6 +105,12 @@ public class ModelNameResolutionTests
                 foreach (var n in sink.ParamTypes) yield return (n, rule.RuleId + " param-types");
             foreach (var (_, receiverType) in rule.ReceiverSanitizers) yield return (receiverType, rule.RuleId + " receiver-type");
             foreach (var prefix in rule.StringSanitizers.Where(p => p.Type != null)) yield return (prefix.Type!, rule.RuleId + " string-prefix type");
+            if (rule.Misuse is { } misuse)
+            {
+                foreach (var e in misuse.EnumValues) yield return (e.Type, rule.RuleId + " enum-values");
+                foreach (var n in misuse.Values.SelectMany(v => v.Created)) yield return (n, rule.RuleId + " values created");
+                if (misuse.AcceptsAllMethods != null) yield return (misuse.AcceptsAllMethods, rule.RuleId + " accepts-all-methods");
+            }
         }
     }
 
@@ -127,6 +133,11 @@ public class ModelNameResolutionTests
             foreach (var (s, _) in rule.ReceiverSanitizers) yield return (s, rule.RuleId + " sanitizers");
             foreach (var g in rule.Guards) yield return (g.Member, rule.RuleId + " guards");
             foreach (var c in rule.Guards.SelectMany(g => g.When).Where(c => c.Member != null)) yield return (c.Member!, rule.RuleId + " guards assigned-from");
+            if (rule.Misuse is { } misuse)
+            {
+                foreach (var p in misuse.Calls) yield return (p, rule.RuleId + " calls");
+                foreach (var v in misuse.Values) yield return (v.Member, rule.RuleId + " values");
+            }
         }
     }
 

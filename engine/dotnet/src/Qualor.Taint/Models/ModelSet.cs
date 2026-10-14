@@ -104,11 +104,50 @@ public sealed record GuardCondition(GuardConditionKind Kind)
     public System.Text.RegularExpressions.Regex? Pattern { get; init; }
 }
 
-/// One rule's model (`models/csharp/<name>.yml`, rule id `csharp.<name>`). Misuse holds the `misuse:` mapping of a
-/// misuse rule as plain values (string, list, dictionary); empty for a taint rule.
+/// A misuse rule's checks (models/README.md, `misuse:`). TestCode: the globs of the files the rule skips (its OpenGrep
+/// rule's `paths: exclude`). Calls: members whose call (a method or constructor) or read (property-get) is a finding.
+/// EnumValues: enum constants that are findings where written to a field or property. Values: what a value given to a
+/// member must be to be a finding. AcceptsAllMethods: the parameter type of the callbacks whose declaration is a finding
+/// when every return is `true`.
+public sealed record MisuseModel(IReadOnlyList<string> TestCode)
+{
+    public IReadOnlyList<MemberPattern> Calls { get; init; } = Array.Empty<MemberPattern>();
+
+    public IReadOnlyList<EnumValueCheck> EnumValues { get; init; } = Array.Empty<EnumValueCheck>();
+
+    public IReadOnlyList<ValueCheck> Values { get; init; } = Array.Empty<ValueCheck>();
+
+    public string? AcceptsAllMethods { get; init; }
+}
+
+/// `enum-values:` a constant of the enum Type, other than its members named in Safe, written to a field or property.
+public sealed record EnumValueCheck(string Type, IReadOnlyList<string> Safe);
+
+/// `values:` the value given to Member (a property set: the assigned value; a method or constructor: the arguments at
+/// Args) is a finding when it is a creation of one of Created, or (AcceptsAll) a callback whose every return is `true`;
+/// With / Without: the object written to has (never has) the property set to one of the values in the same body.
+/// AtObject: an assignment in an object initializer is reported at the object's creation.
+public sealed record ValueCheck(MemberPattern Member, IReadOnlyList<int> Args)
+{
+    public IReadOnlyList<string> Created { get; init; } = Array.Empty<string>();
+
+    public bool AcceptsAll { get; init; }
+
+    public PropertyValues? With { get; init; }
+
+    public PropertyValues? Without { get; init; }
+
+    public bool AtObject { get; init; }
+}
+
+/// A property of the object a value check writes to, and the names of the enum members it is compared with.
+public sealed record PropertyValues(string Property, IReadOnlyList<string> Values);
+
+/// One rule's model (`models/csharp/<name>.yml`, rule id `csharp.<name>`). Misuse holds the checks of a misuse rule;
+/// null for a taint rule.
 public sealed record RuleModel(
     string RuleId, RuleKind Kind, IReadOnlyList<SinkModel> Sinks, IReadOnlyList<MemberPattern> Sanitizers,
-    IReadOnlyList<GuardModel> Guards, IReadOnlyDictionary<string, object?> Misuse)
+    IReadOnlyList<GuardModel> Guards, MisuseModel? Misuse)
 {
     /// Sanitizers by position in a string (`string-prefix:`): a value placed into a string after text that matches.
     public IReadOnlyList<StringSanitizer> StringSanitizers { get; init; } = Array.Empty<StringSanitizer>();

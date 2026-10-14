@@ -9,7 +9,7 @@ namespace Qualor.Taint;
 /// What every method analysis of one run shares: the models (as indexes), the findings and the counters.
 internal sealed class AnalysisContext
 {
-    private readonly Dictionary<(string Rule, string Path, TextSpan Span), Finding> _findings = new();
+    private readonly Dictionary<(string Rule, SyntaxTree Tree, TextSpan Span), Finding> _findings = new();
     private readonly HashSet<(SyntaxTree, TextSpan)> _unmodelledSites = new();
     private readonly Dictionary<ISymbol, string> _names = new(SymbolEqualityComparer.Default);
 
@@ -46,15 +46,25 @@ internal sealed class AnalysisContext
 
     public void CountUnmodelled(SyntaxNode site) => _unmodelledSites.Add((site.SyntaxTree, site.Span));
 
-    /// One finding per rule and sink site (the site's syntax: an argument or an assignment); the first path is kept.
+    /// One finding per rule and sink site (the site's syntax: an argument or an assignment) of a syntax tree; the first
+    /// path is kept. The same file in several compilations (target frameworks) is deduplicated by TaintEngine.
     public void Report(string rule, SyntaxNode site, TaintValue value, ISymbol member)
     {
-        var key = (rule, site.SyntaxTree.FilePath ?? "", site.Span);
+        var key = (rule, site.SyntaxTree, site.Span);
         if (_findings.ContainsKey(key)) return;
         var sink = site.GetLocation();
         var path = value.Path.Add(new PathStep(sink, $"reaches the {rule} sink {Name(member)}")).ToList();
         var others = value.Sources.Where(s => !s.Equals(path[0].Location)).OrderBy(s => s.SourceSpan.Start).ToList();
         _findings[key] = new Finding(rule, sink, path, others);
+    }
+
+    /// A misuse rule's finding at `at` (in source), its one path step saying what was found there.
+    public void ReportMisuse(string rule, Location at, string message)
+    {
+        if (at.SourceTree is not { } tree) return;
+        var key = (rule, tree, at.SourceSpan);
+        if (_findings.ContainsKey(key)) return;
+        _findings[key] = new Finding(rule, at, new[] { new PathStep(at, message) }, Array.Empty<Location>());
     }
 
     /// A member's short name for path messages (`SqlCommand.SqlCommand(string, SqlConnection)`), cached.

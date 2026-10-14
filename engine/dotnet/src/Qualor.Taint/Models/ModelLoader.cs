@@ -223,12 +223,20 @@ public static class ModelLoader
             }
         }
 
-        var misuse = new Dictionary<string, object?>(StringComparer.Ordinal);
+        MisuseModel? misuse = null;
         if (top.Optional("misuse") is { } mn)
         {
             if (kind != RuleKind.Misuse) throw doc.Error(mn, "misuse: belongs to a rule of kind misuse");
-            if (mn is not YamlMappingNode map) throw doc.Error(mn, "misuse must be a mapping");
-            foreach (var (k, v) in map.Children) misuse[doc.String(k)] = Doc.Plain(v);
+            misuse = ReadMisuse(doc, mn);
+        }
+        else if (kind == RuleKind.Misuse)
+        {
+            throw doc.Error(doc.Root, "a misuse rule needs misuse: (its checks)");
+        }
+        if (kind == RuleKind.Misuse)
+        {
+            foreach (var key in new[] { "sinks", "sanitizers", "guards" })
+                if (top.Optional(key) is { } extra) throw doc.Error(extra, $"{key} belong to a taint rule (a misuse rule has misuse: only)");
         }
         return new RuleModel(id, kind, sinks, sanitizers, guards, misuse)
         {
@@ -242,6 +250,84 @@ public static class ModelLoader
     }
 
     private static readonly Regex SimpleName = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.CultureInvariant);
+
+    /// A misuse rule's `misuse:` mapping (models/README.md): `test-code` (required), `calls`, `enum-values`, `values`,
+    /// `accepts-all-methods`.
+    private static MisuseModel ReadMisuse(Doc doc, YamlNode node)
+    {
+        var f = doc.Fields(node, "test-code", "calls", "enum-values", "values", "accepts-all-methods");
+        var testCode = doc.Sequence(f.Required("test-code")).Select(doc.String).ToList();
+
+        var calls = new List<MemberPattern>();
+        if (f.Optional("calls") is { } cn)
+            foreach (var item in doc.Sequence(cn)) calls.Add(doc.Member(item, new[] { "method", "property-get" }).Pattern);
+
+        var enums = new List<EnumValueCheck>();
+        if (f.Optional("enum-values") is { } en)
+        {
+            foreach (var item in doc.Sequence(en))
+            {
+                var e = doc.Fields(item, "type", "safe");
+                enums.Add(new EnumValueCheck(doc.Type(e.Required("type")), doc.Names(e.Required("safe"))));
+            }
+        }
+
+        var values = new List<ValueCheck>();
+        if (f.Optional("values") is { } vn)
+        {
+            foreach (var item in doc.Sequence(vn))
+            {
+                var (pattern, v) = doc.Member(item, new[] { "method", "property-set" }, "args", "created", "accepts-all", "with", "without", "at");
+                if ((v.Optional("created") == null) == (v.Optional("accepts-all") == null)) throw doc.Error(item, "a value check names created or accepts-all (one of them)");
+                IReadOnlyList<int> args = Array.Empty<int>();
+                if (pattern.Kind == MemberKind.PropertySet)
+                {
+                    if (v.Optional("args") is { } a) throw doc.Error(a, "a property-set value check has no args (its assigned value is checked)");
+                }
+                else
+                {
+                    var argsNode = v.Optional("args") ?? throw doc.Error(item, "a method value check needs args (parameter ordinals)");
+                    var ordinals = doc.Sequence(argsNode).Select(n => doc.Ordinal(n, "args")).ToList();
+                    if (ordinals.Count == 0 || ordinals.Distinct().Count() != ordinals.Count) throw doc.Error(argsNode, "args must be distinct parameter ordinals, at least one");
+                    args = ordinals;
+                    foreach (var key in new[] { "with", "without", "at" })
+                        if (v.Optional(key) is { } extra) throw doc.Error(extra, $"{key} belongs to a property-set value check (the object written to)");
+                }
+                var acceptsAll = v.Optional("accepts-all") is { } aa && (doc.Bool(aa) ? true : throw doc.Error(aa, "accepts-all: true, or leave it out"));
+                var atObject = false;
+                if (v.Optional("at") is { } at)
+                {
+                    if (doc.String(at) != "object") throw doc.Error(at, "at must be object (or left out: the assignment)");
+                    atObject = true;
+                }
+                values.Add(new ValueCheck(pattern, args)
+                {
+                    Created = v.Optional("created") is { } c ? doc.Types(c) : Array.Empty<string>(),
+                    AcceptsAll = acceptsAll,
+                    With = v.Optional("with") is { } w ? ReadPropertyValues(doc, w) : null,
+                    Without = v.Optional("without") is { } wo ? ReadPropertyValues(doc, wo) : null,
+                    AtObject = atObject,
+                });
+            }
+        }
+
+        return new MisuseModel(testCode)
+        {
+            Calls = calls,
+            EnumValues = enums,
+            Values = values,
+            AcceptsAllMethods = f.Optional("accepts-all-methods") is { } am ? doc.Type(am) : null,
+        };
+    }
+
+    /// `{ property: P, values: [V, ...] }`: a property name and enum member names.
+    private static PropertyValues ReadPropertyValues(Doc doc, YamlNode node)
+    {
+        var f = doc.Fields(node, "property", "values");
+        var values = doc.Names(f.Required("values"));
+        if (values.Count == 0) throw doc.Error(f.Required("values"), "values must not be empty");
+        return new PropertyValues(doc.Name(f.Required("property")), values);
+    }
 
     /// The conditions of a guard (`when:`, a non-empty list): `assigned-from: T.M`, or `arg: N` with `text: R`.
     private static IReadOnlyList<GuardCondition> ReadGuardConditions(Doc doc, YamlNode node)
@@ -492,16 +578,6 @@ public static class ModelLoader
         private string KeyHint(YamlNode node) =>
             Root.AllNodes.OfType<YamlMappingNode>().SelectMany(m => m.Children).FirstOrDefault(c => ReferenceEquals(c.Value, node)).Key is YamlScalarNode k
                 ? k.Value + ": " : "";
-
-        /// A YAML value as plain objects: a string (null for `~`, `null` or nothing), a list or a dictionary.
-        public static object? Plain(YamlNode node) => node switch
-        {
-            YamlScalarNode { Style: ScalarStyle.Plain, Value: null or "" or "~" or "null" } => null,
-            YamlScalarNode s => s.Value,
-            YamlSequenceNode seq => seq.Children.Select(Plain).ToList(),
-            YamlMappingNode map => map.Children.ToDictionary(c => ((YamlScalarNode)c.Key).Value ?? "", c => Plain(c.Value), StringComparer.Ordinal),
-            _ => null,
-        };
 
         private static int Line(Mark mark) => (int)Math.Clamp(mark.Line, 1, int.MaxValue);
 

@@ -69,8 +69,9 @@ guards:                          # optional: the checked argument is clean on th
   - method: Microsoft.AspNetCore.Mvc.IUrlHelper.IsLocalUrl   # call's result equals clean-when
     arg: 0
     clean-when: true
-misuse: {}                       # kind misuse only: the misuse rule's settings (a mapping)
 ```
+
+A rule of `kind: misuse` has `misuse:` (below) and no `sinks`, `sanitizers` or `guards`.
 
 `sanitizers` take `method:` or `property-get:` (the member's result is clean), or one of the kinds below. A `method:`
 sanitizer may add `receiver-type: T`: the result is clean only when the receiver (its static type) is T or derives
@@ -220,6 +221,76 @@ The conditions read the body's code flow-insensitively (a constant set after the
 to a shell in one branch and to another program in the other (`if (a) { psi.FileName = "bash"; ... } else {
 psi.FileName = "git"; psi.Arguments = q; }`) counts as a shell in both (a known false positive). The expressions
 are .NET regular expressions; write `(?i)` for case-insensitive matching.
+
+## Misuse rules (`kind: misuse`)
+
+A misuse rule reports a dangerous call, setting or callback wherever it is, whatever the data (no sources, no taint):
+
+```yaml
+rule: csharp.xxe
+kind: misuse
+misuse:
+  test-code: ['test/', 'tests/', '*.Tests/', '*Tests.cs']   # required: the files the rule skips
+  calls:                         # optional: a call of the method (a read of the property) is a finding
+    - method: System.Runtime.Serialization.Formatters.Binary.BinaryFormatter.Deserialize*
+    - property-get: System.Net.Http.HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+  enum-values:                   # optional: a constant of the enum written to a field or property
+    - type: Newtonsoft.Json.TypeNameHandling
+      safe: [None]               # the enum members that are no finding
+  values:                        # optional: what the value given to a member must be to be a finding
+    - property-set: System.Xml.XmlReaderSettings.XmlResolver   # the assigned value
+      created: [System.Xml.XmlUrlResolver]   # a creation of one of these types
+      with: { property: DtdProcessing, values: [Parse] }       # optional: the object also has this set
+      at: object                 # optional: report an initializer's assignment at the object's creation
+    - property-set: System.Xml.XmlTextReader.XmlResolver
+      created: [System.Xml.XmlUrlResolver]
+      without: { property: DtdProcessing, values: [Prohibit, Ignore] }   # optional: ... never has this set
+    - method: System.Net.Security.SslStream..ctor
+      args: [2]                  # a method's or constructor's arguments (parameter ordinals)
+      accepts-all: true          # a callback that accepts all (below)
+  accepts-all-methods: System.Net.Security.SslPolicyErrors   # optional (below)
+```
+
+- `test-code`: the rule's OpenGrep `paths: exclude`, copied (a test checks the two lists are equal; COVERAGE.md
+  "Test code"). A file is skipped when its path, relative to the scanned directory, matches one: a glob ending in `/`
+  names a directory at any depth, any other glob a file or directory name at any depth; `*` is any characters, case
+  matters. The scanned directory is the engine's source root (`TaintEngineOptions.SourceRoot`); without one, the
+  nearest directory above the file that holds `.git`.
+- `calls`: `method:` (a constructor too: `T..ctor`) or `property-get:` entries, matched as in "Matching" (by the
+  receiver's type, wherever the object comes from). Reported at the member's name (`.Deserialize`), a constructor at
+  its `new`.
+- `enum-values`: a constant of the enum type (its value: a member, a `const`, a cast number) that is none of the
+  `safe` members, written to a field or property of that type (or Nullable of it): an assignment, an object
+  initializer, an attribute's named argument (`[JsonProperty(TypeNameHandling = ...)]`), a field or property
+  initializer. A `const` declaration is no setting; where the const is written is. A value in a variable or a
+  parameter is not known. Reported at the assignment (the named argument, the initializer's value).
+- `values`: the value given to the member: a `property-set:`'s assigned value (`=`, `+=`, `??=`, an object
+  initializer's, a nested one's: `SslOptions = { RemoteCertificateValidationCallback = ... }`), or the `args` of a
+  `method:` (also a constructor; `D..ctor` of a delegate type D is `new D(x)`, x at 0). Exactly one of:
+  - `created: [T, ...]`: the value may be a creation of one of these types (exactly the type: any constructor, with
+    or without an object initializer and parentheses);
+  - `accepts-all: true`: the value may be a lambda or anonymous method that accepts all (below). A method group is
+    not (its declaration is, under `accepts-all-methods`).
+
+  The value "may be" what it is directly, through conversions, both branches of `?:` and `??`, a delegate creation's
+  target, and a local's values: its initializer and the values assigned to it anywhere in the body (flow-insensitive),
+  unless it is also written another way (`ref`, `out`, a compound assignment, `++`, a deconstruction). A parameter, a
+  field or a call's result is not followed.
+
+  For a `property-set:` only: `with: { property: P, values: [...] }` holds when the object written to has its
+  property P set, anywhere in the same body (flow-insensitive), to a value that may be one of these enum members
+  (a constant or a local holding one); `without:` holds when it never is. The object is told apart by access path, as
+  for the conditional sinks' `property:` (a variable assigned exactly one object creation is that object; an object
+  initializer's object is the created one). `at: object`: an assignment in an object initializer is reported at the
+  object's `new`; otherwise a value is reported at the assignment (or the argument).
+- `accepts-all-methods: T`: a method or local function with a parameter of type T that returns bool and accepts all,
+  reported at its name (where it is declared, whether or not it is wired in).
+
+A callback **accepts all** when every `return` of its own body (not those of nested lambdas and local functions)
+returns an always-true value, there is at least one, and the body has no `throw` (a statement or an expression): a
+constant `true`, `a || b` with either side, `a && b` and `c ? a : b` with both sides always true. A log line or an
+`if` that only logs does not hide it; a callback that returns `errors == SslPolicyErrors.None` or `false` on errors,
+or throws, accepts nothing.
 
 ## `sources.yml`
 

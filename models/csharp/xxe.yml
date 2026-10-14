@@ -1,0 +1,38 @@
+# The engine's model of csharp.xxe (format v1, models/README.md): the misuse checks of rules/csharp/xxe/xxe.yml with
+# types in place of names.
+#
+# Sources (learn.microsoft.com): dotnet/api/system.xml.xmlreadersettings.dtdprocessing,
+# system.xml.xmlreadersettings.xmlresolver, system.xml.xmldocument.xmlresolver, system.xml.xmltextreader.dtdprocessing,
+# system.xml.xmltextreader.xmlresolver, system.xml.xmlurlresolver; cheatsheetseries.owasp.org
+# XML_External_Entity_Prevention_Cheat_Sheet.
+#
+# A resolver that fetches is an XmlUrlResolver created in place (`new XmlUrlResolver()`, also with an object
+# initializer and no parentheses, which the OpenGrep rule's `new $R(...)` does not match), or a local assigned one in
+# the same body. XmlSecureResolver, XmlResolver.ThrowingResolver, a custom XmlResolver and a parameter are not (as
+# OpenGrep). Each setting is reported where the resolver is assigned; when that is in an object initializer, at the
+# object's creation (`at: object`, where OpenGrep's initializer pattern starts).
+rule: csharp.xxe
+kind: misuse
+misuse:
+  # The rule's `paths: exclude` (COVERAGE.md "Test code").
+  test-code: ['test/', 'tests/', '*.Tests/', '*.UnitTests/', '*.IntegrationTests/', '*.Test/', '*.Specs/', '*Tests.cs', '*Test.cs']
+  values:
+    # XmlReaderSettings: the resolver together with DtdProcessing.Parse on the same object (an access path, or the
+    # object an initializer creates and the variable assigned it), anywhere in the same body (flow-insensitive).
+    # Differences: OpenGrep needs both in one block or one initializer, written literally; the engine takes the same
+    # object in the whole body and Parse from a constant or a local. Settings shared between methods are missed (as
+    # OpenGrep).
+    - property-set: System.Xml.XmlReaderSettings.XmlResolver
+      created: [System.Xml.XmlUrlResolver]
+      with: { property: DtdProcessing, values: [Parse] }
+      at: object
+    # XmlDocument: any XmlUrlResolver (Load and LoadXml parse DTDs). XmlDataDocument derives from it.
+    - property-set: System.Xml.XmlDocument.XmlResolver
+      created: [System.Xml.XmlUrlResolver]
+      at: object
+    # XmlTextReader parses DTDs by default: a resolver, unless DtdProcessing is set to Prohibit or Ignore on the
+    # same object in the body.
+    - property-set: System.Xml.XmlTextReader.XmlResolver
+      created: [System.Xml.XmlUrlResolver]
+      without: { property: DtdProcessing, values: [Prohibit, Ignore] }
+      at: object

@@ -1,0 +1,56 @@
+# The engine's model of csharp.tls-verification-disabled (format v1, models/README.md): the misuse checks of
+# rules/csharp/tls/tls-verification-disabled.yml with types in place of names.
+#
+# Sources (learn.microsoft.com): dotnet/api/system.net.http.httpclienthandler.servercertificatecustomvalidationcallback,
+# system.net.http.httpclienthandler.dangerousacceptanyservercertificatevalidator,
+# system.net.servicepointmanager.servercertificatevalidationcallback,
+# system.net.httpwebrequest.servercertificatevalidationcallback, system.net.security.remotecertificatevalidationcallback,
+# system.net.security.sslclientauthenticationoptions.remotecertificatevalidationcallback,
+# system.net.security.sslserverauthenticationoptions.remotecertificatevalidationcallback,
+# system.net.websockets.clientwebsocketoptions.remotecertificatevalidationcallback, system.net.security.sslstream.-ctor;
+# cheatsheetseries.owasp.org Transport_Layer_Security_Cheat_Sheet.
+#
+# "Accepts all" (`accepts-all`, `accepts-all-methods`): every return of the callback's body (not counting nested
+# lambdas and local functions) returns true, and the body throws nowhere; `true` is a constant true, or `a || b`
+# with either side, `a && b` and `c ? a : b` with both sides accepting all. So a log line or an `if` that only logs
+# does not hide it, and a callback that returns false or an expression on errors, or throws, is quiet (as OpenGrep).
+# Difference: OpenGrep does not report `errors == SslPolicyErrors.None || true` (Known limit); the engine does.
+rule: csharp.tls-verification-disabled
+kind: misuse
+misuse:
+  # The rule's `paths: exclude` (COVERAGE.md "Test code").
+  test-code: ['test/', 'tests/', '*.Tests/', '*.UnitTests/', '*.IntegrationTests/', '*.Test/', '*.Specs/', '*Tests.cs', '*Test.cs']
+  calls:
+    # The helper Microsoft provides for tests, wherever it is read.
+    - property-get: System.Net.Http.HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+  values:
+    # A lambda or anonymous method that accepts all, given to the validation callback of the real types (assigned,
+    # `+=`, in an object initializer, also a nested one: `SslOptions = { RemoteCertificateValidationCallback = ... }`),
+    # directly, through `new RemoteCertificateValidationCallback(...)`, or through a local assigned one in the same
+    # body. Differences: OpenGrep matches the property by name, so another library's class with a property of the same
+    # name is reported (a Known false positive), and a callback kept in a variable is missed (Known limit); the engine
+    # binds to these types and follows the local. Reported at the assignment (or the argument).
+    - property-set: System.Net.Http.HttpClientHandler.ServerCertificateCustomValidationCallback
+      accepts-all: true
+    - property-set: System.Net.ServicePointManager.ServerCertificateValidationCallback
+      accepts-all: true
+    - property-set: System.Net.HttpWebRequest.ServerCertificateValidationCallback
+      accepts-all: true
+    - property-set: System.Net.Security.SslClientAuthenticationOptions.RemoteCertificateValidationCallback
+      accepts-all: true
+    - property-set: System.Net.Security.SslServerAuthenticationOptions.RemoteCertificateValidationCallback
+      accepts-all: true
+    - property-set: System.Net.WebSockets.ClientWebSocketOptions.RemoteCertificateValidationCallback
+      accepts-all: true
+    # new SslStream(inner, leaveOpen, userCertificateValidationCallback, ...): every overload with a callback has it
+    # third.
+    - method: System.Net.Security.SslStream..ctor
+      args: [2]
+      accepts-all: true
+    # new RemoteCertificateValidationCallback(callback), wherever it is (also kept in a variable).
+    - method: System.Net.Security.RemoteCertificateValidationCallback..ctor
+      args: [0]
+      accepts-all: true
+  # A method or local function with a parameter of this type that returns bool and accepts all is reported at its
+  # declaration (where OpenGrep reports it); the place that wires it in is not.
+  accepts-all-methods: System.Net.Security.SslPolicyErrors

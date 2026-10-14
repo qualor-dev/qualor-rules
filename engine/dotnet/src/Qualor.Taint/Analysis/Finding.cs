@@ -6,7 +6,12 @@ namespace Qualor.Taint;
 /// is marked incomplete; MaxIterationsPerScc caps the fixed point of one strongly connected component of the call graph
 /// (its analyses, per unit of the component, in one heap round), the rounds of one unit with its lambdas and local
 /// functions, the heap rounds of the run (Task 8), and, times a method's block count, the fixed point of one method.
-public sealed record TaintEngineOptions(TimeSpan TimeLimit, long MemoryLimitBytes, int MaxIterationsPerScc = 50);
+public sealed record TaintEngineOptions(TimeSpan TimeLimit, long MemoryLimitBytes, int MaxIterationsPerScc = 50)
+{
+    /// The directory the misuse rules' test-code globs are matched from (the scanned repository); null: the nearest
+    /// directory above each file that holds `.git` (else the file's full path).
+    public string? SourceRoot { get; init; }
+}
 
 /// One step of a finding's path: "request data enters here", "assigned to 'sql'", "reaches the sink ...".
 public sealed record PathStep(Location Location, string Message);

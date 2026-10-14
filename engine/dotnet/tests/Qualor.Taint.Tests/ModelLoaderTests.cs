@@ -66,8 +66,25 @@ public sealed class ModelLoaderTests : TempDirs
             rule: csharp.xxe
             kind: misuse
             misuse:
-              settings: [System.Xml.XmlReaderSettings]
-              unsafe: { DtdProcessing: Parse }
+              test-code: ['tests/', '*Tests.cs']
+              calls:
+                - method: System.Runtime.Serialization.Formatters.Binary.BinaryFormatter.Deserialize*
+                - property-get: System.Net.Http.HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
+              enum-values:
+                - type: Newtonsoft.Json.TypeNameHandling
+                  safe: [None]
+              values:
+                - property-set: System.Xml.XmlReaderSettings.XmlResolver
+                  created: [System.Xml.XmlUrlResolver]
+                  with: { property: DtdProcessing, values: [Parse] }
+                  at: object
+                - property-set: System.Xml.XmlTextReader.XmlResolver
+                  created: [System.Xml.XmlUrlResolver]
+                  without: { property: DtdProcessing, values: [Prohibit, Ignore] }
+                - method: System.Net.Security.SslStream..ctor
+                  args: [2]
+                  accepts-all: true
+              accepts-all-methods: System.Net.Security.SslPolicyErrors
             """));
 
         var set = ModelLoader.Load(dir);
@@ -75,10 +92,57 @@ public sealed class ModelLoaderTests : TempDirs
         var redirect = set.Rules.Single(r => r.RuleId == "csharp.open-redirect");
         var guard = Assert.Single(redirect.Guards);
         Assert.Equal(new GuardModel(new MemberPattern("Microsoft.AspNetCore.Mvc.IUrlHelper", "IsLocalUrl", false, MemberKind.Method), 0, true), guard);
+        Assert.Null(redirect.Misuse);
         var xxe = set.Rules.Single(r => r.RuleId == "csharp.xxe");
         Assert.Equal(RuleKind.Misuse, xxe.Kind);
-        Assert.Equal(new object?[] { "System.Xml.XmlReaderSettings" }, (IEnumerable<object?>)xxe.Misuse["settings"]!);
-        Assert.Equal("Parse", ((IReadOnlyDictionary<string, object?>)xxe.Misuse["unsafe"]!)["DtdProcessing"]);
+        var m = xxe.Misuse!;
+        Assert.Equal(new[] { "tests/", "*Tests.cs" }, m.TestCode);
+        Assert.Equal(new[]
+        {
+            new MemberPattern("System.Runtime.Serialization.Formatters.Binary.BinaryFormatter", "Deserialize", true, MemberKind.Method),
+            new MemberPattern("System.Net.Http.HttpClientHandler", "DangerousAcceptAnyServerCertificateValidator", false, MemberKind.PropertyGet),
+        }, m.Calls);
+        var e = Assert.Single(m.EnumValues);
+        Assert.Equal("Newtonsoft.Json.TypeNameHandling", e.Type);
+        Assert.Equal(new[] { "None" }, e.Safe);
+        Assert.Equal(3, m.Values.Count);
+        Assert.Equal(new MemberPattern("System.Xml.XmlReaderSettings", "XmlResolver", false, MemberKind.PropertySet), m.Values[0].Member);
+        Assert.Equal(new[] { "System.Xml.XmlUrlResolver" }, m.Values[0].Created);
+        Assert.Equal("DtdProcessing", m.Values[0].With!.Property);
+        Assert.Equal(new[] { "Parse" }, m.Values[0].With!.Values);
+        Assert.True(m.Values[0].AtObject);
+        Assert.Null(m.Values[0].Without);
+        Assert.Equal(new[] { "Prohibit", "Ignore" }, m.Values[1].Without!.Values);
+        Assert.False(m.Values[1].AtObject);
+        Assert.Equal(new MemberPattern("System.Net.Security.SslStream", ".ctor", false, MemberKind.Constructor), m.Values[2].Member);
+        Assert.Equal(new[] { 2 }, m.Values[2].Args);
+        Assert.True(m.Values[2].AcceptsAll);
+        Assert.Empty(m.Values[2].Created);
+        Assert.Equal("System.Net.Security.SslPolicyErrors", m.AcceptsAllMethods);
+    }
+
+    [Theory]
+    [InlineData("misuse:\n  calls: []\n", 4, "test-code")]                                                            // test-code missing
+    [InlineData("misuse:\n  test-code: []\n  colour: x\n", 5, "colour")]                                             // unknown key
+    [InlineData("misuse:\n  test-code: []\n  calls:\n    - property-set: A.B\n", 6, "unknown key property-set")]     // a setter is no call
+    [InlineData("misuse:\n  test-code: []\n  enum-values:\n    - type: A\n", 6, "safe")]                             // safe missing
+    [InlineData("misuse:\n  test-code: []\n  values:\n    - property-set: A.B\n", 6, "created or accepts-all")]      // no value kind
+    [InlineData("misuse:\n  test-code: []\n  values:\n    - property-set: A.B\n      created: [C]\n      accepts-all: true\n", 6, "created or accepts-all")]
+    [InlineData("misuse:\n  test-code: []\n  values:\n    - method: A.B\n      created: [C]\n", 6, "args")]          // a method without args
+    [InlineData("misuse:\n  test-code: []\n  values:\n    - method: A.B\n      args: [0]\n      created: [C]\n      with: { property: P, values: [V] }\n", 9, "property-set")]
+    [InlineData("misuse:\n  test-code: []\n  values:\n    - property-set: A.B\n      created: [C]\n      at: here\n", 8, "at")]
+    [InlineData("misuse:\n  test-code: []\n  values:\n    - property-set: A.B\n      created: [C]\n      with: { property: P }\n", 8, "values")]
+    [InlineData("misuse:\n  test-code: ['']\n", 4, "non-empty")]
+    [InlineData("misuse:\n  test-code: []\n  accepts-all-methods: [A]\n", 5, "non-empty value")]
+    [InlineData("misuse: {}\n", 3, "test-code")]
+    public void An_invalid_misuse_model_throws_with_its_line(string misuse, int line, string fragment)
+    {
+        var dir = WriteModels(("xxe.yml", "rule: csharp.xxe\nkind: misuse\n" + misuse));
+
+        var e = Assert.Throws<ModelException>(() => ModelLoader.Load(dir));
+
+        Assert.Equal(line, e.Line);
+        Assert.Contains(fragment, e.Message);
     }
 
     [Fact]
@@ -165,6 +229,8 @@ public sealed class ModelLoaderTests : TempDirs
     [InlineData("sql-injection.yml", "rule: csharp.sql-injection\nkind: taint\nsinks: []\n", 3, "sink")]
     [InlineData("sql-injection.yml", "rule: csharp.sql-injection\nkind: taintt\nsinks:\n  - method: A.B\n    args: [0]\n", 2, "kind")]
     [InlineData("sql-injection.yml", "rule: csharp.sql-injection\nkind: taint\nmisuse: {}\nsinks:\n  - method: A.B\n    args: [0]\n", 3, "misuse")]
+    [InlineData("xxe.yml", "rule: csharp.xxe\nkind: misuse\n", 1, "misuse")]                                             // misuse: missing
+    [InlineData("xxe.yml", "rule: csharp.xxe\nkind: misuse\nmisuse:\n  test-code: []\nsinks:\n  - method: A.B\n    args: [0]\n", 6, "sinks")]
     [InlineData("sql-injection.yml", "rule: csharp.sql-injection\nkind: taint\nsinks:\n  - method: A.B\n    args: [0]\nguards:\n  - method: A.C\n    arg: 0\n    clean-when: maybe\n", 9, "clean-when")]
     [InlineData("sql-injection.yml", "rule: csharp.sql-injection\nrule: csharp.sql-injection\n", 2, "")]  // duplicate key
     [InlineData("sql-injection.yml", "rule: [unclosed\n", 2, "")]                                           // not YAML
