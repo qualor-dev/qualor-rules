@@ -343,22 +343,44 @@ public sealed class RequestScopedHeapTests
         View("Views_Shared__Unused", "/src/App/Views/Shared/_Unused.cshtml", "Write(Html.Raw(Model.Bio));"),
     };
 
-    private static AnalysisResult AnalyzeWeb(string web, params (string Path, string Code)[] views)
+    private static AnalysisResult AnalyzeWeb(string web, params (string Path, string Code)[] views) => AnalyzeWeb(web, null, views);
+
+    /// The App project (`web` and the generated views), with `library` as a Framework project App references.
+    private static AnalysisResult AnalyzeWeb(string web, string? library, params (string Path, string Code)[] views)
     {
         var parse = new CSharpParseOptions(LanguageVersion.CSharp12);
+        var projects = new List<ProjectCompilation>();
+        var references = FixtureReferences.All.ToList();
+        if (library != null)
+        {
+            var libTrees = new[]
+            {
+                CSharpSyntaxTree.ParseText(library, parse, "/src/Framework/Framework.cs"),
+                CSharpSyntaxTree.ParseText(FixtureRunner.ImplicitUsings, parse, "/src/Framework/obj/GlobalUsings.g.cs"),
+            };
+            var lib = CSharpCompilation.Create("Framework", libTrees, FixtureReferences.All, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+            var libErrors = lib.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
+            Assert.True(libErrors.Count == 0, string.Join("\n", libErrors));
+            projects.Add(new ProjectCompilation(new CompilationInput(
+                "/src/Framework/Framework.csproj", "net8.0", "Framework", OutputKind.DynamicallyLinkedLibrary, LanguageVersion.CSharp12,
+                NullableContextOptions.Disable, Array.Empty<string>(), false, null, libTrees.Select(t => t.FilePath).ToList(),
+                Array.Empty<string>(), Array.Empty<string>(), "/inputs/Framework.txt"), lib, libErrors));
+            references.Add(lib.ToMetadataReference());
+        }
         var trees = new List<SyntaxTree>
         {
             CSharpSyntaxTree.ParseText(web, parse, "/src/App/Controllers.cs"),
             CSharpSyntaxTree.ParseText(FixtureRunner.ImplicitUsings, parse, "/src/App/obj/GlobalUsings.g.cs"),
         };
         trees.AddRange(views.Select(v => CSharpSyntaxTree.ParseText(v.Code, parse, v.Path)));
-        var compilation = CSharpCompilation.Create("App", trees, FixtureReferences.All, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        var compilation = CSharpCompilation.Create("App", trees, references, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         var errors = compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error).ToList();
         Assert.True(errors.Count == 0, string.Join("\n", errors));
         var input = new CompilationInput(
             "/src/App/App.csproj", "net8.0", "App", OutputKind.DynamicallyLinkedLibrary, LanguageVersion.CSharp12, NullableContextOptions.Disable,
             Array.Empty<string>(), false, null, trees.Select(t => t.FilePath).ToList(), Array.Empty<string>(), Array.Empty<string>(), "/inputs/App.txt");
-        var result = new TaintEngine(Snippet.Models, Snippet.Options).Analyze(new LoadedSolution(new[] { new ProjectCompilation(input, compilation, errors) }), CancellationToken.None);
+        projects.Add(new ProjectCompilation(input, compilation, errors));
+        var result = new TaintEngine(Snippet.Models, Snippet.Options).Analyze(new LoadedSolution(projects), CancellationToken.None);
         Assert.True(result.Stats.FailedMethods == 0, string.Join("; ", result.Stats.FirstErrors));
         Assert.True(result.Complete, result.IncompleteReason);
         return result;
@@ -462,5 +484,364 @@ public sealed class RequestScopedHeapTests
         Assert.Contains("/src/App/Views/Shared/_Unused.cshtml:1", Xss(result));
         Assert.Contains("/src/App/Views/Profile/Other.cshtml:1", Xss(result));
         Assert.Contains("/src/App/Views/Profile/Motto.cshtml:2", Xss(result));
+    }
+
+    // ---- Fix round 1 (task-20-review.md) ----
+
+    /// I1: code around the action (a controller's filter override, a filter, middleware, a DI-built constructor) runs in
+    /// every request: what it writes from the request is request data for the actions (reviewer's probes P1–P4b).
+    [Fact]
+    public void A_controllers_OnActionExecuting_writes_request_data_its_actions_read() => Expect("""
+        public class LangController : Controller
+        {
+            private string _lang = "en";
+            private readonly SqlConnection _c = new();
+            public override void OnActionExecuting(Microsoft.AspNetCore.Mvc.Filters.ActionExecutingContext context)
+            {
+                _lang = Request.Query["lang"].ToString();
+            }
+            public IActionResult Index()
+            {
+                _c.Execute("SELECT * FROM t WHERE lang = '" + _lang + "'"); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    private const string TenantAction = """
+        public class TenantCtx { public string Tenant { get; set; } = ""; }
+        public class OrdersController : ControllerBase
+        {
+            private readonly TenantCtx _ctx;
+            private readonly SqlConnection _c = new();
+            public OrdersController(TenantCtx ctx) => _ctx = ctx;
+            public IActionResult List()
+            {
+                _c.Execute("SELECT * FROM " + _ctx.Tenant + ".orders"); /*sink*/
+                return Ok();
+            }
+        }
+
+        """;
+
+    [Fact]
+    public void An_action_filter_writes_request_data_the_action_reads() => Expect(TenantAction + """
+        public class TenantFilter : Microsoft.AspNetCore.Mvc.Filters.IActionFilter
+        {
+            private readonly TenantCtx _ctx;
+            public TenantFilter(TenantCtx ctx) => _ctx = ctx;
+            public void OnActionExecuting(Microsoft.AspNetCore.Mvc.Filters.ActionExecutingContext context) =>
+                _ctx.Tenant = context.HttpContext.Request.Headers["X-Tenant"].ToString();
+            public void OnActionExecuted(Microsoft.AspNetCore.Mvc.Filters.ActionExecutedContext context) { }
+        }
+        """);
+
+    [Fact]
+    public void A_conventional_middleware_writes_request_data_the_action_reads() => Expect(TenantAction + """
+        public class TenantMiddleware
+        {
+            private readonly RequestDelegate _next;
+            public TenantMiddleware(RequestDelegate next) => _next = next;
+            public async Task InvokeAsync(HttpContext context, TenantCtx ctx)
+            {
+                ctx.Tenant = context.Request.Headers["X-Tenant"].ToString();
+                await _next(context);
+            }
+        }
+        """);
+
+    private const string CurrentTenantAction = """
+        public class ReportsController : ControllerBase
+        {
+            private readonly CurrentTenant _t;
+            private readonly SqlConnection _c = new();
+            public ReportsController(CurrentTenant t) => _t = t;
+            public IActionResult List()
+            {
+                _c.Execute("SELECT * FROM " + _t.Name + ".reports"); /*sink*/
+                return Ok();
+            }
+        }
+
+        """;
+
+    [Fact]
+    public void A_DI_built_constructor_writes_request_data_the_action_reads() => Expect(CurrentTenantAction + """
+        public class CurrentTenant
+        {
+            public string Name { get; }
+            public CurrentTenant(IHttpContextAccessor http) => Name = http.HttpContext!.Request.Headers["X-Tenant"].ToString();
+        }
+        """);
+
+    [Fact]
+    public void A_DI_built_constructor_writes_request_data_a_helper_read_and_the_action_reads_it() => Expect(CurrentTenantAction + """
+        public static class Web
+        {
+            public static string Tenant(IHttpContextAccessor http) => http.HttpContext!.Request.Headers["X-Tenant"].ToString();
+        }
+        public class CurrentTenant
+        {
+            public string Name { get; }
+            public CurrentTenant(IHttpContextAccessor http) => Name = Web.Tenant(http);
+        }
+        """);
+
+    /// I2: a view creates a tag helper (CreateTagHelper<T>) and sets its properties; its Process runs in the view's
+    /// request (reviewer's probe P5).
+    [Fact]
+    public void A_tag_helper_the_view_creates_receives_the_views_request_data()
+    {
+        const string web = Web + """
+
+            public class BioTagHelper : Microsoft.AspNetCore.Razor.TagHelpers.TagHelper
+            {
+                public string Text { get; set; } = "";
+                public override void Process(Microsoft.AspNetCore.Razor.TagHelpers.TagHelperContext context, Microsoft.AspNetCore.Razor.TagHelpers.TagHelperOutput output)
+                {
+                    output.Content.SetHtmlContent(Text);
+                }
+            }
+            public class TaggedController : Controller
+            {
+                public IActionResult Show([FromQuery] string q)
+                {
+                    var model = new ProfileModel();
+                    model.Bio = q;
+                    return View(model);
+                }
+            }
+            """;
+        var line = web.Split('\n').Select((l, i) => (l, i)).First(x => x.l.Contains("SetHtmlContent(Text)", StringComparison.Ordinal)).i + 1;
+        var result = AnalyzeWeb(web, Views.Append(View("Views_Tagged_Show", "/src/App/Views/Tagged/Show.cshtml",
+            "var __bio = CreateTagHelper<BioTagHelper>(); __bio.Text = Model.Bio;")).ToArray());
+
+        Assert.Contains("/src/App/Controllers.cs:" + line, Xss(result));
+    }
+
+    /// I3: a view component that renders through an abstract base's wrapper (nopCommerce NopViewComponent.ViewAsync)
+    /// reaches its own Components/<Name>/ views: the default one, or any of them for a view name passed in.
+    [Fact]
+    public void A_view_component_rendering_through_a_base_class_wrapper_reaches_its_own_views()
+    {
+        const string web = """
+            using Microsoft.AspNetCore.Mvc;
+            public class ProfileModel { public string Bio { get; set; } = ""; public string Motto { get; set; } = ""; }
+            public abstract class BaseViewComponent : ViewComponent
+            {
+                protected IViewComponentResult Render(object model) => View(model);
+                protected IViewComponentResult Render(string viewName, object model) => View(viewName, model);
+            }
+            public class BioBoxViewComponent : BaseViewComponent
+            {
+                public IViewComponentResult Invoke(ProfileModel model) => Render(model);
+            }
+            public class MottoBoxViewComponent : BaseViewComponent
+            {
+                public IViewComponentResult Invoke(ProfileModel model, string view) => Render(view, model);
+            }
+            public class BoxController : Controller
+            {
+                public IActionResult Show([FromQuery] string q)
+                {
+                    var model = new ProfileModel();
+                    model.Bio = q;
+                    return View(model);
+                }
+            }
+            """;
+        var result = AnalyzeWeb(web,
+            View("Views_Box_Show", "/src/App/Views/Box/Show.cshtml",
+                """Write(await Component.InvokeAsync("BioBox", Model)); Write(await Component.InvokeAsync("MottoBox", new { model = Model, view = "Wide" }));"""),
+            View("Views_Shared_Components_BioBox_Default", "/src/App/Views/Shared/Components/BioBox/Default.cshtml", "Write(Html.Raw(Model.Bio));"),
+            View("Views_Shared_Components_MottoBox_Wide", "/src/App/Views/Shared/Components/MottoBox/Wide.cshtml", "Write(Html.Raw(Model.Bio));"),
+            View("Views_Shared__Unused", "/src/App/Views/Shared/_Unused.cshtml", "Write(Html.Raw(Model.Bio));"));
+
+        Assert.Equal(new[]
+        {
+            "/src/App/Views/Shared/Components/BioBox/Default.cshtml:1",
+            "/src/App/Views/Shared/Components/MottoBox/Wide.cshtml:1",
+        }, Xss(result));
+        Assert.Equal(0, result.Stats.UnresolvedViews);
+    }
+
+    /// I3: a view name a library's base controller cannot resolve reaches the views of the projects that reference the
+    /// library (the views live in the web project).
+    [Fact]
+    public void An_unresolved_view_name_in_a_library_reaches_the_views_of_the_projects_that_reference_it()
+    {
+        const string library = """
+            namespace Framework;
+            public abstract class BaseController : Microsoft.AspNetCore.Mvc.Controller
+            {
+                protected Microsoft.AspNetCore.Mvc.IActionResult Render(string name, object model) => View(name, model);
+            }
+            """;
+        const string web = Web + """
+
+            public class RenderController : Framework.BaseController
+            {
+                public IActionResult Go([FromQuery] string q)
+                {
+                    var model = new ProfileModel();
+                    model.Bio = q;
+                    return Render(q.Length > 3 ? "Other" : "Motto", model);
+                }
+            }
+            """;
+        var result = AnalyzeWeb(web, library, Views);
+
+        Assert.Contains("/src/App/Views/Profile/Other.cshtml:1", Xss(result));
+        Assert.Equal(1, result.Stats.UnresolvedViews);
+    }
+
+    /// I4: the reported path starts in a request that reaches the sink. Two actions write one member through a shared
+    /// service; only the second reads it into SQL. The first's path is shorter but its request never reaches the sink.
+    [Fact]
+    public void The_reported_path_starts_in_a_request_that_reaches_the_sink()
+    {
+        const string code = """
+            public class Box { public string Name { get; set; } = ""; }
+            public class BoxService
+            {
+                private readonly Box _box = new();
+                public void Set(string v) => _box.Name = v;
+                public string Get() => _box.Name;
+            }
+            public class AdminController : ControllerBase
+            {
+                private readonly BoxService _s;
+                public AdminController(BoxService s) => _s = s;
+                public IActionResult A(string a) { _s.Set(a); return Ok(); }
+            }
+            public class ShopController : ControllerBase
+            {
+                private readonly BoxService _s;
+                private readonly SqlConnection _c = new();
+                public ShopController(BoxService s) => _s = s;
+                public IActionResult B(string b)
+                {
+                    var t = b.Trim();
+                    var u = t.ToUpperInvariant();
+                    var w = u.Replace(" ", "");
+                    _s.Set(w);
+                    _c.Execute("SELECT * FROM t WHERE n = '" + _s.Get() + "'");
+                    return Ok();
+                }
+            }
+            """;
+        var finding = Assert.Single(Snippet.Analyze(code).Findings, f => f.RuleId == "csharp.sql-injection");
+        Assert.Contains("parameter 'b'", finding.Path[0].Message);
+    }
+
+    /// M1 (P6): a field initializer runs when the object is built: it reads what the building request wrote.
+    [Fact]
+    public void A_field_initializer_runs_in_the_request_that_builds_the_object() => Expect("""
+        public static class Ctx { public static string Current = ""; }
+        public class Report
+        {
+            private readonly string _sql = "SELECT * FROM " + Ctx.Current;
+            private readonly SqlConnection _c = new();
+            public int Run() => _c.Execute(_sql); /*sink*/
+        }
+        public class Export
+        {
+            private readonly string _sql = "SELECT * FROM x WHERE t = '" + Ctx.Current + "'";
+            private readonly SqlConnection _c = new();
+            public Export(int n) { _c.Open(); }
+            public int Run() => _c.Execute(_sql); /*sink*/
+        }
+        public class ReportsController : ControllerBase
+        {
+            public IActionResult M(string q)
+            {
+                Ctx.Current = q;
+                return Ok(new Report().Run() + new Export(1).Run());
+            }
+        }
+        """);
+
+    /// M1 (P8): a top-level local function a Minimal API lambda calls runs in that handler's request.
+    [Fact]
+    public void A_top_level_local_function_a_handler_calls_runs_in_its_request() => Expect("""
+        var app = WebApplication.CreateBuilder(args).Build();
+        app.MapGet("/x", (string q) => Run(q));
+        app.Run();
+        string Run(string q)
+        {
+            var s = new State();
+            s.Text = q;
+            new SqlConnection().Execute("SELECT * FROM t WHERE n = '" + s.Text + "'"); /*sink*/
+            return "ok";
+        }
+        public class State { public string Text { get; set; } = ""; }
+        """);
+
+    /// M4: a layout no action names is an entry point of its own (R-E16): heap data it writes and reads in its own
+    /// request stays request data (quiet without the implicit entry, where its reach is empty).
+    [Fact]
+    public void A_layout_reads_the_heap_data_its_own_request_wrote()
+    {
+        const string web = Web + """
+
+            public class Title { public string Text { get; set; } = ""; }
+            """;
+        var result = AnalyzeWeb(web, Views.Append(View("Views_Shared__Layout", "/src/App/Views/Shared/_Layout.cshtml",
+            """var t = new Title(); t.Text = Context.Request.Query["t"].ToString(); Write(Html.Raw(t.Text));""")).ToArray());
+
+        Assert.Contains("/src/App/Views/Shared/_Layout.cshtml:1", Xss(result));
+    }
+
+    /// M3: an area controller's view is looked up in its area; a controller without an area never gets an area's view.
+    [Fact]
+    public void An_area_controller_renders_its_areas_view_and_not_the_root_one()
+    {
+        const string web = """
+            using Microsoft.AspNetCore.Mvc;
+            public class ProfileModel { public string Bio { get; set; } = ""; public string Motto { get; set; } = ""; }
+            public class HomeController : Controller
+            {
+                public IActionResult Index() => View(new ProfileModel());
+            }
+            namespace AdminArea
+            {
+                [Area("Admin")]
+                public abstract class AdminBase : Controller { }
+                public class HomeController : AdminBase
+                {
+                    public IActionResult Index([FromQuery] string q)
+                    {
+                        var model = new ProfileModel();
+                        model.Bio = q;
+                        return View(model);
+                    }
+                }
+            }
+            """;
+        var result = AnalyzeWeb(web,
+            View("Views_Home_Index", "/src/App/Views/Home/Index.cshtml", "Write(Html.Raw(Model.Bio));", identifier: "/Views/Home/Index.cshtml"),
+            View("Areas_Admin_Views_Home_Index", "/src/App/Areas/Admin/Views/Home/Index.cshtml", "Write(Html.Raw(Model.Bio));",
+                identifier: "/Areas/Admin/Views/Home/Index.cshtml"));
+
+        Assert.Equal(new[] { "/src/App/Areas/Admin/Views/Home/Index.cshtml:1" }, Xss(result));
+        Assert.Equal(0, result.Stats.UnresolvedViews);
+    }
+
+    /// M5: a view named by a path that no compiled view has (runtime-compiled plugin views) is counted apart from the
+    /// names that cannot be resolved.
+    [Fact]
+    public void A_path_named_view_that_is_not_compiled_is_counted_as_uncompiled()
+    {
+        const string web = Web + """
+
+            public class PluginController : Controller
+            {
+                public IActionResult Configure() => View("~/Plugins/Payments.Manual/Views/Configure.cshtml", new ProfileModel());
+            }
+            """;
+        var result = AnalyzeWeb(web, Views);
+
+        Assert.Equal(1, result.Stats.UncompiledViews);
+        Assert.Equal(0, result.Stats.UnresolvedViews);
     }
 }

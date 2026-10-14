@@ -111,6 +111,13 @@ internal sealed class Label
 /// caller no entry point reaches (the spec: that code reads the heap clean), while data a helper read from the request
 /// does (a caller the call graph cannot connect, a typed HTTP client built by DI, still runs in the request that built
 /// it). FromHeap joins by "and".
+///
+/// Witnesses (fix round 1, I4): Path is one witness, valid for Scope. When request data of different scopes is joined,
+/// Witnesses keeps up to MaxWitnesses (scope, shortest path) pairs, Path the shortest of them; every narrowing (Within,
+/// a heap read or write) drops the witnesses whose scope it leaves, so a reported path (WitnessFor) starts in a request
+/// that reaches the sink. Witnesses, like paths, do not take part in the order.
+internal readonly record struct Witness(Reach? Scope, Trail Path);
+
 internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFor, Trail Path)
 {
     public const int MaxSources = 16;
@@ -127,9 +134,72 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     /// Whether every part of the request data was read from the heap (see the type's documentation).
     public bool FromHeap { get; init; }
 
+    public const int MaxWitnesses = 4;
+
+    /// The alternative witnesses (scope, path), shortest first, Path the first; empty: Path is the only one, valid for
+    /// Scope.
+    public ImmutableArray<Witness> Witnesses { get; init; } = ImmutableArray<Witness>.Empty;
+
+    private ImmutableArray<Witness> AllWitnesses => Witnesses.IsDefaultOrEmpty ? ImmutableArray.Create(new Witness(Scope, Path)) : Witnesses;
+
+    /// The request data narrowed to the entry points of `reach` (assumed to share some with Scope): its scope and its
+    /// witnesses (those whose scope shares none are dropped, unless none would be left).
+    public TaintValue Narrowed(Reach reach)
+    {
+        if (!Request) return this;
+        var scope = Scope == null ? reach : Scope.Intersect(reach);
+        if (Witnesses.IsDefaultOrEmpty) return ReferenceEquals(scope, Scope) ? this : this with { Scope = scope };
+        var kept = ImmutableArray.CreateBuilder<Witness>(Witnesses.Length);
+        foreach (var w in Witnesses)
+        {
+            if (w.Scope == null) kept.Add(new Witness(reach, w.Path));
+            else if (w.Scope.Intersects(reach)) kept.Add(new Witness(w.Scope.Intersect(reach), w.Path));
+        }
+        if (kept.Count == 0) return this with { Scope = scope, Witnesses = ImmutableArray<Witness>.Empty };
+        var witnesses = Merge(kept, ImmutableArray<Witness>.Empty);
+        return this with { Scope = scope, Path = witnesses[0].Path, Witnesses = witnesses.Length > 1 ? witnesses : ImmutableArray<Witness>.Empty };
+    }
+
+    /// This value with the path of a witness whose scope shares an entry point with `reach` (the sink's body): what a
+    /// finding reports.
+    public TaintValue WitnessFor(Reach reach)
+    {
+        if (!Request || Witnesses.IsDefaultOrEmpty) return this;
+        var target = Scope == null ? reach : Scope.Intersect(reach);
+        foreach (var w in Witnesses)
+            if (w.Scope == null || w.Scope.Intersects(target))
+                return ReferenceEquals(w.Path, Path) ? this : this with { Path = w.Path };
+        return this;
+    }
+
+    /// Two witness lists merged: one per scope (the shorter path), shortest first, at most MaxWitnesses.
+    private static ImmutableArray<Witness> Merge(IEnumerable<Witness> a, IEnumerable<Witness> b)
+    {
+        var byScope = new List<Witness>();
+        foreach (var w in a.Concat(b))
+        {
+            var i = byScope.FindIndex(x => Equals(x.Scope, w.Scope));
+            if (i < 0) byScope.Add(w);
+            else if (w.Path.Count < byScope[i].Path.Count) byScope[i] = w;
+        }
+        byScope.Sort((x, y) => x.Path.Count.CompareTo(y.Path.Count));
+        if (byScope.Count > MaxWitnesses) byScope.RemoveRange(MaxWitnesses, byScope.Count - MaxWitnesses);
+        return byScope.ToImmutableArray();
+    }
+
+    private static bool SameWitnesses(ImmutableArray<Witness> a, ImmutableArray<Witness> b)
+    {
+        if (a.IsDefaultOrEmpty || b.IsDefaultOrEmpty) return a.IsDefaultOrEmpty && b.IsDefaultOrEmpty;
+        if (a.Length != b.Length) return false;
+        for (var i = 0; i < a.Length; i++)
+            if (!ReferenceEquals(a[i].Path, b[i].Path) || !Equals(a[i].Scope, b[i].Scope)) return false;
+        return true;
+    }
+
     /// Request data read from the request in a body that `reach` reaches: valid in those requests only (an empty reach,
     /// which EntryPoints never gives a body that reads the request, leaves it unscoped).
-    public TaintValue ScopedTo(Reach reach) => !Request || reach.IsEmpty ? this : this with { Scope = reach, FromHeap = false };
+    public TaintValue ScopedTo(Reach reach) =>
+        !Request || reach.IsEmpty ? this : this with { Scope = reach, FromHeap = false, Witnesses = ImmutableArray<Witness>.Empty };
 
     /// The request data restricted to the entry points of `reach`: none when it shares no entry point with the scope
     /// and was read from the heap; unscoped data, and data read from the request that shares none (a caller the call
@@ -139,7 +209,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         if (!Request || Scope == null) return this;
         var scope = Scope.Intersect(reach);
         if (scope.IsEmpty) return FromHeap ? LabelPart : this;
-        return ReferenceEquals(scope, Scope) ? this : this with { Scope = scope };
+        return ReferenceEquals(scope, Scope) ? this : Narrowed(reach);
     }
 
     /// Request data or a parameter label: anything a later step must carry.
@@ -175,6 +245,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         var requestChanged = false;
         var scope = Scope;
         var fromHeap = FromHeap;
+        var witnesses = Witnesses;
         if (Request && other.Request)
         {
             request = true;
@@ -188,8 +259,23 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                 sources = sources.Add(s);
             }
             path = other.Path.Count < Path.Count ? other.Path : Path;
+            if (scope == null)
+            {
+                // Unscoped data is valid everywhere: its shortest witness is the one kept.
+                witnesses = ImmutableArray<Witness>.Empty;
+                var best = (Trail?)null;
+                foreach (var w in AllWitnesses.Concat(other.AllWitnesses))
+                    if (w.Scope == null && (best == null || w.Path.Count < best.Count)) best = w.Path;
+                if (best != null) path = best;
+            }
+            else if (!Witnesses.IsDefaultOrEmpty || !other.Witnesses.IsDefaultOrEmpty || !ReferenceEquals(Scope, other.Scope))
+            {
+                var merged = Merge(AllWitnesses, other.AllWitnesses);
+                path = merged[0].Path;
+                witnesses = merged.Length > 1 ? merged : ImmutableArray<Witness>.Empty;
+            }
             requestChanged = cleanFor.Count != CleanFor.Count || !ReferenceEquals(sources, Sources) || !ReferenceEquals(path, Path)
-                || !ReferenceEquals(scope, Scope) || fromHeap != FromHeap;
+                || !ReferenceEquals(scope, Scope) || fromHeap != FromHeap || !SameWitnesses(witnesses, Witnesses);
             if (cleanFor.Count == CleanFor.Count) cleanFor = CleanFor;
         }
         else if (other.Request)
@@ -200,6 +286,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             path = other.Path;
             scope = other.Scope;
             fromHeap = other.FromHeap;
+            witnesses = other.Witnesses;
             requestChanged = true;
         }
         else
@@ -211,7 +298,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         }
         var labels = MergeLabels(Labels, other.Labels, out var labelsChanged);
         if (!requestChanged && !labelsChanged) return this;
-        return new TaintValue(request, cleanFor, path) { Sources = sources, Labels = labels, Scope = scope, FromHeap = fromHeap };
+        return new TaintValue(request, cleanFor, path) { Sources = sources, Labels = labels, Scope = scope, FromHeap = fromHeap, Witnesses = witnesses };
     }
 
     /// The union of two sorted label arrays (one label per owner and slot: CleanFor intersected, the shorter path);
@@ -305,7 +392,20 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         if (!Any) return this;
         PathStep? step = null;
         var value = this;
-        if (Request && Fits(Path, location)) value = value with { Path = Path.Add(step = new PathStep(location, message)) };
+        if (Request && Fits(Path, location))
+        {
+            step = new PathStep(location, message);
+            if (Witnesses.IsDefaultOrEmpty)
+            {
+                value = value with { Path = Path.Add(step) };
+            }
+            else
+            {
+                var s0 = step;
+                var witnesses = Witnesses.Select(w => Fits(w.Path, location) ? new Witness(w.Scope, w.Path.Add(s0)) : w).ToImmutableArray();
+                value = value with { Path = witnesses[0].Path, Witnesses = witnesses };
+            }
+        }
         if (Labels.Length > 0 && Labels.Any(l => Fits(l.Path, location)))
         {
             var s = step ?? new PathStep(location, message);
@@ -321,7 +421,18 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     {
         if (!Any || steps.Count == 0) return this;
         var value = this;
-        if (Request) value = value with { Path = Path.Concat(steps) };
+        if (Request)
+        {
+            if (Witnesses.IsDefaultOrEmpty)
+            {
+                value = value with { Path = Path.Concat(steps) };
+            }
+            else
+            {
+                var witnesses = Witnesses.Select(w => new Witness(w.Scope, w.Path.Concat(steps))).ToImmutableArray();
+                value = value with { Path = witnesses[0].Path, Witnesses = witnesses };
+            }
+        }
         if (Labels.Length > 0) value = value with { Labels = Labels.Select(l => new Label(l.Owner, l.Slot, l.CleanFor, l.Path.Concat(steps))).ToImmutableArray() };
         return value;
     }

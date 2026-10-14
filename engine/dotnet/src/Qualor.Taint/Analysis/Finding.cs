@@ -58,4 +58,8 @@ public sealed record AnalysisStats(int Projects, int Methods, int Sccs, int Unmo
     public int ViewEdges { get; init; }
 
     public int UnresolvedViews { get; init; }
+
+    /// Views named by a path no compiled view has (compiled at run time, as plugin views often are): no edge, not a
+    /// fallback.
+    public int UncompiledViews { get; init; }
 }

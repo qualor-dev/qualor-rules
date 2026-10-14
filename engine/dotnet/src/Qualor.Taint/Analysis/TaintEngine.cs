@@ -85,6 +85,7 @@ public sealed class TaintEngine
             EntryPoints = entries?.Count ?? 0,
             ViewEdges = entries?.ViewEdges ?? 0,
             UnresolvedViews = entries?.UnresolvedViews ?? 0,
+            UncompiledViews = entries?.UncompiledViews ?? 0,
         };
         return new AnalysisResult(findings, reason == null, reason, stats);
     }

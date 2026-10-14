@@ -171,6 +171,7 @@ public static class SarifWriter
         w.WriteNumber("entryPoints", stats.EntryPoints);
         w.WriteNumber("viewEdges", stats.ViewEdges);
         w.WriteNumber("unresolvedViews", stats.UnresolvedViews);
+        w.WriteNumber("uncompiledViews", stats.UncompiledViews);
         w.WriteEndObject();
         w.WriteEndObject();
 

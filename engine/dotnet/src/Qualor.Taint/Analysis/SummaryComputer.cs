@@ -244,12 +244,12 @@ internal sealed class SummaryComputer
             foreach (var e in summary.Sinks.Values)
             {
                 if (e.Slot != key.Slot || !value.TaintedFor(e.RuleId)) continue;
-                _ctx.Report(e.RuleId, e.Site, value.Extend(e.Path), e.Member);
+                _ctx.Report(e.RuleId, e.Site, value.WitnessFor(_entries.Of(body)).Extend(e.Path), e.Member);
             }
             foreach (var (member, symbolic) in summary.Heap.Values)
             {
                 var written = BodySummary.Through(symbolic, body.Id, key.Slot, value);
-                if (written.Request) _heap.Write(member, written, _entries.Of(body));
+                if (written.Request) _heap.Write(member, written, _entries.WriteReach(body));
             }
             foreach (var c in summary.Calls.Values)
                 if (c.Slot == key.Slot) Seed(c.Callee, c.CalleeSlot, value.Extend(c.Path).CleanedFor(c.CleanFor));
@@ -358,7 +358,7 @@ internal sealed class SummaryComputer
                     if (_ctx.Sources.IsSourceParameter(p))
                     {
                         var location = p.Locations.FirstOrDefault(l => l.IsInSource) ?? Location.None;
-                        value = TaintValue.Source(location, $"request data enters here: parameter '{p.Name}' of {_ctx.Name(method)}").ScopedTo(run.Reach);
+                        value = TaintValue.Source(location, $"request data enters here: parameter '{p.Name}' of {_ctx.Name(method)}").ScopedTo(run.WriteReach);
                     }
                     if (body.IsLambda) value = value.Join(seed);
                     else if (p.RefKind != RefKind.Out) value = value.Join(TaintValue.Param(body.Id, p.Ordinal));
@@ -475,10 +475,15 @@ internal sealed class SummaryComputer
             var root = unit.RootBody;
             This = root.Symbol is { IsStatic: false } ? TaintValue.Param(root.Id, -1) : TaintValue.Clean;
             Reach = computer._entries.Of(body);
+            WriteReach = computer._entries.WriteReach(body);
         }
 
-        /// The entry points that reach this body (EntryPoints.Of).
+        /// The entry points that reach this body (EntryPoints.Of): what it reads the heap under.
         public Reach Reach { get; }
+
+        /// The entry points this body's writes and request data are valid for (EntryPoints.WriteReach: widened to every
+        /// entry point for code around every action).
+        public Reach WriteReach { get; }
 
         /// The value of `this`: the label of the unit root's receiver (a lambda's `this` is its enclosing member's).
         public TaintValue This { get; }
@@ -570,7 +575,14 @@ internal sealed class SummaryComputer
 
         public bool IsHeapMember(ISymbol member) => _computer._heap.IsMember(member);
 
-        public TaintValue HeapRead(ISymbol member) => _computer._heap.Read(member, _unit, Reach);
+        public TaintValue HeapRead(ISymbol member)
+        {
+            var value = _computer._heap.Read(member, _unit, Reach);
+            // Code around every action reads heap data in every request.
+            if (value.Scope is not { } scope) return value;
+            var widened = _computer._entries.Widen(scope);
+            return ReferenceEquals(widened, scope) ? value : value with { Scope = widened };
+        }
 
         /// A write to a heap symbol: its request data to the heap, its labels to their owners' summaries.
         public void HeapWrite(ISymbol member, TaintValue value)
@@ -579,7 +591,7 @@ internal sealed class SummaryComputer
             var heap = _computer._heap;
             if (value.Request)
             {
-                heap.Write(member, value, Reach);
+                heap.Write(member, value, WriteReach);
                 _computer.Builder(_body.Id).RequestHeap.TryAdd(heap.Key(member), member);
             }
             if (value.Labels.Length == 0) return;

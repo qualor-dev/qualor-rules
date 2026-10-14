@@ -5,137 +5,43 @@ using Microsoft.CodeAnalysis.Text;
 
 namespace Qualor.Taint;
 
-/// A set of entry points (bit i: entry i): what reaches a strongly connected component of the call graph or a Minimal
-/// API handler's body, and the entry points request data read from the heap is valid for (TaintValue.Scope). Compared
-/// by value. Intersections and unions are remembered per pair (one engine run uses its sets from one thread), so the
-/// heap's reads and the joins of scoped values do not allocate a new set each time.
-internal sealed class Reach : IEquatable<Reach>
-{
-    public static readonly Reach None = new(Array.Empty<ulong>());
-
-    private readonly int _hash;
-    private Dictionary<Reach, Reach>? _intersections;
-    private Dictionary<Reach, Reach>? _unions;
-
-    public Reach(ulong[] bits)
-    {
-        Bits = bits;
-        IsEmpty = Array.TrueForAll(bits, w => w == 0);
-        var hash = new HashCode();
-        var last = bits.Length - 1;
-        while (last >= 0 && bits[last] == 0) last--;
-        for (var i = 0; i <= last; i++) hash.Add(bits[i]);
-        _hash = hash.ToHashCode();
-    }
-
-    public ulong[] Bits { get; }
-
-    public bool IsEmpty { get; }
-
-    public bool Intersects(Reach other)
-    {
-        var a = Bits;
-        var b = other.Bits;
-        var n = Math.Min(a.Length, b.Length);
-        for (var i = 0; i < n; i++)
-            if ((a[i] & b[i]) != 0) return true;
-        return false;
-    }
-
-    /// The entry points in both (None when they share none; `this` when it is the smaller).
-    public Reach Intersect(Reach other)
-    {
-        if (ReferenceEquals(this, other) || IsEmpty) return this;
-        if (other.IsEmpty) return None;
-        _intersections ??= new Dictionary<Reach, Reach>(ReferenceEqualityComparer.Instance);
-        if (_intersections.TryGetValue(other, out var known)) return known;
-        known = ComputeIntersect(other);
-        if (_intersections.Count < MaxMemo) _intersections[other] = known;
-        return known;
-    }
-
-    private const int MaxMemo = 4096;
-
-    private Reach ComputeIntersect(Reach other)
-    {
-        var n = Math.Min(Bits.Length, other.Bits.Length);
-        var bits = new ulong[n];
-        var same = true;
-        var any = false;
-        for (var i = 0; i < n; i++)
-        {
-            bits[i] = Bits[i] & other.Bits[i];
-            if (bits[i] != Bits[i]) same = false;
-            if (bits[i] != 0) any = true;
-        }
-        for (var i = n; i < Bits.Length; i++) if (Bits[i] != 0) same = false;
-        return !any ? None : same ? this : new Reach(bits);
-    }
-
-    /// The entry points in either (`this` when it holds the other).
-    public Reach Union(Reach other)
-    {
-        if (ReferenceEquals(this, other) || other.IsEmpty) return this;
-        if (IsEmpty) return other;
-        _unions ??= new Dictionary<Reach, Reach>(ReferenceEqualityComparer.Instance);
-        if (_unions.TryGetValue(other, out var known)) return known;
-        known = ComputeUnion(other);
-        if (_unions.Count < MaxMemo) _unions[other] = known;
-        return known;
-    }
-
-    private Reach ComputeUnion(Reach other)
-    {
-        var n = Math.Max(Bits.Length, other.Bits.Length);
-        var bits = new ulong[n];
-        var same = true;
-        for (var i = 0; i < n; i++)
-        {
-            var a = i < Bits.Length ? Bits[i] : 0;
-            bits[i] = a | (i < other.Bits.Length ? other.Bits[i] : 0);
-            if (bits[i] != a) same = false;
-        }
-        return same ? this : new Reach(bits);
-    }
-
-    public bool Equals(Reach? other)
-    {
-        if (ReferenceEquals(this, other)) return true;
-        if (other is null || _hash != other._hash) return false;
-        var n = Math.Max(Bits.Length, other.Bits.Length);
-        for (var i = 0; i < n; i++)
-            if ((i < Bits.Length ? Bits[i] : 0) != (i < other.Bits.Length ? other.Bits[i] : 0)) return false;
-        return true;
-    }
-
-    public override bool Equals(object? obj) => Equals(obj as Reach);
-
-    public override int GetHashCode() => _hash;
-}
-
 /// The request entry points and what each reaches (spec §5 "Heap" as amended, decision R-6), for the request-scoped heap.
 ///
 /// - Entry points: the methods the sources model treats as receiving the request (SourceFinder.IsEntry: controller
 ///   actions, Razor Pages handlers, Minimal API handlers given as method groups, methods with a parameter bound by an
-///   attribute), each Minimal API handler given as a lambda or local function (its own entry, apart from the code around
-///   it), and — beyond the three kinds the spec names — request code the framework invokes, which no call edge reaches
-///   but which runs inside a request: when no other entry point reaches it, each view and view component class (a
-///   layout, a view no action names), each filter, middleware, tag helper or hub class, and each other unit that reads
-///   the request itself (a source member or a bound property) is an entry point of its own.
+///   attribute), and each Minimal API handler given as a lambda or local function (its own entry, apart from the code
+///   around it, with the top-level local functions it calls). Beyond the three kinds the spec names (rulings R-E15,
+///   R-E16), request code the framework invokes, which no call edge reaches but which runs inside a request, when no
+///   other entry point reaches it:
+///   - each view and view component class (a layout, a view no action names), each tag helper and hub class: an entry
+///     point of its own;
+///   - code "around" every action (fix round 1, I1): filter, endpoint-filter and middleware classes (a controller's
+///     filter overrides included), conventional middleware `Invoke(HttpContext, …)`, constructors no `new` reaches (DI
+///     builds them) and units that read the request themselves: one shared entry point, Around. What around code writes
+///     or reads from the request runs in every request, so its writes and its request data are widened to every entry
+///     point (WriteReach, SourceScope); its reads keep its own bit (data an admin action saved stays out of it).
 /// - Reach: from each entry point over the call graph (CallGraph: invocations, object creations, property accessors,
-///   method groups, with Dispatch), as one bit set per strongly connected component, propagated once from callers to
-///   callees in the components' top-down order.
-/// - Views: the call graph gets an edge from the unit that renders a view to every unit of the view's generated class
-///   (and of the classes nested in it). `View()`/`PartialView()` of a controller resolve as MVC's default view locator
-///   does for the conventional cases: the default name is the action's (`[ActionName]`, else the method name, also
-///   without an `Async` suffix), looked up as Views/<Controller>/<name>.cshtml and Views/Shared/<name>.cshtml (any area
-///   or theme folder above them); a name that is a path (`~/…`, `/…`, `….cshtml`) matches that path. `Page()` and
-///   every Razor Pages handler reach the page whose `Model` is the handler's page model. In a view, partials
-///   (`Html.Partial*`, `Html.RenderPartial*`, `<partial name="…">`) resolve in the view's folder, then Views/Shared and
-///   Pages/Shared; view components (`Component.InvokeAsync` by name, type or type argument, `<vc:…>`) reach the
-///   component class, whose `View()` resolves under Components/<name>/ (default view "Default"). A view is identified
-///   by the generator's RazorCompiledItem attributes, else by its `#line` file. A name that cannot be resolved (not a
-///   constant, or no view of that name) reaches every view and view component of the caller's project (counted).
+///   method groups, implicit ToString(), with Dispatch), as one interned bit set per strongly connected component,
+///   propagated once from callers to callees in the components' top-down order.
+/// - Edges added to the call graph before its components are computed:
+///   - an action to the view it renders: `View()`/`PartialView()` of a controller resolve as MVC's default view locator
+///     does for the conventional cases: the default name is the action's (`[ActionName]`, else the method name, also
+///     without an `Async` suffix), looked up as Views/<Controller>/<name>.cshtml, Views/Shared/<name>.cshtml and
+///     Pages/Shared/<name>.cshtml outside any area, or, for a controller with `[Area("X")]` (inherited),
+///     Areas/X/Views/<Controller>/, Areas/X/Views/Shared/ and the root Views/Shared/; a path name (`~/…`, `/…`,
+///     `….cshtml`) matches that path. `Page()` and every Razor Pages handler reach the page whose `Model` is the
+///     handler's page model;
+///   - a view to its partials (`Html.Partial*`, `Html.RenderPartial*`, `<partial name="…">`: the view's folder, then the
+///     Shared folders of its area and of the root), its view components (`Component.InvokeAsync` by name, type or type
+///     argument, `<vc:…>`), and the tag helpers it creates (`CreateTagHelper<T>()`: T's Init/Process/ProcessAsync);
+///   - a view component's `View()` (also through an abstract base's wrapper: each concrete component derived from it) to
+///     its Components/<name>/<view or Default>.cshtml (any view under Components/<name>/ for a name passed in);
+///   - a constructor (or the `new` of a type with an implicit one) to its type's instance field and property
+///     initializers.
+///   A view is identified by the generator's RazorCompiledItem attributes, else by its `#line` file. A view name that
+///   cannot be resolved reaches every view and view component of the caller's project and of the projects that
+///   reference it, a view component name every view component of the solution (counted: UnresolvedViews); a path name
+///   no compiled view has (a runtime-compiled view) reaches nothing (counted: UncompiledViews).
 internal sealed class EntryPoints
 {
     private const string RazorPageBase = "Microsoft.AspNetCore.Mvc.Razor.RazorPageBase";
@@ -143,6 +49,7 @@ internal sealed class EntryPoints
     private const string ViewComponentBase = "Microsoft.AspNetCore.Mvc.ViewComponent";
     private const string ViewComponentAttribute = "Microsoft.AspNetCore.Mvc.ViewComponentAttribute";
     private const string PartialTagHelper = "Microsoft.AspNetCore.Mvc.TagHelpers.PartialTagHelper";
+    private const string AreaAttribute = "Microsoft.AspNetCore.Mvc.AreaAttribute";
 
     private enum Kind { View, ComponentView, Page, Partial, Component }
 
@@ -150,6 +57,12 @@ internal sealed class EntryPoints
     private sealed record Request(Unit Caller, Kind Kind, string? Name, INamedTypeSymbol? Component);
 
     private const string Unresolved = "\0";
+
+    private enum Match { Suffix, Root, TwoWay, Folder }
+
+    /// A candidate view path: Suffix (the view's path ends with it), Root (the same, outside any area), TwoWay (either
+    /// ends with the other: an app-relative name against project-relative identifiers), Folder (the path contains it).
+    private readonly record struct Candidate(string Text, Match Mode);
 
     private sealed class ViewClass
     {
@@ -168,58 +81,88 @@ internal sealed class EntryPoints
         public List<Unit> Units { get; } = new();
     }
 
+    /// A Minimal API handler (lambda or local function) inside a unit: its spans (its own and those of the top-level
+    /// local functions it calls) and the keys of its callees.
+    private sealed record Handler(List<TextSpan> Spans, List<object> Callees);
+
     private readonly SourceFinder _sources;
+    private readonly ReachTable _table = new();
     private readonly List<Unit> _entryUnits = new();
-    private readonly Dictionary<Unit, List<(TextSpan Span, List<object> Callees)>> _handlers = new();
+    private readonly Dictionary<Unit, List<Handler>> _handlers = new();
     private readonly HashSet<Unit> _readsRequest = new();
-    private readonly Dictionary<Unit, object> _frameworkClass = new();
+    private readonly Dictionary<Unit, (object Key, bool Around)> _frameworkClass = new();
+    private readonly HashSet<Unit> _constructors = new();
+    private readonly Dictionary<object, List<Unit>> _constructorsOf = new();
+    private readonly Dictionary<object, List<Unit>> _initializersOf = new();
+    private readonly List<(Unit Caller, object Type)> _implicitNews = new();
+    private readonly Dictionary<object, List<Unit>> _tagHelperUnits = new();
+    private readonly List<(Unit View, INamedTypeSymbol Type)> _tagHelpers = new();
     private readonly List<Request> _requests = new();
     private readonly Dictionary<object, ViewClass?> _views = new();
     private readonly Dictionary<object, ComponentClass?> _components = new();
     private readonly Dictionary<Unit, ViewClass> _viewOfUnit = new();
     private readonly Dictionary<Compilation, Dictionary<object, string>> _compiledItems = new();
     private readonly Dictionary<object, bool> _derives = new();
+    private readonly Dictionary<(Compilation, Compilation), bool> _references = new();
 
     private Reach[] _sccReach = Array.Empty<Reach>();
-    private readonly Dictionary<Unit, List<(TextSpan Span, int Bit)>> _handlerBits = new();
+    private readonly Dictionary<Unit, List<(List<TextSpan> Spans, int Bit)>> _handlerBits = new();
     private readonly Dictionary<int, Reach> _bodyReach = new();
+    private readonly Dictionary<int, Reach> _bodyWriteReach = new();
     private int _words;
+    private int _aroundBit = -1;
+    private Reach _all = Reach.None;
+    private Reach _explicit = Reach.None;
 
     public EntryPoints(SourceFinder sources) => _sources = sources;
 
     /// Entry points (explicit, handler bodies and implicit ones).
     public int Count { get; private set; }
 
-    /// Views and view components rendered by name that were resolved, and those that fell back to every view.
+    /// Views and view components rendered by name that were resolved, those that fell back to every view, and path
+    /// names no compiled view has.
     public int ViewEdges { get; private set; }
 
     public int UnresolvedViews { get; private set; }
 
+    public int UncompiledViews { get; private set; }
+
     // ---- Indexing (CallGraph.Build, once per unit) ----
 
     /// Records what a unit tells about entry points and views: whether it is an entry point, its Minimal API handler
-    /// lambdas and local functions (with the callees of each), whether it reads the request itself, the view class or
-    /// view component it belongs to, and the views it renders.
+    /// lambdas and local functions (with the callees of each), whether it reads the request itself, the view class, view
+    /// component or framework class it belongs to, whether it is a constructor or an instance initializer, and the views
+    /// and tag helpers it renders.
     public void Scan(Unit unit, IOperation operation, Dispatch dispatch)
     {
         var type = unit.Symbol?.ContainingType ?? DeclaringType(unit);
         if (type != null)
         {
+            var typeKey = SymbolKeys.Of(type.OriginalDefinition);
             if (ViewOf(type, unit.Compilation) is { } view)
             {
                 view.Units.Add(unit);
                 _viewOfUnit[unit] = view;
-                _frameworkClass[unit] = view;
+                _frameworkClass[unit] = (view, false);
             }
             else if (ComponentOf(type, unit.Compilation) is { } component)
             {
                 component.Units.Add(unit);
-                _frameworkClass[unit] = component;
+                _frameworkClass[unit] = (component, false);
             }
-            else if (IsFrameworkInvoked(type, unit.Symbol))
+            else if (FrameworkClass(type, unit.Symbol) is { } around)
             {
-                _frameworkClass[unit] = SymbolKeys.Of(type.OriginalDefinition);
+                _frameworkClass[unit] = (typeKey, around);
             }
+            if (unit.Symbol is { MethodKind: MethodKind.Constructor, IsStatic: false })
+            {
+                _constructors.Add(unit);
+                Add(_constructorsOf, typeKey, unit);
+            }
+            if (operation is IFieldInitializerOperation { InitializedFields: [{ IsStatic: false }, ..] }
+                or IPropertyInitializerOperation { InitializedProperties: [{ IsStatic: false }, ..] })
+                Add(_initializersOf, typeKey, unit);
+            if (unit.Symbol is { Name: "Process" or "ProcessAsync" or "Init" }) Add(_tagHelperUnits, typeKey, unit);
         }
         if (unit.Symbol is { } symbol && _sources.IsEntry(symbol))
         {
@@ -228,24 +171,32 @@ internal sealed class EntryPoints
             if (type != null && _sources.IsPageHandler(symbol)) _requests.Add(new Request(unit, Kind.Page, null, type));
         }
 
-        List<(TextSpan Span, List<object> Callees)>? handlers = null;
+        List<IOperation>? handlerOps = null;
+        Dictionary<IMethodSymbol, ILocalFunctionOperation>? localFunctions = null;
+        List<TextSpan>? requestReads = null;
         foreach (var op in operation.DescendantsAndSelf())
         {
             switch (op)
             {
                 case IAnonymousFunctionOperation or ILocalFunctionOperation when _sources.IsHandlerSyntax(op.Syntax):
-                    handlers ??= new List<(TextSpan, List<object>)>();
-                    var callees = new List<object>();
-                    foreach (var callee in CallGraph.Callees(op, dispatch)) callees.Add(dispatch.Key(callee));
-                    handlers.Add((op.Syntax.Span, callees));
+                    (handlerOps ??= new List<IOperation>()).Add(op);
+                    if (op is ILocalFunctionOperation handlerFunction)
+                        (localFunctions ??= new Dictionary<IMethodSymbol, ILocalFunctionOperation>(SymbolEqualityComparer.Default))[handlerFunction.Symbol] = handlerFunction;
+                    break;
+                case ILocalFunctionOperation local:
+                    (localFunctions ??= new Dictionary<IMethodSymbol, ILocalFunctionOperation>(SymbolEqualityComparer.Default))[local.Symbol] = local;
                     break;
                 case IInvocationOperation invocation:
-                    if (_sources.SourceMember(invocation.TargetMethod, Access.Call) != null) ReadsRequest(unit, op, handlers);
+                    if (_sources.SourceMember(invocation.TargetMethod, Access.Call) != null) (requestReads ??= new List<TextSpan>()).Add(op.Syntax.Span);
+                    if (invocation.TargetMethod is { Name: "CreateTagHelper", TypeArguments: [INamedTypeSymbol tagHelper] }) _tagHelpers.Add((unit, tagHelper));
                     RendersView(unit, type, invocation);
                     break;
                 case IPropertyReferenceOperation property:
                     if (_sources.SourceMember(property.Property, Access.Get) != null || _sources.IsBoundProperty(property.Property))
-                        ReadsRequest(unit, op, handlers);
+                        (requestReads ??= new List<TextSpan>()).Add(op.Syntax.Span);
+                    break;
+                case IObjectCreationOperation { Constructor: { IsImplicitlyDeclared: true } implicitConstructor }:
+                    _implicitNews.Add((unit, SymbolKeys.Of(implicitConstructor.ContainingType.OriginalDefinition)));
                     break;
                 case ISimpleAssignmentOperation { Target: IPropertyReferenceOperation { Property.Name: "Name" } target } assignment
                     when target.Property.ContainingType is { } t && SymbolMatch.MetadataName(t) == PartialTagHelper:
@@ -253,14 +204,53 @@ internal sealed class EntryPoints
                     break;
             }
         }
-        if (handlers != null) _handlers[unit] = handlers;
+
+        List<Handler>? handlers = null;
+        if (handlerOps != null)
+        {
+            handlers = new List<Handler>();
+            foreach (var op in handlerOps) handlers.Add(HandlerOf(op, localFunctions, dispatch));
+            _handlers[unit] = handlers;
+        }
+        // A read of the request outside the unit's Minimal API handlers (they are entry points of their own).
+        if (requestReads != null && requestReads.Exists(r => handlers == null || !handlers.Exists(h => h.Spans.Exists(s => s.Contains(r)))))
+            _readsRequest.Add(unit);
     }
 
-    /// A read of the request outside the unit's Minimal API handlers (they are entry points of their own).
-    private void ReadsRequest(Unit unit, IOperation op, List<(TextSpan Span, List<object> Callees)>? handlers)
+    /// A handler's spans and callees: its own, and those of the top-level local functions it calls (transitively).
+    private static Handler HandlerOf(IOperation op, Dictionary<IMethodSymbol, ILocalFunctionOperation>? localFunctions, Dispatch dispatch)
     {
-        if (handlers != null && handlers.Exists(h => h.Span.Contains(op.Syntax.Span))) return;
-        _readsRequest.Add(unit);
+        var spans = new List<TextSpan> { op.Syntax.Span };
+        var callees = new List<object>();
+        var seen = new HashSet<IOperation> { op };
+        var work = new Stack<IOperation>();
+        work.Push(op);
+        while (work.Count > 0)
+        {
+            var current = work.Pop();
+            foreach (var callee in CallGraph.Callees(current, dispatch)) callees.Add(dispatch.Key(callee));
+            if (localFunctions == null) continue;
+            foreach (var d in current.Descendants())
+            {
+                var target = d switch
+                {
+                    IInvocationOperation { TargetMethod.MethodKind: MethodKind.LocalFunction } i => i.TargetMethod,
+                    IMethodReferenceOperation { Method.MethodKind: MethodKind.LocalFunction } m => m.Method,
+                    _ => null,
+                };
+                if (target == null || !localFunctions.TryGetValue(target.OriginalDefinition, out var local) || !seen.Add(local)) continue;
+                if (spans.Exists(s => s.Contains(local.Syntax.Span))) continue;
+                spans.Add(local.Syntax.Span);
+                work.Push(local);
+            }
+        }
+        return new Handler(spans, callees);
+    }
+
+    private static void Add(Dictionary<object, List<Unit>> map, object key, Unit unit)
+    {
+        if (!map.TryGetValue(key, out var list)) map[key] = list = new List<Unit>();
+        list.Add(unit);
     }
 
     private static INamedTypeSymbol? DeclaringType(Unit unit)
@@ -339,8 +329,8 @@ internal sealed class EntryPoints
         return Unresolved;
     }
 
-    /// Interfaces and base classes of request code the framework invokes: filters, middleware, tag helpers, hubs.
-    private static readonly HashSet<string> FrameworkTypes = new(StringComparer.Ordinal)
+    /// Request code around every action (filters, endpoint filters, middleware; a controller is an action filter).
+    private static readonly HashSet<string> AroundTypes = new(StringComparer.Ordinal)
     {
         "Microsoft.AspNetCore.Mvc.Filters.IActionFilter", "Microsoft.AspNetCore.Mvc.Filters.IAsyncActionFilter",
         "Microsoft.AspNetCore.Mvc.Filters.IResultFilter", "Microsoft.AspNetCore.Mvc.Filters.IAsyncResultFilter",
@@ -349,23 +339,34 @@ internal sealed class EntryPoints
         "Microsoft.AspNetCore.Mvc.Filters.IExceptionFilter", "Microsoft.AspNetCore.Mvc.Filters.IAsyncExceptionFilter",
         "Microsoft.AspNetCore.Mvc.Filters.IPageFilter", "Microsoft.AspNetCore.Mvc.Filters.IAsyncPageFilter",
         "Microsoft.AspNetCore.Http.IMiddleware", "Microsoft.AspNetCore.Http.IEndpointFilter",
+    };
+
+    /// Request code with an entry point of its own: tag helpers, hubs.
+    private static readonly HashSet<string> OwnEntryTypes = new(StringComparer.Ordinal)
+    {
         "Microsoft.AspNetCore.Razor.TagHelpers.ITagHelperComponent", "Microsoft.AspNetCore.SignalR.Hub",
     };
 
-    /// A unit of request code the framework invokes: a member of a filter, middleware, tag helper or hub class, or a
-    /// conventional middleware's Invoke/InvokeAsync(HttpContext, …).
-    private bool IsFrameworkInvoked(INamedTypeSymbol type, IMethodSymbol? method)
+    /// Whether a unit belongs to request code the framework invokes: true for code around every action (a filter,
+    /// endpoint filter or middleware class; a conventional middleware's Invoke/InvokeAsync(HttpContext, …)), false for a
+    /// tag helper or hub class, null otherwise.
+    private bool? FrameworkClass(INamedTypeSymbol type, IMethodSymbol? method)
     {
         type = type.OriginalDefinition;
-        var key = (SymbolKeys.Of(type), "framework");
-        if (!_derives.TryGetValue(key, out var result))
+        var aroundKey = (SymbolKeys.Of(type), "around");
+        var ownKey = (SymbolKeys.Of(type), "own");
+        if (!_derives.TryGetValue(aroundKey, out var around))
         {
-            result = type.AllInterfaces.Any(i => FrameworkTypes.Contains(SymbolMatch.MetadataName(i)))
-                || SelfAndBases(type).Any(b => FrameworkTypes.Contains(SymbolMatch.MetadataName(b)));
-            _derives[key] = result;
+            bool Is(HashSet<string> names) => type.AllInterfaces.Any(i => names.Contains(SymbolMatch.MetadataName(i)))
+                || SelfAndBases(type).Any(b => names.Contains(SymbolMatch.MetadataName(b)));
+            around = Is(AroundTypes);
+            _derives[aroundKey] = around;
+            _derives[ownKey] = !around && Is(OwnEntryTypes);
         }
-        return result || (method is { Name: "Invoke" or "InvokeAsync", Parameters.Length: > 0 } m
-            && SymbolMatch.MetadataName(m.Parameters[0].Type) == "Microsoft.AspNetCore.Http.HttpContext");
+        if (around || (method is { Name: "Invoke" or "InvokeAsync", Parameters.Length: > 0 } m
+                && SymbolMatch.MetadataName(m.Parameters[0].Type) == "Microsoft.AspNetCore.Http.HttpContext"))
+            return true;
+        return _derives[ownKey] ? false : null;
     }
 
     // ---- View and component classes ----
@@ -442,7 +443,8 @@ internal sealed class EntryPoints
         return null;
     }
 
-    /// A view component class (derived from ViewComponent, with [ViewComponent], or named *ViewComponent), or null.
+    /// A view component class (concrete, derived from ViewComponent, with [ViewComponent], or named *ViewComponent), or
+    /// null.
     private ComponentClass? ComponentOf(INamedTypeSymbol type, Compilation compilation)
     {
         type = type.OriginalDefinition;
@@ -472,108 +474,195 @@ internal sealed class EntryPoints
 
     // ---- Resolution (before the call graph's components are computed) ----
 
-    /// Adds the view edges to the call graph: each request resolved to view or component units (Unit.Callees).
+    /// Adds the edges to the call graph (Unit.Callees): each view request resolved to view or component units, views to
+    /// the tag helpers they create, constructors and implicit `new`s to the type's instance initializers.
     public void Connect()
     {
         var views = _views.Values.OfType<ViewClass>().ToList();
         var components = _components.Values.OfType<ComponentClass>().ToList();
         var edges = new Dictionary<Unit, HashSet<Unit>>();
+        void Edge(Unit from, IEnumerable<Unit> targets)
+        {
+            if (!edges.TryGetValue(from, out var seen)) edges[from] = seen = new HashSet<Unit>(from.Callees) { from };
+            foreach (var target in targets)
+                if (seen.Add(target)) from.Callees.Add(target);
+        }
+
         foreach (var request in _requests)
         {
-            if (!edges.TryGetValue(request.Caller, out var seen)) edges[request.Caller] = seen = new HashSet<Unit>(request.Caller.Callees) { request.Caller };
-            var targets = Resolve(request, views, components);
-            if (targets == null)
+            var (targets, status) = Resolve(request, views, components);
+            switch (status)
             {
-                UnresolvedViews++;
-                targets = views.Where(v => v.Compilation == request.Caller.Compilation).SelectMany(v => v.Units)
-                    .Concat(components.Where(c => c.Compilation == request.Caller.Compilation).SelectMany(c => c.Units));
+                case Status.Resolved:
+                    ViewEdges++;
+                    Edge(request.Caller, targets!);
+                    break;
+                case Status.Uncompiled:
+                    UncompiledViews++;
+                    break;
+                default:
+                    UnresolvedViews++;
+                    var caller = request.Caller.Compilation;
+                    Edge(request.Caller, request.Kind == Kind.Component
+                        ? components.SelectMany(c => c.Units)
+                        : views.Where(v => References(v.Compilation, caller)).SelectMany(v => v.Units)
+                            .Concat(components.Where(c => References(c.Compilation, caller)).SelectMany(c => c.Units)));
+                    break;
             }
-            else
-            {
-                ViewEdges++;
-            }
-            foreach (var target in targets)
-                if (seen.Add(target)) request.Caller.Callees.Add(target);
         }
+        foreach (var (view, type) in _tagHelpers)
+            foreach (var b in SelfAndBases(type))
+                if (_tagHelperUnits.TryGetValue(SymbolKeys.Of(b.OriginalDefinition), out var units)) Edge(view, units);
+        foreach (var (type, initializers) in _initializersOf)
+            if (_constructorsOf.TryGetValue(type, out var constructors))
+                foreach (var constructor in constructors) Edge(constructor, initializers);
+        foreach (var (caller, type) in _implicitNews)
+            if (_initializersOf.TryGetValue(type, out var initializers)) Edge(caller, initializers);
     }
 
-    /// The units a request reaches, or null when its name cannot be resolved.
-    private IEnumerable<Unit>? Resolve(Request request, List<ViewClass> views, List<ComponentClass> components)
+    /// Whether project `project` is `caller` or references it.
+    private bool References(Compilation project, Compilation caller)
     {
-        if (request.Name == Unresolved) return null;
+        if (project == caller) return true;
+        if (_references.TryGetValue((project, caller), out var known)) return known;
+        var name = caller.AssemblyName;
+        known = project.ReferencedAssemblyNames.Any(a => a.Name == name);
+        _references[(project, caller)] = known;
+        return known;
+    }
+
+    private enum Status { Resolved, Unresolved, Uncompiled }
+
+    /// The units a request reaches; Unresolved when its name cannot be resolved, Uncompiled when it names a path no
+    /// compiled view has.
+    private (IEnumerable<Unit>? Targets, Status Status) Resolve(Request request, List<ViewClass> views, List<ComponentClass> components)
+    {
         var caller = request.Caller;
         var callerType = caller.Symbol?.ContainingType;
         switch (request.Kind)
         {
             case Kind.Page:
             {
-                if (request.Component == null) return null;
+                if (request.Component == null) return (null, Status.Unresolved);
                 var key = SymbolKeys.Of(request.Component.OriginalDefinition);
                 var pages = views.Where(v => Equals(v.ModelKey, key) || Equals(SymbolKeys.Of(v.Type), key)).ToList();
-                return pages.Count == 0 ? null : pages.SelectMany(v => v.Units);
+                return pages.Count == 0 ? (null, Status.Unresolved) : (pages.SelectMany(v => v.Units), Status.Resolved);
             }
             case Kind.Component:
             {
+                if (request.Name == Unresolved) return (null, Status.Unresolved);
                 var found = components.Where(c => request.Component != null
                     ? Equals(SymbolKeys.Of(c.Type), SymbolKeys.Of(request.Component.OriginalDefinition))
                     : string.Equals(c.Name, request.Name, StringComparison.OrdinalIgnoreCase)
                       || string.Equals(c.Type.ToDisplayString(), request.Name, StringComparison.Ordinal)).ToList();
-                return found.Count == 0 ? null : found.SelectMany(c => c.Units);
+                return found.Count == 0 ? (null, Status.Unresolved) : (found.SelectMany(c => c.Units), Status.Resolved);
             }
         }
 
-        var candidates = new List<string>();
+        var candidates = new List<Candidate>();
         var name = request.Name;
+        var pathsOnly = true;
+        void Named(string n, string? folder, IEnumerable<Candidate> conventional)
+        {
+            if (IsPath(n))
+            {
+                candidates.Add(PathCandidate(n, folder));
+                return;
+            }
+            pathsOnly = false;
+            candidates.AddRange(conventional);
+        }
+
         if (request.Kind == Kind.ComponentView)
         {
-            var component = callerType == null ? null : ComponentOf(callerType, caller.Compilation);
-            if (component == null) return null;
-            name ??= "Default";
-            if (IsPath(name)) candidates.Add(PathName(name, null));
-            else candidates.Add($"/Components/{component.Name}/{name}.cshtml");
+            // The caller's component, or each concrete component derived from the abstract base that calls View().
+            var own = callerType == null ? null : ComponentOf(callerType, caller.Compilation);
+            var owners = own != null ? new List<ComponentClass> { own }
+                : callerType == null ? new List<ComponentClass>()
+                : components.Where(c => SelfAndBases(c.Type).Any(b => Equals(SymbolKeys.Of(b.OriginalDefinition), SymbolKeys.Of(callerType.OriginalDefinition)))).ToList();
+            if (owners.Count == 0) return (null, Status.Unresolved);
+            foreach (var owner in owners)
+            {
+                if (name == Unresolved)
+                {
+                    pathsOnly = false;
+                    candidates.Add(new Candidate($"/Components/{owner.Name}/", Match.Folder));
+                }
+                else
+                {
+                    Named(name ?? "Default", null, new[] { new Candidate($"/Components/{owner.Name}/{name ?? "Default"}.cshtml", Match.Suffix) });
+                }
+            }
+        }
+        else if (name == Unresolved)
+        {
+            return (null, Status.Unresolved);
         }
         else if (request.Kind == Kind.View)
         {
             var names = new List<string>();
             if (name != null) names.Add(name);
             else if (caller.Symbol is { } action && _sources.IsAction(action)) names.AddRange(ActionNames(action));
-            else return null;
+            else return (null, Status.Unresolved);
             var controller = callerType == null ? null
                 : callerType.Name.EndsWith("Controller", StringComparison.Ordinal) ? callerType.Name[..^"Controller".Length] : callerType.Name;
-            foreach (var n in names)
-            {
-                if (IsPath(n))
-                {
-                    candidates.Add(PathName(n, null));
-                    continue;
-                }
-                if (controller != null) candidates.Add($"/Views/{controller}/{n}.cshtml");
-                candidates.Add($"/Views/Shared/{n}.cshtml");
-                candidates.Add($"/Pages/Shared/{n}.cshtml");
-            }
+            var area = callerType == null ? null : AreaOf(callerType);
+            foreach (var n in names) Named(n, null, Conventional(n, controller, area));
         }
         else
         {
-            if (name == null) return null;
-            var folder = _viewOfUnit.TryGetValue(caller, out var callerView) && callerView.Path is { } p ? p[..(p.LastIndexOf('/') + 1)] : null;
-            if (IsPath(name))
-            {
-                candidates.Add(PathName(name, folder));
-            }
-            else
-            {
-                if (folder != null) candidates.Add(folder + name + ".cshtml");
-                candidates.Add($"/Views/Shared/{name}.cshtml");
-                candidates.Add($"/Pages/Shared/{name}.cshtml");
-                if (callerType != null && callerType.Name.EndsWith("Controller", StringComparison.Ordinal))
-                    candidates.Add($"/Views/{callerType.Name[..^"Controller".Length]}/{name}.cshtml");
-            }
+            if (name == null) return (null, Status.Unresolved);
+            var callerPath = _viewOfUnit.TryGetValue(caller, out var callerView) ? callerView.Path : null;
+            var folder = callerPath?[..(callerPath.LastIndexOf('/') + 1)];
+            var area = callerPath == null ? null : AreaOfPath(callerPath);
+            var controller = callerType != null && callerType.Name.EndsWith("Controller", StringComparison.Ordinal)
+                ? callerType.Name[..^"Controller".Length] : null;
+            var conventional = Conventional(name, controller, area ?? (callerType == null ? null : AreaOf(callerType))).ToList();
+            if (folder != null) conventional.Insert(0, new Candidate(folder + name + ".cshtml", Match.TwoWay));
+            Named(name, folder, conventional);
         }
 
         // The caller's project first, then the solution (a Razor class library's views).
         var matched = views.Where(v => v.Compilation == caller.Compilation && candidates.Exists(c => Matches(v.Path, c))).ToList();
         if (matched.Count == 0) matched = views.Where(v => candidates.Exists(c => Matches(v.Path, c))).ToList();
-        return matched.Count == 0 ? null : matched.SelectMany(v => v.Units);
+        if (matched.Count > 0) return (matched.SelectMany(v => v.Units), Status.Resolved);
+        return (null, pathsOnly ? Status.Uncompiled : Status.Unresolved);
+    }
+
+    /// MVC's conventional locations of a view name: in an area its own folders then the root Shared, else the root
+    /// folders outside any area.
+    private static IEnumerable<Candidate> Conventional(string name, string? controller, string? area)
+    {
+        if (area != null)
+        {
+            if (controller != null) yield return new Candidate($"/Areas/{area}/Views/{controller}/{name}.cshtml", Match.Suffix);
+            yield return new Candidate($"/Areas/{area}/Views/Shared/{name}.cshtml", Match.Suffix);
+            yield return new Candidate($"/Views/Shared/{name}.cshtml", Match.Root);
+            yield break;
+        }
+        if (controller != null) yield return new Candidate($"/Views/{controller}/{name}.cshtml", Match.Root);
+        yield return new Candidate($"/Views/Shared/{name}.cshtml", Match.Root);
+        yield return new Candidate($"/Pages/Shared/{name}.cshtml", Match.Root);
+    }
+
+    /// The area of a controller: `[Area("X")]` on it or a base class.
+    private static string? AreaOf(INamedTypeSymbol type)
+    {
+        foreach (var t in SelfAndBases(type))
+            foreach (var a in t.GetAttributes())
+                for (var c = a.AttributeClass; c != null; c = c.BaseType)
+                    if (SymbolMatch.MetadataName(c) == AreaAttribute)
+                        return a.ConstructorArguments.Length == 1 && a.ConstructorArguments[0].Value is string area ? area : null;
+        return null;
+    }
+
+    private static string? AreaOfPath(string path)
+    {
+        var i = path.IndexOf("/Areas/", StringComparison.OrdinalIgnoreCase);
+        if (i < 0) return null;
+        var start = i + "/Areas/".Length;
+        var end = path.IndexOf('/', start);
+        return end < 0 ? null : path[start..end];
     }
 
     /// An action's view names: [ActionName], else its name, and that name without an `Async` suffix (MVC removes it by
@@ -591,15 +680,16 @@ internal sealed class EntryPoints
     private static bool IsPath(string name) =>
         name.StartsWith('~') || name.StartsWith('/') || name.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase);
 
-    /// A view name that is a path: app-relative (`~/`, `/`) as it is; relative (`../x.cshtml`, `x.cshtml`) under the
-    /// caller view's folder when known.
-    private static string PathName(string name, string? folder)
+    /// A view name that is a path: app-relative (`~/`, `/`) matched either way against project-relative identifiers;
+    /// relative (`x.cshtml`) under the caller view's folder when known, else as a suffix.
+    private static Candidate PathCandidate(string name, string? folder)
     {
         name = name.Replace('\\', '/');
+        var appRelative = name.StartsWith('~') || name.StartsWith('/');
         if (name.StartsWith('~')) name = name[1..];
         if (!name.StartsWith('/')) name = (folder ?? "/") + name;
         if (!name.EndsWith(".cshtml", StringComparison.OrdinalIgnoreCase)) name += ".cshtml";
-        return name;
+        return new Candidate(name, appRelative || folder != null ? Match.TwoWay : Match.Suffix);
     }
 
     private static string? Normalize(string? path)
@@ -609,51 +699,75 @@ internal sealed class EntryPoints
         return path.StartsWith('/') ? path : "/" + path;
     }
 
-    /// A view path and a candidate name the same file: one ends with the other (identifiers are project-relative,
-    /// `#line` paths absolute, candidates relative to any area, theme or project folder).
-    private static bool Matches(string? path, string candidate) =>
-        path != null && (path.EndsWith(candidate, StringComparison.OrdinalIgnoreCase) || candidate.EndsWith(path, StringComparison.OrdinalIgnoreCase));
+    private static bool Matches(string? path, Candidate candidate)
+    {
+        if (path == null) return false;
+        var text = candidate.Text;
+        return candidate.Mode switch
+        {
+            Match.Suffix => path.EndsWith(text, StringComparison.OrdinalIgnoreCase),
+            Match.Root => path.EndsWith(text, StringComparison.OrdinalIgnoreCase) && !path.Contains("/Areas/", StringComparison.OrdinalIgnoreCase),
+            Match.TwoWay => path.EndsWith(text, StringComparison.OrdinalIgnoreCase) || text.EndsWith(path, StringComparison.OrdinalIgnoreCase),
+            _ => path.Contains(text, StringComparison.OrdinalIgnoreCase),
+        };
+    }
 
     // ---- Reach (after the call graph's components are computed) ----
 
-    /// Computes each component's reach: explicit and handler entry points first; then every unit that reads the request
-    /// but none of them reaches gets an entry point of its own, and the reach is computed again with those.
+    /// Computes each component's reach: explicit and handler entry points first; then, for the request code no entry
+    /// point reaches, one entry point per view, view component, tag helper or hub class and one shared Around entry
+    /// point for the code around every action, and the reach is computed again with those.
     public void ComputeReach(CallGraph graph)
     {
         var entries = new List<Entry>();
-        foreach (var unit in _entryUnits) entries.Add(new Entry(new List<Unit> { unit }, null, default, null));
+        foreach (var unit in _entryUnits) entries.Add(new Entry(new List<Unit> { unit }, null, null));
         foreach (var (unit, handlers) in _handlers)
-            foreach (var (span, callees) in handlers) entries.Add(new Entry(null, callees, span, unit));
+            foreach (var handler in handlers) entries.Add(new Entry(null, handler.Callees, (unit, handler.Spans)));
         var explicitCount = entries.Count;
         var reach = Propagate(graph, entries);
-        // Request code the framework invokes (no call edge leads to it): one entry point per view, view component,
-        // filter, middleware, tag helper or hub class, and one per other unit that reads the request itself.
         var groups = new Dictionary<object, List<Unit>>();
+        var around = new List<Unit>();
         foreach (var unit in graph.Units)
         {
             if (reach[unit.Scc] != null) continue;
-            object? key = _frameworkClass.TryGetValue(unit, out var k) ? k : _readsRequest.Contains(unit) ? unit : null;
-            if (key == null) continue;
-            if (!groups.TryGetValue(key, out var list)) groups[key] = list = new List<Unit>();
-            list.Add(unit);
+            if (_frameworkClass.TryGetValue(unit, out var framework))
+            {
+                if (framework.Around) around.Add(unit);
+                else Add(groups, framework.Key, unit);
+            }
+            else if (_readsRequest.Contains(unit) || _constructors.Contains(unit))
+            {
+                around.Add(unit);
+            }
         }
-        foreach (var units in groups.Values) entries.Add(new Entry(units, null, default, null));
+        foreach (var units in groups.Values) entries.Add(new Entry(units, null, null));
+        if (around.Count > 0)
+        {
+            _aroundBit = entries.Count;
+            entries.Add(new Entry(around, null, null));
+        }
         if (entries.Count > explicitCount) reach = Propagate(graph, entries);
 
         Count = entries.Count;
         _words = (entries.Count + 63) / 64;
+        var all = new ulong[_words];
+        for (var i = 0; i < entries.Count; i++) all[i >> 6] |= 1UL << (i & 63);
+        _all = _table.Of(all);
+        var explicitBits = new ulong[_words];
+        for (var i = 0; i < explicitCount; i++) explicitBits[i >> 6] |= 1UL << (i & 63);
+        _explicit = _table.Of(explicitBits);
         _sccReach = new Reach[graph.Sccs.Count];
-        for (var s = 0; s < reach.Length; s++) _sccReach[s] = reach[s] == null ? Reach.None : new Reach(reach[s]!);
+        for (var s = 0; s < reach.Length; s++) _sccReach[s] = reach[s] == null ? Reach.None : _table.Of(reach[s]!);
         for (var i = 0; i < entries.Count; i++)
         {
-            if (entries[i].Owner is not { } owner) continue;
-            if (!_handlerBits.TryGetValue(owner, out var list)) _handlerBits[owner] = list = new List<(TextSpan, int)>();
-            list.Add((entries[i].Span, i));
+            if (entries[i].Handler is not { } handler) continue;
+            if (!_handlerBits.TryGetValue(handler.Owner, out var list)) _handlerBits[handler.Owner] = list = new List<(List<TextSpan>, int)>();
+            list.Add((handler.Spans, i));
         }
     }
 
-    /// An entry point: units it starts in, or a Minimal API handler inside unit Owner (its Span) with its callees' keys.
-    private sealed record Entry(List<Unit>? Units, List<object>? Callees, TextSpan Span, Unit? Owner);
+    /// An entry point: units it starts in, or a Minimal API handler (its unit and spans) with its callees' keys.
+    private sealed record Entry(List<Unit>? Units, List<object>? Callees, (Unit Owner, List<TextSpan> Spans)? Handler);
 
     private static ulong[]?[] Propagate(CallGraph graph, List<Entry> entries)
     {
@@ -688,8 +802,8 @@ internal sealed class EntryPoints
         return reach;
     }
 
-    /// The entry points a body is reached from: its unit's component's, or, for a Minimal API handler lambda or local
-    /// function (and the bodies inside it), that handler's own.
+    /// The entry points a body is reached from (what it reads the heap under): its unit's component's, or, for a body in
+    /// a Minimal API handler lambda or in a top-level local function a handler calls, those handlers' own.
     public Reach Of(Body body)
     {
         if (_bodyReach.TryGetValue(body.Id, out var cached)) return cached;
@@ -698,15 +812,33 @@ internal sealed class EntryPoints
             && body.Symbol?.DeclaringSyntaxReferences.FirstOrDefault() is { } syntax && syntax.SyntaxTree == body.Unit.Root.SyntaxTree)
         {
             ulong[]? bits = null;
-            foreach (var (span, bit) in handlers)
+            foreach (var (spans, bit) in handlers)
             {
-                if (!span.Contains(syntax.Span)) continue;
+                if (!spans.Exists(s => s.Contains(syntax.Span))) continue;
                 bits ??= new ulong[_words];
                 bits[bit >> 6] |= 1UL << (bit & 63);
             }
-            if (bits != null) reach = new Reach(bits);
+            if (bits != null) reach = _table.Of(bits);
         }
         _bodyReach[body.Id] = reach;
         return reach;
     }
+
+    /// The entry points a body writes the heap under and scopes the request data it reads under: its reach, widened to
+    /// every entry point for code only the Around entry point reaches (code around every action runs in every request).
+    public Reach WriteReach(Body body)
+    {
+        if (_bodyWriteReach.TryGetValue(body.Id, out var cached)) return cached;
+        var reach = Widen(Of(body));
+        _bodyWriteReach[body.Id] = reach;
+        return reach;
+    }
+
+    /// Every entry point when `reach` holds Around and no explicit entry point (code that only runs around the actions:
+    /// code an action reaches too writes under its own reach, so what an admin action saves through a shared service
+    /// stays scoped to the requests that reach that service), else `reach`.
+    public Reach Widen(Reach reach) => _aroundBit >= 0 && reach.Has(_aroundBit) && !reach.Intersects(_explicit) ? _all : reach;
+
+    /// The interned Reach sets of the run.
+    public int ReachSets => _table.Count;
 }

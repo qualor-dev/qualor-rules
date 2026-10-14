@@ -18,7 +18,7 @@ namespace Qualor.Taint;
 /// the summaries and the heap.
 internal sealed class Heap
 {
-    private readonly Dictionary<object, Dictionary<Reach, TaintValue>> _values = new();
+    private readonly Dictionary<object, Writes> _values = new();
     private readonly Dictionary<object, HashSet<(Unit Unit, Reach Reach)>> _readers = new();
     private readonly HashSet<(object Key, Reach Writer)> _changed = new();
     private readonly Dictionary<ISymbol, bool> _members = new(SymbolEqualityComparer.Default);
@@ -71,21 +71,30 @@ internal sealed class Heap
         if (!_readers.TryGetValue(key, out var readers)) _readers[key] = readers = new HashSet<(Unit, Reach)>();
         readers.Add((reader, reach));
         if (!_values.TryGetValue(key, out var writes)) return TaintValue.Clean;
-        var value = TaintValue.Clean;
-        foreach (var (writer, written) in writes)
-        {
-            var scope = writer.Intersect(reach);
-            if (!scope.IsEmpty) value = value.Join(written with { Scope = scope, FromHeap = true });
-        }
+        var value = Read(writes.Writer, writes.Value, reach);
+        if (writes.More != null)
+            foreach (var (writer, written) in writes.More) value = value.Join(Read(writer, written, reach));
         return value;
     }
 
-    /// Joins the request data of `value` into `member` under `writer` (the writing body's Reach), narrowed to the
-    /// value's own Scope when it was read from the heap itself.
+    private static TaintValue Read(Reach writer, TaintValue written, Reach reach)
+    {
+        var scope = writer.Intersect(reach);
+        return scope.IsEmpty ? TaintValue.Clean : written.Narrowed(scope) with { FromHeap = true };
+    }
+
+    /// Joins the request data of `value` into `member` under `writer` (the writing body's WriteReach), narrowed to the
+    /// value's own Scope. A writer no entry point reaches (fix round 1, I1: a constructor or initializer the call graph
+    /// cannot connect) writes data it did not read from the heap under that data's Scope, the requests it came from.
     public void Write(ISymbol member, TaintValue value, Reach writer)
     {
-        if (!value.Request || writer.IsEmpty) return;
-        if (value.Scope != null)
+        if (!value.Request) return;
+        if (writer.IsEmpty)
+        {
+            if (value.Scope == null || value.FromHeap) return;
+            writer = value.Scope;
+        }
+        else if (value.Scope != null)
         {
             var narrowed = writer.Intersect(value.Scope);
             // Heap data valid in none of the writer's requests is not written; data a helper read from the request (an
@@ -93,19 +102,43 @@ internal sealed class Heap
             if (narrowed.IsEmpty && value.FromHeap) return;
             if (!narrowed.IsEmpty) writer = narrowed;
         }
-        value = value.RequestPart with { Scope = null, FromHeap = false };
+        value = value.RequestPart.Narrowed(writer) with { FromHeap = false };
         var key = Key(member);
-        if (!_values.TryGetValue(key, out var writes)) _values[key] = writes = new Dictionary<Reach, TaintValue>();
-        if (!writes.TryGetValue(writer, out var old))
+        if (!_values.TryGetValue(key, out var writes))
         {
-            writes[writer] = value;
+            _values[key] = new Writes(writer, value);
+            _changed.Add((key, writer));
+            return;
+        }
+        TaintValue old;
+        if (ReferenceEquals(writes.Writer, writer)) old = writes.Value;
+        else if (writes.More == null || !writes.More.TryGetValue(writer, out old!))
+        {
+            (writes.More ??= new Dictionary<Reach, TaintValue>())[writer] = value;
             _changed.Add((key, writer));
             return;
         }
         var joined = old.Join(value);
         if (ReferenceEquals(joined, old)) return;
-        writes[writer] = joined;
+        if (ReferenceEquals(writes.Writer, writer)) writes.Value = joined;
+        else writes.More![writer] = joined;
         if (!joined.SameFlow(old)) _changed.Add((key, writer));
+    }
+
+    /// The writes of one heap symbol: the first writer's inline (most symbols have one), the others in More.
+    private sealed class Writes
+    {
+        public Writes(Reach writer, TaintValue value)
+        {
+            Writer = writer;
+            Value = value;
+        }
+
+        public Reach Writer { get; }
+
+        public TaintValue Value { get; set; }
+
+        public Dictionary<Reach, TaintValue>? More { get; set; }
     }
 
     /// The readers that share an entry point with a write that changed since the last call.

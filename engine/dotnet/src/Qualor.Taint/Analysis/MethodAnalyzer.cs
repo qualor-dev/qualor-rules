@@ -836,7 +836,7 @@ internal sealed partial class MethodAnalyzer
     /// A value reaches a sink: its request data is a finding, each label tainted for the rule a sink of its body.
     private void SinkReached(string rule, SyntaxNode site, TaintValue value, ISymbol member)
     {
-        if (value.TaintedFor(rule)) _ctx.Report(rule, site, value, member);
+        if (value.TaintedFor(rule)) _ctx.Report(rule, site, value.WitnessFor(_body.Reach), member);
         foreach (var label in value.Labels)
             if (label.TaintedFor(rule)) _body.RecordSink(label, rule, site, member);
     }
@@ -881,9 +881,9 @@ internal sealed partial class MethodAnalyzer
         var property = operation.Property;
         var result = TaintValue.Clean;
         if (_ctx.Sources.SourceMember(property, Access.Get) != null)
-            result = TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(property)}").ScopedTo(_body.Reach);
+            result = TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(property)}").ScopedTo(_body.WriteReach);
         if (_ctx.Sources.IsBoundProperty(property))
-            result = result.Join(TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: bound property {_ctx.Name(property)}").ScopedTo(_body.Reach));
+            result = result.Join(TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: bound property {_ctx.Name(property)}").ScopedTo(_body.WriteReach));
 
         var receiver = Value(operation.Instance, state);
         var isVirtual = Dispatch.IsVirtualAccess(property, operation.Instance);
@@ -1073,7 +1073,7 @@ internal sealed partial class MethodAnalyzer
 
         var result = TaintValue.Clean;
         if (_ctx.Sources.SourceMember(method, Access.Call) != null)
-            result = TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(method)}").ScopedTo(_body.Reach);
+            result = TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(method)}").ScopedTo(_body.WriteReach);
 
         // Out arguments are overwritten by the call.
         foreach (var i in inputs) if (i.RefKind == RefKind.Out) Assign(i.Operation, TaintValue.Clean, state, i.Operation);
@@ -1223,16 +1223,16 @@ internal sealed partial class MethodAnalyzer
         var s = callee.Summary;
         if (s.NoLocalEffects) return TaintValue.Clean;
         location ??= site.Syntax.GetLocation();
-        var result = BodySummary.Substitute(s.Return, callee.Id, argument, location, name, _body.Keeps, _body.Reach);
+        var result = BodySummary.Substitute(s.Return, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach);
         if (s.ToThis.Any)
         {
-            var written = BodySummary.Substitute(s.ToThis, callee.Id, argument, location, name, _body.Keeps, _body.Reach);
+            var written = BodySummary.Substitute(s.ToThis, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach);
             if (constructor) result = result.Join(written);
             else if (receiverOperation != null) WriteReceiver(receiverOperation, written, state);
         }
         foreach (var (ordinal, symbolic) in s.Refs)
         {
-            var v = BodySummary.Substitute(symbolic, callee.Id, argument, location, name, _body.Keeps, _body.Reach);
+            var v = BodySummary.Substitute(symbolic, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach);
             foreach (var i in inputs)
                 if (i.Ordinal == ordinal && i.RefKind is RefKind.Ref or RefKind.Out) Assign(i.Operation, v, state, i.Operation);
         }
