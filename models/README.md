@@ -411,8 +411,11 @@ false positives (FP) or misses (FN) there.
   every entry; a static property returning a string literal or a static readonly field initialised with one counts as
   its constant. The view model is keyed by type: a model is written under its static type (generic arguments included),
   its base classes, its interfaces and its exact type, and a view reads its own model type and the exact entries of its
-  model type's base classes and interfaces, so a model reaches the views whose type it may have at run time (typed as the
-  view's type, a subtype or a supertype) and no view of a sibling type; an `object`/`dynamic` model is read by every
+  model type's base classes declared in the project and of its generic collection interfaces (`IEnumerable<T>`,
+  `ICollection<T>`, `IList<T>`, `IReadOnlyCollection<T>`, `IReadOnlyList<T>`; ruling R-E24), so a model reaches the views
+  of its own static type and of its supertypes, and a view of a subtype only when the model is typed by a project base
+  class or a generic collection interface (a model typed by an interface that other view models share is not read by
+  their views); an `object`/`dynamic` model is read by every
   view, an `object`/`dynamic` view reads only such models (FN: a typed model in a `dynamic` view, covariant
   `IEnumerable<Base>`). A generic helper's model whose type holds a type parameter (`T`, `List<T>`, `T[]`) is written at
   each call under the argument's type; a change of it analyses the helper's callers again (recursive helpers included).
@@ -438,7 +441,9 @@ false positives (FP) or misses (FN) there.
   builds it; a redirect to the request's own URL (scheme, host, path) is reported (FP).
 - `Enumerable.*` passes its source sequence to the result as well as a lambda's return: an encoder inside
   `Select(x => ...)` does not clean the result (FP).
-- Not followed (FN): `TempData` entries (another request); `ViewData.Model = m` with an `object`/`dynamic` m (a view
+- Not followed (FN): `TempData` entries (another request); a model that is not a collection, statically typed as an
+  interface or a library base class and given to a view of a narrower type, whose members are never written in code
+  (members written in code still reach the view through the field heap); `ViewData.Model = m` with an `object`/`dynamic` m (a view
   engine's own plumbing, which every view goes through); `HttpContext.Items` held in a local that is assigned again or
   in a field; a layout reads none of an action's heap data (it is an entry
   point of its own); a view model given as a model expression (`<partial for>`, editor and display templates); callbacks a framework or library makes into the project

@@ -662,6 +662,40 @@ public sealed class ViewDataTests
             Found(result));
     }
 
+    /// N1 (ruling R-E24): a model statically typed by an interface that unrelated view models share (a marker interface)
+    /// is not read by a view of another class implementing it; wider reads go only through project base classes and the
+    /// generic collection interfaces.
+    [Fact]
+    public void A_model_typed_by_a_shared_interface_is_not_read_by_another_implementations_view()
+    {
+        const string web = """
+            public interface ITile { }
+            public class PhotoTile : ITile { public string Caption { get; set; } = ""; }
+            public class NoteTile : ITile { public string Body { get; set; } = ""; }
+            public class NoteViewComponent : ViewComponent
+            {
+                public IViewComponentResult Invoke() => View(new NoteTile());
+            }
+            public class TilesController : Controller
+            {
+                public IActionResult Show([FromBody] PhotoTile photo)
+                {
+                    ITile tile = photo;
+                    return View(tile);
+                }
+            }
+            """;
+        var result = Analyze(web,
+            View("Views_Tiles_Show", "object", "/src/App/Views/Tiles/Show.cshtml", """
+                Write(await Component.InvokeAsync("Note"));
+                """),
+            View("Views_Shared_Components_Note_Default", "NoteTile", "/src/App/Views/Shared/Components/Note/Default.cshtml", """
+                Write(Html.Raw(Model.Body));
+                """));
+
+        Assert.Empty(Found(result));
+    }
+
     /// I2 (a): a generic helper's parameter typed over its type parameter (List<T>, T[]) is a Generic model too.
     [Fact]
     public void A_generic_helpers_parameter_built_over_its_type_parameter_keeps_the_callers_type()

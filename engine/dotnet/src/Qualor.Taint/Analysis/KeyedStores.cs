@@ -15,8 +15,9 @@ namespace Qualor.Taint;
 ///   `ViewData.Model`, and written by `ViewData.Model = m`). Its key is a type (with its generic arguments): a model is
 ///   written under its static type, that type's base classes (not object) and its interfaces, and under the exact entry
 ///   of its static type; a view reads the key of its own model type and the exact entries of its model type's base
-///   classes and interfaces. So a model reaches a view whose type it may have at run time (statically typed as the view's
-///   type, a subtype, or a supertype of it), and never a view of a sibling type. A model whose static type is object or
+///   classes declared in the project and of its generic collection interfaces (ruling R-E24). So a model reaches a view
+///   of its static type or a supertype of it, and a view of a subtype only when the model is statically typed by a
+///   project base class or a generic collection interface. A model whose static type is object or
 ///   dynamic is written to the "any key" entry, which every view reads, and a view whose model type is object or dynamic
 ///   reads only that entry. A model whose type holds a type parameter (`T`, `List<T>`, `T[]`: a generic helper's
 ///   `View(name, model)`) is written to the Generic entry, which no view reads: each call of the helper writes its
@@ -218,6 +219,12 @@ internal sealed class ModelKeys
     private readonly Dictionary<ITypeSymbol, KeyedLocation[]> _writes = new(SymbolEqualityComparer.Default);
     private readonly Dictionary<ITypeSymbol, KeyedLocation[]> _reads = new(SymbolEqualityComparer.Default);
 
+    private static readonly HashSet<string> CollectionInterfaces = new(StringComparer.Ordinal)
+    {
+        "System.Collections.Generic.IEnumerable`1", "System.Collections.Generic.ICollection`1", "System.Collections.Generic.IList`1",
+        "System.Collections.Generic.IReadOnlyCollection`1", "System.Collections.Generic.IReadOnlyList`1",
+    };
+
     private static readonly KeyedLocation[] AnyEntry = { new(KeyedStore.ViewModel, null) };
     private static readonly KeyedLocation[] GenericEntry = { KeyedLocation.Generic };
     private static readonly KeyedLocation[] ObjectView = { new(KeyedStore.ViewModel, "System.Object") };
@@ -248,15 +255,20 @@ internal sealed class ModelKeys
     }
 
     /// The entries a view whose model has static type `type` reads (each joined with the "any key" entry, Heap.Read): its
-    /// type's key, and the exact entries of its base classes but object and of its interfaces (a model statically typed
-    /// wider than the view's type). An object or dynamic view reads only the "any key" entry.
+    /// type's key, and the exact entries of its base classes declared in the project and of its generic collection
+    /// interfaces (a model statically typed wider than the view's type). An object or dynamic view reads only the "any
+    /// key" entry.
     public IReadOnlyList<KeyedLocation> Reads(ITypeSymbol? type)
     {
         if (type == null || type.SpecialType == SpecialType.System_Object || type.TypeKind is TypeKind.Dynamic or TypeKind.Error) return ObjectView;
         if (_reads.TryGetValue(type, out var cached)) return cached;
         var list = new List<KeyedLocation> { Key(type) };
-        for (var t = type.BaseType; t != null && t.SpecialType != SpecialType.System_Object; t = t.BaseType) list.Add(Exact(t));
-        foreach (var i in type.AllInterfaces) list.Add(Exact(i));
+        // Wider reads only through base classes declared in the project and the generic collection interfaces (ruling
+        // R-E24): an interface or library base that many view models share would join them all.
+        for (var t = type.BaseType; t != null && t.SpecialType != SpecialType.System_Object; t = t.BaseType)
+            if (SymbolKeys.InSource(t)) list.Add(Exact(t));
+        foreach (var i in type.AllInterfaces)
+            if (CollectionInterfaces.Contains(SymbolMatch.MetadataName(i))) list.Add(Exact(i));
         return _reads[type] = list.ToArray();
     }
 }
