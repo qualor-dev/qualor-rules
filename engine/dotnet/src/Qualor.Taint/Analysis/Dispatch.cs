@@ -144,6 +144,12 @@ internal sealed partial class Dispatch
     public IReadOnlyList<IMethodSymbol> Targets(IMethodSymbol method, bool isVirtual, ITypeSymbol? receiverType) =>
         Resolve(method, isVirtual, receiverType)?.Targets ?? new[] { (IMethodSymbol)SymbolKeys.Definition(method) };
 
+    /// Whether a call is resolved by a fallback to more than one implementation (R-9, ruling R-E29): the class hierarchy
+    /// (no implementation known) or the implementations of projects and types opened by scanning, reflection or a
+    /// missing registration (Task 26). A path through such a call is medium; a call with one candidate is not a guess.
+    public bool IsFallback(IMethodSymbol method, bool isVirtual, ITypeSymbol? receiverType) =>
+        Resolve(method, isVirtual, receiverType) is { Kind: DispatchKind.Hierarchy or DispatchKind.Scanning, Targets.Count: > 1 };
+
     /// Counts one call site of the call graph in the stats (once per site, CallGraph.Build).
     public void Count(CallSite site)
     {

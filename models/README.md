@@ -480,6 +480,33 @@ learn.microsoft.com nor tusdotnet's documentation (its wiki's "Custom data store
 says where the store's `fileId` comes from or whether it is validated before the store is called (a file id provider has
 a `ValidateId`), and the models are written from documentation only (Task 29; a recall loss, see Known limits).
 
+## Confidence (Task 28, decision R-9, ruling R-E29)
+
+Each engine finding is `high` or `medium` confidence, by the steps of the path it reports. Value passing within the
+request is high: local flows, calls resolved to the implementations the solution creates or registers (or with one
+candidate), the view-model edge (`View(model)` to the view's `Model`), and keyed request store entries under a constant
+key (`ViewData["k"]`, `ViewBag.K`, `HttpContext.Items["k"]`). A path is medium when a step of it is:
+
+| step kind (SARIF `threadFlowLocations[].properties.kind`) | what |
+|---|---|
+| `heap-read` | a field or auto-property read from the heap (written elsewhere in the request) |
+| `any-key-entry` | a keyed store entry written or read with a key that is not a constant, or a view model of type object |
+| `key-lookup` | an element found by a request key (R-E9/R-E18: a dictionary or JSON lookup, `GetValueOrDefault`, a `key:` propagator) |
+| `view-fallback` | a keyed entry or view model a view shares with its writer only through an unresolved view name (every view of the project) |
+| `dispatch-fallback` | a call resolved by the class-hierarchy fallback (no implementation created or registered, or projects and types opened by scanning: R-7) to more than one implementation |
+
+(`keyed-entry` and `view-model` steps are named too; they are high.) Of the paths to one sink the engine reports a high
+one when it finds one: a join keeps the path of the side that is request data for more rules (a path cleaned for a rule,
+an encoded value or a rule's own source of another rule, is no witness of that rule's finding), else the high one, else
+the shorter; witnesses prefer a high path to a shorter medium one, and a value, a summary's sink or call edge,
+a heap location or a finding whose path becomes high counts as changed (each at most once), so the fixed point carries
+the high path on. A misuse finding is high. SARIF: `result.properties.confidence` is `"high"` or `"medium"`; a medium
+result's `level` is `warning`, a high one keeps the rule's `error`; `analysisStats` counts `highFindings` and
+`mediumFindings`. Qualor shows a medium finding as "possible".
+
+R-E29's cost: a constant-key `ViewData` flow whose writer is code around every action (a filter) counts high. A
+member written and read through one known object (`o.Name = q; Save(o)` reading `o.Name`) is a heap read, so medium.
+
 ## Known limits (measured 2026-10-14, MEASUREMENTS.md "C# engine")
 
 What the engine does by design or does not model, as measured on the reference projects; each one is a source of

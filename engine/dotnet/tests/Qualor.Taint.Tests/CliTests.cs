@@ -181,15 +181,23 @@ public sealed class CliTests : TempDirs
         Assert.Equal(3, location.GetProperty("region").GetProperty("startLine").GetInt32());
         var flow = result.GetProperty("codeFlows")[0].GetProperty("threadFlows")[0].GetProperty("locations").EnumerateArray().ToList();
         Assert.True(flow.Count >= 2);
-        // SARIF 2.1.0: a threadFlowLocation holds its location (physicalLocation, message) under "location".
+        // SARIF 2.1.0: a threadFlowLocation holds its location (physicalLocation, message) under "location"; a step that
+        // is not a plain flow names its kind under "properties" (R-9).
         Assert.All(flow, l =>
         {
-            Assert.Equal(new[] { "location" }, l.EnumerateObject().Select(p => p.Name).ToArray());
+            var names = l.EnumerateObject().Select(p => p.Name).ToArray();
+            Assert.True(names.SequenceEqual(new[] { "location" }) || names.SequenceEqual(new[] { "location", "properties" }), string.Join(",", names));
             Assert.Equal(new[] { "message", "physicalLocation" }, l.GetProperty("location").EnumerateObject().Select(p => p.Name).OrderBy(x => x, StringComparer.Ordinal).ToArray());
             Assert.False(string.IsNullOrEmpty(l.GetProperty("location").GetProperty("message").GetProperty("text").GetString()));
         });
         Assert.Equal("obj/Views_Profile_Show_cshtml.g.cs", flow[0].GetProperty("location").GetProperty("physicalLocation").GetProperty("artifactLocation").GetProperty("uri").GetString());
         Assert.Equal("Views/Profile/Show.cshtml", flow[^1].GetProperty("location").GetProperty("physicalLocation").GetProperty("artifactLocation").GetProperty("uri").GetString());
+        // The view reads Model.Bio from the heap (written in the action): a medium step, so the result is medium (R-9,
+        // R-E29): level "warning", properties.confidence "medium".
+        var kinds = flow.Where(l => l.TryGetProperty("properties", out _)).Select(l => l.GetProperty("properties").GetProperty("kind").GetString()).ToList();
+        Assert.Equal(new[] { "heap-read" }, kinds);
+        Assert.Equal("medium", result.GetProperty("properties").GetProperty("confidence").GetString());
+        Assert.Equal("warning", result.GetProperty("level").GetString());
 
         var invocation = run.GetProperty("invocations")[0];
         Assert.True(invocation.GetProperty("executionSuccessful").GetBoolean());
@@ -199,6 +207,36 @@ public sealed class CliTests : TempDirs
         Assert.Equal(0, stats.GetProperty("failedMethods").GetInt32());
         foreach (var name in new[] { "firstErrors", "sccs", "unmodelledExternalCalls", "elapsedSeconds", "peakMemoryBytes" })
             Assert.True(stats.TryGetProperty(name, out _), name);
+        var results = run.GetProperty("results").EnumerateArray().ToList();
+        Assert.Equal(results.Count(r => r.GetProperty("properties").GetProperty("confidence").GetString() == "high"), stats.GetProperty("highFindings").GetInt32());
+        Assert.Equal(results.Count(r => r.GetProperty("properties").GetProperty("confidence").GetString() == "medium"), stats.GetProperty("mediumFindings").GetInt32());
+        Assert.True(stats.GetProperty("mediumFindings").GetInt32() >= 1);
+    }
+
+    [Fact]
+    public void A_high_confidence_result_keeps_the_rules_level()
+    {
+        // Request data straight to a sink: no medium step, so the rule's level stays and no step names a kind (R-9).
+        var (inputs, root) = AppInputs("""
+            using Microsoft.AspNetCore.Mvc;
+            public class NotesController : Controller
+            {
+                public IActionResult Raw([FromQuery] string q) => Content(q, "text/html");
+            }
+            """);
+        var sarif = Path.Combine(root, "r.sarif");
+
+        Assert.Equal(0, Qualor.Taint.Cli.Program.Run(new[] { "analyze", "--inputs", inputs, "--models", Models, "--sarif", sarif, "--root", root }, TextWriter.Null));
+
+        using var doc = ReadSarif(sarif);
+        var run = doc.RootElement.GetProperty("runs")[0];
+        var result = run.GetProperty("results").EnumerateArray()
+            .Single(r => r.GetProperty("locations")[0].GetProperty("physicalLocation").GetProperty("artifactLocation").GetProperty("uri").GetString() == "Tls.cs");
+        Assert.Equal("high", result.GetProperty("properties").GetProperty("confidence").GetString());
+        Assert.Equal("error", result.GetProperty("level").GetString());
+        var flow = result.GetProperty("codeFlows")[0].GetProperty("threadFlows")[0].GetProperty("locations").EnumerateArray();
+        Assert.All(flow, l => Assert.False(l.TryGetProperty("properties", out _)));
+        Assert.True(run.GetProperty("properties").GetProperty("analysisStats").GetProperty("highFindings").GetInt32() >= 1);
     }
 
     [Fact]

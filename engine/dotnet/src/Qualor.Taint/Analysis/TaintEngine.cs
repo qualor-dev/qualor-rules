@@ -97,6 +97,8 @@ public sealed class TaintEngine
             DispatchByHierarchy = dispatch?.ByHierarchy ?? 0,
             OpenProjects = dispatch?.OpenProjects ?? 0,
             OpenTypes = dispatch?.OpenTypes ?? 0,
+            HighFindings = findings.Count(f => f.Confidence == Confidence.High),
+            MediumFindings = findings.Count(f => f.Confidence == Confidence.Medium),
         };
         return new AnalysisResult(findings, reason == null, reason, stats);
     }
@@ -120,7 +122,8 @@ public sealed class TaintEngine
 
     /// One finding per rule, file and line (Review Focus 2: a project of several target frameworks is analysed once
     /// per framework; two sinks of a rule on one line are one finding), by the mapped location (`#line`, generated
-    /// views), keeping the finding of the first compilation input in the solution's order, then the first on the line.
+    /// views), keeping a high finding over a medium one (R-9), then the finding of the first compilation input in the
+    /// solution's order, then the first on the line.
     private static IEnumerable<Finding> Deduplicate(LoadedSolution solution, IEnumerable<Finding> findings)
     {
         var order = new Dictionary<SyntaxTree, int>();
@@ -133,7 +136,8 @@ public sealed class TaintEngine
                 return (f.RuleId, span.Path, span.StartLinePosition.Line);
             })
             .Select(g => g
-                .OrderBy(f => f.Sink.SourceTree is { } t && order.TryGetValue(t, out var i) ? i : int.MaxValue)
+                .OrderBy(f => f.Confidence)
+                .ThenBy(f => f.Sink.SourceTree is { } t && order.TryGetValue(t, out var i) ? i : int.MaxValue)
                 .ThenBy(f => f.Sink.SourceSpan.Start)
                 .First());
     }

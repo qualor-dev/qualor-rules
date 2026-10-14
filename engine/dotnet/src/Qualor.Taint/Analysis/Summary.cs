@@ -30,7 +30,18 @@ internal sealed record SinkEffect(int Slot, string RuleId, SyntaxNode Site, ISym
 /// A parameter of a body is passed to a parameter of a callee (CalleeSlot of Callee), cleaned on its way for CleanFor;
 /// Path the steps inside the body from its entry to the callee's entry. The callee's own effects are not copied into
 /// the caller: request data that reaches the parameter flows on along these edges (SummaryComputer.Seed).
-internal sealed record CallEffect(int Slot, Body Callee, int CalleeSlot, ImmutableHashSet<string> CleanFor, Trail Path);
+internal sealed record CallEffect(int Slot, Body Callee, int CalleeSlot, ImmutableHashSet<string> CleanFor, Trail Path)
+{
+    /// `old` joined with another edge of the same parameters: CleanFor intersected, the first path kept unless the other
+    /// is high and it is not (R-9); null when nothing changes.
+    public static CallEffect? Joined(CallEffect old, ImmutableHashSet<string> cleanFor, Trail path)
+    {
+        var narrower = !old.CleanFor.IsSubsetOf(cleanFor);
+        var better = old.Path.Medium && !path.Medium;
+        if (!narrower && !better) return null;
+        return old with { CleanFor = narrower ? old.CleanFor.Intersect(cleanFor) : old.CleanFor, Path = better ? path : old.Path };
+    }
+}
 
 /// The engine's summary of one body, in the body's own parameter labels (TaintValue.Labels whose owner is the body;
 /// a local function's summary may also hold labels of the body it is nested in, its captures, which a call site keeps).
@@ -137,12 +148,17 @@ internal sealed class BodySummary
         var refs = Refs;
         foreach (var (k, v) in other.Refs) refs = refs.SetItem(k, refs.TryGetValue(k, out var old) ? old.Join(v) : v);
         var sinks = Sinks;
-        foreach (var (k, v) in other.Sinks) if (!sinks.ContainsKey(k)) sinks = sinks.Add(k, v);
+        foreach (var (k, v) in other.Sinks)
+        {
+            // The first path is kept, unless the other one is high and it is not (R-9).
+            if (!sinks.TryGetValue(k, out var old)) sinks = sinks.Add(k, v);
+            else if (old.Path.Medium && !v.Path.Medium) sinks = sinks.SetItem(k, v);
+        }
         var calls = Calls;
         foreach (var (k, v) in other.Calls)
         {
             if (!calls.TryGetValue(k, out var old)) calls = calls.Add(k, v);
-            else if (!old.CleanFor.IsSubsetOf(v.CleanFor)) calls = calls.SetItem(k, old with { CleanFor = old.CleanFor.Intersect(v.CleanFor) });
+            else if (CallEffect.Joined(old, v.CleanFor, v.Path) is { } joined) calls = calls.SetItem(k, joined);
         }
         var heap = Heap;
         foreach (var (k, v) in other.Heap) heap = heap.SetItem(k, heap.TryGetValue(k, out var old) ? (old.Location, old.Value.Join(v.Value)) : v);
@@ -261,8 +277,10 @@ internal sealed class BodySummary
     {
         if (ReferenceEquals(this, other)) return true;
         if (Sinks.Count != other.Sinks.Count || Calls.Count != other.Calls.Count || Heap.Count != other.Heap.Count) return false;
-        foreach (var k in Sinks.Keys) if (!other.Sinks.ContainsKey(k)) return false;
-        foreach (var (k, v) in Calls) if (!other.Calls.TryGetValue(k, out var o) || !v.CleanFor.SetEquals(o.CleanFor)) return false;
+        // A path that became high is a change (R-9): the seeds report it again.
+        foreach (var (k, v) in Sinks) if (!other.Sinks.TryGetValue(k, out var o) || v.Path.Medium != o.Path.Medium) return false;
+        foreach (var (k, v) in Calls)
+            if (!other.Calls.TryGetValue(k, out var o) || !v.CleanFor.SetEquals(o.CleanFor) || v.Path.Medium != o.Path.Medium) return false;
         foreach (var (k, v) in Heap) if (!other.Heap.TryGetValue(k, out var o) || !v.Value.SameFlow(o.Value)) return false;
         return true;
     }
@@ -272,19 +290,21 @@ internal sealed class BodySummary
     /// callee cleans it. A label of another body (a local function's capture of its enclosing body) is kept when
     /// `keep` accepts its owner. Request data the callee read from the heap reaches the call only for the entry points
     /// that also reach the caller (`caller`; TaintValue.Scope).
+    /// `kind`: the kind of the call's steps (StepKind.DispatchFallback for a call resolved by the class-hierarchy
+    /// fallback, R-9).
     public static TaintValue Substitute(TaintValue symbolic, int owner, Func<int, TaintValue> argument, Location site, string name, Func<int, bool> keep,
-        Reach caller, bool dropViaKey = false, ObjectTable? objects = null)
+        Reach caller, bool dropViaKey = false, ObjectTable? objects = null, StepKind kind = StepKind.Plain)
     {
-        if (!symbolic.Any) return symbolic.HasIdentity && objects != null ? SubstituteIdentity(TaintValue.Clean, symbolic, owner, argument, site, name, keep, caller, objects) : TaintValue.Clean;
-        var result = SubstituteTaint(symbolic, owner, argument, site, name, keep, caller, dropViaKey);
-        return symbolic.HasIdentity && objects != null ? SubstituteIdentity(result, symbolic, owner, argument, site, name, keep, caller, objects) : result;
+        if (!symbolic.Any) return symbolic.HasIdentity && objects != null ? SubstituteIdentity(TaintValue.Clean, symbolic, owner, argument, site, name, keep, caller, objects, kind) : TaintValue.Clean;
+        var result = SubstituteTaint(symbolic, owner, argument, site, name, keep, caller, dropViaKey, kind);
+        return symbolic.HasIdentity && objects != null ? SubstituteIdentity(result, symbolic, owner, argument, site, name, keep, caller, objects, kind) : result;
     }
 
     /// The objects and members of a symbolic value at a call (Task 27): the callee's parameter objects become the objects
     /// its arguments hold (unknown when an argument's are); another body's parameter objects are kept when `keep`
     /// accepts the body (a capture of the enclosing body), else unknown; each known member's value is substituted.
     private static TaintValue SubstituteIdentity(TaintValue result, TaintValue symbolic, int owner, Func<int, TaintValue> argument, Location site, string name,
-        Func<int, bool> keep, Reach caller, ObjectTable objects)
+        Func<int, bool> keep, Reach caller, ObjectTable objects, StepKind kind)
     {
         var objs = symbolic.Objects?.SelectMany(id =>
         {
@@ -293,16 +313,16 @@ internal sealed class BodySummary
             if (body == owner) return argument(slot).Objects;
             return keep(body) ? objects.Single(id) : null;
         });
-        var members = symbolic.Members?.Select(v => Substitute(v, owner, argument, site, name, keep, caller, false, objects));
+        var members = symbolic.Members?.Select(v => Substitute(v, owner, argument, site, name, keep, caller, false, objects, kind));
         return result with { Objects = objs, Members = members };
     }
 
     private static TaintValue SubstituteTaint(TaintValue symbolic, int owner, Func<int, TaintValue> argument, Location site, string name, Func<int, bool> keep,
-        Reach caller, bool dropViaKey)
+        Reach caller, bool dropViaKey, StepKind kind)
     {
         var own = symbolic.RequestPart.WithoutIdentity().Within(caller);
         if (dropViaKey && own.KeyOnly) own = TaintValue.Clean;
-        var result = own.Request ? own.Step(site, $"returned by {name}") : TaintValue.Clean;
+        var result = own.Request ? own.Step(site, $"returned by {name}", kind) : TaintValue.Clean;
         foreach (var label in symbolic.Labels)
         {
             if (label.Owner == owner)
@@ -312,7 +332,7 @@ internal sealed class BodySummary
                 if (label.ViaKey && dropViaKey) continue;
                 var a = argument(label.Slot).WithoutIdentity();
                 if (!a.Any) continue;
-                var v = a.Step(site, $"passed to {name}").Extend(label.Path).CleanedFor(label.CleanFor);
+                var v = a.Step(site, $"passed to {name}", kind).Extend(label.Path).CleanedFor(label.CleanFor);
                 result = result.Join(label.ViaKey ? v.ViaKey() : v);
             }
             else if (keep(label.Owner))
@@ -358,14 +378,18 @@ internal sealed class SummaryBuilder
         ObjWrites[(slot, key)] = ObjWrites.TryGetValue((slot, key), out var old) ? (old.Symbol, old.Value.Join(value)) : (member, value);
     }
 
-    public void AddSink(int slot, string rule, SyntaxNode site, ISymbol member, Trail path) =>
-        Sinks.TryAdd((slot, rule, site.SyntaxTree, site.Span), new SinkEffect(slot, rule, site, member, path));
+    /// The first path of a sink is kept, unless a later one is high and it is not (R-9).
+    public void AddSink(int slot, string rule, SyntaxNode site, ISymbol member, Trail path)
+    {
+        var key = (slot, rule, site.SyntaxTree, site.Span);
+        if (!Sinks.TryGetValue(key, out var old) || (old.Path.Medium && !path.Medium)) Sinks[key] = new SinkEffect(slot, rule, site, member, path);
+    }
 
     public void AddCall(int slot, Body callee, int calleeSlot, ImmutableHashSet<string> cleanFor, Trail path)
     {
         var key = (slot, callee.Id, calleeSlot);
         if (!Calls.TryGetValue(key, out var old)) Calls[key] = new CallEffect(slot, callee, calleeSlot, cleanFor, path);
-        else if (!old.CleanFor.IsSubsetOf(cleanFor)) Calls[key] = old with { CleanFor = old.CleanFor.Intersect(cleanFor) };
+        else if (CallEffect.Joined(old, cleanFor, path) is { } joined) Calls[key] = joined;
     }
 
     public void AddHeap(object key, object location, TaintValue labels)

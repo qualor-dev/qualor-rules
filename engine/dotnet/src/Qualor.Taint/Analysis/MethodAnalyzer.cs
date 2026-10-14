@@ -112,15 +112,21 @@ internal sealed class AnalysisContext
     }
 
     /// One finding per rule and sink site (the site's syntax: an argument or an assignment) of a syntax tree; the first
-    /// path is kept. The same file in several compilations (target frameworks) is deduplicated by TaintEngine.
+    /// path is kept, unless a later one is high and it is not (R-9: a finding is medium only when no high path is
+    /// found). The same file in several compilations (target frameworks) is deduplicated by TaintEngine.
     public void Report(string rule, SyntaxNode site, TaintValue value, ISymbol member)
     {
         var key = (rule, site.SyntaxTree, site.Span);
-        if (_findings.ContainsKey(key)) return;
+        if (_findings.TryGetValue(key, out var old) && (old.Confidence == Confidence.High || value.Path.Medium)) return;
         var sink = site.GetLocation();
-        var path = value.Path.Add(new PathStep(sink, $"reaches the {rule} sink {Name(member)}")).ToList();
+        var trail = value.Path.Add(new PathStep(sink, $"reaches the {rule} sink {Name(member)}"));
+        var path = trail.ToList();
         var others = value.Sources.Where(s => !s.Equals(path[0].Location)).OrderBy(s => s.SourceSpan.Start).ToList();
-        _findings[key] = new Finding(rule, sink, path, others) { Message = Sinks.MessageFor(rule, member) };
+        _findings[key] = new Finding(rule, sink, path, others)
+        {
+            Message = Sinks.MessageFor(rule, member),
+            Confidence = trail.Medium ? Confidence.Medium : Confidence.High,
+        };
     }
 
     /// A misuse rule's finding at `at` (in source), its one path step saying what was found there.
@@ -809,7 +815,7 @@ internal sealed partial class MethodAnalyzer
         var result = TaintValue.Clean;
         foreach (var target in _body.Targets(toString, true, type))
             if (target.Kind == TargetKind.Body)
-                result = result.Join(Apply(target.Body!, expression, toString, slot => slot == -1 ? value : TaintValue.Clean, null, Array.Empty<Input>(), false, state));
+                result = result.Join(Apply(target.Body!, expression, toString, slot => slot == -1 ? value : TaintValue.Clean, null, Array.Empty<Input>(), false, state, kind: target.StepKind));
         return result;
     }
 
@@ -971,9 +977,17 @@ internal sealed partial class MethodAnalyzer
         }
         if (unknown) heap = _body.HeapRead(member);
         else if (concrete) heap = _body.HeapRead(member, objects);
-        var value = heap.Join(labels);
-        return value.Any ? value.Step(at.Syntax.GetLocation(), $"read from {_ctx.Name(member)}") : value;
+        // A member read from the heap (its field or object locations) is a heap read (R-9, R-E29). A parameter object's
+        // member slot is plain: the call site gives what the argument holds there (MemberArg tags an exact member).
+        var location = at.Syntax.GetLocation();
+        var message = $"read from {_ctx.Name(member)}";
+        return (heap.Any ? heap.Step(location, message, StepKind.HeapRead) : heap).Join(labels.Any ? labels.Step(location, message) : labels);
     }
+
+    /// The kind of a read of a strong update this body holds for `path` (Task 27): an own or static member's, which this
+    /// body tracks as its own state, is plain; a member through any other object is a heap read (R-9, R-E29).
+    private static StepKind HoldsKind(AccessPath path) =>
+        path.Members.Length == 1 && (path.Root == AccessPath.This || path.Root == AccessPath.Static) ? StepKind.Plain : StepKind.HeapRead;
 
     /// A view's known model members joined with what is written into those members of the model's objects.
     private MemberMap? KnownLater(MemberMap known, ObjSet? objects, IOperation at)
@@ -1009,9 +1023,9 @@ internal sealed partial class MethodAnalyzer
         var definition = member.OriginalDefinition;
         // (All: nothing known yet, e.g. a view's model no write has reached: read as unknown.)
         if (!member.IsStatic && instance.Members is { IsAll: false } known && known.TryGet(definition, out var exact))
-            return exact.Any ? exact.Step(operation.Syntax.GetLocation(), $"read from {_ctx.Name(member)}") : exact;
+            return exact.Any ? exact.Step(operation.Syntax.GetLocation(), $"read from {_ctx.Name(member)}", StepKind.HeapRead) : exact;
         if (state.HasFacts && PathOf(operation, true) is { } path && state.Fact(path)?.Holds is { } holds)
-            return holds.Any ? holds.Step(operation.Syntax.GetLocation(), $"read from {_ctx.Name(member)}") : holds;
+            return holds.Any ? holds.Step(operation.Syntax.GetLocation(), $"read from {_ctx.Name(member)}", HoldsKind(path)) : holds;
         var neverSource = member is IFieldSymbol or IPropertySymbol && !member.IsStatic
             && _ctx.Sources.IsNeverSourceType(member is IFieldSymbol f ? f.Type : ((IPropertySymbol)member).Type);
         var heapMember = _body.IsHeapMember(member);
@@ -1131,8 +1145,11 @@ internal sealed partial class MethodAnalyzer
     private static bool IsVariable(IOperation operation) => operation is ILocalReferenceOperation or IParameterReferenceOperation
         or IFieldReferenceOperation or IFlowCaptureReferenceOperation or IPropertyReferenceOperation or IArrayElementReferenceOperation;
 
-    private TaintValue Named(TaintValue value, IOperation assignment, string name) =>
-        value.Any ? value.Step(assignment.Syntax.GetLocation(), $"assigned to '{name}'") : value;
+    private TaintValue Named(TaintValue value, IOperation assignment, string name, StepKind kind = StepKind.Plain) =>
+        value.Any ? value.Step(assignment.Syntax.GetLocation(), $"assigned to '{name}'", kind) : value;
+
+    /// The kind of a write to a keyed store entry: medium under the store's "any key" (R-E29).
+    private static StepKind AnyKey(KeyedLocation location) => location.Key == null ? StepKind.AnyKeyEntry : StepKind.Plain;
 
     /// A weak write into what `operation` refers to (a collection, a builder, a tuple or object in a variable): the
     /// variable that holds it, a flow capture and what it captured, a field or auto-property (its state, its instance,
@@ -1234,23 +1251,50 @@ internal sealed partial class MethodAnalyzer
 
     // ---- Keyed request stores (Task 22) ----
 
-    /// The request data of a keyed store entry for this body, with a path step at the read.
+    /// The request data of a keyed store entry for this body, with a path step at the read (R-9, R-E29): a constant key's
+    /// entry and a view model are high (value passing within the request: what was written under the store's "any key"
+    /// carries its medium write step), a read with a key that is not a constant medium; the part of the data this body
+    /// shares with its writers only through an unresolved view name's fallback edges is medium (StepKind.ViewFallback).
     private TaintValue Keyed(KeyedLocation location, IOperation read)
     {
         var value = _body.KeyedRead(location);
-        return value.Any ? value.Step(read.Syntax.GetLocation(), $"read from {Describe(location)}") : value;
+        if (!value.Any) return value;
+        var at = read.Syntax.GetLocation();
+        var message = $"read from {Describe(location)}";
+        if (location.Key == null) return value.Step(at, message, StepKind.AnyKeyEntry);
+        var kind = location.Store == KeyedStore.ViewModel ? StepKind.ViewModel : StepKind.KeyedEntry;
+        var precise = _body.ThroughResolvedEdges(value);
+        if (ReferenceEquals(precise, value)) return value.Step(at, message, kind);
+        var fallback = value.Step(at, message, StepKind.ViewFallback);
+        return precise.Any ? precise.Step(at, message, kind).Join(fallback) : fallback;
     }
 
-    /// The view's model read under its type's entries (Task 27: what all of them know of its members).
+    /// A write to a keyed store entry; under the store's "any key" (a key that is not a constant, a model of type object)
+    /// it is a medium step (R-9, R-E29), so every read that joins that entry carries it.
+    private void KeyedWrite(KeyedLocation location, TaintValue value, IOperation at)
+    {
+        // A value without taint still goes to the body (a view model's objects and members: Task 27).
+        if (value.Any && location.Key == null) value = value.Step(at.Syntax.GetLocation(), $"written to {Describe(location)}", StepKind.AnyKeyEntry);
+        _body.KeyedWrite(location, value);
+    }
+
+    /// The view's model read under its type's entries (Task 27: what all of them know of its members). The view-model
+    /// edge is high (R-E29), but for what the view shares with its writer only through an unresolved view name (as Keyed).
     private TaintValue Keyed(IEnumerable<KeyedLocation> locations, IOperation read)
     {
         var value = _body.KeyedRead(locations);
-        return value.Any ? value.Step(read.Syntax.GetLocation(), "read from the view's model") : value;
+        if (!value.Any) return value;
+        var at = read.Syntax.GetLocation();
+        const string message = "read from the view's model";
+        var precise = _body.ThroughResolvedEdges(value);
+        if (ReferenceEquals(precise, value)) return value.Step(at, message, StepKind.ViewModel);
+        var fallback = value.Step(at, message, StepKind.ViewFallback);
+        return precise.Any ? precise.Step(at, message, StepKind.ViewModel).Join(fallback) : fallback;
     }
 
     /// A callee that gives a type-parameter-typed parameter to a view as its model (KeyedLocation.Generic in its summary):
     /// the argument is written as the view model under the argument's own static type.
-    private void GenericModels(BodySummary summary, Body callee, IOperation site, string name, Input[] inputs)
+    private void GenericModels(BodySummary summary, Body callee, IOperation site, string name, Input[] inputs, StepKind kind)
     {
         if (!summary.Heap.TryGetValue(KeyedLocation.Generic, out var entry)) return;
         foreach (var label in entry.Value.Labels)
@@ -1259,9 +1303,9 @@ internal sealed partial class MethodAnalyzer
             foreach (var i in inputs)
             {
                 if (i.Ordinal != label.Slot || i.RefKind == RefKind.Out || !i.Value.Any) continue;
-                var value = i.Value.Step(site.Syntax.GetLocation(), $"passed to {name}").Extend(label.Path).CleanedFor(label.CleanFor);
+                var value = i.Value.Step(site.Syntax.GetLocation(), $"passed to {name}", kind).Extend(label.Path).CleanedFor(label.CleanFor);
                 if (!value.Any) continue;
-                foreach (var model in _ctx.ModelKeys.Writes(StaticType(i.Operation))) _body.KeyedWrite(model, value);
+                foreach (var model in _ctx.ModelKeys.Writes(StaticType(i.Operation))) KeyedWrite(model, value, site);
             }
         }
     }
@@ -1277,7 +1321,7 @@ internal sealed partial class MethodAnalyzer
     {
         KeyedStore.ViewData => location.Key == null ? "ViewData (a key built at run time)" : $"ViewData[\"{location.Key}\"]",
         KeyedStore.Items => location.Key == null ? "HttpContext.Items (a key built at run time)" : $"HttpContext.Items[\"{location.Key}\"]",
-        _ => "the view's model",
+        _ => location.Key == null ? "the view's model (of no known type)" : "the view's model",
     };
 
     /// The keyed-store effects of a call: the model a view is rendered with (`View(model)`, `PartialView(model)`, a view
@@ -1294,7 +1338,7 @@ internal sealed partial class MethodAnalyzer
                 // Task 27: also a model without request data (what it knows of its members reaches the view).
                 if (i.Ordinal != model) continue;
                 var named = Named(i.Value, operation, "the view's model");
-                foreach (var entry in _ctx.ModelKeys.Writes(StaticType(i.Operation))) _body.KeyedWrite(entry, named);
+                foreach (var entry in _ctx.ModelKeys.Writes(StaticType(i.Operation))) KeyedWrite(entry, named, operation);
             }
             return;
         }
@@ -1311,7 +1355,7 @@ internal sealed partial class MethodAnalyzer
             }
             else if (i.Value.Any)
             {
-                _body.KeyedWrite(location, Named(i.Value, operation, Describe(location)));
+                KeyedWrite(location, Named(i.Value, operation, Describe(location), AnyKey(location)), operation);
             }
         }
     }
@@ -1421,10 +1465,10 @@ internal sealed partial class MethodAnalyzer
             {
                 result = result.Join(Note(target.Kind switch
                 {
-                    TargetKind.Body => Apply(target.Body!, operation, property, Arguments(receiver, inputs), operation.Instance, inputs, false, state, exits: targets.Count == 1),
+                    TargetKind.Body => Apply(target.Body!, operation, property, Arguments(receiver, inputs), operation.Instance, inputs, false, state, exits: targets.Count == 1, kind: target.StepKind),
                     TargetKind.Auto => ReadMember(operation, target.Method.AssociatedSymbol!, receiver, state),
                     TargetKind.External => ExternalRead((IPropertySymbol?)target.Method.AssociatedSymbol ?? property, operation, receiver, inputs),
-                    _ => Through(operation, property, receiver.Join(JoinInputs(inputs))),
+                    _ => Through(operation, property, receiver.Join(JoinInputs(inputs)), target.StepKind),
                 }));
             }
         }
@@ -1486,11 +1530,17 @@ internal sealed partial class MethodAnalyzer
                     if (f == "this") result = result.Join(receiver);
                     else foreach (var i in index) if (f == "args" || IsOrdinal(f, i.Ordinal)) result = result.Join(i.Value);
                 }
-                // A lookup key reaches only an element that can carry an injection by itself (ruling R-E18).
+                // A lookup key reaches only an element that can carry an injection by itself (ruling R-E18); its path is
+                // a medium step (R-9, R-E29).
                 if (p.Keys.Count > 0 && _ctx.Sources.CanCarryInjection(operation.Type))
                 {
                     var later = _ctx.Sources.CarriesOnlyAsTypeParameter(operation.Type);
-                    foreach (var i in index) if (p.Keys.Contains(i.Ordinal)) result = result.Join(later ? i.Value.ViaKey() : i.Value);
+                    foreach (var i in index)
+                    {
+                        if (!p.Keys.Contains(i.Ordinal) || !i.Value.Any) continue;
+                        var key = i.Value.Step(operation.Syntax.GetLocation(), $"looked up by key in {_ctx.Name(property)}", StepKind.KeyLookup);
+                        result = result.Join(later ? key.ViaKey() : key);
+                    }
                 }
             }
         }
@@ -1524,7 +1574,7 @@ internal sealed partial class MethodAnalyzer
         if (KeyedStores.IndexerStore(operation, Model()?.Compilation) is { } store)
         {
             var location = KeyedStores.Location(store, operation.Arguments[0].Value);
-            _body.KeyedWrite(location, Named(value, assignment, Describe(location)));
+            KeyedWrite(location, Named(value, assignment, Describe(location), AnyKey(location)), assignment);
         }
         else if ((value.Any || value.HasIdentity) && (KeyedStores.IsPartialModel(property) || (KeyedStores.IsViewModel(property) && KeyedStores.IsViewData(operation.Instance?.Type))))
         {
@@ -1536,7 +1586,7 @@ internal sealed partial class MethodAnalyzer
             if (KeyedStores.IsPartialModel(property) || !(type == null || type.SpecialType == SpecialType.System_Object || type.TypeKind is TypeKind.Dynamic or TypeKind.Error))
             {
                 var named = Named(value, assignment, "the view's model");
-                foreach (var location in _ctx.ModelKeys.Writes(type)) _body.KeyedWrite(location, named);
+                foreach (var location in _ctx.ModelKeys.Writes(type)) KeyedWrite(location, named, assignment);
             }
         }
         // A setter other than an auto-property's runs code on its receiver: as a call given the receiver (Task 21).
@@ -1562,7 +1612,7 @@ internal sealed partial class MethodAnalyzer
                 switch (target.Kind)
                 {
                     case TargetKind.Body:
-                        Apply(target.Body!, assignment, property, Arguments(receiver, inputs), operation.Instance, inputs, false, state, exits: targets.Count == 1);
+                        Apply(target.Body!, assignment, property, Arguments(receiver, inputs), operation.Instance, inputs, false, state, exits: targets.Count == 1, kind: target.StepKind);
                         break;
                     case TargetKind.Auto:
                         AssignMember(target.Method.AssociatedSymbol!, operation.Instance, receiver, value, state, assignment, targets.Count == 1 ? operation : null);
@@ -1603,8 +1653,8 @@ internal sealed partial class MethodAnalyzer
     };
 
     /// What passes through a member that has no body to analyse: its receiver and arguments, to its result.
-    private TaintValue Through(IOperation site, ISymbol member, TaintValue inputs) =>
-        inputs.Any ? inputs.Step(site.Syntax.GetLocation(), $"passed to {_ctx.Name(member)}") : inputs;
+    private TaintValue Through(IOperation site, ISymbol member, TaintValue inputs, StepKind kind = StepKind.Plain) =>
+        inputs.Any ? inputs.Step(site.Syntax.GetLocation(), $"passed to {_ctx.Name(member)}", kind) : inputs;
 
     private TaintValue Call(IOperation operation, IMethodSymbol? method, IOperation? instance, ImmutableArray<IArgumentOperation> arguments, TaintState state, bool isVirtual)
     {
@@ -1694,7 +1744,7 @@ internal sealed partial class MethodAnalyzer
                     {
                         anyBody = true;
                         var applied = Apply(target.Body!, operation, method, Arguments(instanceValue, inputs), reduced ? null : instance, inputs, constructor, state,
-                            dropViaKey: _ctx.ValueFactories(definition) != null, exits: targets!.Count == 1);
+                            dropViaKey: _ctx.ValueFactories(definition) != null, exits: targets!.Count == 1, kind: target.StepKind);
                         identity = identity.Join(IdentityOf(applied));
                         result = result.Join(applied.WithoutIdentity());
                         break;
@@ -1706,7 +1756,7 @@ internal sealed partial class MethodAnalyzer
                     default:
                     {
                         unknownIdentity = true;
-                        var through = Through(operation, method, all.WithoutIdentity());
+                        var through = Through(operation, method, all.WithoutIdentity(), target.StepKind);
                         result = result.Join(through);
                         foreach (var i in inputs)
                             if (i.RefKind is RefKind.Out or RefKind.Ref) Assign(i.Operation, through, state, i.Operation);
@@ -1860,14 +1910,15 @@ internal sealed partial class MethodAnalyzer
     /// (the callee's return value, a constructor's object), what it writes into its receiver, its ref and out
     /// parameters.
     /// With `dropViaKey` (a value-factory shaped call, ruling R-E23) the result loses what reached the callee's return
-    /// only as the key of a type-parameter-typed lookup (Label.ViaKey); the rest of its return is kept.
+    /// only as the key of a type-parameter-typed lookup (Label.ViaKey); the rest of its return is kept. `kind`: the kind
+    /// of the call's path steps (Target.StepKind: medium for a class-hierarchy fallback, R-9).
     ///
     /// Task 27 (decision R-8): a constructor's receiver is the object its `new` makes; a member slot of the callee is what
     /// the call's argument holds in that member (MemberArg); the callee's ObjWrites are written into the objects its
     /// arguments hold; with `exits` (the call's only target), its ParamExit members hold exactly in the arguments that are
     /// variables (a constructor's: in the object made) after the call.
     private TaintValue Apply(Body callee, IOperation site, ISymbol member, Func<int, TaintValue> argument, IOperation? receiverOperation,
-        Input[] inputs, bool constructor, TaintState state, bool dropViaKey = false, bool exits = false)
+        Input[] inputs, bool constructor, TaintState state, bool dropViaKey = false, bool exits = false, StepKind kind = StepKind.Plain)
     {
         _body.Depend(callee);
         Location? location = null;
@@ -1897,7 +1948,7 @@ internal sealed partial class MethodAnalyzer
                 var v = argument(slot).WithoutIdentity();
                 if (!v.Any) continue;
                 location ??= site.Syntax.GetLocation();
-                _body.Pass(callee, slot, v.Step(location, $"passed to {name}"));
+                _body.Pass(callee, slot, v.Step(location, $"passed to {name}", kind));
             }
         }
         foreach (var slot in s.MemberSlots)
@@ -1905,22 +1956,22 @@ internal sealed partial class MethodAnalyzer
             var v = argument(slot);
             if (!v.Any) continue;
             location ??= site.Syntax.GetLocation();
-            _body.Pass(callee, slot, v.Step(location, $"passed to {name}"));
+            _body.Pass(callee, slot, v.Step(location, $"passed to {name}", kind));
         }
-        if (!s.Heap.IsEmpty) GenericModels(s, callee, site, name, inputs);
+        if (!s.Heap.IsEmpty) GenericModels(s, callee, site, name, inputs, kind);
         if (s.NoLocalEffects) return TaintValue.Clean;
         location ??= site.Syntax.GetLocation();
-        var result = BodySummary.Substitute(s.Return, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach, dropViaKey, _ctx.Objects);
+        var result = BodySummary.Substitute(s.Return, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach, dropViaKey, _ctx.Objects, kind);
         foreach (var ((slot, _), (written, symbolic)) in s.ObjWrites)
         {
-            var v = BodySummary.Substitute(symbolic, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach).WithoutIdentity();
+            var v = BodySummary.Substitute(symbolic, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach, kind: kind).WithoutIdentity();
             if (v.Any) _body.HeapWrite(written, v, argument(slot).Objects);
         }
         if (exits && s.ParamExit is { Count: > 0 } paramExit && (callee.Symbol is not { IsAsync: true } || AwaitedDirectly(site)))
         {
             foreach (var (slot, fixedMembers) in paramExit)
             {
-                var substituted = fixedMembers.Select(v => BodySummary.Substitute(v, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach, false, _ctx.Objects));
+                var substituted = fixedMembers.Select(v => BodySummary.Substitute(v, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach, false, _ctx.Objects, kind));
                 if (substituted is not { IsAll: false } known) continue;
                 if (slot == -1 && constructor && site is IObjectCreationOperation)
                 {
@@ -1938,13 +1989,13 @@ internal sealed partial class MethodAnalyzer
         }
         if (s.ToThis.Any)
         {
-            var written = BodySummary.Substitute(s.ToThis, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach);
+            var written = BodySummary.Substitute(s.ToThis, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach, kind: kind);
             if (constructor) result = result.Join(written);
             else if (receiverOperation != null) WriteReceiver(receiverOperation, written, state);
         }
         foreach (var (ordinal, symbolic) in s.Refs)
         {
-            var v = BodySummary.Substitute(symbolic, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach);
+            var v = BodySummary.Substitute(symbolic, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach, kind: kind);
             foreach (var i in inputs)
                 if (i.Ordinal == ordinal && i.RefKind is RefKind.Ref or RefKind.Out) Assign(i.Operation, v, state, i.Operation);
         }
@@ -2008,8 +2059,11 @@ internal sealed partial class MethodAnalyzer
             foreach (var ((wslot, _), (symbol, value)) in s.ObjWrites)
                 if (wslot == k && SymbolEqualityComparer.Default.Equals(symbol, member)) written = value;
             var top = s.TopWrites?.Contains(SymbolKeys.Of(member)) == true;
-            if (written == null && !top && !s.Escapes.Contains(k)) return exact.WithoutIdentity();
-            var joined = exact.WithoutIdentity().Join(MemberHeap(member, a.Objects, site, neverSource));
+            // A member the caller wrote into a known object, read in the callee: a heap read (R-9, R-E29).
+            var held = exact.WithoutIdentity();
+            if (held.Any) held = held.Step(site.Syntax.GetLocation(), $"read from {_ctx.Name(member)}", StepKind.HeapRead);
+            if (written == null && !top && !s.Escapes.Contains(k)) return held;
+            var joined = held.Join(MemberHeap(member, a.Objects, site, neverSource));
             if (written != null)
                 joined = joined.Join(BodySummary.Substitute(written, callee.Id, substituted, site.Syntax.GetLocation(), _ctx.Name(callee.Symbol ?? member), _body.Keeps, _body.WriteReach).WithoutIdentity());
             return joined;
@@ -2060,7 +2114,7 @@ internal sealed partial class MethodAnalyzer
                     foreach (var target in _body.Targets(reference.Method, reference.IsVirtual, reference.Instance?.Type))
                     {
                         value = value.Join(target.Kind == TargetKind.Body
-                            ? Apply(target.Body!, inputs[k].Operation, reference.Method, slot => slot == -1 ? instance : others, reference.Instance, Array.Empty<Input>(), false, state)
+                            ? Apply(target.Body!, inputs[k].Operation, reference.Method, slot => slot == -1 ? instance : others, reference.Instance, Array.Empty<Input>(), false, state, kind: target.StepKind)
                             : _ctx.Sources.IsScalar(reference.Method.ReturnType) || !others.Any ? TaintValue.Clean
                             : others.CleanedFor(_ctx.Sinks.Sanitizes(reference.Method, Access.Call)).CleanedFor(_ctx.Sinks.SanitizesByName(reference.Method)));
                     }
@@ -2235,9 +2289,11 @@ internal sealed partial class MethodAnalyzer
         if (!from.Any && !key.Any) return result;
         var site = operation.Syntax.GetLocation();
         var through = $"passed through {_ctx.Name(method)}";
-        var keyed = key.Any ? from.Join(key).Step(site, through) : TaintValue.Clean;
-        var keyedLater = key.Any ? from.Join(key.ViaKey()).Step(site, through) : TaintValue.Clean;
         from = from.Any ? from.Step(site, through) : from;
+        // What only the key gives the element found is a medium step (R-9, R-E29); the collection's own data stays high.
+        var byKey = key.Any ? key.Step(site, $"looked up by key in {_ctx.Name(method)}", StepKind.KeyLookup) : TaintValue.Clean;
+        var keyed = key.Any ? from.Join(byKey) : TaintValue.Clean;
+        var keyedLater = key.Any ? from.Join(byKey.ViaKey()) : TaintValue.Clean;
         // An element typed by a type parameter may or may not carry: the key's labels pass marked (Label.ViaKey, R-E23).
         TaintValue For(ITypeSymbol? type) => !key.Any || !_ctx.Sources.CanCarryInjection(type) ? from
             : _ctx.Sources.CarriesOnlyAsTypeParameter(type) ? keyedLater : keyed;

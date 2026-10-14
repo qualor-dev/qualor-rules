@@ -901,4 +901,83 @@ public sealed class ViewDataTests
         var code = "using Microsoft.Data.SqlClient;\nusing Dapper;\n" + web;
         Assert.Equal(Marked(code), Found(Analyze(code), "csharp.sql-injection"));
     }
+
+    // ---- Confidence (Task 28, decision R-9, ruling R-E29) ----
+
+    /// The findings of `rule` as "<file>:<line>" with their confidence, sorted.
+    private static List<string> Confidences(AnalysisResult result, string rule = "csharp.xss") => result.Findings.Where(f => f.RuleId == rule)
+        .Select(f => f.SinkSpan.Path + ":" + (f.SinkSpan.StartLinePosition.Line + 1) + " " + f.Confidence).OrderBy(p => p, StringComparer.Ordinal).ToList();
+
+    [Fact]
+    public void A_constant_keyed_entry_and_the_view_model_are_high_and_an_any_key_entry_medium()
+    {
+        const string web = """
+            public class Note { public string Text { get; set; } = ""; }
+            public class NotesController : Controller
+            {
+                public IActionResult Show([FromQuery] string term, [FromQuery] string slot, [FromForm] Note n)
+                {
+                    ViewData["Term"] = term;
+                    ViewData["slot-" + slot] = slot;
+                    return View(n);
+                }
+            }
+            """;
+        var result = Analyze(web,
+            View("Views_Notes_Show", "Note", "/src/App/Views/Notes/Show.cshtml", """
+                Write(Html.Raw(ViewData["Term"]));
+                Write(Html.Raw(ViewData["Other"]));
+                Write(Html.Raw(Model.Text));
+                Write(Html.Raw(ViewData["x" + System.DateTime.Now.Ticks]));
+                """));
+
+        // Line 1: the constant entry (high; the "any key" entry it joins is the medium alternative). Line 2: only what was
+        // written under a key built at run time. Line 3: the bound model through View(model). Line 4: a read with a key
+        // built at run time joins every entry.
+        Assert.Equal(new[]
+        {
+            "/src/App/Views/Notes/Show.cshtml:1 High",
+            "/src/App/Views/Notes/Show.cshtml:2 Medium",
+            "/src/App/Views/Notes/Show.cshtml:3 High",
+            "/src/App/Views/Notes/Show.cshtml:4 Medium",
+        }, Confidences(result));
+    }
+
+    [Fact]
+    public void An_entry_a_view_shares_with_its_writer_only_through_an_unresolved_view_name_is_medium()
+    {
+        const string web = """
+            public class SearchController : Controller
+            {
+                public IActionResult Find([FromQuery] string term)
+                {
+                    ViewData["Term"] = term;
+                    return View(term.Length > 3 ? "Find" : "Exact");
+                }
+                public IActionResult Exact([FromQuery] string word)
+                {
+                    ViewData["Word"] = word;
+                    return View();
+                }
+            }
+            """;
+        var result = Analyze(web,
+            View("Views_Search_Find", "object", "/src/App/Views/Search/Find.cshtml", """
+                Write(Html.Raw(ViewData["Term"]));
+                """),
+            View("Views_Search_Exact", "object", "/src/App/Views/Search/Exact.cshtml", """
+                Write(Html.Raw(ViewData["Word"]));
+                Write(Html.Raw(ViewData["Term"]));
+                """));
+
+        // Find's view name is chosen at run time: it reaches every view through the fallback (medium). Exact's own view
+        // reads Exact's entry over a resolved edge (high).
+        Assert.Equal(1, result.Stats.UnresolvedViews);
+        Assert.Equal(new[]
+        {
+            "/src/App/Views/Search/Exact.cshtml:1 High",
+            "/src/App/Views/Search/Exact.cshtml:2 Medium",
+            "/src/App/Views/Search/Find.cshtml:1 Medium",
+        }, Confidences(result));
+    }
 }

@@ -7,6 +7,10 @@ namespace Qualor.Taint;
 /// A path as an immutable rope of steps (Task 8): adding a step and appending another trail (a callee's steps after a
 /// call) are O(1) and share structure, so the paths of summaries applied along deep call chains cost a node each; a
 /// trail is flattened only when a finding is reported (at most MaxReported steps: the first and last ones).
+///
+/// Medium (R-9): whether any step of the trail crosses a medium edge (StepKind.IsMedium), kept per node so a finding's
+/// confidence costs nothing and survives the steps a long path omits; a capped trail still records a medium step it
+/// could not add.
 internal sealed class Trail
 {
     /// A trail stops growing at this many steps (a soft cap against pathological recursion).
@@ -15,31 +19,44 @@ internal sealed class Trail
     /// The most steps a reported path shows; the middle of a longer one is replaced by one "steps omitted" step.
     public const int MaxReported = 64;
 
-    public static readonly Trail Empty = new(null, null, null, 0, null);
+    public static readonly Trail Empty = new(null, null, null, 0, null, false);
 
     private readonly Trail? _left;
     private readonly Trail? _right;
     private readonly PathStep? _step;
 
-    private Trail(Trail? left, Trail? right, PathStep? step, int count, PathStep? last)
+    private Trail(Trail? left, Trail? right, PathStep? step, int count, PathStep? last, bool medium)
     {
         _left = left;
         _right = right;
         _step = step;
         Count = count;
         Last = last;
+        Medium = medium;
     }
 
     public int Count { get; }
 
     public PathStep? Last { get; }
 
-    public static Trail Of(PathStep step) => new(null, null, step, 1, step);
+    /// Whether a step of the trail crosses a medium edge (R-9).
+    public bool Medium { get; }
 
-    public Trail Add(PathStep step) => Count == 0 ? Of(step) : Count >= MaxSteps ? this : new Trail(this, Of(step), null, Count + 1, step);
+    public static Trail Of(PathStep step) => new(null, null, step, 1, step, step.Kind.IsMedium());
+
+    public Trail Add(PathStep step) =>
+        Count == 0 ? Of(step) : Count >= MaxSteps ? Capped(step.Kind.IsMedium()) : new Trail(this, Of(step), null, Count + 1, step, Medium || step.Kind.IsMedium());
 
     public Trail Concat(Trail other) =>
-        other.Count == 0 ? this : Count == 0 ? other : Count + other.Count > MaxSteps ? this : new Trail(this, other, null, Count + other.Count, other.Last);
+        other.Count == 0 ? (other.Medium ? Capped(true) : this) : Count == 0 ? other
+        : Count + other.Count > MaxSteps ? Capped(other.Medium)
+        : new Trail(this, other, null, Count + other.Count, other.Last, Medium || other.Medium);
+
+    /// This trail, marked medium when a step it cannot take any more was (the steps stay as they are).
+    private Trail Capped(bool medium) => !medium || Medium ? this : new Trail(this, null, null, Count, Last, true);
+
+    /// Whether `a` is the better witness than `b` (R-9): a high path before a medium one, then the shorter.
+    public static bool Better(Trail a, Trail b) => a.Medium != b.Medium ? !a.Medium : a.Count < b.Count;
 
     /// The steps in order (a longer trail: its first and last MaxReported / 2 steps around one omission step).
     public ImmutableList<PathStep> ToList()
@@ -107,8 +124,10 @@ internal sealed class Label
 /// its CleanFor, the higher; labels form a set lattice of their own (per label, the smaller its CleanFor, the higher).
 /// Join is the union of the request flags and the intersection of CleanFor (over the request values only: a clean
 /// operand does not make a cleaned one dirty); Sources are united; labels are united, CleanFor intersected per label.
-/// Paths do not take part in the order (they are witnesses, the shorter one is kept), so the fixed point ends when
-/// Request, CleanFor, Scope, Sources and labels stop changing.
+/// Paths take part in the order only by their confidence (R-9): of two witnesses the high one is kept, then the shorter
+/// (Trail.Better), and a value whose path became high is above the same value with a medium path (a value rises so at
+/// most once), so the fixed point ends when Request, CleanFor, Scope, Sources, labels and the paths' confidence stop
+/// changing.
 ///
 /// Scope (Task 20, the request-scoped heap): the entry points the request data is valid for — those that reach the body
 /// that read it from the request (ScopedTo), or, for data read from the heap, the writers' entry points the reading body
@@ -120,7 +139,7 @@ internal sealed class Label
 /// it). FromHeap joins by "and".
 ///
 /// Witnesses (fix round 1, I4): Path is one witness, valid for Scope. When request data of different scopes is joined,
-/// Witnesses keeps up to MaxWitnesses (scope, shortest path) pairs, Path the shortest of them; every narrowing (Within,
+/// Witnesses keeps up to MaxWitnesses (scope, best path) pairs, Path the best of them (high first, then shortest); every narrowing (Within,
 /// a heap read or write) drops the witnesses whose scope it leaves, so a reported path (WitnessFor) starts in a request
 /// that reaches the sink. Witnesses, like paths, do not take part in the order.
 internal readonly record struct Witness(Reach? Scope, Trail Path);
@@ -191,7 +210,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
 
     public const int MaxWitnesses = 4;
 
-    /// The alternative witnesses (scope, path), shortest first, Path the first; empty: Path is the only one, valid for
+    /// The alternative witnesses (scope, path), best first (Trail.Better), Path the first; empty: Path is the only one, valid for
     /// Scope.
     public ImmutableArray<Witness> Witnesses { get; init; } = ImmutableArray<Witness>.Empty;
 
@@ -227,7 +246,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         return this;
     }
 
-    /// Two witness lists merged: one per scope (the shorter path), shortest first, at most MaxWitnesses.
+    /// Two witness lists merged: one per scope (the better path: high, then shorter), best first, at most MaxWitnesses.
     private static ImmutableArray<Witness> Merge(IEnumerable<Witness> a, IEnumerable<Witness> b)
     {
         var byScope = new List<Witness>();
@@ -235,9 +254,9 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         {
             var i = byScope.FindIndex(x => Equals(x.Scope, w.Scope));
             if (i < 0) byScope.Add(w);
-            else if (w.Path.Count < byScope[i].Path.Count) byScope[i] = w;
+            else if (Trail.Better(w.Path, byScope[i].Path)) byScope[i] = w;
         }
-        byScope.Sort((x, y) => x.Path.Count.CompareTo(y.Path.Count));
+        byScope.Sort((x, y) => x.Path.Medium != y.Path.Medium ? (x.Path.Medium ? 1 : -1) : x.Path.Count.CompareTo(y.Path.Count));
         if (byScope.Count > MaxWitnesses) byScope.RemoveRange(MaxWitnesses, byScope.Count - MaxWitnesses);
         return byScope.ToImmutableArray();
     }
@@ -335,14 +354,23 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                 if (sources.Count >= MaxSources) break;
                 sources = sources.Add(s);
             }
-            path = other.Path.Count < Path.Count ? other.Path : Path;
-            if (scope == null)
+            path = Trail.Better(other.Path, Path) ? other.Path : Path;
+            if (Dirtier(other.CleanFor, CleanFor) || Dirtier(CleanFor, other.CleanFor))
             {
-                // Unscoped data is valid everywhere: its shortest witness is the one kept.
+                // One side is cleaned for rules the other is not: its paths are no witness for those rules, while the
+                // dirtier side's are one for every rule the join is request data for (R-9: a finding's confidence is
+                // its path's). That side's witnesses are kept.
+                var d = Dirtier(other.CleanFor, CleanFor) ? other : this;
+                path = d.Path;
+                witnesses = scope == null ? ImmutableArray<Witness>.Empty : d.Witnesses;
+            }
+            else if (scope == null)
+            {
+                // Unscoped data is valid everywhere: its best witness is the one kept.
                 witnesses = ImmutableArray<Witness>.Empty;
                 var best = (Trail?)null;
                 foreach (var w in AllWitnesses.Concat(other.AllWitnesses))
-                    if (w.Scope == null && (best == null || w.Path.Count < best.Count)) best = w.Path;
+                    if (w.Scope == null && (best == null || Trail.Better(w.Path, best))) best = w.Path;
                 if (best != null) path = best;
             }
             else if (!Witnesses.IsDefaultOrEmpty || !other.Witnesses.IsDefaultOrEmpty || !ReferenceEquals(Scope, other.Scope))
@@ -409,7 +437,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                 var x = a[i++];
                 var y = b[j++];
                 var cf = x.CleanFor.Count == 0 || y.CleanFor.Count == 0 ? ImmutableHashSet<string>.Empty : x.CleanFor.Intersect(y.CleanFor);
-                var p = y.Path.Count < x.Path.Count ? y.Path : x.Path;
+                var p = Dirtier(y.CleanFor, x.CleanFor) ? y.Path : Dirtier(x.CleanFor, y.CleanFor) ? x.Path : Trail.Better(y.Path, x.Path) ? y.Path : x.Path;
                 var viaKey = x.ViaKey && y.ViaKey;
                 if (cf.Count != x.CleanFor.Count || !ReferenceEquals(p, x.Path) || viaKey != x.ViaKey)
                 {
@@ -425,16 +453,21 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         return changed ? result.ToImmutableArray() : a;
     }
 
-    /// Equal in the lattice (paths aside).
+    /// Whether data cleaned for `a` is request data for strictly more rules than data cleaned for `b` (a ⊂ b): its path
+    /// is a witness for every rule the other's is.
+    private static bool Dirtier(ImmutableHashSet<string> a, ImmutableHashSet<string> b) => a.Count < b.Count && a.IsSubsetOf(b);
+
+    /// Equal in the lattice (paths aside but for their confidence, R-9).
     public bool SameTaint(TaintValue other) =>
         ReferenceEquals(this, other)
-        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Sources.SetEquals(other.Sources) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly))
+        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Sources.SetEquals(other.Sources) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly && Path.Medium == other.Path.Medium))
             && SameLabels(other));
 
-    /// Equal in the lattice, paths and source locations aside: what decides whether a summary or the heap changed.
+    /// Equal in the lattice, paths (but for their confidence) and source locations aside: what decides whether a summary
+    /// or the heap changed.
     public bool SameFlow(TaintValue other) =>
         ReferenceEquals(this, other)
-        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly)) && SameLabels(other));
+        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly && Path.Medium == other.Path.Medium)) && SameLabels(other));
 
     private bool SameLabels(TaintValue other)
     {
@@ -443,7 +476,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         {
             var x = Labels[k];
             var y = other.Labels[k];
-            if (x.Owner != y.Owner || x.Slot != y.Slot || x.ViaKey != y.ViaKey || !x.CleanFor.SetEquals(y.CleanFor)) return false;
+            if (x.Owner != y.Owner || x.Slot != y.Slot || x.ViaKey != y.ViaKey || x.Path.Medium != y.Path.Medium || !x.CleanFor.SetEquals(y.CleanFor)) return false;
         }
         return true;
     }
@@ -464,16 +497,17 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         return value;
     }
 
-    /// The value with one more path step (on the request path and on each label's; a step at the last step's location
-    /// is not repeated).
-    public TaintValue Step(Location location, string message)
+    /// The value with one more path step of `kind` (on the request path and on each label's; a step at the last step's
+    /// location is not repeated, unless it is a medium step a high path would otherwise lose: R-9).
+    public TaintValue Step(Location location, string message, StepKind kind = StepKind.Plain)
     {
         if (!Any) return this;
         PathStep? step = null;
+        var medium = kind.IsMedium();
         var value = this;
-        if (Request && Fits(Path, location))
+        if (Request && Fits(Path, location, medium))
         {
-            step = new PathStep(location, message);
+            step = new PathStep(location, message, kind);
             if (Witnesses.IsDefaultOrEmpty)
             {
                 value = value with { Path = Path.Add(step) };
@@ -481,19 +515,20 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             else
             {
                 var s0 = step;
-                var witnesses = Witnesses.Select(w => Fits(w.Path, location) ? new Witness(w.Scope, w.Path.Add(s0)) : w).ToImmutableArray();
+                var witnesses = Witnesses.Select(w => Fits(w.Path, location, medium) ? new Witness(w.Scope, w.Path.Add(s0)) : w).ToImmutableArray();
                 value = value with { Path = witnesses[0].Path, Witnesses = witnesses };
             }
         }
-        if (Labels.Length > 0 && Labels.Any(l => Fits(l.Path, location)))
+        if (Labels.Length > 0 && Labels.Any(l => Fits(l.Path, location, medium)))
         {
-            var s = step ?? new PathStep(location, message);
-            value = value with { Labels = Labels.Select(l => Fits(l.Path, location) ? new Label(l.Owner, l.Slot, l.CleanFor, l.Path.Add(s), l.ViaKey) : l).ToImmutableArray() };
+            var s = step ?? new PathStep(location, message, kind);
+            value = value with { Labels = Labels.Select(l => Fits(l.Path, location, medium) ? new Label(l.Owner, l.Slot, l.CleanFor, l.Path.Add(s), l.ViaKey) : l).ToImmutableArray() };
         }
         return value;
     }
 
-    private static bool Fits(Trail path, Location location) => path.Last == null || !path.Last.Location.Equals(location);
+    private static bool Fits(Trail path, Location location, bool medium) =>
+        path.Last == null || !path.Last.Location.Equals(location) || (medium && !path.Medium);
 
     /// The value with these steps appended to its request path and to each label's (a callee's steps, after a call).
     public TaintValue Extend(Trail steps)

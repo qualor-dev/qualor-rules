@@ -43,7 +43,8 @@ namespace Qualor.Taint;
 ///     initializers.
 ///   A view is identified by the generator's RazorCompiledItem attributes, else by its `#line` file. A view name that
 ///   cannot be resolved reaches every view and view component of the caller's project and of the projects that
-///   reference it, a view component name every view component of the solution (counted: UnresolvedViews); a path name
+///   reference it, a view component name every view component of the solution (counted: UnresolvedViews; such fallback
+///   edges are left out of PreciseOf, so keyed data a view shares with its writer only through them is medium, R-9); a path name
 ///   no compiled view has (a runtime-compiled view) reaches nothing (counted: UncompiledViews).
 internal sealed class EntryPoints
 {
@@ -113,6 +114,12 @@ internal sealed class EntryPoints
     private readonly Dictionary<(Compilation, Compilation), bool> _references = new();
 
     private Reach[] _sccReach = Array.Empty<Reach>();
+
+    /// Each component's reach without the edges of unresolved view names (R-9): what a keyed store or view model read
+    /// shares with its writers through resolved edges only (PreciseOf).
+    private Reach[] _sccPrecise = Array.Empty<Reach>();
+    private readonly HashSet<(Unit From, Unit To)> _fallbackEdges = new();
+    private readonly Dictionary<int, Reach> _bodyPrecise = new();
     private readonly Dictionary<Unit, List<(List<TextSpan> Spans, int Bit)>> _handlerBits = new();
     private readonly Dictionary<int, Reach> _bodyReach = new();
     private readonly Dictionary<int, Reach> _bodyWriteReach = new();
@@ -496,11 +503,22 @@ internal sealed class EntryPoints
         var views = _views.Values.OfType<ViewClass>().ToList();
         var components = _components.Values.OfType<ComponentClass>().ToList();
         var edges = new Dictionary<Unit, HashSet<Unit>>();
-        void Edge(Unit from, IEnumerable<Unit> targets)
+        var resolved = new HashSet<(Unit, Unit)>();
+        void Edge(Unit from, IEnumerable<Unit> targets, bool fallback = false)
         {
             if (!edges.TryGetValue(from, out var seen)) edges[from] = seen = new HashSet<Unit>(from.Callees) { from };
             foreach (var target in targets)
-                if (seen.Add(target)) from.Callees.Add(target);
+            {
+                if (seen.Add(target))
+                {
+                    from.Callees.Add(target);
+                    if (fallback) _fallbackEdges.Add((from, target));
+                }
+                else if (!fallback)
+                {
+                    resolved.Add((from, target));
+                }
+            }
         }
 
         foreach (var request in _requests)
@@ -521,10 +539,12 @@ internal sealed class EntryPoints
                     Edge(request.Caller, request.Kind == Kind.Component
                         ? components.SelectMany(c => c.Units)
                         : views.Where(v => References(v.Compilation, caller)).SelectMany(v => v.Units)
-                            .Concat(components.Where(c => References(c.Compilation, caller)).SelectMany(c => c.Units)));
+                            .Concat(components.Where(c => References(c.Compilation, caller)).SelectMany(c => c.Units)), fallback: true);
                     break;
             }
         }
+        // An edge a resolved view name (or a call) also gives is no fallback.
+        _fallbackEdges.ExceptWith(resolved);
         foreach (var (view, type) in _tagHelpers)
             foreach (var b in SelfAndBases(type))
                 if (_tagHelperUnits.TryGetValue(SymbolKeys.Of(b.OriginalDefinition), out var units)) Edge(view, units);
@@ -773,6 +793,7 @@ internal sealed class EntryPoints
             entries.Add(new Entry(around, null, null));
         }
         if (entries.Count > explicitCount) reach = Propagate(graph, entries);
+        var precise = _fallbackEdges.Count == 0 ? reach : Propagate(graph, entries, _fallbackEdges);
 
         Count = entries.Count;
         foreach (var e in entries)
@@ -783,6 +804,8 @@ internal sealed class EntryPoints
         _all = _table.Of(all);
         _sccReach = new Reach[graph.Sccs.Count];
         for (var s = 0; s < reach.Length; s++) _sccReach[s] = reach[s] == null ? Reach.None : _table.Of(reach[s]!);
+        _sccPrecise = new Reach[graph.Sccs.Count];
+        for (var s = 0; s < precise.Length; s++) _sccPrecise[s] = precise[s] == null ? Reach.None : _table.Of(precise[s]!);
         for (var i = 0; i < entries.Count; i++)
         {
             if (entries[i].Handler is not { } handler) continue;
@@ -806,7 +829,9 @@ internal sealed class EntryPoints
     /// An entry point: units it starts in, or a Minimal API handler (its unit and spans) with its callees' keys.
     private sealed record Entry(List<Unit>? Units, List<object>? Callees, (Unit Owner, List<TextSpan> Spans)? Handler);
 
-    private static ulong[]?[] Propagate(CallGraph graph, List<Entry> entries)
+    /// The reach of every component from `entries`, over the call graph's edges but `skip` (R-9: an unresolved view
+    /// name's fallback edges).
+    private static ulong[]?[] Propagate(CallGraph graph, List<Entry> entries, HashSet<(Unit, Unit)>? skip = null)
     {
         var words = (entries.Count + 63) / 64;
         var reach = new ulong[]?[graph.Sccs.Count];
@@ -831,7 +856,7 @@ internal sealed class EntryPoints
             foreach (var unit in graph.Sccs[s])
                 foreach (var callee in unit.Callees)
                 {
-                    if (callee.Scc == s) continue;
+                    if (callee.Scc == s || (skip != null && skip.Contains((unit, callee)))) continue;
                     var target = reach[callee.Scc] ??= new ulong[words];
                     for (var w = 0; w < words; w++) target[w] |= own[w];
                 }
@@ -858,6 +883,18 @@ internal sealed class EntryPoints
             if (bits != null) reach = _table.Of(bits);
         }
         _bodyReach[body.Id] = reach;
+        return reach;
+    }
+
+    /// The entry points a body is reached from over resolved edges only (R-9): its reach without what only an unresolved
+    /// view name's fallback edges give it; the reach itself when they give it nothing.
+    public Reach PreciseOf(Body body)
+    {
+        if (_bodyPrecise.TryGetValue(body.Id, out var cached)) return cached;
+        var reach = Of(body);
+        var scc = body.Unit.Scc;
+        if (scc < _sccPrecise.Length && !ReferenceEquals(_sccPrecise[scc], _sccReach[scc])) reach = reach.Intersect(_sccPrecise[scc]);
+        _bodyPrecise[body.Id] = reach;
         return reach;
     }
 

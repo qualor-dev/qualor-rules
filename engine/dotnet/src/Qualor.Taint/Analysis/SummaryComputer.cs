@@ -11,7 +11,13 @@ namespace Qualor.Taint;
 /// propagator models or the `unmodelled-external` default).
 internal enum TargetKind { Body, Auto, Opaque, External }
 
-internal readonly record struct Target(TargetKind Kind, IMethodSymbol Method, Body? Body);
+/// Fallback: the call that runs it was resolved by the class-hierarchy fallback to several implementations
+/// (Dispatch.IsFallback): the call's path steps are medium (R-9).
+internal readonly record struct Target(TargetKind Kind, IMethodSymbol Method, Body? Body, bool Fallback = false)
+{
+    /// The kind of the path steps of a call to this target.
+    public StepKind StepKind => Fallback ? StepKind.DispatchFallback : StepKind.Plain;
+}
 
 /// The interprocedural analysis (spec §5): summaries computed bottom-up over the call graph's strongly connected
 /// components (CallGraph.Sccs) with a worklist ordered by component, to the joint fixed point of the summaries, the
@@ -707,8 +713,9 @@ internal sealed class SummaryComputer
             if (methods.Count == 1)
                 return new[] { TargetOf(SymbolEqualityComparer.Default.Equals(methods[0], SymbolKeys.Definition(method)) ? method : methods[0]) };
             if (methods.Count == 0) return new[] { new Target(TargetKind.Opaque, method, null) };
+            var fallback = _computer._dispatch.IsFallback(method, isVirtual, receiverType);
             var targets = new Target[methods.Count];
-            for (var i = 0; i < methods.Count; i++) targets[i] = TargetOf(methods[i]);
+            for (var i = 0; i < methods.Count; i++) targets[i] = TargetOf(methods[i]) with { Fallback = fallback };
             return targets;
         }
 
@@ -774,6 +781,17 @@ internal sealed class SummaryComputer
             if (value.Scope is not { } scope) return value;
             var widened = _computer._entries.Widen(scope);
             return ReferenceEquals(widened, scope) ? value : value with { Scope = widened };
+        }
+
+        /// The part of keyed data read here (KeyedRead) that this body shares with its writers over resolved edges (R-9):
+        /// the value itself when this body has no unresolved view name's fallback edge behind it (or the data is
+        /// unscoped), else the value narrowed to the entry points that reach it over resolved edges (clean when none).
+        public TaintValue ThroughResolvedEdges(TaintValue value)
+        {
+            if (!value.Request || value.Scope is not { } scope) return value;
+            var precise = _computer._entries.PreciseOf(_body);
+            if (ReferenceEquals(precise, Reach)) return value;
+            return scope.Intersects(precise) ? value.Narrowed(precise) : TaintValue.Clean;
         }
 
         /// A write to a heap symbol: its request data to the heap, its labels to their owners' summaries. Through known

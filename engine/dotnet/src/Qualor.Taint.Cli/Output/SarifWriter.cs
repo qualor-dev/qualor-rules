@@ -6,7 +6,9 @@ namespace Qualor.Taint.Cli.Output;
 
 /// SARIF 2.1.0 for one analysis run: tool qualor-taint with one rule per model, a result per finding (mapped locations,
 /// the path as codeFlows[0].threadFlows[0], the other sources as relatedLocations; no partialFingerprints, Qualor
-/// computes its own), the run's AnalysisStats in runs[0].properties and the invocation's success.
+/// computes its own), the run's AnalysisStats in runs[0].properties and the invocation's success. A result's confidence
+/// (R-9) is `properties.confidence` ("high" or "medium"); a medium result's level is "warning" (a high one keeps the
+/// rule's level, "error"), and each step of its path that is not a plain flow names its kind (`properties.kind`).
 public static class SarifWriter
 {
     public const string Schema = "https://json.schemastore.org/sarif-2.1.0.json";
@@ -87,7 +89,7 @@ public static class SarifWriter
             w.WriteStartObject();
             w.WriteString("ruleId", f.RuleId);
             w.WriteNumber("ruleIndex", ruleIds.IndexOf(f.RuleId));
-            w.WriteString("level", "error");
+            w.WriteString("level", f.Confidence == Confidence.Medium ? "warning" : "error");
             w.WriteStartObject("message");
             var name = f.RuleId[(f.RuleId.IndexOf('.') + 1)..];
             // A sink's own message (Task 29: a DataTable filter, a request-chosen type) names what was reached.
@@ -114,6 +116,12 @@ public static class SarifWriter
                     w.WriteStartObject("location");
                     WriteLocationBody(w, mapper, step.Span, null, step.Message);
                     w.WriteEndObject();
+                    if (step.Kind.Name() is { } kind)
+                    {
+                        w.WriteStartObject("properties");
+                        w.WriteString("kind", kind);
+                        w.WriteEndObject();
+                    }
                     w.WriteEndObject();
                 }
                 w.WriteEndArray();
@@ -129,6 +137,9 @@ public static class SarifWriter
                 foreach (var s in f.OtherSources) WriteLocation(w, mapper, s.GetMappedLineSpan(), n++, "other request data reaching the same sink");
                 w.WriteEndArray();
             }
+            w.WriteStartObject("properties");
+            w.WriteString("confidence", f.Confidence == Confidence.Medium ? "medium" : "high");
+            w.WriteEndObject();
             w.WriteEndObject();
         }
         w.WriteEndArray();
@@ -183,6 +194,8 @@ public static class SarifWriter
         w.WriteNumber("dispatchByHierarchy", stats.DispatchByHierarchy);
         w.WriteNumber("openProjects", stats.OpenProjects);
         w.WriteNumber("openTypes", stats.OpenTypes);
+        w.WriteNumber("highFindings", stats.HighFindings);
+        w.WriteNumber("mediumFindings", stats.MediumFindings);
         w.WriteEndObject();
         w.WriteEndObject();
 

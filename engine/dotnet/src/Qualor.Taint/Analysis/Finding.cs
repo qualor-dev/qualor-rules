@@ -13,9 +13,72 @@ public sealed record TaintEngineOptions(TimeSpan TimeLimit, long MemoryLimitByte
     public string? SourceRoot { get; init; }
 }
 
-/// One step of a finding's path: "request data enters here", "assigned to 'sql'", "reaches the sink ...".
+/// What kind of edge a path step crosses (decision R-9, ruling R-E29). Value passing within the request is `high`
+/// confidence: a local flow, a call resolved to the implementations the solution creates or registers, the view-model
+/// edge (`View(model)` to the view's Model), a keyed request store entry with a constant key (ViewData, ViewBag,
+/// HttpContext.Items). The others are `medium`: a field or property read from the heap, an entry written or read under a
+/// key that is not a constant (a store's "any key" entry), a lookup whose key carries the request data (R-E9/R-E18), a
+/// keyed store entry or view model a view reads only through an unresolved view name's fallback edges, and a call
+/// resolved by the class-hierarchy fallback (no implementation known, or projects/types opened by scanning: R-7, Task 26)
+/// to more than one implementation.
+public enum StepKind
+{
+    /// A local flow, a resolved call, a source, a sink.
+    Plain,
+
+    /// A keyed request store entry under a constant key (high).
+    KeyedEntry,
+
+    /// The view model a view reads (the View(model) edge; high).
+    ViewModel,
+
+    /// A field or auto-property read from the heap (medium).
+    HeapRead,
+
+    /// A keyed store's "any key" entry: written or read with a key that is not a constant (medium).
+    AnyKeyEntry,
+
+    /// A lookup that passes its key's request data to the element found (R-E9/R-E18; medium).
+    KeyLookup,
+
+    /// A keyed entry or view model reached only through an unresolved view name's fallback edges (medium).
+    ViewFallback,
+
+    /// A call resolved by the class-hierarchy fallback to several implementations (medium).
+    DispatchFallback,
+}
+
+/// A finding's confidence (R-9): High when its path crosses only high steps, Medium otherwise (shown as "possible").
+public enum Confidence { High, Medium }
+
+public static class StepKinds
+{
+    /// Whether a step of this kind makes a path medium confidence.
+    public static bool IsMedium(this StepKind kind) => kind >= StepKind.HeapRead;
+
+    /// The SARIF name of a step kind (`threadFlowLocations[].properties.kind`); null for a plain step.
+    public static string? Name(this StepKind kind) => kind switch
+    {
+        StepKind.KeyedEntry => "keyed-entry",
+        StepKind.ViewModel => "view-model",
+        StepKind.HeapRead => "heap-read",
+        StepKind.AnyKeyEntry => "any-key-entry",
+        StepKind.KeyLookup => "key-lookup",
+        StepKind.ViewFallback => "view-fallback",
+        StepKind.DispatchFallback => "dispatch-fallback",
+        _ => null,
+    };
+}
+
+/// One step of a finding's path: "request data enters here", "assigned to 'sql'", "reaches the sink ...", with the kind
+/// of edge it crosses (R-9).
 public sealed record PathStep(Location Location, string Message)
 {
+    public PathStep(Location location, string message, StepKind kind)
+        : this(location, message) => Kind = kind;
+
+    public StepKind Kind { get; init; }
+
     /// Where to report the step: its mapped file and lines (see Finding.SinkSpan).
     public FileLinePositionSpan Span => Location.GetMappedLineSpan();
 }
@@ -27,6 +90,10 @@ public sealed record Finding(string RuleId, Location Sink, IReadOnlyList<PathSte
     /// What the sink is, when its model says more than the rule's generic text (a sink's `message:`, Task 29): the SARIF
     /// result's message then names it. Null: the rule's generic message.
     public string? Message { get; init; }
+
+    /// Medium when the reported path crosses a medium step (R-9; decided on the whole path, also the steps a long path
+    /// omits); a misuse finding is High.
+    public Confidence Confidence { get; init; }
 
     /// Where to report the finding: the sink's mapped file and lines. In generated code with `#line` directives (a Razor
     /// view's `*_cshtml.g.cs` from the Razor source generator) that is the directive's file and line, the `.cshtml` the
@@ -93,4 +160,9 @@ public sealed record AnalysisStats(int Projects, int Methods, int Sccs, int Unmo
     public int OpenProjects { get; init; }
 
     public int OpenTypes { get; init; }
+
+    /// The findings by confidence (R-9).
+    public int HighFindings { get; init; }
+
+    public int MediumFindings { get; init; }
 }
