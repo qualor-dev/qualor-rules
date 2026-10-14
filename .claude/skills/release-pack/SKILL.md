@@ -78,9 +78,17 @@ V=<version>
 npm run release && cp "dist/qualor-rules-$V.tar.gz" .tmp/first.tar.gz
 npm run release && cmp .tmp/first.tar.gz "dist/qualor-rules-$V.tar.gz"  # no output = identical
 cat "dist/qualor-rules-$V.tar.gz.sha256"
-tar -tvzf "dist/qualor-rules-$V.tar.gz"                                  # LICENSE, NOTICE, manifest.json, rules/**.yml only
+tar -tvzf "dist/qualor-rules-$V.tar.gz"                                  # LICENSE, NOTICE, manifest.json, rules/**.yml, dotnet/engine/** (+ licenses/), dotnet/models/csharp/*.yml
 npm run measure -- --check                                              # still current
 ```
+
+`npm run release` builds the C# engine first (`npm run build:engine`, needs the .NET SDK): the tarball carries
+`dotnet/engine/` and `dotnet/models/csharp/` and the manifest's `dotnetEngine` lists each file's SHA-256. A host
+SDK newer than `engine/dotnet/global.json`'s 8.0.425 may compile different bytes than CI, which installs exactly the
+pinned SDK: the SHA-256 to pin is the one of the tag's CI build (the release job builds twice and compares), so
+publish the tag first and take the pin from the GitHub release's `.sha256`. Check that the tarball holds a licence text
+for every third-party DLL (`dotnet/engine/licenses/`) and no `*.pdb`. In the Linux build below, the image needs the
+.NET 8 SDK (`qualor/scanner-dotnet`, not `qualor/scanner`).
 
 Also build once in Linux and compare the SHA-256 (it must be the same):
 

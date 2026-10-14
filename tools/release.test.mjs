@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import { buildRelease, tarGz } from './release.mjs';
@@ -11,16 +12,26 @@ import { LANGS } from './rules.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
-function copyRepo() {
+/** A copy of the repository with a fake engine publish (the real one needs the .NET SDK: npm run build:engine). */
+function copyRepo({ engine = true } = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'qualor-rules-'));
-  for (const f of ['package.json', 'LICENSE', 'NOTICE', 'schema', 'rules']) {
+  for (const f of ['package.json', 'LICENSE', 'NOTICE', 'schema', 'rules', 'models/csharp', 'engine/dotnet/licenses']) {
     cpSync(path.join(root, f), path.join(dir, f), { recursive: true });
+  }
+  if (engine) {
+    const publish = path.join(dir, 'engine/dotnet/publish');
+    mkdirSync(publish, { recursive: true });
+    writeFileSync(path.join(publish, 'Qualor.Taint.Cli.dll'), 'cli dll');
+    writeFileSync(path.join(publish, 'Qualor.Taint.Cli.runtimeconfig.json'), '{}');
+    writeFileSync(path.join(publish, 'YamlDotNet.dll'), 'yaml dll');
   }
   return dir;
 }
 
+const hex = (buf) => createHash('sha256').update(buf).digest('hex');
+
 test('the same tree gives the same tarball, byte for byte', () => {
-  const a = buildRelease(root);
+  const a = buildRelease(copyRepo());
   const b = buildRelease(copyRepo());
   assert.equal(a.sha256, b.sha256);
   assert.match(a.sha256, /^[0-9a-f]{64}$/);
@@ -29,7 +40,7 @@ test('the same tree gives the same tarball, byte for byte', () => {
 });
 
 test('lists manifest.json, LICENSE, NOTICE and the rule YAML only, sorted, owner 0, mtime 0', () => {
-  const { tarball, manifestText } = buildRelease(root);
+  const { tarball, manifestText } = buildRelease(copyRepo());
   const dir = mkdtempSync(path.join(tmpdir(), 'qualor-rules-tar-'));
   writeFileSync(path.join(dir, 'p.tar.gz'), tarball);
   const list = spawnSync('tar', ['-tvzf', 'p.tar.gz'], {
@@ -43,6 +54,7 @@ test('lists manifest.json, LICENSE, NOTICE and the rule YAML only, sorted, owner
   assert.deepEqual(names, [...names].sort());
   assert.ok(names.includes('manifest.json') && names.includes('LICENSE') && names.includes('NOTICE'));
   assert.ok(names.filter((n) => n.startsWith('rules/')).every((n) => n.endsWith('.yml')));
+  assert.ok(names.every((n) => ['manifest.json', 'LICENSE', 'NOTICE'].includes(n) || /^(rules|dotnet)\//.test(n)));
   for (const l of lines) assert.match(l, /^-rw-r--r-- (root\/root|0\/0) .* 1970-01-01 00:00 /);
   const extracted = spawnSync('tar', ['-xzf', 'p.tar.gz', 'manifest.json'], { cwd: dir });
   assert.equal(extracted.status, 0);
@@ -50,13 +62,13 @@ test('lists manifest.json, LICENSE, NOTICE and the rule YAML only, sorted, owner
 });
 
 test('the manifest names every rule with its own SHA-256, the pinned OpenGrep and its taint mode', () => {
-  const { manifestText } = buildRelease(root);
+  const { manifestText } = buildRelease(copyRepo());
   const manifest = JSON.parse(manifestText);
   const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   assert.equal(manifest.version, pkg.version);
   assert.equal(manifest.opengrep, pkg.opengrep);
   assert.equal(manifest.taintIntrafile, pkg.taintIntrafile);
-  assert.deepEqual(Object.keys(manifest), ['version', 'opengrep', 'taintIntrafile', 'rules']);
+  assert.deepEqual(Object.keys(manifest), ['version', 'opengrep', 'taintIntrafile', 'rules', 'dotnetEngine']);
   assert.ok(manifest.rules.length > 0);
   for (const r of manifest.rules) {
     const langs = Object.keys(LANGS).join('|');
@@ -92,4 +104,50 @@ test('tarGz pads every file to 512 bytes and ends with two zero blocks', () => {
   const tar = gunzipSync(tarGz([['b', Buffer.from('x')], ['a', Buffer.alloc(512)]]));
   assert.equal(tar.length, 512 + 512 + 512 + 512 + 1024);
   assert.equal(tar.subarray(0, 1).toString(), 'a');
+});
+
+test('the engine publish and the models go under dotnet/, each file with its SHA-256 in dotnetEngine', () => {
+  const dir = copyRepo();
+  const { manifestText, tarball } = buildRelease(dir);
+  const manifest = JSON.parse(manifestText);
+  const e = manifest.dotnetEngine;
+  assert.equal(e.version, manifest.version);
+  assert.equal(e.entry, 'dotnet/engine/Qualor.Taint.Cli.dll');
+  assert.equal(e.models, 'dotnet/models');
+  const paths = e.files.map((f) => f.path);
+  assert.deepEqual(paths, [...paths].sort((a, b) => (a < b ? -1 : 1)));
+  const models = readdirSync(path.join(dir, 'models/csharp')).filter((n) => n.endsWith('.yml'));
+  assert.ok(models.length > 0);
+  for (const m of models) assert.ok(paths.includes(`dotnet/models/csharp/${m}`), m);
+  for (const n of ['Qualor.Taint.Cli.dll', 'Qualor.Taint.Cli.runtimeconfig.json', 'YamlDotNet.dll']) {
+    assert.ok(paths.includes(`dotnet/engine/${n}`), n);
+  }
+  assert.ok(paths.includes('dotnet/engine/licenses/YamlDotNet.txt'));
+  const cli = e.files.find((f) => f.path === 'dotnet/engine/Qualor.Taint.Cli.dll');
+  assert.equal(cli.sha256, hex('cli dll'));
+  // every listed file is in the tarball with those bytes
+  const tar = gunzipSync(tarball);
+  for (const f of e.files) assert.ok(tar.includes(Buffer.from(f.path)), f.path);
+  for (const f of manifest.rules) assert.ok(!paths.includes(f.path));
+});
+
+test('the engine part of the manifest does not change the older fields', () => {
+  const dir = copyRepo();
+  const withEngine = JSON.parse(buildRelease(dir).manifestText);
+  const { dotnetEngine, ...old } = withEngine;
+  assert.ok(dotnetEngine);
+  assert.deepEqual(Object.keys(old), ['version', 'opengrep', 'taintIntrafile', 'rules']);
+});
+
+test('without the publish directory the release asks for npm run build:engine', () => {
+  assert.throws(() => buildRelease(copyRepo({ engine: false })), /run npm run build:engine first/);
+});
+
+test('a third-party DLL without a licence text, or a *.pdb, is refused', () => {
+  const dir = copyRepo();
+  writeFileSync(path.join(dir, 'engine/dotnet/publish/Npgsql.dll'), 'x');
+  assert.throws(() => buildRelease(dir), /Npgsql\.dll: no licence text/);
+  rmSync(path.join(dir, 'engine/dotnet/publish/Npgsql.dll'));
+  writeFileSync(path.join(dir, 'engine/dotnet/publish/Qualor.Taint.Cli.pdb'), 'x');
+  assert.throws(() => buildRelease(dir), /\*\.pdb/);
 });

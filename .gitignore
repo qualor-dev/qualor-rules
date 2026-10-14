@@ -3,3 +3,4 @@ dist/
 .tmp/
 engine/dotnet/**/bin/
 engine/dotnet/**/obj/
+engine/dotnet/publish/

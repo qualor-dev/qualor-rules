@@ -2,6 +2,8 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Qualor.Taint.Cli</RootNamespace>
+    <!-- The pack carries the dll only (run with dotnet): an apphost is platform-specific and would make the pack differ by build OS. -->
+    <UseAppHost>false</UseAppHost>
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Qualor.Taint.Tests" />

@@ -12,6 +12,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <IsPackable>false</IsPackable>
+    <!-- packages.lock.json is committed; CI and build:engine restore in locked mode. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
   <!-- Roslyn's package depends on Microsoft.CodeAnalysis.Analyzers, rules for analyzer authors (RS*) whose analyzers
        need a newer compiler than the pinned SDK 8.0.4xx's (CS9057); the engine is no analyzer, so they are dropped. -->

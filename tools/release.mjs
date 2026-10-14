@@ -3,10 +3,13 @@
 // from Node's zlib): entries sorted, mtime 0, owner 0:0, modes 0644, a plain ustar archive written
 // here and gzip with mtime 0 and the OS byte fixed to Unix. It holds
 // manifest.json (with the pinned OpenGrep and the taint mode the rules are tested in), LICENSE,
-// NOTICE and rules/ (the rule YAML only, never the tests). Prints the
+// NOTICE, rules/ (the rule YAML only, never the tests) and the C# taint engine: dotnet/engine/ (the
+// `npm run build:engine` publish output, framework-dependent, no *.pdb, with the licence text of every
+// third-party DLL in dotnet/engine/licenses/) and dotnet/models/csharp/*.yml, each file with its SHA-256 in the
+// manifest's dotnetEngine. Prints the
 // tarball's SHA-256, which the scanner pins (QUALOR_RULES_SHA256 in qualor's install.sh).
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
@@ -54,6 +57,52 @@ export function tarGz(entries) {
   return gz;
 }
 
+const ENGINE_ENTRY = 'Qualor.Taint.Cli.dll';
+
+/** The regular files of `dir` (sorted names, no sub-directories), as [name, Buffer]. */
+function filesOf(dir) {
+  return readdirSync(dir, { withFileTypes: true })
+    .sort((a, b) => (a.name < b.name ? -1 : 1))
+    .map((e) => {
+      if (!e.isFile()) throw new Error(`${path.join(dir, e.name)}: only regular files are packed`);
+      return [e.name, readFileSync(path.join(dir, e.name))];
+    });
+}
+
+/**
+ * The engine's tarball entries and the manifest's dotnetEngine: the publish output of Qualor.Taint.Cli
+ * (engine/dotnet/publish), the models (models/csharp) and the licence texts (engine/dotnet/licenses).
+ * Throws when the engine is not built, a *.pdb is among the files, or a third-party DLL has no licence text.
+ */
+function engineEntries(root, version) {
+  const publish = path.join(root, 'engine/dotnet/publish');
+  if (!existsSync(path.join(publish, ENGINE_ENTRY))) throw new Error('engine not built: run npm run build:engine first');
+  const engine = filesOf(publish);
+  if (engine.some(([n]) => n.endsWith('.pdb'))) throw new Error('engine/dotnet/publish holds a *.pdb: build with npm run build:engine');
+  const licences = filesOf(path.join(root, 'engine/dotnet/licenses'));
+  const stems = licences.map(([n]) => n.replace(/\.txt$/, ''));
+  for (const [n] of engine) {
+    if (!n.endsWith('.dll') || n.startsWith('Qualor.')) continue;
+    const base = n.slice(0, -4);
+    if (!stems.some((s) => base === s || base.startsWith(`${s}.`))) {
+      throw new Error(`${n}: no licence text in engine/dotnet/licenses (<package>.txt)`);
+    }
+  }
+  const models = filesOf(path.join(root, 'models/csharp'));
+  const entries = [
+    ...engine.map(([n, d]) => [`dotnet/engine/${n}`, d]),
+    ...licences.map(([n, d]) => [`dotnet/engine/licenses/${n}`, d]),
+    ...models.map(([n, d]) => [`dotnet/models/csharp/${n}`, d]),
+  ];
+  const dotnetEngine = {
+    version,
+    entry: `dotnet/engine/${ENGINE_ENTRY}`,
+    models: 'dotnet/models',
+    files: [...entries].sort(([a], [b]) => (a < b ? -1 : 1)).map(([n, d]) => ({ path: n, sha256: sha256(d) })),
+  };
+  return { entries, dotnetEngine };
+}
+
 /** The manifest and tarball of the repository at `root`; throws when `npm run check` would fail. */
 export function buildRelease(root) {
   const problems = checkRepository(root);
@@ -77,7 +126,15 @@ export function buildRelease(root) {
     });
   }
   // package.json's mode, never QUALOR_TAINT_INTRAFILE (tools/engine.mjs): Qualor runs the pack so.
-  const manifest = { version: pkg.version, opengrep: pkg.opengrep, taintIntrafile: pkg.taintIntrafile === true, rules };
+  const engine = engineEntries(root, pkg.version);
+  entries.push(...engine.entries);
+  const manifest = {
+    version: pkg.version,
+    opengrep: pkg.opengrep,
+    taintIntrafile: pkg.taintIntrafile === true,
+    rules,
+    dotnetEngine: engine.dotnetEngine,
+  };
   const manifestText = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
   entries.push(['manifest.json', manifestText]);
   entries.push(['LICENSE', readFileSync(path.join(root, 'LICENSE'))]);
