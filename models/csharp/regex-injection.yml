@@ -1,0 +1,58 @@
+# The engine's model of csharp.regex-injection (format v1, models/README.md): the sinks and sanitizers of
+# rules/csharp/regex/regex-injection.yml with types in place of names. Sources and propagators: sources.yml and
+# propagators.yml (shared).
+#
+# Sources (learn.microsoft.com): dotnet/api/system.text.regularexpressions.regex,
+# system.text.regularexpressions.regex.-ctor, system.text.regularexpressions.regex.escape,
+# standard/base-types/best-practices-regex (match time-outs and NonBacktracking are no security boundary against
+# malicious patterns).
+rule: csharp.regex-injection
+kind: taint
+sinks:
+  # The pattern given to the Regex constructor and to Regex's static methods (IsMatch, Match, Matches, Replace,
+  # Split, Count, EnumerateMatches, EnumerateSplits). The pattern parameter is named `pattern` in every overload
+  # (`param-names`); an instance method's arguments (the input, a replacement) are no pattern. A match time-out or
+  # RegexOptions.NonBacktracking does not make a request-chosen pattern safe (ruling R13 of the rules plan).
+  # Difference: OpenGrep matches the calls written as Regex (or fully qualified) only; the engine matches Regex's
+  # members however they are reached.
+  - method: System.Text.RegularExpressions.Regex..ctor
+    args: [0]
+    param-names: [pattern]
+  - method: System.Text.RegularExpressions.Regex.IsMatch
+    args: [1]
+    param-names: [pattern]
+  - method: System.Text.RegularExpressions.Regex.Match
+    args: [1]
+    param-names: [pattern]
+  - method: System.Text.RegularExpressions.Regex.Matches
+    args: [1]
+    param-names: [pattern]
+  - method: System.Text.RegularExpressions.Regex.Replace
+    args: [1]
+    param-names: [pattern]
+  - method: System.Text.RegularExpressions.Regex.Split
+    args: [1]
+    param-names: [pattern]
+  - method: System.Text.RegularExpressions.Regex.Count
+    args: [1]
+    param-names: [pattern]
+  - method: System.Text.RegularExpressions.Regex.EnumerateMatches
+    args: [1]
+    param-names: [pattern]
+  - method: System.Text.RegularExpressions.Regex.EnumerateSplits
+    args: [1]
+    param-names: [pattern]
+# Shared C# sanitizers (as in every taint model; see sql-injection.yml), the shared allow-lists (a table of verbatim
+# literals too: the engine reads constants, not their spelling), then the rule's own: Regex.Escape, whose value
+# matches literally. Only the value it returns is clean.
+sanitizers:
+  - method: System.Int32.Parse
+  - method: System.Int64.Parse
+  - method: System.Guid.Parse
+  - method: System.DateTime.Parse
+  - method: System.Convert.ToInt32
+  - method: System.Convert.ToInt64
+  - method: System.Enum.Parse
+  - allow-list: literal-tables
+  - method: System.Text.RegularExpressions.Regex.Escape
+guards: []

@@ -66,8 +66,7 @@ sinks:
     args: [0]
   - method: System.Net.WebRequest.CreateHttp
     args: [0]
-# Shared C# sanitizers (as in every taint model; see sql-injection.yml), then the rule's own.
-# Not here (plan Task 11, guards): the shared allow-lists.
+# Shared C# sanitizers (as in every taint model; see sql-injection.yml), the shared allow-lists, then the rule's own.
 sanitizers:
   - method: System.Int32.Parse
   - method: System.Int64.Parse
@@ -76,6 +75,7 @@ sanitizers:
   - method: System.Convert.ToInt32
   - method: System.Convert.ToInt64
   - method: System.Enum.Parse
+  - allow-list: literal-tables
   # A fixed origin: a value placed into a URL after a literal scheme and host followed by a separator
   # ("https://api.example.com/" + x, also in an interpolated string or a string.Format format), or after a relative
   # path that cannot become a host ("v1/items/" + x, "/v1/items/" + x; not "/" + x, which makes "//host"). The text

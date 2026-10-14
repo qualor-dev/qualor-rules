@@ -95,43 +95,11 @@ public class OpenGrepFixtureTests
     public static IEnumerable<object[]> Rules() =>
         Models.Value.Rules.Select(r => new object[] { r.RuleId["csharp.".Length..] });
 
-    /// Ruling R-E7: the lines the engine does not get right yet, each with its reason and the task that closes it —
-    /// Unexpected ok lines whose safety rests on an allow-list or a guard (Task 11); no Missing line is left after the
-    /// interprocedural analysis (Task 8). A listed line the engine gets right fails the test too (remove the entry).
+    /// Ruling R-E7 ended with Task 11 (guards and allow-lists): no rule may keep a pending Missing or Unexpected line.
+    /// The list stays for a line a later task has to leave open, with its reason and the task that closes it; a listed
+    /// line the engine gets right fails the test too (remove the entry).
     private static readonly (string Rule, string File, int Line, string Kind, string Why)[] Pending =
-    {
-        ("csharp.sql-injection", "sql-injection.cs", 515, "unexpected", "Task 11 (guard): !Directions.Contains(dir) then return"),
-        ("csharp.sql-injection", "sql-injection.cs", 523, "unexpected", "Task 11 (guard): !Directions.Contains(dir) return"),
-        ("csharp.sql-injection", "sql-injection.cs", 532, "unexpected", "Task 11 (guard): !Regions.Contains(region) throw"),
-        ("csharp.sql-injection", "sql-injection.cs", 544, "unexpected", "Task 11 (guard): !Regions.Contains(region) then throw"),
-        ("csharp.sql-injection", "sql-injection.cs", 552, "unexpected", "Task 11 (guard): !SortColumns.ContainsKey(sort) return"),
-        ("csharp.sql-injection", "sql-injection.cs", 559, "unexpected", "Task 11 (guard): Directions.Contains(dir) ? dir : literal"),
-        ("csharp.sql-injection", "sql-injection.cs", 562, "unexpected", "Task 11 (guard): SortColumns.ContainsKey(dir) ? dir : literal"),
-        ("csharp.sql-injection", "sql-injection.cs", 591, "unexpected", "Task 11 (guard): !Directions.Contains(dir) then return"),
-        ("csharp.sql-injection", "sql-injection.cs", 604, "unexpected", "Task 11 (guard): !Directions.Contains(dir) then return"),
-        ("csharp.sql-injection", "sql-injection.cs", 617, "unexpected", "Task 11 (guard): !Regions.Contains(region) then throw"),
-        ("csharp.sql-injection", "sql-injection.cs", 631, "unexpected", "Task 11 (guard): !Directions.Contains(dir) then return"),
-        ("csharp.sql-injection", "sql-injection.cs", 640, "unexpected", "Task 11 (guard): !Directions.Contains(dir) return"),
-        ("csharp.sql-injection", "sql-injection.cs", 649, "unexpected", "Task 11 (guard): !Regions.Contains(region) throw"),
-        ("csharp.sql-injection", "sql-injection.cs", 761, "unexpected", "Task 11 (allow-list): SortColumns[sort], a lookup in a table of literals"),
-        ("csharp.sql-injection", "sql-injection.cs", 763, "unexpected", "Task 11 (allow-list): SortColumns.GetValueOrDefault(sort, literal)"),
-        ("csharp.sql-injection", "sql-injection.cs", 765, "unexpected", "Task 11 (allow-list): Filters.GetValueOrDefault(filter)"),
-        ("csharp.sql-injection", "sql-injection.cs", 769, "unexpected", "Task 11 (allow-list): SortColumns.TryGetValue(sort, out var column)"),
-        ("csharp.path-traversal", "path-traversal.cs", 214, "unexpected", "Task 11 (guard): GetFullPath then !full.StartsWith(Storage + Path.DirectorySeparatorChar) return"),
-        ("csharp.path-traversal", "path-traversal.cs", 218, "unexpected", "Task 11 (allow-list): Reports[report], a lookup in a table of literals"),
-        ("csharp.path-traversal", "path-traversal.cs", 232, "unexpected", "Task 11 (guard): GetFullPath then !first.StartsWith(_root + \"/\") return"),
-        ("csharp.path-traversal", "path-traversal.cs", 239, "unexpected", "Task 11 (guard): GetFullPath then !second.StartsWith(Storage + '/') throw"),
-        ("csharp.path-traversal", "path-traversal.cs", 247, "unexpected", "Task 11 (guard): GetFullPath then !third.StartsWith(Storage + Path.AltDirectorySeparatorChar) return"),
-        ("csharp.path-traversal", "path-traversal.cs", 255, "unexpected", "Task 11 (guard): GetFullPath then !fourth.StartsWith(StorageRoot) throw"),
-        ("csharp.path-traversal", "path-traversal.cs", 259, "unexpected", "Task 11 (guard): GetFullPath then !fifth.StartsWith(Storage + '\\\\') return"),
-        ("csharp.path-traversal", "path-traversal.cs", 268, "unexpected", "Task 11 (guard): GetFullPath then !resolved.StartsWith(\"/var/app/storage/\") throw"),
-        ("csharp.command-injection", "command-injection.cs", 375, "unexpected", "Task 11 (allow-list): Commands.Contains(command) ? command : literal"),
-        ("csharp.command-injection", "command-injection.cs", 385, "unexpected", "Task 11 (guard): !Commands.Contains(name) then return"),
-        ("csharp.command-injection", "command-injection.cs", 400, "unexpected", "Task 11 (guard): !Commands.Contains(command) then return"),
-        ("csharp.ssrf", "ssrf.cs", 184, "unexpected", "Task 11 (allow-list): Mirrors[region], a lookup in a table of literals"),
-        ("csharp.xss", "xss.cs", 222, "unexpected", "Task 11 (guard): !Sections.Contains(section) then return"),
-        ("csharp.xss", "xss.cs", 233, "unexpected", "Task 11 (guard): !Sections.Contains(section) return"),
-    };
+        Array.Empty<(string, string, int, string, string)>();
 
     /// The engine runs to completion (no internal error, no iteration cap) on every fixture, modelled or not.
     [Theory]

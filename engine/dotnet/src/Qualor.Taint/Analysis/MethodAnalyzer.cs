@@ -33,6 +33,9 @@ internal sealed class AnalysisContext
 
     public MemberTable<PropagatorModel> Propagators { get; } = new();
 
+    /// The allow-list tables (`allow-list: literal-tables`), found once per field.
+    public AllowLists AllowLists { get; } = new();
+
     /// The `unmodelled-external` policy: an external member no propagator names passes its receiver's and arguments'
     /// taint to a string-like or collection result.
     public bool UnmodelledPasses { get; }
@@ -71,7 +74,8 @@ internal sealed class AnalysisContext
 /// SummaryComputer.BodyRun: the body's parameters carry labels, and what reaches its return value, its sinks, its
 /// receiver, its ref and out parameters and the heap becomes its summary.
 ///
-/// - Join at block entries: TaintState.JoinWith. Branches are not yet told apart (guards: Task 11).
+/// - Join at block entries: TaintState.JoinWith. A block that ends in a condition passes each successor the state
+///   refined by what the condition says on that branch (guards, allow-lists, equality: MethodAnalyzer.Guards.cs).
 /// - Exception regions: the first block of a catch, filter or finally gets the state at every point of its try region
 ///   (each block's entry and the state after each of its operations); the code a finally leaves to (the destinations
 ///   of the branches that run it) also gets the finally's exit state.
@@ -102,7 +106,7 @@ internal sealed class AnalysisContext
 /// - Sinks: the arguments at a sink's ordinals, and the value assigned to a property-set sink (for `+=` the joined
 ///   value): reported when request data reaches them; a label that reaches them is a sink of the label's body. A
 ///   conditional sink (`when:`) applies only where SinkConditions finds its conditions hold, possibly element by element.
-internal sealed class MethodAnalyzer
+internal sealed partial class MethodAnalyzer
 {
     private readonly AnalysisContext _ctx;
     private readonly ControlFlowGraph _cfg;
@@ -110,6 +114,9 @@ internal sealed class MethodAnalyzer
 
     /// What each flow capture captured (a capture is assigned in several blocks for `c ? a : b`).
     private readonly Dictionary<CaptureId, List<IOperation>> _captured = new();
+
+    /// The calls (invocations) evaluated here that had no body to analyse (for awaited `lookup:` sanitizers).
+    private readonly HashSet<IOperation> _bodyless = new();
 
     public MethodAnalyzer(AnalysisContext ctx, ControlFlowGraph cfg, SummaryComputer.BodyRun body)
     {
@@ -180,8 +187,12 @@ internal sealed class MethodAnalyzer
             }
             if (outStates != null) outStates[ordinal] = state;
 
-            if (block.FallThroughSuccessor?.Destination is { } next) Flow(next.Ordinal, state);
-            if (block.ConditionalSuccessor?.Destination is { } jump) Flow(jump.Ordinal, state);
+            // A conditional branch is taken when the branch value equals ConditionKind; the fall-through otherwise. Each
+            // successor gets the state as the condition leaves it on that branch (guards).
+            var conditional = block.BranchValue != null && block.ConditionKind != ControlFlowConditionKind.None;
+            var jumpOutcome = block.ConditionKind == ControlFlowConditionKind.WhenTrue;
+            if (block.FallThroughSuccessor?.Destination is { } next) Flow(next.Ordinal, conditional ? Refine(block.BranchValue!, !jumpOutcome, state) : state);
+            if (block.ConditionalSuccessor?.Destination is { } jump) Flow(jump.Ordinal, conditional ? Refine(block.BranchValue!, jumpOutcome, state) : state);
             if (finallyExits.TryGetValue(ordinal, out var after))
                 foreach (var destination in after) Flow(destination, state);
         }
@@ -376,12 +387,22 @@ internal sealed class MethodAnalyzer
                 return Value(unary.Operand, state);
             case IConversionOperation conversion:
             {
-                // A user-defined conversion is a call of its operator method: its sanitizers clean the result.
+                // A user-defined conversion to a string is a call of its operator method: its sanitizers clean the result
+                // (PathString's text). A conversion to another type (a string made into a PathString) keeps the value.
                 var value = Value(conversion.Operand, state);
-                return conversion.OperatorMethod is { } op && value.Any ? value.CleanedFor(_ctx.Sinks.Sanitizes(op, Access.Call)) : value;
+                return conversion.OperatorMethod is { } op && value.Any && conversion.Type?.SpecialType == SpecialType.System_String
+                    ? value.CleanedFor(_ctx.Sinks.Sanitizes(op, Access.Call))
+                    : value;
             }
             case IAwaitOperation await:
-                return Value(await.Operation, state);
+            {
+                // An awaited `lookup:` (`awaited: true`): what a call without a body so named gives, awaited (also through
+                // ConfigureAwait), is stored data for those rules.
+                var value = Value(await.Operation, state);
+                if (value.Any && _ctx.Sinks.HasAwaitedLookups && Awaited(await) is { } lookup && _bodyless.Contains(lookup))
+                    value = value.CleanedFor(_ctx.Sinks.AwaitedLookups(lookup.TargetMethod.Name));
+                return value;
+            }
             case IConditionalOperation conditional:
                 Value(conditional.Condition, state);
                 return Value(conditional.WhenTrue, state).Join(Value(conditional.WhenFalse, state));
@@ -879,6 +900,9 @@ internal sealed class MethodAnalyzer
         {
             result = result.Join(ExternalRead(property, operation, receiver, IndexInputs(operation, state, null)));
         }
+        // An element of an allow-list table is one of its constants (`allow-list: literal-tables`).
+        if (property.IsIndexer && result.Any && _ctx.Sinks.AllowListRules.Length > 0 && _ctx.AllowLists.IsTable(operation.Instance, Model()?.Compilation))
+            result = result.CleanedFor(_ctx.Sinks.AllowListRules);
         return result.CleanedFor(_ctx.Sinks.Sanitizes(property, Access.Get));
     }
 
@@ -1079,9 +1103,39 @@ internal sealed class MethodAnalyzer
             // `lookup:` sanitizers: what a method the engine cannot see into returns under a lookup's name (a record
             // found by an id) is stored data for those rules; a method with a body is followed instead.
             if (!anyBody && result.Any && method.MethodKind == MethodKind.Ordinary) result = result.CleanedFor(_ctx.Sinks.Lookups(method.Name));
+            if (!anyBody && method.MethodKind == MethodKind.Ordinary && _ctx.Sinks.HasAwaitedLookups) _bodyless.Add(operation);
         }
 
-        return result.CleanedFor(_ctx.Sinks.Sanitizes(method, Access.Call));
+        if (_ctx.Sinks.AllowListRules.Length > 0 && method.Name is "GetValueOrDefault" or "TryGetValue" && thisOperation != null
+            && _ctx.AllowLists.IsTable(thisOperation, Model()?.Compilation))
+            result = TableLookup(method, inputs, result, state);
+
+        result = result.CleanedFor(_ctx.Sinks.Sanitizes(method, Access.Call));
+        if (result.Any)
+        {
+            result = result.CleanedFor(_ctx.Sinks.SanitizesByName(method));
+            var receiverOperation = instance;
+            while (receiverOperation is IConversionOperation { Operand: { } inner }) receiverOperation = inner;
+            result = result.CleanedFor(_ctx.Sinks.SanitizesOnReceiver(method, receiverOperation?.Type));
+        }
+        return result;
+    }
+
+    /// A lookup in an allow-list table: GetValueOrDefault gives one of its constants or the default value given (the
+    /// default's own value); TryGetValue's out value is one of its constants.
+    private TaintValue TableLookup(IMethodSymbol method, Input[] inputs, TaintValue result, TaintState state)
+    {
+        var rules = _ctx.Sinks.AllowListRules;
+        if (method.Name == "TryGetValue")
+        {
+            foreach (var i in inputs)
+                if (i.RefKind == RefKind.Out && Value(i.Operation, state) is { Any: true } v) Assign(i.Operation, v.CleanedFor(rules), state, i.Operation);
+            return result;
+        }
+        var fallback = TaintValue.Clean;
+        foreach (var i in inputs)
+            if (i.Parameter?.Name == "defaultValue") fallback = fallback.Join(i.Value);
+        return result.CleanedFor(rules).Join(fallback);
     }
 
     /// string.Format with a constant format: each of arg0, arg1 and arg2 is cleaned as a value placed after the format's

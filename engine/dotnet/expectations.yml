@@ -35,9 +35,70 @@ must-find:
   - { rule: csharp.xss, line: 197, why: "held.Value: a PathString held in a variable, its unescaped Value" }
   # The content type's constants are followed through a local (`when: arg: 1`): one of them is HTML.
   - { rule: csharp.xss, line: 318, why: "Content(html, type) with type = other == \"html\" ? \"text/html\" : \"text/plain\"" }
+  # Task 11, summaries of the four new rules (as above).
+  - { rule: csharp.open-redirect, line: 610, why: "UrlOf(Request): an expression-bodied helper that reads the request" }
+  - { rule: csharp.open-redirect, line: 612, why: "Next: an expression-bodied property that reads the request" }
+  - { rule: csharp.ldap-injection, line: 338, why: "NameOf(Request): an expression-bodied helper that reads the request" }
+  - { rule: csharp.ldap-injection, line: 340, why: "Account: an expression-bodied property that reads the request" }
+  - { rule: csharp.ldap-injection, line: 342, why: "Office: a property getter that reads the request" }
+  - { rule: csharp.regex-injection, line: 173, why: "PatternOf(Request): an expression-bodied helper that reads the request" }
+  - { rule: csharp.regex-injection, line: 175, why: "Filter: an expression-bodied property that reads the request" }
+  - { rule: csharp.regex-injection, line: 177, why: "Exclude: a property getter that reads the request" }
+  - { rule: csharp.xpath-injection, line: 186, why: "TitleOf(Request): an expression-bodied helper that reads the request" }
+  - { rule: csharp.xpath-injection, line: 188, why: "Title: an expression-bodied property that reads the request" }
+  - { rule: csharp.xpath-injection, line: 190, why: "Author: a property getter that reads the request" }
+  # Task 11, guards on the control-flow graph: a value assigned request data again after a Contains guard is request
+  # data again (OpenGrep's shared allow-list region still takes it for checked, a Known limit of every rule).
+  - { rule: csharp.sql-injection, line: 753, why: "dir = Request.Query[...] after if (!Directions.Contains(dir)) return" }
+  - { rule: csharp.path-traversal, line: 405, why: "other = Request.Query[...] after if (!Reports.ContainsKey(other)) return" }
+  - { rule: csharp.command-injection, line: 503, why: "other = Request.Query[...] after if (!Commands.Contains(other)) return" }
+  - { rule: csharp.ssrf, line: 282, why: "other = Request.Query[...] after if (!Mirrors.ContainsKey(other)) return" }
+  - { rule: csharp.xss, line: 334, why: "other = Request.Query[...] after if (!Sections.Contains(other)) return" }
+  - { rule: csharp.open-redirect, line: 618, why: "other = Request.Query[...] after if (!Partners.ContainsKey(other)) return" }
+  - { rule: csharp.ldap-injection, line: 363, why: "kind = Request.Query[...] after if (!Classes.Contains(kind)) return" }
+  - { rule: csharp.regex-injection, line: 181, why: "other = Request.Query[...] after if (!Patterns.ContainsKey(other)) return" }
+  - { rule: csharp.xpath-injection, line: 194, why: "other = Request.Query[...] after if (!Fields.ContainsKey(other)) return" }
+  # Uri.MakeRelativeUri passes its argument on (propagators.yml: `from: [0]`), which is the URL itself when its host
+  # differs; OpenGrep cleans the whole call (Known limit).
+  - { rule: csharp.open-redirect, line: 555, why: "catalog.MakeRelativeUri(new Uri(referrer)): the argument is request data" }
 must-stay-quiet:
   # Results.File given a stream is no path: the engine goes by the overload (`param-types`), OpenGrep cannot (Known limit).
   - { rule: csharp.path-traversal, line: 367, why: "Results.File(Request.Body, ...): the Stream overload is no sink" }
+  # Task 11, guards on the control-flow graph (models/README.md "Guards"): a value equal to a constant is that constant
+  # (OpenGrep does not recognise an equality guard, a Known limit of every rule) ...
+  - { rule: csharp.sql-injection, line: 734, why: "after if (dir != \"ASC\" && dir != \"DESC\") return" }
+  - { rule: csharp.path-traversal, line: 398, why: "after if (report != \"daily\" && report != \"weekly\") return" }
+  - { rule: csharp.command-injection, line: 496, why: "after if (command != \"uptime\" && command != \"df -h\") return" }
+  - { rule: csharp.ssrf, line: 296, why: "after if (region != \"eu\" && region != \"us\") return" }
+  - { rule: csharp.xss, line: 347, why: "after if (section != \"news\" && section != \"sports\") return" }
+  - { rule: csharp.open-redirect, line: 631, why: "after if (region != \"eu\" && region != \"us\") return" }
+  - { rule: csharp.ldap-injection, line: 350, why: "after if (region != \"eu\" && region != \"us\") return" }
+  - { rule: csharp.regex-injection, line: 195, why: "after if (region != \"eu\" && region != \"us\") return" }
+  - { rule: csharp.xpath-injection, line: 208, why: "after if (region != \"eu\" && region != \"us\") return" }
+  # ... and Enumerable.Contains called as a static method (also on a table's Keys) is a membership check of the table
+  # (OpenGrep matches only the extension-method form, a Known limit of every rule).
+  - { rule: csharp.sql-injection, line: 743, why: "Enumerable.Contains(Regions, region) ? region : \"eu\"" }
+  - { rule: csharp.path-traversal, line: 401, why: "Enumerable.Contains(Reports.Keys, other) ? other : \"daily\"" }
+  - { rule: csharp.command-injection, line: 499, why: "Enumerable.Contains(Commands, other) ? other : \"uptime\"" }
+  - { rule: csharp.ssrf, line: 299, why: "Enumerable.Contains(Mirrors.Keys, other) ? other : \"eu\"" }
+  - { rule: csharp.xss, line: 350, why: "Enumerable.Contains(Sections, other) ? other : \"news\"" }
+  - { rule: csharp.open-redirect, line: 634, why: "Enumerable.Contains(Partners.Keys, other) ? other : \"shop\"" }
+  - { rule: csharp.ldap-injection, line: 353, why: "Enumerable.Contains(Classes, kind) ? kind : \"user\"" }
+  - { rule: csharp.regex-injection, line: 198, why: "Enumerable.Contains(Patterns.Keys, other) ? other : \"digits\"" }
+  - { rule: csharp.xpath-injection, line: 211, why: "Enumerable.Contains(Fields.Keys, other) ? other : \"title\"" }
+  # The containment check reads the prefix's text, also from an interpolated string (OpenGrep: a Known limit).
+  - { rule: csharp.path-traversal, line: 359, why: "full.StartsWith($\"{_root}{Path.DirectorySeparatorChar}\")" }
+  # A Contains guard whose failing branch runs other statements before it returns counts on the graph whatever the
+  # table's literals are written as (the regex rule's own copy of the allow-list takes a single return or throw only).
+  - { rule: csharp.regex-injection, line: 251, why: "if (!Known.Contains(logged)) { Console.WriteLine(...); return BadRequest(); }" }
+  # A helper's object: fields and auto-properties are tracked by symbol (spec §5), and the not-null guard in the helper
+  # cleans the URL it stores; its other field holds the request data (OpenGrep taints the object as a whole).
+  - { rule: csharp.open-redirect, line: 808, why: "ticket.Destination of PrepareWithHintAsync: checked, ticket.Hint is not read" }
+  # The engine goes by the overload (`param-types`) and by the type (OpenGrep goes by the argument's form or the
+  # imported name, Known limits).
+  - { rule: csharp.ldap-injection, line: 120, why: "new DirectorySearcher(filter, AttributesFor(name)): a string[] parameter is no filter" }
+  - { rule: csharp.ldap-injection, line: 315, why: "new DirectorySearcher(RootFor(ou)): a DirectoryEntry parameter is no filter" }
+  - { rule: csharp.ldap-injection, line: 500, why: "new Acme.Catalog.SearchRequest { Filter = term }: another library's type" }
 # Fixture lines that cannot compile in any form (an intentionally invalid shape); excluded from the engine comparison.
 uncompilable:
   - { rule: csharp.open-redirect, file: open-redirect.cs, line: 51, reason: "RedirectHttpResult.IsLocalUrl is not public in the ASP.NET Core 8 reference assemblies (added in .NET 10); the call does not bind" }
@@ -86,3 +147,5 @@ unresolved-model-names:
   - { name: "Microsoft.EntityFrameworkCore.RawSqlString", reason: "EF Core 2.x type; removed in EF Core 3.0" }
   - { name: "Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlCommand [Method]", reason: "EF Core 2.x method; removed in EF Core 3.0" }
   - { name: "Microsoft.EntityFrameworkCore.RelationalDatabaseFacadeExtensions.ExecuteSqlCommandAsync [Method]", reason: "EF Core 2.x method; removed in EF Core 3.0" }
+  - { name: "Duende.IdentityServer.Services.IIdentityServerInteractionService", reason: "Duende IdentityServer (commercial licence) is not a fixture reference; the open-redirect shim declares the interface the fixture uses" }
+  - { name: "System.Text.RegularExpressions.Regex.EnumerateSplits [Method]", reason: "added in .NET 9; the fixture references are .NET 8 (a project on .NET 9 or later has it)" }

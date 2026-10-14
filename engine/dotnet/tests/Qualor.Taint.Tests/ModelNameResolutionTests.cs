@@ -27,6 +27,12 @@ public class ModelNameResolutionTests
             if (type == null) continue; // reported as a type
             if (!HasMember(compilation, type, pattern)) unresolved.Add(pattern.ToString() + " [" + pattern.Kind + "]");
         }
+        foreach (var (pattern, _) in Values(models))
+        {
+            var type = Resolve(compilation, pattern.TypeName);
+            if (type == null) continue; // reported as a type
+            if (!type.GetMembers(pattern.MemberName).Any(m => m is IFieldSymbol or IPropertySymbol)) unresolved.Add(pattern.ToString() + " [Value]");
+        }
 
         var allowed = AllowedUnresolved();
         var unexpected = unresolved.Except(allowed.Keys).ToList();
@@ -92,10 +98,21 @@ public class ModelNameResolutionTests
         var pt = s.ParameterTypes;
         foreach (var n in pt.Scalars.Concat(pt.ScalarCollections).Concat(pt.NotScalarElements).Concat(pt.NotSourceTypes).Concat(pt.SourceInterfaces)) yield return (n, "parameter-types");
         foreach (var (p, w) in Members(m)) yield return (p.TypeName, w);
+        foreach (var (p, w) in Values(m)) yield return (p.TypeName, w);
         foreach (var rule in m.Rules)
+        {
             foreach (var sink in rule.Sinks)
                 foreach (var n in sink.ParamTypes) yield return (n, rule.RuleId + " param-types");
+            foreach (var (_, receiverType) in rule.ReceiverSanitizers) yield return (receiverType, rule.RuleId + " receiver-type");
+            foreach (var prefix in rule.StringSanitizers.Where(p => p.Type != null)) yield return (prefix.Type!, rule.RuleId + " string-prefix type");
+        }
     }
+
+    /// The fields and properties the `is:` conditions read.
+    private static IEnumerable<(MemberPattern Pattern, string Where)> Values(ModelSet m) =>
+        m.Rules.SelectMany(rule => rule.Sinks.SelectMany(s => s.When)
+            .Where(c => c.Kind == SinkConditionKind.Argument && c.Member != null)
+            .Select(c => (c.Member!, rule.RuleId + " when is")));
 
     private static IEnumerable<(MemberPattern Pattern, string Where)> Members(ModelSet m)
     {
@@ -105,9 +122,11 @@ public class ModelNameResolutionTests
         foreach (var rule in m.Rules)
         {
             foreach (var s in rule.Sinks) yield return (s.Member, rule.RuleId + " sinks");
-            foreach (var c in rule.Sinks.SelectMany(s => s.When).Where(c => c.Member != null)) yield return (c.Member!, rule.RuleId + " when receiver");
+            foreach (var c in rule.Sinks.SelectMany(s => s.When).Where(c => c.Kind == SinkConditionKind.Receiver)) yield return (c.Member!, rule.RuleId + " when receiver");
             foreach (var s in rule.Sanitizers) yield return (s, rule.RuleId + " sanitizers");
+            foreach (var (s, _) in rule.ReceiverSanitizers) yield return (s, rule.RuleId + " sanitizers");
             foreach (var g in rule.Guards) yield return (g.Member, rule.RuleId + " guards");
+            foreach (var c in rule.Guards.SelectMany(g => g.When).Where(c => c.Member != null)) yield return (c.Member!, rule.RuleId + " guards assigned-from");
         }
     }
 

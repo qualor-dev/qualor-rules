@@ -1,0 +1,155 @@
+# The engine's model of csharp.open-redirect (format v1, models/README.md): the sinks, sanitizers and guards of
+# rules/csharp/redirect/open-redirect.yml with types in place of names. Sources and propagators: sources.yml and
+# propagators.yml (shared; Url.Action, Url.Page and Url.RouteUrl pass only their protocol and host, QueryHelpers.
+# AddQueryString only its base URI, UriHelper.BuildAbsolute only its scheme and host, Uri.MakeRelativeUri only its
+# argument).
+#
+# Sources (learn.microsoft.com): aspnet/core/security/preventing-open-redirects,
+# dotnet/api/microsoft.aspnetcore.mvc.controllerbase.redirect, microsoft.aspnetcore.mvc.redirectresult,
+# microsoft.aspnetcore.mvc.razorpages.pagemodel, microsoft.aspnetcore.http.results.redirect,
+# microsoft.aspnetcore.http.typedresults.redirect, microsoft.aspnetcore.http.httpresponse.redirect,
+# microsoft.aspnetcore.http.iheaderdictionary.location, microsoft.aspnetcore.http.headerdictionaryextensions.append,
+# microsoft.net.http.headers.headernames.location, microsoft.aspnetcore.mvc.iurlhelper.islocalurl,
+# microsoft.aspnetcore.mvc.urlhelperextensions, microsoft.aspnetcore.webutilities.queryhelpers.addquerystring,
+# system.uri.escapedatastring, system.net.webutility.urlencode, system.text.encodings.web.urlencoder,
+# microsoft.aspnetcore.http.extensions.urihelper.buildabsolute, microsoft.aspnetcore.http.pathstring,
+# microsoft.aspnetcore.http.querystring, system.uri.makerelativeuri; docs.duendesoftware.com
+# identityserver/reference/v8/services/interaction-service/ (IsValidReturnUrl, GetAuthorizationContextAsync).
+rule: csharp.open-redirect
+kind: taint
+sinks:
+  # MVC and Razor Pages helpers (Redirect, RedirectPermanent, RedirectPreserveMethod, RedirectPermanentPreserveMethod),
+  # RedirectResult, Results/TypedResults.Redirect and HttpResponse.Redirect: the URL. LocalRedirect and
+  # Results.LocalRedirect refuse a URL that is not local and are no sinks.
+  # Differences: OpenGrep matches the helpers by name without a receiver (or on `this`) and Response.Redirect on
+  # Response, HttpContext.Response, a `context`/`ctx` variable's Response or a parameter or variable declared as
+  # HttpResponse; the engine matches the members of these types on any receiver (a response reached otherwise
+  # counts), and a look-alike class's Redirect does not.
+  - method: Microsoft.AspNetCore.Mvc.ControllerBase.Redirect
+    args: [0]
+  - method: Microsoft.AspNetCore.Mvc.ControllerBase.RedirectPermanent
+    args: [0]
+  - method: Microsoft.AspNetCore.Mvc.ControllerBase.RedirectPreserveMethod
+    args: [0]
+  - method: Microsoft.AspNetCore.Mvc.ControllerBase.RedirectPermanentPreserveMethod
+    args: [0]
+  - method: Microsoft.AspNetCore.Mvc.RazorPages.PageModel.Redirect
+    args: [0]
+  - method: Microsoft.AspNetCore.Mvc.RazorPages.PageModel.RedirectPermanent
+    args: [0]
+  - method: Microsoft.AspNetCore.Mvc.RazorPages.PageModel.RedirectPreserveMethod
+    args: [0]
+  - method: Microsoft.AspNetCore.Mvc.RazorPages.PageModel.RedirectPermanentPreserveMethod
+    args: [0]
+  - method: Microsoft.AspNetCore.Mvc.RedirectResult..ctor
+    args: [0]
+  - method: Microsoft.AspNetCore.Http.Results.Redirect
+    args: [0]
+  - method: Microsoft.AspNetCore.Http.TypedResults.Redirect
+    args: [0]
+  - method: Microsoft.AspNetCore.Http.HttpResponse.Redirect
+    args: [0]
+  # The Location header set by hand: Headers.Location, the headers' indexer with the name "Location" (any case) or
+  # HeaderNames.Location, HeaderDictionaryExtensions.Append and the dictionary's Add with that name.
+  # Differences: OpenGrep checks these on a response it recognises by name (Response, HttpContext.Response,
+  # context/ctx.Response, a declared HttpResponse); the engine checks the Location property and the indexer of any
+  # header dictionary, and Add (a member of every dictionary) on a response's Headers.
+  - property-set: Microsoft.AspNetCore.Http.IHeaderDictionary.Location
+  - property-set: Microsoft.AspNetCore.Http.IHeaderDictionary.Item
+    when:
+      - arg: 0
+        matches: '(?i)^location$'
+  - property-set: Microsoft.AspNetCore.Http.IHeaderDictionary.Item
+    when:
+      - arg: 0
+        is: Microsoft.Net.Http.Headers.HeaderNames.Location
+  - method: Microsoft.AspNetCore.Http.HeaderDictionaryExtensions.Append
+    args: [2]
+    when:
+      - arg: 1
+        matches: '(?i)^location$'
+  - method: Microsoft.AspNetCore.Http.HeaderDictionaryExtensions.Append
+    args: [2]
+    when:
+      - arg: 1
+        is: Microsoft.Net.Http.Headers.HeaderNames.Location
+  - method: System.Collections.Generic.IDictionary`2.Add
+    args: [1]
+    when:
+      - receiver: Microsoft.AspNetCore.Http.HttpResponse.Headers
+      - arg: 0
+        matches: '(?i)^location$'
+  - method: System.Collections.Generic.IDictionary`2.Add
+    args: [1]
+    when:
+      - receiver: Microsoft.AspNetCore.Http.HttpResponse.Headers
+      - arg: 0
+        is: Microsoft.Net.Http.Headers.HeaderNames.Location
+# Shared C# sanitizers (as in every taint model; see sql-injection.yml), the shared allow-lists, then the rule's own.
+sanitizers:
+  - method: System.Int32.Parse
+  - method: System.Int64.Parse
+  - method: System.Guid.Parse
+  - method: System.DateTime.Parse
+  - method: System.Convert.ToInt32
+  - method: System.Convert.ToInt64
+  - method: System.Enum.Parse
+  - allow-list: literal-tables
+  # A fixed target: a value placed into a URL after a literal URL with a host and a separator after it
+  # ("https://help.example/" + x), a local path ("/orders/" + x, "~/orders/" + x; not "/" + x or "~/" + x, which make
+  # "//host"), a relative path with a separator and no colon ("orders/" + x), or a query or fragment ("?page=" + x);
+  # also in an interpolated string or a string.Format format. An earlier value in the text (U+FFFC) may be the host
+  # (that value is reported itself) but cannot begin a path.
+  # Difference: OpenGrep requires the target to be a literal written in place; the engine also takes a constant.
+  - string-prefix: '^(https?://[^/?#"\s]+[/?#]|~?/[^/\\"￼]|[?#]|[^/\\"\s:~?#￼][^"\s:]*[/?#])'
+  # A URL rebuilt on the request's own host: the request's PathBase, Path and QueryString (PathString and QueryString
+  # values: escaped, starting with "/" or "?") placed after a scheme, "://" and a host, as a concatenation or an
+  # interpolated string. The scheme and the host are values of their own: request data there is reported by itself
+  # (a request-chosen scheme or host), so the text only needs the shape `scheme://host`.
+  # Difference: OpenGrep requires the literal "http(s)://" or Request.Scheme and Request.Host written in place; the
+  # engine checks the scheme and the host as values, so a held Request.Host counts too.
+  - string-prefix: '^(https?|￼)://￼+$'
+    type: Microsoft.AspNetCore.Http.PathString
+  - string-prefix: '^(https?|￼)://￼+$'
+    type: Microsoft.AspNetCore.Http.QueryString
+  # Percent-encoding leaves no ':' or '/' to form a scheme or a host. Only the returned value is clean.
+  # UrlEncoder.Encode is TextEncoder.Encode (declared there): `receiver-type` keeps it to a UrlEncoder (HtmlEncoder and
+  # JavaScriptEncoder leave ':' and '/').
+  - method: System.Uri.EscapeDataString
+  - method: System.Net.WebUtility.UrlEncode
+  - method: System.Web.HttpUtility.UrlEncode
+  - method: System.Text.Encodings.Web.TextEncoder.Encode
+    receiver-type: System.Text.Encodings.Web.UrlEncoder
+  # The request's PathBase is the path base the application configured (UsePathBase, the server's virtual
+  # directory), not a value the client chooses.
+  - property-get: Microsoft.AspNetCore.Http.HttpRequest.PathBase
+  # The value of an awaited lookup (GetXxx, FindXxx, LoadXxx, with or without Async, also with ConfigureAwait: a stored
+  # record found by an id) is stored data, not request data.
+  # Difference: OpenGrep takes any awaited call of these names on another object for a lookup, so a helper that hands
+  # request data back is missed (a Known limit); the engine applies the name only where it has no body to analyse and
+  # follows a helper with a body.
+  - lookup: '^(Get|Find|Load)\w*$'
+    awaited: true
+guards:
+  # Url.IsLocalUrl and Duende IdentityServer's IsValidReturnUrl: the checked URL is clean on the branch where the check
+  # holds (an if or else branch, the code after a failing check that always leaves the method, a ternary, either side
+  # of && and ||). A check whose failing branch does not leave the method leaves the URL as it was where the branches
+  # meet; inside the failing branch the URL is the one that failed.
+  # Differences: OpenGrep recognises the check on a receiver named Url, urlHelper, interaction or *InteractionService
+  # and in an if condition alone or as one side of && or ||; the engine takes the members on any receiver and in any
+  # condition (a deeper one too). RedirectHttpResult.IsLocalUrl is public from ASP.NET Core 10 on (not in the reference
+  # assemblies of 8): not modelled.
+  - method: Microsoft.AspNetCore.Mvc.IUrlHelper.IsLocalUrl
+    arg: 0
+    clean-when: true
+  - method: Duende.IdentityServer.Services.IIdentityServerInteractionService.IsValidReturnUrl
+    arg: 0
+    clean-when: true
+  # IdentityServer's GetAuthorizationContextAsync (GetAuthenticationContextAsync) returns null for a return URL that is
+  # no valid pending request: the URL is clean where the awaited result, held in a variable, is not null.
+  - method: Duende.IdentityServer.Services.IIdentityServerInteractionService.GetAuthorizationContextAsync
+    arg: 0
+    clean-when: not-null
+  - method: Duende.IdentityServer.Services.IIdentityServerInteractionService.GetAuthenticationContextAsync
+    arg: 0
+    clean-when: not-null

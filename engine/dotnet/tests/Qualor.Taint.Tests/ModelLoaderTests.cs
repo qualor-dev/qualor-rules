@@ -123,7 +123,7 @@ public sealed class ModelLoaderTests : TempDirs
     [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - arg: 0\n        matches: '('\n", 8, "regular expression")]
     [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - arg: 0\n        literal-text: x\n", 7, "exactly one")]
     [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - literal-text: x\n        next: true\n", 8, "next")]
-    [InlineData("  - property-set: A.B\n    when:\n      - arg: 0\n        matches: x\n", 6, "method sink")]
+    [InlineData("  - property-set: A.B\n    when:\n      - after: x\n", 6, "method sink")]
     [InlineData("  - method: A..ctor\n    args: [0]\n    when:\n      - receiver: A.B\n", 7, "receiver")]
     [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - receiver: A.B*\n", 7, "'*'")]
     [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - property: 1x\n        matches: x\n", 7, "not a name")]

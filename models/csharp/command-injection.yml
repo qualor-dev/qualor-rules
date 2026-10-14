@@ -108,8 +108,8 @@ sinks:
       - property: FileName
         matches: '(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$'
       - after: '(?i)^(/[ck]|-c|-command)$'
-# Shared C# sanitizers (as in every taint model; see sql-injection.yml). The rule has none of its own.
-# Not here (plan Task 11, guards): the shared allow-lists.
+# Shared C# sanitizers (as in every taint model; see sql-injection.yml) and the shared allow-lists. The rule has none of
+# its own.
 sanitizers:
   - method: System.Int32.Parse
   - method: System.Int64.Parse
@@ -118,4 +118,5 @@ sanitizers:
   - method: System.Convert.ToInt32
   - method: System.Convert.ToInt64
   - method: System.Enum.Parse
+  - allow-list: literal-tables
 guards: []

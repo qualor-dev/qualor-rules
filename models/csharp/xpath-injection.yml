@@ -1,0 +1,57 @@
+# The engine's model of csharp.xpath-injection (format v1, models/README.md): the sinks and sanitizers of
+# rules/csharp/xpath/xpath-injection.yml with types in place of names. Sources and propagators: sources.yml and
+# propagators.yml (shared).
+#
+# Sources (learn.microsoft.com): dotnet/api/system.xml.xmlnode.selectnodes, system.xml.xmlnode.selectsinglenode,
+# system.xml.xpath.xpathnavigator (Select, SelectSingleNode, Evaluate, Compile, Matches),
+# system.xml.xpath.xpathexpression.compile, system.xml.xpath.extensions (XPathSelectElements, XPathSelectElement,
+# XPathEvaluate), system.xml.xsl.xsltcontext.
+rule: csharp.xpath-injection
+kind: taint
+sinks:
+  # XmlNode (XmlDocument, XmlElement): SelectNodes and SelectSingleNode; XPathNavigator: SelectSingleNode, Select,
+  # Evaluate, Compile and Matches given an expression string; XPathExpression.Compile; LINQ to XML's XPath extension
+  # methods (an extension's `this` is 0, the expression 1).
+  # Differences: OpenGrep checks SelectNodes and SelectSingleNode on any receiver in a file that names System.Xml (an
+  # HtmlAgilityPack HtmlNode's too), and XPathNavigator's methods on a navigator it can see is one; the engine checks
+  # these types' members wherever they are called (a global using included). A compiled XPathExpression given to
+  # Select or Evaluate is no string (`param-types`): the Compile call that built it is the sink, as in OpenGrep.
+  - method: System.Xml.XmlNode.SelectNodes
+    args: [0]
+  - method: System.Xml.XmlNode.SelectSingleNode
+    args: [0]
+  - method: System.Xml.XPath.XPathNavigator.SelectSingleNode
+    args: [0]
+    param-types: [System.String]
+  - method: System.Xml.XPath.XPathNavigator.Select
+    args: [0]
+    param-types: [System.String]
+  - method: System.Xml.XPath.XPathNavigator.Evaluate
+    args: [0]
+    param-types: [System.String]
+  - method: System.Xml.XPath.XPathNavigator.Compile
+    args: [0]
+  - method: System.Xml.XPath.XPathNavigator.Matches
+    args: [0]
+    param-types: [System.String]
+  - method: System.Xml.XPath.XPathExpression.Compile
+    args: [0]
+  - method: System.Xml.XPath.Extensions.XPathSelectElements
+    args: [1]
+  - method: System.Xml.XPath.Extensions.XPathSelectElement
+    args: [1]
+  - method: System.Xml.XPath.Extensions.XPathEvaluate
+    args: [1]
+# Shared C# sanitizers (as in every taint model; see sql-injection.yml) and the shared allow-lists. System.Xml has no
+# escaping function for XPath literals. An XPath variable bound through an XsltContext (XPathExpression.SetContext)
+# keeps the value out of the expression text: the compiled expression given to Select is no string sink.
+sanitizers:
+  - method: System.Int32.Parse
+  - method: System.Int64.Parse
+  - method: System.Guid.Parse
+  - method: System.DateTime.Parse
+  - method: System.Convert.ToInt32
+  - method: System.Convert.ToInt64
+  - method: System.Enum.Parse
+  - allow-list: literal-tables
+guards: []

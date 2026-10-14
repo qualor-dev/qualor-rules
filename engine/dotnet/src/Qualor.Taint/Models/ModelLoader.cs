@@ -121,7 +121,7 @@ public static class ModelLoader
         {
             foreach (var node in doc.Sequence(sinksNode))
             {
-                var (pattern, f) = doc.Member(node, new[] { "method", "property-set" }, "args", "param-types", "when");
+                var (pattern, f) = doc.Member(node, new[] { "method", "property-set" }, "args", "param-types", "param-names", "when");
                 var argsNode = f.Optional("args");
                 IReadOnlyList<int> args;
                 if (pattern.Kind == MemberKind.PropertySet)
@@ -137,8 +137,10 @@ public static class ModelLoader
                     args = ordinals;
                 }
                 var paramTypes = f.Optional("param-types") is { } pt ? doc.Types(pt, arrays: true) : Array.Empty<string>();
+                if (pattern.Kind == MemberKind.PropertySet && f.Optional("param-names") is { } pnNode) throw doc.Error(pnNode, "param-names belong to a method sink");
+                var paramNames = f.Optional("param-names") is { } pn ? doc.Names(pn) : Array.Empty<string>();
                 var when = f.Optional("when") is { } wn ? ReadConditions(doc, wn, pattern) : Array.Empty<SinkCondition>();
-                sinks.Add(new SinkModel(pattern, args) { ParamTypes = paramTypes, When = when });
+                sinks.Add(new SinkModel(pattern, args) { ParamTypes = paramTypes, ParamNames = paramNames, When = when });
             }
             if (kind == RuleKind.Taint && sinks.Count == 0) throw doc.Error(sinksNode, "a taint rule needs at least one sink");
         }
@@ -146,25 +148,59 @@ public static class ModelLoader
         var sanitizers = new List<MemberPattern>();
         var stringSanitizers = new List<StringSanitizer>();
         var lookups = new List<Regex>();
+        var awaitedLookups = new List<Regex>();
+        var receiverSanitizers = new List<(MemberPattern, string)>();
+        var namedSanitizers = new List<(string, string)>();
+        var allowLists = false;
         if (top.Optional("sanitizers") is { } sn)
         {
+            var sanitizerKinds = new[] { "method", "property-get", "string-prefix", "lookup", "by-name", "allow-list" };
             foreach (var n in doc.Sequence(sn))
             {
-                var f = doc.Fields(n, "method", "property-get", "string-prefix", "type", "lookup");
-                if (f.Optional("string-prefix") is { } prefix)
+                var f = doc.Fields(n, "method", "property-get", "string-prefix", "type", "lookup", "awaited", "receiver-type", "by-name", "allow-list");
+                var present = sanitizerKinds.Where(k => f.Optional(k) != null).ToList();
+                if (present.Count != 1) throw doc.Error(n, $"a sanitizer names exactly one of {string.Join(", ", sanitizerKinds)}");
+                var sanitizerKind = present[0];
+                string[] allowed = sanitizerKind switch
                 {
-                    if ((f.Optional("method") ?? f.Optional("property-get") ?? f.Optional("lookup")) is { } other) throw doc.Error(other, "a string-prefix sanitizer names no member and no lookup");
-                    stringSanitizers.Add(new StringSanitizer(doc.Regex(prefix), f.Optional("type") is { } t ? doc.Type(t) : null));
-                }
-                else if (f.Optional("lookup") is { } lookup)
+                    "string-prefix" => new[] { "type" },
+                    "lookup" => new[] { "awaited" },
+                    "method" => new[] { "receiver-type" },
+                    _ => Array.Empty<string>(),
+                };
+                foreach (var key in new[] { "type", "awaited", "receiver-type" })
+                    if (f.Optional(key) is { } extra && Array.IndexOf(allowed, key) < 0) throw doc.Error(extra, $"{key} does not belong to a {sanitizerKind} sanitizer");
+                switch (sanitizerKind)
                 {
-                    if ((f.Optional("method") ?? f.Optional("property-get") ?? f.Optional("type")) is { } other) throw doc.Error(other, "a lookup sanitizer is a method name expression alone");
-                    lookups.Add(doc.Regex(lookup));
-                }
-                else
-                {
-                    if (f.Optional("type") is { } t) throw doc.Error(t, "type belongs to a string-prefix sanitizer");
-                    sanitizers.Add(doc.Member(n, new[] { "method", "property-get" }).Pattern);
+                    case "string-prefix":
+                        stringSanitizers.Add(new StringSanitizer(doc.Regex(f.Required("string-prefix")), f.Optional("type") is { } t ? doc.Type(t) : null));
+                        break;
+                    case "lookup":
+                        (f.Optional("awaited") is { } aw && doc.Bool(aw) ? awaitedLookups : lookups).Add(doc.Regex(f.Required("lookup")));
+                        break;
+                    case "by-name":
+                    {
+                        var node = f.Required("by-name");
+                        var text = doc.String(node);
+                        var parts = text.Split('.');
+                        if (parts.Length != 2 || !parts.All(SimpleName.IsMatch)) throw doc.Error(node, $"{text}: by-name is Type.Method, two simple names");
+                        namedSanitizers.Add((parts[0], parts[1]));
+                        break;
+                    }
+                    case "allow-list":
+                    {
+                        var node = f.Required("allow-list");
+                        if (doc.String(node) != "literal-tables") throw doc.Error(node, "allow-list must be literal-tables");
+                        allowLists = true;
+                        break;
+                    }
+                    default:
+                    {
+                        var pattern = doc.Member(n, new[] { "method", "property-get" }, "receiver-type").Pattern;
+                        if (f.Optional("receiver-type") is { } rt) receiverSanitizers.Add((pattern, doc.Type(rt)));
+                        else sanitizers.Add(pattern);
+                        break;
+                    }
                 }
             }
         }
@@ -174,9 +210,16 @@ public static class ModelLoader
         {
             foreach (var node in doc.Sequence(gn))
             {
-                var (pattern, f) = doc.Member(node, new[] { "method" }, "arg", "clean-when");
+                var (pattern, f) = doc.Member(node, new[] { "method" }, "arg", "clean-when", "when");
                 if (pattern.Kind != MemberKind.Method) throw doc.Error(node, "a guard is a method");
-                guards.Add(new GuardModel(pattern, doc.Ordinal(f.Required("arg"), "arg"), doc.Bool(f.Required("clean-when"))));
+                var argNode = f.Required("arg");
+                var arg = argNode is YamlScalarNode { Value: "this" } ? -1 : doc.Ordinal(argNode, "arg");
+                var cleanNode = f.Required("clean-when");
+                var notNull = cleanNode is YamlScalarNode { Value: "not-null" };
+                var cleanWhen = notNull || doc.Bool(cleanNode);
+                if (notNull && arg < 0) throw doc.Error(argNode, "a not-null guard checks an argument of the call");
+                var when = f.Optional("when") is { } wn ? ReadGuardConditions(doc, wn) : Array.Empty<GuardCondition>();
+                guards.Add(new GuardModel(pattern, arg, cleanWhen) { Kind = notNull ? GuardKind.NotNull : GuardKind.Result, When = when });
             }
         }
 
@@ -187,7 +230,44 @@ public static class ModelLoader
             if (mn is not YamlMappingNode map) throw doc.Error(mn, "misuse must be a mapping");
             foreach (var (k, v) in map.Children) misuse[doc.String(k)] = Doc.Plain(v);
         }
-        return new RuleModel(id, kind, sinks, sanitizers, guards, misuse) { StringSanitizers = stringSanitizers, LookupSanitizers = lookups };
+        return new RuleModel(id, kind, sinks, sanitizers, guards, misuse)
+        {
+            StringSanitizers = stringSanitizers,
+            LookupSanitizers = lookups,
+            AwaitedLookupSanitizers = awaitedLookups,
+            ReceiverSanitizers = receiverSanitizers,
+            NamedSanitizers = namedSanitizers,
+            AllowLists = allowLists,
+        };
+    }
+
+    private static readonly Regex SimpleName = new(@"^[A-Za-z_][A-Za-z0-9_]*$", RegexOptions.CultureInvariant);
+
+    /// The conditions of a guard (`when:`, a non-empty list): `assigned-from: T.M`, or `arg: N` with `text: R`.
+    private static IReadOnlyList<GuardCondition> ReadGuardConditions(Doc doc, YamlNode node)
+    {
+        var list = new List<GuardCondition>();
+        foreach (var item in doc.Sequence(node))
+        {
+            var f = doc.Fields(item, "assigned-from", "arg", "text");
+            if (f.Optional("assigned-from") is { } from)
+            {
+                if ((f.Optional("arg") ?? f.Optional("text")) is { } extra) throw doc.Error(extra, "an assigned-from condition is a method alone");
+                var pattern = doc.Pattern(from, MemberKind.Method);
+                if (pattern.Kind != MemberKind.Method) throw doc.Error(from, "assigned-from names a method");
+                list.Add(new GuardCondition(GuardConditionKind.AssignedFrom) { Member = pattern });
+            }
+            else if (f.Optional("arg") is { } arg)
+            {
+                list.Add(new GuardCondition(GuardConditionKind.ArgumentText) { Arg = doc.Ordinal(arg, "arg"), Pattern = doc.Regex(f.Required("text")) });
+            }
+            else
+            {
+                throw doc.Error(item, "a guard condition names assigned-from or arg");
+            }
+        }
+        if (list.Count == 0) throw doc.Error(node, "when must not be empty");
+        return list;
     }
 
     /// The conditions of a conditional sink (`when:`, a non-empty list): each names one kind (arg, property,
@@ -199,23 +279,25 @@ public static class ModelLoader
         var kinds = new[] { "arg", "property", "literal-text", "after", "receiver" };
         foreach (var item in doc.Sequence(node))
         {
-            var f = doc.Fields(item, "arg", "property", "of", "matches", "literal-text", "after", "next", "receiver");
+            var f = doc.Fields(item, "arg", "property", "of", "matches", "is", "literal-text", "after", "next", "receiver");
             var present = kinds.Where(k => f.Optional(k) != null).ToList();
             if (present.Count != 1) throw doc.Error(item, $"a condition names exactly one of {string.Join(", ", kinds)}");
             var kind = present[0];
             string[] allowed = kind switch
             {
-                "arg" => new[] { "arg", "matches" },
+                "arg" => new[] { "arg", "matches", "is" },
                 "property" => new[] { "property", "of", "matches" },
                 "after" => new[] { "after", "next" },
                 _ => new[] { kind },
             };
-            foreach (var key in new[] { "of", "matches", "next" })
+            foreach (var key in new[] { "of", "matches", "is", "next" })
                 if (f.Optional(key) is { } extra && Array.IndexOf(allowed, key) < 0) throw doc.Error(extra, $"{key} does not belong to a {kind} condition");
-            if (kind is "arg" or "after" && sink.Kind == MemberKind.PropertySet) throw doc.Error(item, $"a {kind} condition needs a method sink");
-            if (kind == "receiver" && sink.Kind != MemberKind.Method) throw doc.Error(item, "a receiver condition needs a method sink that is no constructor");
+            if (kind == "after" && sink.Kind == MemberKind.PropertySet) throw doc.Error(item, "an after condition needs a method sink");
+            if (kind == "receiver" && sink.Kind == MemberKind.Constructor) throw doc.Error(item, "a receiver condition needs a method sink that is no constructor, or a property-set sink");
+            if (kind == "arg" && (f.Optional("matches") == null) == (f.Optional("is") == null)) throw doc.Error(item, "an arg condition has matches or is (one of them)");
             list.Add(kind switch
             {
+                "arg" when f.Optional("is") is { } isNode => new SinkCondition(SinkConditionKind.Argument) { Arg = doc.Ordinal(f.Required("arg"), "arg"), Member = ValuePattern(doc, isNode) },
                 "arg" => new SinkCondition(SinkConditionKind.Argument) { Arg = doc.Ordinal(f.Required("arg"), "arg"), Pattern = doc.Regex(f.Required("matches")) },
                 "property" => new SinkCondition(SinkConditionKind.Property)
                 {
@@ -234,6 +316,14 @@ public static class ModelLoader
         }
         if (list.Count == 0) throw doc.Error(node, "when must not be empty");
         return list;
+    }
+
+    /// A field or property read (`is:`): one member, written Type.Member.
+    private static MemberPattern ValuePattern(Doc doc, YamlNode node)
+    {
+        var pattern = doc.Pattern(node, MemberKind.PropertyGet);
+        if (pattern.Prefix) throw doc.Error(node, $"{pattern}: is names one field or property (no '*')");
+        return pattern;
     }
 
     private static MemberPattern ReceiverPattern(Doc doc, YamlNode node)

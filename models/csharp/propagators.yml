@@ -61,10 +61,39 @@ propagators:
   - property-get: System.Uri.*              # AbsoluteUri, AbsolutePath, PathAndQuery, Query, Host, ...
   - method: System.UriBuilder..ctor         # (scheme, host, ...), (uri)
   - property-get: System.UriBuilder.*       # Uri, Host, Path, Query, ...
+  # Uri.MakeRelativeUri: a path relative to the receiver, or the argument itself when its host or scheme differs; the
+  # receiver cannot choose the host of the result.
+  - method: System.Uri.MakeRelativeUri
+    from: [0]
+  # ASP.NET Core's URL parts: a PathString or HostString made from a string (constructor, Add, FromUriComponent) holds
+  # it; its Value and its text (ToString, which escapes) come from it. (The engine's default would drop them: neither
+  # is string-like nor a collection.) UriHelper.BuildAbsolute writes the scheme and the host first and then the escaped
+  # PathString, QueryString and FragmentString values, which cannot change them: only the scheme and the host reach
+  # the URL's origin, and the result carries them (`from: [0, 1]`).
+  - method: Microsoft.AspNetCore.Http.PathString..ctor
+  - method: Microsoft.AspNetCore.Http.PathString.Add
+  - method: Microsoft.AspNetCore.Http.PathString.FromUriComponent
+  - method: Microsoft.AspNetCore.Http.HostString..ctor
+  - method: Microsoft.AspNetCore.Http.HostString.FromUriComponent
+  - method: Microsoft.AspNetCore.Http.Extensions.UriHelper.BuildAbsolute
+    from: [0, 1]
+  # QueryHelpers.AddQueryString writes the names and values given into the query of the URI, encoded: only the URI
+  # (ordinal 0) reaches the result's scheme, host and path.
+  - method: Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString
+    from: [0]
+  # URLs generated from routes on this site (UrlHelperExtensions.Action, Page and RouteUrl): the route values and names
+  # are encoded into a path of this application; only a protocol and a host given to them (Action and Page: ordinals 4
+  # and 5, RouteUrl: 3 and 4, an extension's `this` being 0) make an absolute URL elsewhere.
+  - method: Microsoft.AspNetCore.Mvc.UrlHelperExtensions.Action
+    from: [4, 5]
+  - method: Microsoft.AspNetCore.Mvc.UrlHelperExtensions.Page
+    from: [4, 5]
+  - method: Microsoft.AspNetCore.Mvc.UrlHelperExtensions.RouteUrl
+    from: [3, 4]
   # Request collections and their values. Element reads (ruling R-E9): the element of a tainted collection, and
   # the element found by a tainted key (OpenGrep's taint passes through a lookup by its key; a table of literals that
-  # no method changes is an allow-list, the engine's Task 11), so TryGetValue's out value comes from the dictionary
-  # and the key.
+  # no code changes is an allow-list: models/README.md "Allow-lists"), so TryGetValue's out value comes from the
+  # dictionary and the key.
   - method: System.Collections.Generic.IDictionary`2.TryGetValue
     from: [this, args]
     to: [out]
@@ -153,6 +182,12 @@ propagators:
   - method: System.IO.TextReader.ReadToEnd*     # ReadToEnd, ReadToEndAsync
     from: [this]
   - method: System.IO.TextReader.ReadLine*
+    from: [this]
+  # A task's awaiter: ConfigureAwait keeps the task's value (ConfiguredTaskAwaitable is neither string-like nor a
+  # collection).
+  - method: System.Threading.Tasks.Task`1.ConfigureAwait
+    from: [this]
+  - method: System.Threading.Tasks.ValueTask`1.ConfigureAwait
     from: [this]
   # LINQ: the source sequence (an extension method's `this` is its first argument) and the other arguments
   # (a second sequence, a seed) reach the result.

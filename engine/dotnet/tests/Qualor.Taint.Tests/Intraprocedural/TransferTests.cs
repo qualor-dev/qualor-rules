@@ -119,10 +119,11 @@ public sealed class TransferTests
         """);
 
     [Fact]
-    public void A_lookup_by_a_request_key_is_request_data_until_allow_lists_exist() => Expect("""
+    public void A_lookup_by_a_request_key_is_request_data_unless_the_table_is_an_allow_list() => Expect("""
         public class C
         {
             private static readonly Dictionary<string, string> Columns = new() { ["price"] = "unit_price" };
+            private static readonly Dictionary<string, string> Named = new() { ["price"] = "unit_price" };
             public void M([FromQuery] string q, SqlConnection c)
             {
                 c.Execute("SELECT * FROM t ORDER BY " + Columns.GetValueOrDefault(q, "name")); /*sink*/
@@ -130,7 +131,12 @@ public sealed class TransferTests
                 c.Execute("SELECT * FROM t ORDER BY " + Columns[q]); /*sink*/
                 if (Columns.TryGetValue(q, out var column)) c.Execute("SELECT * FROM t ORDER BY " + column); /*sink*/
                 c.Execute("SELECT * FROM t ORDER BY " + Columns.GetValueOrDefault("price", "name"));
+                c.Execute("SELECT * FROM t ORDER BY " + Named.GetValueOrDefault(q, "name"));
+                c.Execute("SELECT * FROM t ORDER BY " + Named.GetValueOrDefault("price", q)); /*sink*/
+                c.Execute("SELECT * FROM t ORDER BY " + Named[q]);
+                if (Named.TryGetValue(q, out var named)) c.Execute("SELECT * FROM t ORDER BY " + named);
             }
+            public void Grow(string k, string v) => Columns[k] = v;
         }
         """);
 

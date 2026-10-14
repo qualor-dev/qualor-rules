@@ -104,8 +104,7 @@ sinks:
 # Shared C# sanitizers (as in every taint model; see sql-injection.yml), then the rule's own: Path.GetFileName
 # keeps only the last segment (no folder, no root); so does GetFileNameWithoutExtension, and GetExtension returns
 # only the extension.
-# Not here (plan Task 11, guards): the containment check (`var full = Path.GetFullPath(...)` and
-# `if (!full.StartsWith(base + separator)) return/throw`) and the shared allow-lists.
+# The shared allow-lists too; the containment check is a guard (below).
 sanitizers:
   - method: System.Int32.Parse
   - method: System.Int64.Parse
@@ -114,7 +113,25 @@ sanitizers:
   - method: System.Convert.ToInt32
   - method: System.Convert.ToInt64
   - method: System.Enum.Parse
+  - allow-list: literal-tables
   - method: System.IO.Path.GetFileName
   - method: System.IO.Path.GetFileNameWithoutExtension
   - method: System.IO.Path.GetExtension
-guards: []
+# A full path checked against the base folder: `full` is clean where `full.StartsWith(prefix)` holds (the code after a
+# failing check that always leaves the method, an if branch), when every assignment of the local `full` in the method
+# is a Path.GetFullPath call and the prefix carries no request data and ends with a directory separator: a string
+# ending in / or \ (a literal, a constant, base + "/") or base + Path.DirectorySeparatorChar, AltDirectorySeparatorChar,
+# '/' or '\' ("/srv/files" alone also admits the sibling "/srv/files-old"). Inside the failing branch the path is the
+# one that failed.
+# Differences: OpenGrep needs the check written as `if (!full.StartsWith(prefix))` before the use; the engine reads the
+# condition on the control-flow graph, so a positive check guarding its then-branch and a separator added by
+# interpolation count too; a check on a GetFullPath result written in the condition itself (no local) does not.
+guards:
+  - method: System.String.StartsWith
+    arg: this
+    clean-when: true
+    when:
+      - assigned-from: System.IO.Path.GetFullPath
+      - arg: 0
+        text: '[\\/]$'
+

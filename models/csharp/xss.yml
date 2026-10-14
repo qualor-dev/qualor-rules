@@ -86,8 +86,7 @@ sinks:
       - property: ContentType
         of: 0
         matches: '(?i)^\s*(text/html|application/xhtml\+xml)'
-# Shared C# sanitizers (as in every taint model; see sql-injection.yml), then the rule's own.
-# Not here (plan Task 11, guards): the shared allow-lists.
+# Shared C# sanitizers (as in every taint model; see sql-injection.yml), the shared allow-lists, then the rule's own.
 sanitizers:
   - method: System.Int32.Parse
   - method: System.Int64.Parse
@@ -96,6 +95,7 @@ sanitizers:
   - method: System.Convert.ToInt32
   - method: System.Convert.ToInt64
   - method: System.Enum.Parse
+  - allow-list: literal-tables
   # HTML encoding: an HtmlEncoder (Default, Create(...) or injected) and the HtmlEncode helpers; URL encoding (a
   # UrlEncoder, Uri.EscapeDataString, WebUtility.UrlEncode) percent-encodes ' " < > & too, so the value cannot leave an
   # attribute or start a tag. Only the returned value is clean.
@@ -114,9 +114,10 @@ sanitizers:
   # As in the OpenGrep rule (a Known limit): PathString does not escape for HTML (' ( ) = ; & pass), so one in a
   # single-quoted or unquoted attribute value or a script string is missed.
   # Differences: OpenGrep cleans the reads Request.Path and PathBase, so it misses a PathString held in a variable
-  # whose .Value is read later; the engine cleans where a PathString becomes text, from any source. PathString's
-  # other implicit conversion (from a string) is an op_Implicit too, so a request string converted into a PathString
-  # and read back through .Value counts as clean.
+  # whose .Value is read later; the engine cleans where a PathString becomes text, from any source. Its op_Implicit
+  # cleans only the conversion to a string (the engine applies a conversion operator's sanitizers to a string result):
+  # a request string made into a PathString (the conversion from a string, new PathString(q), PathBase.Add(q)) and
+  # read back through .Value stays request data, as in OpenGrep.
   - method: Microsoft.AspNetCore.Http.PathString.ToString
   - method: Microsoft.AspNetCore.Http.PathString.ToUriComponent
   - method: Microsoft.AspNetCore.Http.PathString.op_Implicit

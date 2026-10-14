@@ -40,7 +40,8 @@ internal sealed class SinkConditions
         {
             case IAssignmentOperation assignment:
                 argument = assignment.Value;
-                self = Unwrap(assignment.Target) is IPropertyReferenceOperation p ? facts.Key(p.Instance) : null;
+                receiver = (Unwrap(assignment.Target) as IPropertyReferenceOperation)?.Instance;
+                self = receiver != null ? facts.Key(receiver) : null;
                 break;
             case IInvocationOperation invocation:
                 argument = ArgumentValue(invocation, ordinal);
@@ -68,7 +69,8 @@ internal sealed class SinkConditions
             switch (c.Kind)
             {
                 case SinkConditionKind.Argument:
-                    if (ArgumentValue(original, c.Arg) is not { } other || !AnyMatch(c.Pattern!, facts.Constants(other))) return SinkDecision.No;
+                    if (ArgumentValue(original, c.Arg) is not { } other) return SinkDecision.No;
+                    if (c.Member != null ? !Reads(other, c.Member) : !AnyMatch(c.Pattern!, facts.Constants(other))) return SinkDecision.No;
                     break;
                 case SinkConditionKind.Property:
                 {
@@ -112,6 +114,14 @@ internal sealed class SinkConditions
         return elements != null ? new SinkDecision(true, elements) : SinkDecision.Whole;
     }
 
+    /// Whether a value is a read of the field or property `member` (`is:`).
+    private static bool Reads(IOperation value, MemberPattern member) => Unwrap(value) switch
+    {
+        IFieldReferenceOperation f => f.Field.Name == member.MemberName && SymbolMatch.MetadataName(f.Field.ContainingType) == member.TypeName,
+        IPropertyReferenceOperation p => SymbolMatch.Matches(member, p.Property),
+        _ => false,
+    };
+
     private static bool Follows(SinkCondition c, BodyFacts facts, IReadOnlyList<IOperation> list, int k)
     {
         if (c.Next) return k > 0 && AnyMatch(c.Pattern!, facts.Constants(list[k - 1]));
@@ -149,9 +159,17 @@ internal sealed class SinkConditions
         return null;
     }
 
-    /// The value of the argument at parameter `ordinal` of the member's definition (an extension method's `this` is 0).
+    /// The value of the argument at parameter `ordinal` of the member's definition (an extension method's `this` is 0); for
+    /// an assignment to an indexer, the indexer's argument.
     internal static IOperation? ArgumentValue(IOperation call, int ordinal)
     {
+        if (call is IAssignmentOperation assignment)
+        {
+            if (Unwrap(assignment.Target) is not IPropertyReferenceOperation indexer) return null;
+            foreach (var a in indexer.Arguments)
+                if (a.Parameter?.Ordinal == ordinal) return a.ArgumentKind == ArgumentKind.DefaultValue ? null : a.Value;
+            return null;
+        }
         var (method, instance, arguments) = call switch
         {
             IInvocationOperation i => (i.TargetMethod, i.Instance, i.Arguments),

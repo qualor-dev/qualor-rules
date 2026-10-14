@@ -21,6 +21,9 @@ public sealed record SinkModel(MemberPattern Member, IReadOnlyList<int> Args)
 {
     public IReadOnlyList<string> ParamTypes { get; init; } = Array.Empty<string>();
 
+    /// When not empty, limits the sink to arguments whose parameter (in the member's definition) has one of these names.
+    public IReadOnlyList<string> ParamNames { get; init; } = Array.Empty<string>();
+
     /// A conditional sink (`when:`): the sink applies only where every condition holds at the call or assignment.
     public IReadOnlyList<SinkCondition> When { get; init; } = Array.Empty<SinkCondition>();
 }
@@ -29,7 +32,8 @@ public sealed record SinkModel(MemberPattern Member, IReadOnlyList<int> Args)
 public enum SinkConditionKind
 {
     /// `arg: N, matches: R`: argument N is a constant (a literal, a const, a local or a ternary of them) one of whose
-    /// values matches R.
+    /// values matches R; `arg: N, is: T.F`: argument N reads the field or property T.F. On a property-set sink (an
+    /// indexer) N is the indexer's argument.
     Argument,
 
     /// `property: P [of: N], matches: R`: the object the sink acts on (or argument N) has its property P set in the
@@ -50,7 +54,8 @@ public enum SinkConditionKind
 }
 
 /// One condition of a conditional sink. Arg: Argument's ordinal, or Property's `of` (−1: the sink's own object);
-/// Pattern: the `matches`, `literal-text` or `after` regular expression; Member: Receiver's property.
+/// Pattern: the `matches`, `literal-text` or `after` regular expression; Member: Receiver's property, or Argument's
+/// `is` member (then Pattern is null).
 public sealed record SinkCondition(SinkConditionKind Kind)
 {
     public int Arg { get; init; } = -1;
@@ -64,8 +69,40 @@ public sealed record SinkCondition(SinkConditionKind Kind)
     public MemberPattern? Member { get; init; }
 }
 
-/// A guard: a call whose boolean result says the argument at Arg is clean on the branch where it equals CleanWhen.
-public sealed record GuardModel(MemberPattern Member, int Arg, bool CleanWhen);
+/// What a guard's call tells (`clean-when:`): its boolean result (true or false), or whether its awaited result, held in a
+/// variable, is null (`not-null`).
+public enum GuardKind { Result, NotNull }
+
+/// A guard (models/README.md, `guards:`): a call whose boolean result says the argument at Arg (−1: the receiver) is
+/// clean on the branch where it equals CleanWhen; with Kind NotNull, a call whose (awaited) result is held in a variable
+/// whose null check says the argument is clean where the variable is not null. When: the guard's conditions.
+public sealed record GuardModel(MemberPattern Member, int Arg, bool CleanWhen)
+{
+    public GuardKind Kind { get; init; } = GuardKind.Result;
+
+    public IReadOnlyList<GuardCondition> When { get; init; } = Array.Empty<GuardCondition>();
+}
+
+/// The kinds of a guard's conditions (models/README.md, guards' `when:`).
+public enum GuardConditionKind
+{
+    /// `assigned-from: T.M`: the checked value is a local every assignment of which in the body is a call of T.M.
+    AssignedFrom,
+
+    /// `arg: N, text: R`: argument N carries no request data, and the text it is built from in place (constants, the
+    /// platform's directory separators as '/', other values as U+FFFC) matches R.
+    ArgumentText,
+}
+
+/// One condition of a guard: Member for AssignedFrom; Arg and Pattern for ArgumentText.
+public sealed record GuardCondition(GuardConditionKind Kind)
+{
+    public MemberPattern? Member { get; init; }
+
+    public int Arg { get; init; } = -1;
+
+    public System.Text.RegularExpressions.Regex? Pattern { get; init; }
+}
 
 /// One rule's model (`models/csharp/<name>.yml`, rule id `csharp.<name>`). Misuse holds the `misuse:` mapping of a
 /// misuse rule as plain values (string, list, dictionary); empty for a taint rule.
@@ -78,6 +115,20 @@ public sealed record RuleModel(
 
     /// Sanitizers by name (`lookup:`): the result of a call, whose body the engine cannot see, to a method so named.
     public IReadOnlyList<System.Text.RegularExpressions.Regex> LookupSanitizers { get; init; } = Array.Empty<System.Text.RegularExpressions.Regex>();
+
+    /// `lookup:` sanitizers with `awaited: true`: only the awaited result of such a call (also through ConfigureAwait).
+    public IReadOnlyList<System.Text.RegularExpressions.Regex> AwaitedLookupSanitizers { get; init; } = Array.Empty<System.Text.RegularExpressions.Regex>();
+
+    /// Sanitizers with `receiver-type:`: the member's result is clean only when the call's receiver is of that type (or
+    /// derives from it).
+    public IReadOnlyList<(MemberPattern Member, string ReceiverType)> ReceiverSanitizers { get; init; } = Array.Empty<(MemberPattern, string)>();
+
+    /// Sanitizers by simple names (`by-name: Type.Method`): a method of that name on a type of that simple name, in any
+    /// namespace.
+    public IReadOnlyList<(string Type, string Method)> NamedSanitizers { get; init; } = Array.Empty<(string, string)>();
+
+    /// `allow-list: literal-tables`: the shared allow-lists (models/README.md, "Allow-lists") apply to this rule.
+    public bool AllowLists { get; init; }
 }
 
 /// A `string-prefix:` sanitizer: a value built into a string (concatenation, interpolation, string.Format with a

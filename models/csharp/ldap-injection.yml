@@ -1,0 +1,49 @@
+# The engine's model of csharp.ldap-injection (format v1, models/README.md): the sinks and sanitizers of
+# rules/csharp/ldap/ldap-injection.yml with types in place of names. Sources and propagators: sources.yml and
+# propagators.yml (shared).
+#
+# Sources (learn.microsoft.com): dotnet/api/system.directoryservices.directorysearcher,
+# system.directoryservices.directorysearcher.-ctor, system.directoryservices.directorysearcher.filter,
+# system.directoryservices.protocols.searchrequest, system.directoryservices.protocols.searchrequest.-ctor,
+# system.directoryservices.protocols.searchrequest.filter, windows/win32/adsi/search-filter-syntax;
+# www.rfc-editor.org/rfc/rfc4515; cheatsheetseries.owasp.org LDAP_Injection_Prevention_Cheat_Sheet.
+rule: csharp.ldap-injection
+kind: taint
+sinks:
+  # DirectorySearcher (System.DirectoryServices): the filter of a constructor (the first string argument, or the
+  # second after a search root) and its Filter property.
+  # Differences: OpenGrep tells the filter from a search root or a propertiesToLoad array by the argument's form (a
+  # declared DirectoryEntry or string[], or one created in place), so a root or an attribute list from a helper is
+  # taken for a filter (Known limits); the engine goes by the overload the compiler chose (`param-types`), so only a
+  # string parameter is a filter. Filter is a sink on a DirectorySearcher wherever it is (OpenGrep needs a receiver
+  # declared as one in a file that names the type).
+  - method: System.DirectoryServices.DirectorySearcher..ctor
+    args: [0, 1]
+    param-types: [System.String]
+  - property-set: System.DirectoryServices.DirectorySearcher.Filter
+  # SearchRequest (System.DirectoryServices.Protocols): the ldapFilter of its constructor and its Filter property.
+  # Difference: OpenGrep matches SearchRequest by the name the file imports, so another library's SearchRequest
+  # declared in a file that imports System.DirectoryServices.Protocols is reported (Known limit); the engine knows
+  # the type.
+  - method: System.DirectoryServices.Protocols.SearchRequest..ctor
+    args: [1]
+    param-types: [System.String]
+  - property-set: System.DirectoryServices.Protocols.SearchRequest.Filter
+# Shared C# sanitizers (as in every taint model; see sql-injection.yml), the shared allow-lists, then the rule's own.
+sanitizers:
+  - method: System.Int32.Parse
+  - method: System.Int64.Parse
+  - method: System.Guid.Parse
+  - method: System.DateTime.Parse
+  - method: System.Convert.ToInt32
+  - method: System.Convert.ToInt64
+  - method: System.Enum.Parse
+  - allow-list: literal-tables
+  # LDAP filter encoding: Encoder.LdapFilterEncode, the AntiXSS encoder the OWASP LDAP Injection Prevention Cheat Sheet
+  # names, writes '*', '(', ')', '\' and NUL as a backslash and two hex digits (RFC 4515 section 3). Only the value it
+  # returns is clean. Bound by its name (a method LdapFilterEncode of a type named Encoder, in any namespace), as the
+  # OpenGrep rule does (ruling R15 of the rules plan): a project's own class named Encoder whose LdapFilterEncode does
+  # not escape is taken for it (Known limit), and the name wins over that method's body. LdapDistinguishedNameEncode
+  # (RFC 4514) leaves '*', '(' and ')' as they are and is no filter sanitizer.
+  - by-name: Encoder.LdapFilterEncode
+guards: []
