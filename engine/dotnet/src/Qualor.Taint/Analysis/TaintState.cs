@@ -131,6 +131,34 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
 
     public static readonly TaintValue Clean = new(false, ImmutableHashSet<string>.Empty, Trail.Empty);
 
+    /// The identity of a join (Task 27): no request data, no labels, no object, every member known. What a value not yet
+    /// seen starts from (a body's returned value before its first return); a null literal is it too. Never stored.
+    public static readonly TaintValue Bottom = new(false, ImmutableHashSet<string>.Empty, Trail.Empty) { Objects = ObjSet.Empty, Members = MemberMap.All };
+
+    /// The abstract objects the value may be (Task 27, decision R-8): null when they are not known (the value may be any
+    /// object: its members are read and written at their field locations). Clean's are unknown, Bottom's empty. A join
+    /// unites them (beyond ObjSet.MaxObjects: unknown).
+    public ObjSet? Objects { get; init; }
+
+    /// The members of the object the value is that are known to hold exactly a value (Task 27, strong updates; a must
+    /// map: a join keeps only what both sides know). Clean knows none, Bottom all.
+    public MemberMap? Members { get; init; }
+
+    /// Whether the value carries objects or members (Clean does not).
+    public bool HasIdentity => Objects != null || Members != null;
+
+    /// Whether the value tells something of its objects or members (Bottom tells nothing yet).
+    public bool KnowsIdentity => HasIdentity && !ReferenceEquals(this, Bottom);
+
+    /// The value without its objects and members (what is stored where only taint matters, or a value that is not the
+    /// same object as the operand it was computed from).
+    public TaintValue WithoutIdentity() => HasIdentity ? this with { Objects = null, Members = null } : this;
+
+    /// Equal objects and members (members' values in the lattice).
+    public bool SameIdentity(TaintValue other) =>
+        ReferenceEquals(this, other)
+        || (Equals(Objects, other.Objects) && (ReferenceEquals(Members, other.Members) || (Members != null && Members.SameFlow(other.Members))));
+
     public ImmutableHashSet<Location> Sources { get; init; } = ImmutableHashSet<Location>.Empty;
 
     public ImmutableArray<Label> Labels { get; init; } = ImmutableArray<Label>.Empty;
@@ -254,7 +282,19 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
 
     public bool TaintedFor(string rule) => Request && !CleanFor.Contains(rule);
 
+    /// The join: request data and labels as the lattice above; objects united, members met (Task 27). Clean contributes
+    /// unknown objects and no members, so a join with Clean keeps only the taint; Bottom is the identity of a join.
     public TaintValue Join(TaintValue other)
+    {
+        if (ReferenceEquals(this, other)) return this;
+        if (Objects == null && Members == null && other.Objects == null && other.Members == null) return JoinTaint(other);
+        var taint = JoinTaint(other);
+        var objects = ObjSet.Union(Objects, other.Objects);
+        var members = MemberMap.Meet(Members, other.Members);
+        return ReferenceEquals(objects, taint.Objects) && ReferenceEquals(members, taint.Members) ? taint : taint with { Objects = objects, Members = members };
+    }
+
+    private TaintValue JoinTaint(TaintValue other)
     {
         if (ReferenceEquals(this, other) || !other.Any) return this;
         if (!Any) return other;
@@ -472,19 +512,55 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
 ///
 /// Member facts (Task 21): what guards established for access paths (`x.M`), must-hold, so a join keeps only the facts
 /// both sides hold (MemberFacts); an empty list (most states) costs nothing.
+///
+/// Points-to facts (Task 27): the objects a variable (a local, a parameter, a flow capture) is known to hold, must-hold
+/// like member facts (a join keeps a variable only both sides know, its objects united); a variable without one holds
+/// unknown objects. Kept apart from the map, whose missing entries are clean, so an unknown object never meets a known
+/// one as if it were none.
 internal sealed class TaintState
 {
+    public const int MaxPointsTo = 64;
+
     private object? _root;
 
     private ImmutableArray<MemberFact> _facts = ImmutableArray<MemberFact>.Empty;
 
+    private ImmutableArray<(object Key, ObjSet Objects)> _points = ImmutableArray<(object, ObjSet)>.Empty;
+
     public TaintState() { }
 
-    private TaintState(object? root, ImmutableArray<MemberFact> facts)
+    private TaintState(object? root, ImmutableArray<MemberFact> facts, ImmutableArray<(object, ObjSet)> points)
     {
         _root = root;
         _facts = facts;
+        _points = points;
     }
+
+    /// The objects a variable is known to hold (null: unknown).
+    public ObjSet? PointsTo(object key)
+    {
+        foreach (var (k, o) in _points)
+            if (SymbolOrCapture.Comparer.Equals(k, key)) return o;
+        return null;
+    }
+
+    /// Records the objects a variable holds after an assignment (null: unknown).
+    public void SetPointsTo(object key, ObjSet? objects)
+    {
+        for (var i = 0; i < _points.Length; i++)
+        {
+            if (!SymbolOrCapture.Comparer.Equals(_points[i].Key, key)) continue;
+            _points = objects == null ? _points.RemoveAt(i) : Equals(_points[i].Objects, objects) ? _points : _points.SetItem(i, (key, objects));
+            return;
+        }
+        if (objects != null && _points.Length < MaxPointsTo) _points = _points.Add((key, objects));
+    }
+
+    /// Records a strong update of a member path (Task 27).
+    public void SetHolds(AccessPath path, TaintValue value) => _facts = MemberFacts.SetHolds(_facts, path, value);
+
+    /// Forgets the guard parts of the facts `guards` holds for and the strong updates `holds` holds for.
+    public void ForgetParts(Func<AccessPath, bool> guards, Func<AccessPath, bool> holds) => _facts = MemberFacts.RemoveParts(_facts, guards, holds);
 
     public bool HasFacts => !_facts.IsEmpty;
 
@@ -500,14 +576,18 @@ internal sealed class TaintState
 
     public void ForgetAll() => _facts = ImmutableArray<MemberFact>.Empty;
 
+    /// Forgets what every variable holds (a write through a `ref` may assign any of them).
+    public void ForgetPointsTo() => _points = ImmutableArray<(object, ObjSet)>.Empty;
+
     public IEnumerable<KeyValuePair<object, TaintValue>> Entries =>
         TaintMap.Entries(_root).Select(e => new KeyValuePair<object, TaintValue>(e.Key, e.Value));
 
     public TaintValue Get(object key) => TaintMap.Get(_root, key, TaintMap.Hash(key), 0)?.Value ?? TaintValue.Clean;
 
-    /// A strong update (an assignment).
+    /// A strong update (an assignment). The map keeps taint only (objects and members are facts: Task 27).
     public void Set(object key, TaintValue value)
     {
+        value = value.WithoutIdentity();
         var hash = TaintMap.Hash(key);
         if (!value.Any)
         {
@@ -523,6 +603,7 @@ internal sealed class TaintState
     public void Add(object key, TaintValue value)
     {
         if (!value.Any) return;
+        value = value.WithoutIdentity();
         var hash = TaintMap.Hash(key);
         var old = TaintMap.Get(_root, key, hash, 0);
         if (old == null)
@@ -534,10 +615,10 @@ internal sealed class TaintState
         if (!joined.SameTaint(old.Value)) _root = TaintMap.Set(_root, new TaintMap.Entry(key, hash, joined), 0);
     }
 
-    public TaintState Clone() => new(_root, _facts);
+    public TaintState Clone() => new(_root, _facts, _points);
 
-    /// Joins `other` into this state; true when this state changed (in the lattice: a value rose or a member fact was
-    /// lost).
+    /// Joins `other` into this state; true when this state changed (in the lattice: a value rose or a member fact or a
+    /// points-to fact was lost or grew).
     public bool JoinWith(TaintState other)
     {
         var changed = false;
@@ -546,6 +627,28 @@ internal sealed class TaintState
         {
             _facts = MemberFacts.Meet(_facts, other._facts, out var lost);
             changed |= lost;
+        }
+        if (!_points.IsEmpty && _points != other._points)
+        {
+            ImmutableArray<(object, ObjSet)>.Builder? kept = null;
+            for (var i = 0; i < _points.Length; i++)
+            {
+                var (key, objects) = _points[i];
+                var theirs = other.PointsTo(key);
+                var met = theirs == null ? null : ObjSet.Union(objects, theirs);
+                if (kept == null && ReferenceEquals(met, objects)) continue;
+                if (kept == null)
+                {
+                    kept = ImmutableArray.CreateBuilder<(object, ObjSet)>(_points.Length);
+                    for (var j = 0; j < i; j++) kept.Add(_points[j]);
+                }
+                if (met != null) kept.Add((key, met));
+            }
+            if (kept != null)
+            {
+                _points = kept.ToImmutable();
+                changed = true;
+            }
         }
         return changed;
     }

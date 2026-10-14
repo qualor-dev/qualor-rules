@@ -69,11 +69,20 @@ internal sealed class AccessPath : IEquatable<AccessPath>
 /// What a guard established for one access path on this branch (must-hold): the path's value is clean for every rule
 /// (All: it equals a constant) or for Rules; Pending: the calls of `not-null` guards that were given the path's value, still
 /// unchanged since (a null check of the call's held result turns one into Rules).
+///
+/// Holds (Task 27, strong updates): the path was last assigned this value on every path here, and nothing since may have
+/// changed it (an assignment of its root, a write of a member on it through any object, a call that may write it: see
+/// MethodAnalyzer.ForgetForCall), so a read of the path is exactly that value: not the object's whole taint, not the heap.
 internal sealed record MemberFact(AccessPath Path, bool All, ImmutableHashSet<string> Rules, ImmutableHashSet<IOperation> Pending)
 {
+    public TaintValue? Holds { get; init; }
+
     public bool Cleans => All || Rules.Count > 0;
 
-    public bool Empty => !All && Rules.Count == 0 && Pending.Count == 0;
+    /// A guard's part: All, Rules or Pending.
+    public bool Guards => All || Rules.Count > 0 || Pending.Count > 0;
+
+    public bool Empty => !Guards && Holds == null;
 
     /// The fact on both sides of a join: what holds on each of them.
     public MemberFact Meet(MemberFact other)
@@ -81,9 +90,16 @@ internal sealed record MemberFact(AccessPath Path, bool All, ImmutableHashSet<st
         var all = All && other.All;
         var rules = All ? other.Rules : other.All ? Rules : Rules.Intersect(other.Rules);
         var pending = Pending.Count == 0 || other.Pending.Count == 0 ? ImmutableHashSet<IOperation>.Empty : Pending.Intersect(other.Pending);
-        if (all == All && rules.Count == Rules.Count && pending.Count == Pending.Count) return this;
-        return new MemberFact(Path, all, rules, pending);
+        var holds = Holds == null || other.Holds == null ? null : Holds.Join(other.Holds);
+        if (all == All && rules.Count == Rules.Count && pending.Count == Pending.Count && ReferenceEquals(holds, Holds)) return this;
+        return new MemberFact(Path, all, rules, pending) { Holds = holds };
     }
+
+    /// The fact without its guard part.
+    public MemberFact? WithoutGuards() => Holds == null ? null : Guards ? new MemberFact(Path, false, ImmutableHashSet<string>.Empty, ImmutableHashSet<IOperation>.Empty) { Holds = Holds } : this;
+
+    /// The fact without its strong update.
+    public MemberFact? WithoutHolds() => !Guards ? null : Holds == null ? this : this with { Holds = null };
 }
 
 /// The member facts of a state (Task 21): a must-hold set, so a join keeps a fact only where every predecessor has it
@@ -109,10 +125,41 @@ internal static class MemberFacts
             var all = f.All || fact.All;
             var rules = f.Rules.Union(fact.Rules);
             var pending = f.Pending.Union(fact.Pending);
-            if (all == f.All && rules.Count == f.Rules.Count && pending.Count == f.Pending.Count) return facts;
-            return facts.SetItem(i, new MemberFact(f.Path, all, rules, pending));
+            var holds = fact.Holds ?? f.Holds;
+            if (all == f.All && rules.Count == f.Rules.Count && pending.Count == f.Pending.Count && ReferenceEquals(holds, f.Holds)) return facts;
+            return facts.SetItem(i, new MemberFact(f.Path, all, rules, pending) { Holds = holds });
         }
         return facts.Length >= MaxFacts ? facts : facts.Add(fact);
+    }
+
+    /// The facts with the strong update of `path` set to `value` (a fact for the path is kept for its guard part).
+    public static ImmutableArray<MemberFact> SetHolds(ImmutableArray<MemberFact> facts, AccessPath path, TaintValue value)
+    {
+        for (var i = 0; i < facts.Length; i++)
+            if (facts[i].Path.Equals(path)) return facts.SetItem(i, facts[i] with { Holds = value });
+        return facts.Length >= MaxFacts ? facts : facts.Add(new MemberFact(path, false, ImmutableHashSet<string>.Empty, ImmutableHashSet<IOperation>.Empty) { Holds = value });
+    }
+
+    /// The facts without the guard parts `guards` holds for and the strong updates `holds` holds for.
+    public static ImmutableArray<MemberFact> RemoveParts(ImmutableArray<MemberFact> facts, Func<AccessPath, bool> guards, Func<AccessPath, bool> holds)
+    {
+        if (facts.IsEmpty) return facts;
+        ImmutableArray<MemberFact>.Builder? kept = null;
+        for (var i = 0; i < facts.Length; i++)
+        {
+            var f = facts[i];
+            MemberFact? g = f;
+            if (g.Guards && guards(f.Path)) g = g.WithoutGuards();
+            if (g != null && g.Holds != null && holds(f.Path)) g = g.WithoutHolds();
+            if (kept == null && ReferenceEquals(g, f)) continue;
+            if (kept == null)
+            {
+                kept = ImmutableArray.CreateBuilder<MemberFact>(facts.Length);
+                for (var j = 0; j < i; j++) kept.Add(facts[j]);
+            }
+            if (g != null) kept.Add(g);
+        }
+        return kept == null ? facts : kept.ToImmutable();
     }
 
     /// The facts both sides hold (`a` itself when nothing is lost).

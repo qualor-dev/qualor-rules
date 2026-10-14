@@ -63,6 +63,9 @@ internal sealed class AnalysisContext
     /// The view-model entries of types (Task 22), cached for the run.
     public ModelKeys ModelKeys { get; } = new();
 
+    /// The abstract objects and member slots of the run (Task 27).
+    public ObjectTable Objects { get; } = new();
+
     /// The `unmodelled-external` policy: an external member no propagator names passes its receiver's and arguments'
     /// taint to a string-like or collection result.
     public bool UnmodelledPasses { get; }
@@ -156,9 +159,14 @@ internal sealed class AnalysisContext
 ///   captured variable (strong for a local, a parameter, a static field or a field of `this`).
 /// - `this` is the label of the receiver; a field or auto-property read is its instance's value (element-insensitive
 ///   objects: `this` for an own one), its state in this body (strong updates for own and static ones), and the heap's
-///   request data for it (Heap: field-based, across methods and projects, scoped to the request entry point). A write of a source field or
+///   request data for it (Heap: across methods and projects, scoped to the request entry point, per abstract object
+///   where the instance's objects are known: Task 27, "Objects and strong updates" below). A write of a source field or
 ///   auto-property taints its symbol only (its state here, the heap), never the object holding it; other members
 ///   (tuple elements, external structs) are written into their instance.
+/// - Objects (Task 27, decision R-8): a value carries the abstract objects it may be (an allocation site, a bound model,
+///   a parameter's own object in a symbolic body; at most ObjSet.MaxObjects, else unknown) and the members it is known to
+///   hold exactly; variables keep them as facts (points-to facts, strong updates of `v.M`). Only operations whose value
+///   is the object they were given keep them (KeepsIdentity).
 /// - Values of a scalar type (sources.yml `scalars`, enums, void) are always clean.
 /// - Calls and property accessors of members declared in source: their targets (Dispatch: class hierarchy) apply their
 ///   summaries: the arguments are substituted for the callee's labels in its local effects (result, receiver, ref and
@@ -214,8 +222,9 @@ internal sealed partial class MethodAnalyzer
     /// False when the fixed point hit its iteration cap (the result is then partial).
     public bool Complete { get; private set; } = true;
 
-    /// The join of the values the body returns (`return x`, an expression body, `yield return x`).
-    public TaintValue ReturnValue { get; private set; } = TaintValue.Clean;
+    /// The join of the values the body returns (`return x`, an expression body, `yield return x`); Bottom before the
+    /// first (Task 27: the objects and members of what it returns are joined over its returns).
+    public TaintValue ReturnValue { get; private set; } = TaintValue.Bottom;
 
     /// Whether ReturnText is kept (a string method's body).
     public bool TrackReturnText { get; init; }
@@ -361,13 +370,26 @@ internal sealed partial class MethodAnalyzer
     {
         if (operation == null) return TaintValue.Clean;
         var value = Transfer(operation, state);
+        // Task 27: only an operation whose value is the object it was given (a variable, a conversion, a branch, a call's
+        // returned object, an allocation, a member's exactly known value) keeps objects and members.
+        if (value.HasIdentity && !KeepsIdentity(operation)) value = value.WithoutIdentity();
         return value.Any && operation.Type is { } type && _ctx.Sources.IsScalar(type) ? TaintValue.Clean : value;
     }
+
+    private static bool KeepsIdentity(IOperation operation) => operation is ILocalReferenceOperation or IParameterReferenceOperation
+        or IFlowCaptureReferenceOperation or IInstanceReferenceOperation or IConversionOperation { OperatorMethod: null } or IAwaitOperation
+        or IConditionalOperation or ICoalesceOperation or IInvocationOperation or IObjectCreationOperation or IAnonymousObjectCreationOperation
+        or IArrayCreationOperation or ICollectionExpressionOperation or IPropertyReferenceOperation or IFieldReferenceOperation
+        or ISimpleAssignmentOperation or IArgumentOperation or IDeclarationExpressionOperation or ILiteralOperation or IDefaultValueOperation;
 
     private TaintValue Transfer(IOperation operation, TaintState state)
     {
         switch (operation)
         {
+            // Task 27: null is no object (every member of it known: the identity of a join).
+            case ILiteralOperation { ConstantValue: { HasValue: true, Value: null } }:
+            case IDefaultValueOperation { Type.IsReferenceType: true }:
+                return TaintValue.Bottom;
             case ILiteralOperation:
             case IDefaultValueOperation:
             case ITypeOfOperation:
@@ -383,24 +405,29 @@ internal sealed partial class MethodAnalyzer
                 return TaintValue.Clean;
 
             case IInstanceReferenceOperation instance:
-                return instance.ReferenceKind == InstanceReferenceKind.ContainingTypeInstance ? _body.This : TaintValue.Clean;
+                return instance.ReferenceKind == InstanceReferenceKind.ContainingTypeInstance ? Identity(AccessPath.This, _body.This, state) : TaintValue.Clean;
             case IFlowAnonymousFunctionOperation lambda:
                 return _body.LambdaReturn(lambda.Symbol);
             case IDelegateCreationOperation creation:
                 return Value(creation.Target, state);
 
             case ILocalReferenceOperation local:
-                return _body.Local(local.Local, state.Get(local.Local));
+                return Identity(local.Local, _body.Local(local.Local, state.Get(local.Local)), state);
             case IParameterReferenceOperation parameter:
-                return _body.Local(parameter.Parameter, state.Get(parameter.Parameter));
+                return Identity(parameter.Parameter, _body.Local(parameter.Parameter, state.Get(parameter.Parameter)), state);
             case IFlowCaptureReferenceOperation capture:
-                return state.Get(capture.Id);
+                return Identity(capture.Id, state.Get(capture.Id), state);
             case IFieldReferenceOperation field:
                 return Guarded(field, ReadMember(field, field.Field, Value(field.Instance, state), state), state);
 
             case IFlowCaptureOperation capture:
-                state.Set(capture.Id, Value(capture.Value, state));
+            {
+                var value = Value(capture.Value, state);
+                if (state.HasFacts) state.Forget(p => SymbolOrCapture.Comparer.Equals(p.Root, capture.Id));
+                state.Set(capture.Id, value);
+                RecordIdentity(capture.Id, capture.Value.Type, value, state);
                 return TaintValue.Clean;
+            }
 
             case ISimpleAssignmentOperation assignment:
             {
@@ -456,7 +483,8 @@ internal sealed partial class MethodAnalyzer
                 var value = Call(creation, creation.Constructor, null, creation.Arguments, state, false);
                 // The CFG lowers initializers into assignments on a flow capture; one left here is evaluated as such.
                 if (creation.Initializer != null) value = value.Join(Value(creation.Initializer, state));
-                return value;
+                // Task 27: the object made here is its allocation site; its constructor's strong updates of `this` are known.
+                return value with { Objects = ObjSet.Of(_ctx.Objects.Site(creation.Syntax)), Members = value.Members };
             }
 
             case IBinaryOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String } concatenation:
@@ -517,13 +545,19 @@ internal sealed partial class MethodAnalyzer
                 return Value(declaration.Expression, state);
             case IArrayCreationOperation array:
                 foreach (var size in array.DimensionSizes) Value(size, state);
-                return Value(array.Initializer, state);
+                return Value(array.Initializer, state).WithoutIdentity() with { Objects = ObjSet.Of(_ctx.Objects.Site(array.Syntax)) };
             case IAnonymousObjectCreationOperation anonymous:
             {
                 var value = TaintValue.Clean;
                 foreach (var initializer in anonymous.Initializers)
                     value = value.Join(initializer is ISimpleAssignmentOperation a ? Value(a.Value, state) : Value(initializer, state));
-                return value;
+                return value.WithoutIdentity() with { Objects = ObjSet.Of(_ctx.Objects.Site(anonymous.Syntax)) };
+            }
+            case ICollectionExpressionOperation collection:
+            {
+                var value = TaintValue.Clean;
+                foreach (var child in collection.ChildOperations) value = value.Join(Value(child, state));
+                return value.WithoutIdentity() with { Objects = ObjSet.Of(_ctx.Objects.Site(collection.Syntax)) };
             }
 
             case IDynamicMemberReferenceOperation member when KeyedStores.IsViewBag(member.Instance):
@@ -536,6 +570,11 @@ internal sealed partial class MethodAnalyzer
                 var value = Value(dynamic.Operation, state);
                 var arguments = new TaintValue[dynamic.Arguments.Length];
                 for (var k = 0; k < arguments.Length; k++) value = value.Join(arguments[k] = Value(dynamic.Arguments[k], state));
+                if (_body.RootSymbolic)
+                {
+                    Escape(dynamic.Operation, value);
+                    for (var k = 0; k < arguments.Length; k++) Escape(dynamic.Arguments[k], arguments[k]);
+                }
                 DynamicSinks(dynamic, dynamic.Arguments, k => dynamic.GetArgumentName(k), arguments);
                 state.ForgetAll();
                 return value;
@@ -547,6 +586,8 @@ internal sealed partial class MethodAnalyzer
                 var arguments = new TaintValue[creation.Arguments.Length];
                 var value = TaintValue.Clean;
                 for (var k = 0; k < arguments.Length; k++) value = value.Join(arguments[k] = Value(creation.Arguments[k], state));
+                if (_body.RootSymbolic)
+                    for (var k = 0; k < arguments.Length; k++) Escape(creation.Arguments[k], arguments[k]);
                 if (creation.Initializer != null) value = value.Join(Value(creation.Initializer, state));
                 DynamicSinks(creation, creation.Arguments, k => creation.GetArgumentName(k), arguments);
                 state.ForgetAll();
@@ -566,12 +607,17 @@ internal sealed partial class MethodAnalyzer
                 // Unmodelled operation kinds (tuples, collection expressions, spreads, ranges, `with`, dynamic and
                 // invalid operations, ...): conservatively the join of their children.
                 var value = TaintValue.Clean;
-                foreach (var child in operation.ChildOperations) value = value.Join(Value(child, state));
                 // A call the engine does not bind (dynamic, a function pointer) may change anything: every member fact
-                // ends (fix round 1, M2).
-                if (operation is IDynamicInvocationOperation or IDynamicObjectCreationOperation or IDynamicIndexerAccessOperation
-                    or IFunctionPointerInvocationOperation)
-                    state.ForgetAll();
+                // ends (fix round 1, M2), and what it is given escapes (Task 27).
+                var unbound = operation is IDynamicInvocationOperation or IDynamicObjectCreationOperation or IDynamicIndexerAccessOperation
+                    or IFunctionPointerInvocationOperation;
+                foreach (var child in operation.ChildOperations)
+                {
+                    var v = Value(child, state);
+                    if (unbound && _body.RootSymbolic) Escape(child, v);
+                    value = value.Join(v);
+                }
+                if (unbound) state.ForgetAll();
                 return value;
             }
         }
@@ -807,13 +853,129 @@ internal sealed partial class MethodAnalyzer
     private TaintValue LocalValue(ILocalSymbol local, TaintValue value) =>
         _ctx.Sources.IsScalar(local.Type) ? TaintValue.Clean : value;
 
-    /// A strong update of a local or parameter (a captured one is also a captured write of this body).
+    /// A strong update of a local or parameter (a captured one is also a captured write of this body); the objects and
+    /// members it now holds are its facts (Task 27).
     private void SetLocal(ISymbol symbol, TaintValue value, TaintState state)
     {
         ForgetRoot(symbol, state);
         state.Set(symbol, value);
         _body.Assigned(symbol, value);
+        if (symbol is ILocalSymbol { RefKind: RefKind.None } or IParameterSymbol { RefKind: RefKind.None })
+            RecordIdentity(symbol, symbol is ILocalSymbol l ? l.Type : ((IParameterSymbol)symbol).Type, value, state);
     }
+
+    // ---- Objects and strong updates (Task 27, decision R-8) ----
+
+    /// A variable's value (a local, a parameter, a flow capture, `this`) with what it is known to hold: its objects (the
+    /// points-to fact; `this`: the body's own object, when its callers' objects stand for it) and the members its strong
+    /// updates fix (`v.M` paths).
+    private TaintValue Identity(object root, TaintValue value, TaintState state)
+    {
+        var objects = ReferenceEquals(root, AccessPath.This) ? _body.This.Objects : state.PointsTo(root);
+        MemberMap? members = null;
+        if (state.HasFacts)
+        {
+            ImmutableDictionary<ISymbol, TaintValue>.Builder? known = null;
+            foreach (var f in state.Facts)
+            {
+                if (f.Holds == null || f.Path.Members.Length != 1 || !SymbolOrCapture.Comparer.Equals(f.Path.Root, root)) continue;
+                (known ??= ImmutableDictionary.CreateBuilder<ISymbol, TaintValue>(SymbolEqualityComparer.Default))[f.Path.Members[0]] = f.Holds;
+            }
+            if (known != null) members = MemberMap.Of(known.ToImmutable());
+        }
+        if (objects == null && members == null) return value.HasIdentity ? value.WithoutIdentity() : value;
+        return value with { Objects = objects, Members = members };
+    }
+
+    /// Records what a variable was assigned: its objects (none recorded when a lambda or local function of the method
+    /// may assign it) and the members the value is known to hold, as strong updates of `root.M`.
+    private void RecordIdentity(object root, ITypeSymbol? type, TaintValue value, TaintState state)
+    {
+        _nestedEffects ??= NestedEffects();
+        var nested = _nestedEffects.Contains(root);
+        state.SetPointsTo(root, nested ? null : value.Objects);
+        if (nested || value.Members is not { IsAll: false } members) return;
+        foreach (var (member, v) in members.Values)
+            if (state.Facts.Length < MaxHolds && MemberPath(root, type, member) is { } path && CanHold(path)) state.SetHolds(path, v);
+    }
+
+    /// Strong updates are recorded while the state holds fewer facts (guards keep the rest of MemberFacts.MaxFacts).
+    private const int MaxHolds = MemberFacts.MaxFacts - 16;
+
+    /// The access path `root.M`.
+    private static AccessPath MemberPath(object root, ITypeSymbol? type, ISymbol member)
+    {
+        var types = new List<ITypeSymbol>(2);
+        if (type != null && (ReferenceEquals(root, AccessPath.This) || MemberFacts.IsChangeable(type))) types.Add(type);
+        var memberType = member is IFieldSymbol f ? f.Type : (member as IPropertySymbol)?.Type;
+        if (MemberFacts.IsChangeable(memberType)) types.Add(memberType!);
+        return new AccessPath(root, ImmutableArray.Create(member.OriginalDefinition), types.ToImmutableArray());
+    }
+
+    /// The variable an operation is (a local, a value parameter, `this`, a flow capture), with its type, or null.
+    private static (object Root, ITypeSymbol? Type)? RootOf(IOperation? operation)
+    {
+        while (operation is IConversionOperation { OperatorMethod: null } c) operation = c.Operand;
+        return operation switch
+        {
+            ILocalReferenceOperation { Local: { RefKind: RefKind.None } l } => (l, l.Type),
+            IParameterReferenceOperation { Parameter: { RefKind: RefKind.None } p } => (p, p.Type),
+            IInstanceReferenceOperation { ReferenceKind: InstanceReferenceKind.ContainingTypeInstance } i => (AccessPath.This, i.Type),
+            IFlowCaptureReferenceOperation r => (r.Id, r.Type),
+            _ => null,
+        };
+    }
+
+    /// The objects an operation's value holds, read without evaluating it again: a variable's points-to fact, `this`'s
+    /// own object; unknown (null) for anything else.
+    private TaintValue? KnownIdentity(IOperation? operation, TaintState state)
+    {
+        while (operation is IConversionOperation { OperatorMethod: null } c) operation = c.Operand;
+        return RootOf(operation) is { } root
+            ? Identity(root.Root, TaintValue.Clean, state)
+            : null;
+    }
+
+    /// Whether every object of a known set is a parameter object of a body of this unit (a member read through it is a
+    /// member slot).
+    private bool AllKeptParams(ObjSet objects)
+    {
+        foreach (var o in objects.Ids)
+        {
+            var (kind, owner, _) = _ctx.Objects.Describe(o);
+            if (kind != ObjKind.Param || !_body.Keeps(owner)) return false;
+        }
+        return true;
+    }
+
+    /// The heap's part of a member read through `objects`: unknown objects (null), a static member or a member of a
+    /// type that is never request data read the member's field location; known objects their locations and the writes
+    /// through unknown objects; a parameter object of this unit's bodies is the member slot of that parameter (a label,
+    /// substituted at each call). Empty objects (null itself) read nothing.
+    private TaintValue MemberHeap(ISymbol member, ObjSet? objects, IOperation at, bool neverSource)
+    {
+        if (!member.IsStatic && objects != null && objects.IsEmpty) return TaintValue.Clean;
+        var heap = TaintValue.Clean;
+        var labels = TaintValue.Clean;
+        var unknown = member.IsStatic || objects == null;
+        var concrete = false;
+        if (!unknown)
+        {
+            foreach (var o in objects!.Ids)
+            {
+                var (kind, owner, slot) = _ctx.Objects.Describe(o);
+                if (kind != ObjKind.Param) concrete = true;
+                else if (!neverSource && _body.Keeps(owner)) labels = labels.Join(TaintValue.Param(owner, _ctx.Objects.MemberSlot(slot, SymbolKeys.Definition(member))));
+                else unknown = true;
+            }
+        }
+        if (unknown) heap = _body.HeapRead(member);
+        else if (concrete) heap = _body.HeapRead(member, objects);
+        var value = heap.Join(labels);
+        return value.Any ? value.Step(at.Syntax.GetLocation(), $"read from {_ctx.Name(member)}") : value;
+    }
+
+    private static TaintValue IdentityOf(TaintValue value) => value.HasIdentity ? TaintValue.Clean with { Objects = value.Objects, Members = value.Members } : TaintValue.Clean;
 
     // ---- Fields and auto-properties ----
 
@@ -825,17 +987,26 @@ internal sealed partial class MethodAnalyzer
     /// its state in this body, and the heap's request data for it. An own member of a type that is never request data
     /// (sources.yml `parameter-types`: an interface is a DI service, a scalar) does not take the receiver's value: a
     /// request-bound object's data members carry it, its injected services do not.
+    ///
+    /// Task 27: a member the instance is known to hold exactly (its strong update) is that value alone. Otherwise the heap's part goes through the instance's objects (MemberHeap); a read through only
+    /// this unit's parameter objects is that parameter's member slot, which stands for the instance's value too (a call
+    /// site gives its argument's whole taint when the member is not known exactly).
     private TaintValue ReadMember(IOperation operation, ISymbol member, TaintValue instance, TaintState state)
     {
-        if (instance.Any && member is IFieldSymbol or IPropertySymbol && !member.IsStatic
-            && _ctx.Sources.IsNeverSourceType(member is IFieldSymbol f ? f.Type : ((IPropertySymbol)member).Type))
-            instance = TaintValue.Clean;
-        var value = instance.Join(state.Get(member.OriginalDefinition));
-        if (_body.IsHeapMember(member))
-        {
-            var heap = _body.HeapRead(member);
-            if (heap.Any) value = value.Join(heap.Step(operation.Syntax.GetLocation(), $"read from {_ctx.Name(member)}"));
-        }
+        var definition = member.OriginalDefinition;
+        // (All: nothing known yet, e.g. a view's model no write has reached: read as unknown.)
+        if (!member.IsStatic && instance.Members is { IsAll: false } known && known.TryGet(definition, out var exact))
+            return exact.Any ? exact.Step(operation.Syntax.GetLocation(), $"read from {_ctx.Name(member)}") : exact;
+        if (state.HasFacts && PathOf(operation, true) is { } path && state.Fact(path)?.Holds is { } holds)
+            return holds.Any ? holds.Step(operation.Syntax.GetLocation(), $"read from {_ctx.Name(member)}") : holds;
+        var neverSource = member is IFieldSymbol or IPropertySymbol && !member.IsStatic
+            && _ctx.Sources.IsNeverSourceType(member is IFieldSymbol f ? f.Type : ((IPropertySymbol)member).Type);
+        var heapMember = _body.IsHeapMember(member);
+        var objects = member.IsStatic ? null : instance.Objects;
+        var slotOnly = heapMember && !neverSource && objects is { IsEmpty: false } && AllKeptParams(objects);
+        var value = instance.Any && !neverSource && !slotOnly ? instance.WithoutIdentity() : TaintValue.Clean;
+        value = value.Join(state.Get(definition));
+        if (heapMember) value = value.Join(MemberHeap(member, objects, operation, neverSource));
         return value;
     }
 
@@ -844,13 +1015,18 @@ internal sealed partial class MethodAnalyzer
     /// heap write and, for an own one, a strong update of its state in this body; the object that holds it is not
     /// written (fix round 1 of Task 8, I1: its other members stay clean). Any other member (a tuple element, an external
     /// struct's field) is written into its instance as before (element-insensitive, Task 7 I3).
-    private void AssignMember(ISymbol member, IOperation? instance, TaintValue value, TaintState state, IOperation assignment)
+    ///
+    /// Task 27: the write goes to the instance's objects (Body.HeapWrite); the written path (`x.M`, `this.M`, a capture's
+    /// member) holds exactly the value until something may change it (a strong update: the facts of every path that
+    /// mentions the member were already forgotten by ForgetWritten).
+    private void AssignMember(ISymbol member, IOperation? instance, TaintValue instanceValue, TaintValue value, TaintState state, IOperation assignment, IOperation? target)
     {
         var named = Named(value, assignment, member.Name);
         if (_body.IsHeapMember(member))
         {
             if (IsOwn(instance)) state.Set(member.OriginalDefinition, named);
-            _body.HeapWrite(member, named);
+            _body.HeapWrite(member, named, member.IsStatic ? null : instanceValue.Objects);
+            if (target != null && state.Facts.Length < MaxHolds && PathOf(target, true) is { } path && CanHold(path)) state.SetHolds(path, named);
             return;
         }
         if (IsOwn(instance))
@@ -887,6 +1063,7 @@ internal sealed partial class MethodAnalyzer
             case IFlowCaptureReferenceOperation capture:
             {
                 state.Set(capture.Id, value);
+                RecordIdentity(capture.Id, capture.Type, value, state);
                 // An lvalue capture: the CFG spilled the assignment's target; assign the variable itself.
                 if (!_captured.TryGetValue(capture.Id, out var targets)) break;
                 if (targets.Count == 1)
@@ -900,10 +1077,12 @@ internal sealed partial class MethodAnalyzer
                 break;
             }
             case IFieldReferenceOperation field:
-                Value(field.Instance, state);
+            {
+                var instance = Value(field.Instance, state);
                 ForgetWritten(field, state);
-                AssignMember(field.Field, field.Instance, value, state, assignment);
+                AssignMember(field.Field, field.Instance, instance, value, state, assignment, field);
                 break;
+            }
             case IPropertyReferenceOperation property:
                 ForgetWritten(property, state);
                 AssignProperty(property, value, state, assignment);
@@ -928,8 +1107,9 @@ internal sealed partial class MethodAnalyzer
                 _body.KeyedWrite(KeyedStores.ViewBagLocation(member.MemberName), Named(value, assignment, "ViewBag." + member.MemberName));
                 break;
             default:
-                // A target the engine does not follow (a dynamic member, an event): what it changes is unknown.
+                // A target the engine does not follow (a dynamic member, an event, a ref): what it changes is unknown.
                 state.ForgetAll();
+                state.ForgetPointsTo();
                 Value(target, state);
                 break;
         }
@@ -989,7 +1169,7 @@ internal sealed partial class MethodAnalyzer
         if (_body.IsHeapMember(member))
         {
             if (IsOwn(instance)) state.Add(member.OriginalDefinition, value);
-            _body.HeapWrite(member, value);
+            _body.HeapWrite(member, value, member.IsStatic ? null : KnownIdentity(instance, state)?.Objects);
             return;
         }
         if (IsOwn(instance))
@@ -1048,6 +1228,13 @@ internal sealed partial class MethodAnalyzer
         return value.Any ? value.Step(read.Syntax.GetLocation(), $"read from {Describe(location)}") : value;
     }
 
+    /// The view's model read under its type's entries (Task 27: what all of them know of its members).
+    private TaintValue Keyed(IEnumerable<KeyedLocation> locations, IOperation read)
+    {
+        var value = _body.KeyedRead(locations);
+        return value.Any ? value.Step(read.Syntax.GetLocation(), "read from the view's model") : value;
+    }
+
     /// A callee that gives a type-parameter-typed parameter to a view as its model (KeyedLocation.Generic in its summary):
     /// the argument is written as the view model under the argument's own static type.
     private void GenericModels(BodySummary summary, Body callee, IOperation site, string name, Input[] inputs)
@@ -1091,7 +1278,8 @@ internal sealed partial class MethodAnalyzer
         {
             foreach (var i in inputs)
             {
-                if (i.Ordinal != model || !i.Value.Any) continue;
+                // Task 27: also a model without request data (what it knows of its members reaches the view).
+                if (i.Ordinal != model) continue;
                 var named = Named(i.Value, operation, "the view's model");
                 foreach (var entry in _ctx.ModelKeys.Writes(StaticType(i.Operation))) _body.KeyedWrite(entry, named);
             }
@@ -1197,34 +1385,55 @@ internal sealed partial class MethodAnalyzer
 
         var receiver = Value(operation.Instance, state);
         var isVirtual = Dispatch.IsVirtualAccess(property, operation.Instance);
+        // Task 27: what the property's value is known to be (objects, members), from the member read or the getters.
+        TaintValue? identity = null;
+        var unknownIdentity = false;
+        TaintValue Note(TaintValue v)
+        {
+            if (v.HasIdentity) identity = identity == null ? IdentityOf(v) : identity.Join(IdentityOf(v));
+            else unknownIdentity = true;
+            return v.WithoutIdentity();
+        }
         if (SymbolKeys.InSource(property) && !isVirtual && _body.IsHeapMember(property))
         {
             foreach (var a in operation.Arguments) Value(a.Value, state);
-            result = result.Join(ReadMember(operation, property, receiver, state));
+            result = result.Join(Note(ReadMember(operation, property, receiver, state)));
         }
         else if (SymbolKeys.InSource(property) && property.GetMethod is { } getter)
         {
             var inputs = IndexInputs(operation, state, null);
-            foreach (var target in _body.Targets(getter, isVirtual, operation.Instance?.Type))
+            var targets = _body.Targets(getter, isVirtual, operation.Instance?.Type);
+            if (state.HasFacts || _body.RootSymbolic) CallEffects(operation.Instance, receiver, inputs, state, targets, guards: false);
+            foreach (var target in targets)
             {
-                result = result.Join(target.Kind switch
+                result = result.Join(Note(target.Kind switch
                 {
-                    TargetKind.Body => Apply(target.Body!, operation, property, Arguments(receiver, inputs), operation.Instance, inputs, false, state),
+                    TargetKind.Body => Apply(target.Body!, operation, property, Arguments(receiver, inputs), operation.Instance, inputs, false, state, exits: targets.Count == 1),
                     TargetKind.Auto => ReadMember(operation, target.Method.AssociatedSymbol!, receiver, state),
                     TargetKind.External => ExternalRead((IPropertySymbol?)target.Method.AssociatedSymbol ?? property, operation, receiver, inputs),
                     _ => Through(operation, property, receiver.Join(JoinInputs(inputs))),
-                });
+                }));
             }
         }
         else
         {
+            unknownIdentity = true;
             result = result.Join(ExternalRead(property, operation, receiver, IndexInputs(operation, state, null)));
         }
         // A keyed request store entry (ViewData, HttpContext.Items) or the view's model (Task 22).
         if (KeyedStores.IndexerStore(operation, Model()?.Compilation) is { } store)
+        {
             result = result.Join(Keyed(KeyedStores.Location(store, operation.Arguments[0].Value), operation));
+        }
         else if (KeyedStores.IsViewModel(property))
-            foreach (var entry in _ctx.ModelKeys.Reads(operation.Type)) result = result.Join(Keyed(entry, operation));
+        {
+            // The model given to the view, with the members every model it may render is known to hold (Task 27).
+            var model = Keyed(_ctx.ModelKeys.Reads(operation.Type), operation);
+            result = result.Join(model.WithoutIdentity());
+            identity = IdentityOf(model);
+            unknownIdentity = !model.HasIdentity;
+        }
+        if (!unknownIdentity && identity != null) result = result with { Objects = identity.Objects, Members = identity.Members };
         // An element of an allow-list table is one of its constants (`allow-list: literal-tables`).
         if (property.IsIndexer && result.Any && _ctx.Sinks.AllowListRules.Length > 0 && _ctx.AllowLists.IsTable(operation.Instance, Model()?.Compilation))
             result = result.CleanedFor(_ctx.Sinks.AllowListRules);
@@ -1300,7 +1509,7 @@ internal sealed partial class MethodAnalyzer
             var location = KeyedStores.Location(store, operation.Arguments[0].Value);
             _body.KeyedWrite(location, Named(value, assignment, Describe(location)));
         }
-        else if (value.Any && (KeyedStores.IsPartialModel(property) || (KeyedStores.IsViewModel(property) && KeyedStores.IsViewData(operation.Instance?.Type))))
+        else if ((value.Any || value.HasIdentity) && (KeyedStores.IsPartialModel(property) || (KeyedStores.IsViewModel(property) && KeyedStores.IsViewData(operation.Instance?.Type))))
         {
             // `<partial model="…">` gives the partial its model; `ViewData.Model = m` sets the view's model. A view data
             // dictionary given an object or dynamic model is a view engine's own plumbing (a shape renderer that every
@@ -1314,7 +1523,8 @@ internal sealed partial class MethodAnalyzer
             }
         }
         // A setter other than an auto-property's runs code on its receiver: as a call given the receiver (Task 21).
-        if (state.HasFacts && !(SymbolKeys.InSource(property) && _body.IsHeapMember(property))) ForgetForCall(operation.Instance, inputs, state);
+        var setters = SymbolKeys.InSource(property) && property.SetMethod is { } setterMethod ? _body.Targets(setterMethod, Dispatch.IsVirtualAccess(property, operation.Instance), operation.Instance?.Type) : null;
+        if ((state.HasFacts || _body.RootSymbolic) && !(SymbolKeys.InSource(property) && _body.IsHeapMember(property))) CallEffects(operation.Instance, receiver, inputs, state, setters);
         foreach (var hit in _ctx.Sinks.Sinks(property, Access.Set))
             if (value.Any && (hit.Sink.When.Count == 0 || _ctx.Conditions.Check(hit.Sink, assignment, -1, Model()).Holds))
                 SinkReached(hit.RuleId, assignment.Syntax, value, property);
@@ -1325,19 +1535,20 @@ internal sealed partial class MethodAnalyzer
             if (property.SetMethod is not { } setter || (!isVirtual && _body.IsHeapMember(property)))
             {
                 // A get-only auto-property assigned in a constructor has no setter: its hidden field is written.
-                if (_body.IsHeapMember(property)) AssignMember(property, operation.Instance, value, state, assignment);
+                if (_body.IsHeapMember(property)) AssignMember(property, operation.Instance, receiver, value, state, assignment, operation);
                 else if (operation.Instance != null) Write(operation.Instance, value, state);
                 return;
             }
-            foreach (var target in _body.Targets(setter, isVirtual, operation.Instance?.Type))
+            var targets = setters ?? _body.Targets(setter, isVirtual, operation.Instance?.Type);
+            foreach (var target in targets)
             {
                 switch (target.Kind)
                 {
                     case TargetKind.Body:
-                        Apply(target.Body!, assignment, property, Arguments(receiver, inputs), operation.Instance, inputs, false, state);
+                        Apply(target.Body!, assignment, property, Arguments(receiver, inputs), operation.Instance, inputs, false, state, exits: targets.Count == 1);
                         break;
                     case TargetKind.Auto:
-                        AssignMember(target.Method.AssociatedSymbol!, operation.Instance, value, state, assignment);
+                        AssignMember(target.Method.AssociatedSymbol!, operation.Instance, receiver, value, state, assignment, targets.Count == 1 ? operation : null);
                         break;
                     default:
                         if (operation.Instance != null) Write(operation.Instance, value, state);
@@ -1369,9 +1580,9 @@ internal sealed partial class MethodAnalyzer
     private static Func<int, TaintValue> Arguments(TaintValue receiver, Input[] inputs) => slot =>
     {
         if (slot == -1) return receiver;
-        var value = TaintValue.Clean;
-        foreach (var i in inputs) if (i.Ordinal == slot && i.RefKind != RefKind.Out) value = value.Join(i.Value);
-        return value;
+        TaintValue? value = null;
+        foreach (var i in inputs) if (i.Ordinal == slot && i.RefKind != RefKind.Out) value = value == null ? i.Value : value.Join(i.Value);
+        return value ?? TaintValue.Clean;
     };
 
     /// What passes through a member that has no body to analyse: its receiver and arguments, to its result.
@@ -1410,7 +1621,8 @@ internal sealed partial class MethodAnalyzer
         }
         if (n < inputs.Length) Array.Resize(ref inputs, n);
         if (format != null) FormatPlaced(inputs, format);
-        if (state.HasFacts) ForgetForCall(instance, inputs, state);
+        var targets = method == null || method.MethodKind == MethodKind.DelegateInvoke ? null : _body.Targets(method, isVirtual, instance?.Type);
+        if (state.HasFacts || _body.RootSymbolic) CallEffects(instance, receiver, inputs, state, targets);
         if (method != null) GuardArguments(operation, method, inputs, state);
         HigherOrder(inputs, instanceValue, state, definition);
 
@@ -1450,21 +1662,30 @@ internal sealed partial class MethodAnalyzer
         {
             var constructor = method.MethodKind == MethodKind.Constructor;
             var anyBody = false;
-            foreach (var target in _body.Targets(method, isVirtual, instance?.Type))
+            // Task 27: the objects and members of the result, from the bodies' summaries (unknown when another target runs).
+            var identity = TaintValue.Bottom;
+            var unknownIdentity = false;
+            foreach (var target in targets!)
             {
                 switch (target.Kind)
                 {
                     case TargetKind.Body:
+                    {
                         anyBody = true;
-                        result = result.Join(Apply(target.Body!, operation, method, Arguments(instanceValue, inputs), reduced ? null : instance, inputs, constructor, state,
-                            dropViaKey: _ctx.ValueFactories(definition) != null));
+                        var applied = Apply(target.Body!, operation, method, Arguments(instanceValue, inputs), reduced ? null : instance, inputs, constructor, state,
+                            dropViaKey: _ctx.ValueFactories(definition) != null, exits: targets!.Count == 1);
+                        identity = identity.Join(IdentityOf(applied));
+                        result = result.Join(applied.WithoutIdentity());
                         break;
+                    }
                     case TargetKind.External:
+                        unknownIdentity = true;
                         result = External(target.Method, operation, inputs, receiver, thisOperation, reduced && instance != null, all, result, state);
                         break;
                     default:
                     {
-                        var through = Through(operation, method, all);
+                        unknownIdentity = true;
+                        var through = Through(operation, method, all.WithoutIdentity());
                         result = result.Join(through);
                         foreach (var i in inputs)
                             if (i.RefKind is RefKind.Out or RefKind.Ref) Assign(i.Operation, through, state, i.Operation);
@@ -1472,6 +1693,8 @@ internal sealed partial class MethodAnalyzer
                     }
                 }
             }
+            if (!unknownIdentity && !ReferenceEquals(identity, TaintValue.Bottom) && identity.HasIdentity)
+                result = result with { Objects = identity.Objects, Members = identity.Members };
             // A LINQ projection gives what its selector returns, a value factory cache what its factory makes (Task 23).
             if (Produced(definition, inputs) is { } produced)
                 result = sourced.Join(produced.Any ? produced.Step(operation.Syntax.GetLocation(), $"returned by {_ctx.Name(method)}") : produced);
@@ -1616,28 +1839,80 @@ internal sealed partial class MethodAnalyzer
     /// parameters.
     /// With `dropViaKey` (a value-factory shaped call, ruling R-E23) the result loses what reached the callee's return
     /// only as the key of a type-parameter-typed lookup (Label.ViaKey); the rest of its return is kept.
+    ///
+    /// Task 27 (decision R-8): a constructor's receiver is the object its `new` makes; a member slot of the callee is what
+    /// the call's argument holds in that member (MemberArg); the callee's ObjWrites are written into the objects its
+    /// arguments hold; with `exits` (the call's only target), its ParamExit members hold exactly in the arguments that are
+    /// variables (a constructor's: in the object made) after the call.
     private TaintValue Apply(Body callee, IOperation site, ISymbol member, Func<int, TaintValue> argument, IOperation? receiverOperation,
-        Input[] inputs, bool constructor, TaintState state, bool dropViaKey = false)
+        Input[] inputs, bool constructor, TaintState state, bool dropViaKey = false, bool exits = false)
     {
         _body.Depend(callee);
         Location? location = null;
         var name = _ctx.Name(callee.Symbol ?? member);
+        var s = callee.Summary;
+        if (constructor && site is IObjectCreationOperation)
+        {
+            var created = TaintValue.Clean with { Objects = ObjSet.Of(_ctx.Objects.Site(site.Syntax)) };
+            var given = argument;
+            argument = slot => slot == -1 ? created : given(slot);
+        }
+        var raw = argument;
+        Dictionary<int, TaintValue>? members = null;
+        argument = slot =>
+        {
+            if (!ObjectTable.IsMemberSlot(slot)) return raw(slot);
+            members ??= new Dictionary<int, TaintValue>();
+            if (!members.TryGetValue(slot, out var v)) members[slot] = v = MemberArg(slot, raw, site);
+            return v;
+        };
         if (callee.Symbol is { } symbol)
         {
             for (var slot = symbol.IsStatic || constructor ? 0 : -1; slot < symbol.Parameters.Length; slot++)
             {
                 if (slot >= 0 && symbol.Parameters[slot].RefKind == RefKind.Out) continue;
-                var v = argument(slot);
+                var v = argument(slot).WithoutIdentity();
                 if (!v.Any) continue;
                 location ??= site.Syntax.GetLocation();
                 _body.Pass(callee, slot, v.Step(location, $"passed to {name}"));
             }
         }
-        var s = callee.Summary;
+        foreach (var slot in s.MemberSlots)
+        {
+            var v = argument(slot);
+            if (!v.Any) continue;
+            location ??= site.Syntax.GetLocation();
+            _body.Pass(callee, slot, v.Step(location, $"passed to {name}"));
+        }
         if (!s.Heap.IsEmpty) GenericModels(s, callee, site, name, inputs);
         if (s.NoLocalEffects) return TaintValue.Clean;
         location ??= site.Syntax.GetLocation();
-        var result = BodySummary.Substitute(s.Return, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach, dropViaKey);
+        var result = BodySummary.Substitute(s.Return, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach, dropViaKey, _ctx.Objects);
+        foreach (var ((slot, _), (written, symbolic)) in s.ObjWrites)
+        {
+            var v = BodySummary.Substitute(symbolic, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach).WithoutIdentity();
+            if (v.Any) _body.HeapWrite(written, v, argument(slot).Objects);
+        }
+        if (exits && s.ParamExit is { Count: > 0 } paramExit && (callee.Symbol is not { IsAsync: true } || AwaitedDirectly(site)))
+        {
+            foreach (var (slot, fixedMembers) in paramExit)
+            {
+                var substituted = fixedMembers.Select(v => BodySummary.Substitute(v, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach, false, _ctx.Objects));
+                if (substituted is not { IsAll: false } known) continue;
+                if (slot == -1 && constructor && site is IObjectCreationOperation)
+                {
+                    result = result with { Members = known };
+                    continue;
+                }
+                IOperation? given = slot == -1 ? receiverOperation : null;
+                if (slot >= 0)
+                    foreach (var i in inputs)
+                        if (i.Ordinal == slot && i.RefKind == RefKind.None) given = given == null ? i.Operation : null;
+                if (RootOf(given) is not { } root) continue;
+                foreach (var (m, v) in known.Values)
+                    if (state.Facts.Length < MaxHolds && MemberPath(root.Root, root.Type, m) is { } path && CanHold(path)) state.SetHolds(path, v);
+            }
+        }
         if (s.ToThis.Any)
         {
             var written = BodySummary.Substitute(s.ToThis, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach);
@@ -1651,6 +1926,29 @@ internal sealed partial class MethodAnalyzer
                 if (i.Ordinal == ordinal && i.RefKind is RefKind.Ref or RefKind.Out) Assign(i.Operation, v, state, i.Operation);
         }
         return result;
+    }
+
+    /// What a call's argument holds in member M, for the callee's member slot of (k, M) (Task 27): the member's exact
+    /// value when the argument knows it; else the argument's whole taint (unless the member's type is
+    /// never request data) and the heap's part of the member through the argument's objects (MemberHeap: a parameter
+    /// object of the caller becomes the caller's own member slot).
+    private TaintValue MemberArg(int slot, Func<int, TaintValue> argument, IOperation site)
+    {
+        var (k, member) = _ctx.Objects.OfMemberSlot(slot);
+        var a = argument(k);
+        if (a.Members is { IsAll: false } known && known.TryGet(member, out var exact)) return exact.WithoutIdentity();
+        var type = member is IFieldSymbol f ? f.Type : (member as IPropertySymbol)?.Type;
+        var neverSource = type != null && _ctx.Sources.IsNeverSourceType(type);
+        var value = neverSource ? TaintValue.Clean : a.WithoutIdentity();
+        return value.Join(MemberHeap(member, a.Objects, site, neverSource));
+    }
+
+    /// Whether a call is awaited where it is made (an async callee's writes are done when the await returns).
+    private static bool AwaitedDirectly(IOperation call)
+    {
+        var parent = call.Parent;
+        while (parent is IConversionOperation or IInvocationOperation { TargetMethod.Name: "ConfigureAwait" }) parent = parent.Parent;
+        return parent is IAwaitOperation;
     }
 
     /// Lambdas and method groups given to a call get the join of the call's receiver and other arguments in their

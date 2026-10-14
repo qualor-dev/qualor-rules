@@ -155,12 +155,22 @@ internal sealed class SummaryComputer
             foreach (var e in s.Sinks.Values) slots.Add(e.Slot);
             foreach (var c in s.Calls.Values) slots.Add(c.Slot);
             foreach (var (_, v) in s.Heap.Values) foreach (var l in v.Labels) if (l.Owner == body.Id) slots.Add(l.Slot);
+            foreach (var (_, v) in s.ObjWrites.Values) foreach (var l in v.Labels) if (l.Owner == body.Id) slots.Add(l.Slot);
+            // A member slot (Task 27: a member read through a parameter) is part of that parameter's effect.
             var effects = new Dictionary<int, ParamEffect>();
             foreach (var slot in slots)
             {
                 var toReturn = s.Return.Labels.FirstOrDefault(l => l.Owner == body.Id && l.Slot == slot);
                 var (sinks, heap) = Reach(body, slot);
-                effects[slot] = new ParamEffect(toReturn != null, sinks, heap, toReturn?.CleanFor ?? ImmutableHashSet<string>.Empty);
+                foreach (var (member, v) in s.ObjWrites.Values)
+                    if (v.Labels.Any(l => l.Owner == body.Id && l.Slot == slot) && !heap.Contains(member, SymbolEqualityComparer.Default)) heap.Add(member);
+                var key = ObjectTable.IsMemberSlot(slot) ? _ctx.Objects.OfMemberSlot(slot).Slot : slot;
+                var effect = new ParamEffect(toReturn != null, sinks, heap, toReturn?.CleanFor ?? ImmutableHashSet<string>.Empty);
+                if (effects.TryGetValue(key, out var old))
+                    effect = new ParamEffect(old.ToReturn || effect.ToReturn, old.ToSinks.Concat(effect.ToSinks).ToList(),
+                        old.ToHeap.Concat(effect.ToHeap.Where(h => !old.ToHeap.Contains(h, SymbolEqualityComparer.Default))).ToList(),
+                        old.ToReturn && effect.ToReturn ? old.CleanFor.Intersect(effect.CleanFor) : old.ToReturn ? old.CleanFor : effect.CleanFor);
+                effects[key] = effect;
             }
             result.TryAdd(body.Symbol, new Summary(effects, s.Return.Request, s.RequestHeap.Values.ToList()));
         }
@@ -182,11 +192,80 @@ internal sealed class SummaryComputer
             foreach (var e in b.Summary.Sinks.Values)
                 if (e.Slot == k && !cleanFor.Contains(e.RuleId)) sinks.Add((e.RuleId, e.Site.GetLocation(), path.Concat(e.Path).ToList()));
             foreach (var (location, v) in b.Summary.Heap.Values)
-                if (location is ISymbol member && v.Labels.Any(l => l.Owner == b.Id && l.Slot == k) && !heap.Contains(member, SymbolEqualityComparer.Default)) heap.Add(member);
+            {
+                var member = location as ISymbol ?? (location is ObjLocation at ? at.Symbol : null);
+                if (member != null && v.Labels.Any(l => l.Owner == b.Id && l.Slot == k) && !heap.Contains(member, SymbolEqualityComparer.Default)) heap.Add(member);
+            }
             foreach (var c in b.Summary.Calls.Values)
                 if (c.Slot == k) work.Push((c.Callee, c.CalleeSlot, path.Concat(c.Path), cleanFor.Union(c.CleanFor)));
         }
         return (sinks, heap);
+    }
+
+    // ---- Objects (Task 27) ----
+
+    private readonly Dictionary<int, bool> _symbolic = new();
+    private readonly Dictionary<int, HashSet<object>> _topWrites = new();
+
+    private readonly Dictionary<int, Dictionary<HashSet<object>, int>> _absorbed = new();
+
+    /// The callee components' sets a component has taken in, with their sizes then.
+    internal Dictionary<HashSet<object>, int> Absorbed(int scc)
+    {
+        if (!_absorbed.TryGetValue(scc, out var set)) _absorbed[scc] = set = new Dictionary<HashSet<object>, int>(ReferenceEqualityComparer.Instance);
+        return set;
+    }
+
+    /// The members written through unknown objects in a unit's component (Task 27): one set per component, which every
+    /// body of it records into, so it is complete when the component's fixed point is (a cycle of a thousand bodies
+    /// would otherwise pass a growing set around it member by member). It holds every such write, request data or not.
+    internal HashSet<object> TopWritesOf(Unit unit)
+    {
+        if (!_topWrites.TryGetValue(unit.Scc, out var set)) _topWrites[unit.Scc] = set = new HashSet<object>();
+        _builders.TryGetValue(unit.RootBody.Id, out var builder);
+        if (builder != null) builder.TopWrites = set;
+        return set;
+    }
+
+    /// Whether a body's parameters and `this` stand for the objects its calls give (Task 27): a member's body (not a
+    /// lambda or local function) that other code of the solution calls, where no entry point starts (the framework calls
+    /// those), that is no method group (a delegate: anything calls it) and overrides or implements no external member (an
+    /// external caller gives objects no call site of ours substitutes). Its reads of members through them are member
+    /// slots and its writes ObjWrites, both resolved at each call site; any other body reads and writes such members at
+    /// their field locations.
+    internal bool IsSymbolic(Body body)
+    {
+        if (_symbolic.TryGetValue(body.Id, out var cached)) return cached;
+        var result = !body.Nested && body.Symbol is { } method
+            && method.MethodKind is MethodKind.Ordinary or MethodKind.Constructor or MethodKind.PropertyGet or MethodKind.PropertySet
+                or MethodKind.ExplicitInterfaceImplementation
+            && _graph.IsCalled(body.Unit) && !_entries.StartsAt(body.Unit) && !_graph.IsMethodGroup(method) && !OverridesExternal(method);
+        _symbolic[body.Id] = result;
+        return result;
+    }
+
+    private static bool OverridesExternal(IMethodSymbol method)
+    {
+        for (var m = method.OverriddenMethod; m != null; m = m.OverriddenMethod)
+            if (!SymbolKeys.InSource(m)) return true;
+        if (method.ExplicitInterfaceImplementations.Any(i => !SymbolKeys.InSource(i))) return true;
+        if (method.ContainingType is not { } type) return false;
+        foreach (var i in type.AllInterfaces)
+        {
+            if (SymbolKeys.InSource(i)) continue;
+            foreach (var member in i.GetMembers())
+                if (member is IMethodSymbol && SymbolEqualityComparer.Default.Equals(type.FindImplementationForInterfaceMember(member), method)) return true;
+        }
+        return false;
+    }
+
+    /// The objects a body's parameter holds at its entry: the binder's object for a bound parameter of an action (one per
+    /// entry point), the parameter's own object for a symbolic body, else unknown.
+    private ObjSet? EntryObjects(Body body, IParameterSymbol p, bool symbolic)
+    {
+        if (!MemberFacts.MayHold(p.Type) || p.RefKind != RefKind.None) return null;
+        if (_ctx.Sources.IsSourceParameter(p)) return ObjSet.Of(_ctx.Objects.Bound(body.Id, p.Ordinal));
+        return symbolic ? ObjSet.Of(_ctx.Objects.Param(body.Id, p.Ordinal)) : null;
     }
 
     // ---- Seeds: request data at a body's parameters ----
@@ -240,19 +319,18 @@ internal sealed class SummaryComputer
             _queued.Remove(key);
             var body = _graph.Body(key.Body);
             var value = _seeds[key];
-            var summary = body.Summary;
-            foreach (var e in summary.Sinks.Values)
+            var (sinks, calls, heap) = body.Summary.EffectsOf(key.Slot, body.Id);
+            foreach (var e in sinks)
             {
-                if (e.Slot != key.Slot || !value.TaintedFor(e.RuleId)) continue;
+                if (!value.TaintedFor(e.RuleId)) continue;
                 _ctx.Report(e.RuleId, e.Site, value.WitnessFor(_entries.Of(body)).Extend(e.Path), e.Member);
             }
-            foreach (var (location, symbolic) in summary.Heap.Values)
+            foreach (var (location, symbolic) in heap)
             {
                 var written = BodySummary.Through(symbolic, body.Id, key.Slot, value);
                 if (written.Request) _heap.Write(location, written, _entries.WriteReach(body));
             }
-            foreach (var c in summary.Calls.Values)
-                if (c.Slot == key.Slot) Seed(c.Callee, c.CalleeSlot, value.Extend(c.Path).CleanedFor(c.CleanFor));
+            foreach (var c in calls) Seed(c.Callee, c.CalleeSlot, value.Extend(c.Path).CleanedFor(c.CleanFor));
         }
     }
 
@@ -348,6 +426,7 @@ internal sealed class SummaryComputer
             if (enclosing != null)
                 foreach (var (key, value) in enclosing.Entries)
                     if (key is ISymbol) entry.Set(key, value);
+            var symbolic = IsSymbolic(body);
             if (body.Symbol is { } method)
             {
                 var seed = body.IsLambda && unit.LambdaSeeds.TryGetValue(SymbolKeys.Of(method), out var s) ? s : TaintValue.Clean;
@@ -363,13 +442,19 @@ internal sealed class SummaryComputer
                     if (body.IsLambda) value = value.Join(seed);
                     else if (p.RefKind != RefKind.Out) value = value.Join(TaintValue.Param(body.Id, p.Ordinal));
                     if (value.Any) entry.Set(p, value);
+                    if (!body.IsLambda && EntryObjects(body, p, symbolic) is { } objects) entry.SetPointsTo(p, objects);
                 }
             }
 
             var analyzer = new MethodAnalyzer(_ctx, cfg, run) { TrackReturnText = !body.IsLambda && body.Symbol is { } m && ReturnsString(m) };
             all = analyzer.Run(entry, collectAll: nested.Count > 0);
             var builder = Builder(body.Id);
-            builder.Return = builder.Return.Join(analyzer.ReturnValue);
+            builder.Symbolic |= symbolic;
+            if (symbolic) TopWritesOf(unit);
+            // An iterator's value is the sequence, not what it yields: no objects or members of it are known.
+            var returned = body.Symbol is { IsIterator: true } ? analyzer.ReturnValue.WithoutIdentity() : analyzer.ReturnValue;
+            builder.Return = builder.Return.Join(returned);
+            if (symbolic && analyzer.ExitState is { } exitState && body.Symbol is { IsIterator: false } owner) builder.ParamExit = ParamExit(owner, exitState, analyzer);
             if (analyzer.TrackReturnText) builder.ReturnText = BodySummary.JoinText(builder.ReturnText, analyzer.ReturnText);
             if (analyzer.ExitState is { } exit && body.Symbol != null)
             {
@@ -414,6 +499,27 @@ internal sealed class SummaryComputer
             }
             AnalyzeGraph(inner, _graph.Nested(unit, symbol), unit, all, ref changed, ct);
         }
+    }
+
+    /// The members of each parameter's object (and `this`'s) the body overwrote on every path to its exit (Task 27): the
+    /// strong updates at its exit of a path `p.M` whose root parameter the body never assigns.
+    private static Dictionary<int, MemberMap> ParamExit(IMethodSymbol method, TaintState exit, MethodAnalyzer analyzer)
+    {
+        var builders = new Dictionary<int, ImmutableDictionary<ISymbol, TaintValue>.Builder>();
+        foreach (var fact in exit.Facts)
+        {
+            if (fact.Holds == null || fact.Path.Members.Length != 1) continue;
+            int slot;
+            if (ReferenceEquals(fact.Path.Root, AccessPath.This) && !method.IsStatic) slot = -1;
+            else if (fact.Path.Root is IParameterSymbol { RefKind: RefKind.None } p && SymbolEqualityComparer.Default.Equals(p.ContainingSymbol, method) && !analyzer.IsReassigned(p)) slot = p.Ordinal;
+            else continue;
+            if (!builders.TryGetValue(slot, out var b)) builders[slot] = b = ImmutableDictionary.CreateBuilder<ISymbol, TaintValue>(SymbolEqualityComparer.Default);
+            b[fact.Path.Members[0]] = fact.Holds;
+        }
+        var result = new Dictionary<int, MemberMap>();
+        foreach (var (slot, b) in builders)
+            if (MemberMap.Of(b.ToImmutable()) is { } map) result[slot] = map;
+        return result;
     }
 
     /// A method that returns a string (also as a Task's or ValueTask's result): its returned text is kept (Task 23).
@@ -485,9 +591,61 @@ internal sealed class SummaryComputer
             _body = body;
             var root = unit.RootBody;
             This = root.Symbol is { IsStatic: false } ? TaintValue.Param(root.Id, -1) : TaintValue.Clean;
+            if (root.Symbol is { IsStatic: false } && computer.IsSymbolic(root)) This = This with { Objects = ObjSet.Of(computer._ctx.Objects.Param(root.Id, -1)) };
             Reach = computer._entries.Of(body);
             WriteReach = computer._entries.WriteReach(body);
         }
+
+        /// The run's abstract objects and member slots (Task 27).
+        public ObjectTable Objects => _computer._ctx.Objects;
+
+        /// Whether a body's parameter objects stand for its callers' (SummaryComputer.IsSymbolic).
+        public bool IsSymbolic(Body body) => _computer.IsSymbolic(body);
+
+        /// The summary of the unit's root records a member written through unknown objects (a call may end a strong
+        /// update of it) and the parameters whose objects reach calls whose effects are unknown (Task 27).
+        public void RecordTopWrite(ISymbol member) => TopWrites.Add(SymbolKeys.Of(SymbolKeys.Definition(member)));
+
+        /// The members written through unknown objects in this body's component of the call graph (and what it calls).
+        public HashSet<object> TopWrites => _computer.TopWritesOf(_unit);
+
+        /// Adds a callee component's set to this component's, again only when it grew (a component's set is complete when a
+        /// caller outside it runs; it holds every write whatever its value).
+        public void AbsorbTopWrites(HashSet<object> callee)
+        {
+            if (ReferenceEquals(callee, TopWrites)) return;
+            var absorbed = _computer.Absorbed(_unit.Scc);
+            if (absorbed.TryGetValue(callee, out var count) && count == callee.Count) return;
+            absorbed[callee] = callee.Count;
+            TopWrites.UnionWith(callee);
+        }
+
+        /// Whether a body is in this body's component of the call graph (its summary is not final while this runs).
+        public bool SameComponent(Body body) => body.Unit.Scc == _unit.Scc;
+
+        /// A value given to a call whose effects are unknown: the root's parameters it holds the objects of, or whose
+        /// labels (a parameter, a member read through one) it carries, escape.
+        public void RecordEscape(TaintValue value)
+        {
+            var root = _unit.RootBody;
+            var builder = _computer.Builder(root.Id);
+            if (value.Objects is { } objects)
+            {
+                foreach (var o in objects.Ids)
+                {
+                    var (kind, owner, slot) = Objects.Describe(o);
+                    if (kind == ObjKind.Param && owner == root.Id) builder.Escapes.Add(slot);
+                }
+            }
+            foreach (var l in value.Labels)
+                if (l.Owner == root.Id) builder.Escapes.Add(ObjectTable.IsMemberSlot(l.Slot) ? Objects.OfMemberSlot(l.Slot).Slot : l.Slot);
+        }
+
+        /// Whether the unit's root is symbolic: its effects on objects are recorded for its callers (Task 27).
+        public bool RootSymbolic => _computer.IsSymbolic(_unit.RootBody);
+
+        /// The unit's root body.
+        public Body Root => _unit.RootBody;
 
         /// The entry points that reach this body (EntryPoints.Of): what it reads the heap under.
         public Reach Reach { get; }
@@ -505,8 +663,12 @@ internal sealed class SummaryComputer
 
         /// The value of a local or parameter: its state joined with what the unit's lambdas and local functions write to
         /// it (captured writes, flow-insensitive).
-        public TaintValue Local(ISymbol symbol, TaintValue value) =>
-            _unit.HasCapturedWrites ? value.Join(_unit.CapturedWrites.Get(symbol)) : value;
+        public TaintValue Local(ISymbol symbol, TaintValue value)
+        {
+            if (!_unit.HasCapturedWrites) return value;
+            var written = _unit.CapturedWrites.Get(symbol);
+            return written.Any ? value.Join(written) : value;
+        }
 
         /// A local or parameter was assigned (or written into): a captured variable of an enclosing body records it.
         public void Assigned(ISymbol symbol, TaintValue value)
@@ -529,6 +691,7 @@ internal sealed class SummaryComputer
         public void Seed(IMethodSymbol lambda, TaintValue value)
         {
             if (!value.Any) return;
+            value = value.WithoutIdentity();
             var key = SymbolKeys.Of(lambda);
             _unit.LambdaSeeds[key] = _unit.LambdaSeeds.TryGetValue(key, out var old) ? old.Join(value) : value;
         }
@@ -586,9 +749,19 @@ internal sealed class SummaryComputer
 
         public bool IsHeapMember(ISymbol member) => _computer._heap.IsMember(member);
 
-        public TaintValue HeapRead(ISymbol member)
+        /// The request data of a member for this body (Heap.Read): through unknown objects (null) its field location,
+        /// through known objects (the parameter objects aside, which the caller substitutes) theirs and the writes through
+        /// unknown objects.
+        public TaintValue HeapRead(ISymbol member, ObjSet? objects = null)
         {
-            var value = _computer._heap.Read(member, _unit, Reach);
+            List<int>? concrete = null;
+            if (objects != null)
+            {
+                concrete = new List<int>(objects.Count);
+                foreach (var o in objects.Ids)
+                    if (!Objects.IsParam(o)) concrete.Add(o);
+            }
+            var value = _computer._heap.Read(member, _unit, Reach, concrete);
             // Code around every action reads heap data in every request.
             if (value.Scope is not { } scope) return value;
             var widened = _computer._entries.Widen(scope);
@@ -596,34 +769,63 @@ internal sealed class SummaryComputer
         }
 
         /// The request data of a keyed store entry (ViewData, HttpContext.Items, the view model; Task 22), as HeapRead.
-        public TaintValue KeyedRead(KeyedLocation location)
+        public TaintValue KeyedRead(KeyedLocation location) => Widened(_computer._heap.Read(location, _unit, Reach));
+
+        /// The view model read under several entries at once (what all of them know of its members: Task 27).
+        public TaintValue KeyedRead(IEnumerable<KeyedLocation> locations) => Widened(_computer._heap.Read(locations, _unit, Reach));
+
+        private TaintValue Widened(TaintValue value)
         {
-            var value = _computer._heap.Read(location, _unit, Reach);
             if (value.Scope is not { } scope) return value;
             var widened = _computer._entries.Widen(scope);
             return ReferenceEquals(widened, scope) ? value : value with { Scope = widened };
         }
 
-        /// A write to a heap symbol: its request data to the heap, its labels to their owners' summaries.
-        public void HeapWrite(ISymbol member, TaintValue value)
+        /// A write to a heap symbol: its request data to the heap, its labels to their owners' summaries. Through known
+        /// objects (Task 27): each concrete object's member location; a parameter object's member is an ObjWrite of its
+        /// body (written by each call site into the objects the call gives); unknown objects: the member's field location.
+        public void HeapWrite(ISymbol member, TaintValue value, ObjSet? objects = null)
         {
-            if (!value.Any || !IsHeapMember(member)) return;
-            Store(member, value);
+            if (!IsHeapMember(member)) return;
+            // A write through unknown objects, whatever its value, may end a caller's strong update of the member.
+            if (objects == null && RootSymbolic) RecordTopWrite(member);
+            if (!value.Any) return;
+            value = value.WithoutIdentity();
+            if (objects == null)
+            {
+                Store(member, value);
+                return;
+            }
+            var heap = _computer._heap;
+            var definition = SymbolKeys.Definition(member);
+            foreach (var o in objects.Ids)
+            {
+                var (kind, owner, slot) = Objects.Describe(o);
+                if (kind == ObjKind.Param)
+                {
+                    if (Keeps(owner)) _computer.Builder(owner).AddObjWrite(slot, heap.Key(member), definition, value);
+                }
+                else
+                {
+                    Store(new ObjLocation(o, heap.Key(member), definition), value, member);
+                }
+            }
         }
 
-        /// A write to a keyed store entry, as HeapWrite.
+        /// A write to a keyed store entry, as HeapWrite. A view model is written also without request data (what it knows
+        /// of its members: Task 27).
         public void KeyedWrite(KeyedLocation location, TaintValue value)
         {
-            if (value.Any) Store(location, value);
+            if (value.Any || location.Store == KeyedStore.ViewModel) Store(location, value);
         }
 
-        private void Store(object location, TaintValue value)
+        private void Store(object location, TaintValue value, ISymbol? symbol = null)
         {
             var heap = _computer._heap;
-            if (value.Request)
+            if (value.Request || location is KeyedLocation { Store: KeyedStore.ViewModel })
             {
                 heap.Write(location, value, WriteReach);
-                if (location is ISymbol member) _computer.Builder(_body.Id).RequestHeap.TryAdd(heap.Key(member), member);
+                if ((symbol ?? location as ISymbol) is { } member && value.Request) _computer.Builder(_body.Id).RequestHeap.TryAdd(heap.Key(member), member);
             }
             if (value.Labels.Length == 0) return;
             var key = heap.Key(location);

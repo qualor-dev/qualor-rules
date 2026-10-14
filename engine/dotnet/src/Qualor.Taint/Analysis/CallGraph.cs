@@ -103,6 +103,15 @@ internal sealed class CallGraph
 
     private CallGraph(Dispatch dispatch) => _dispatch = dispatch;
 
+    private readonly HashSet<object> _methodGroups = new();
+    private readonly HashSet<Unit> _called = new();
+
+    /// Whether a method is used as a method group somewhere (a delegate: anything may call it).
+    public bool IsMethodGroup(IMethodSymbol method) => _methodGroups.Contains(_dispatch.Key(method));
+
+    /// Whether another unit's code may call the unit (an edge of the call graph from another unit).
+    public bool IsCalled(Unit unit) => _called.Contains(unit);
+
     public List<Unit> Units { get; } = new();
 
     public List<List<Unit>> Sccs { get; } = new();
@@ -172,6 +181,8 @@ internal sealed class CallGraph
                             if (Dispatch.IsDispatched(site)) (unit.PendingSites ??= new List<CallSite>()).Add(site);
                             else unit.CalleeKeys.Add(dispatch.Key(SymbolKeys.Definition(site.Method)));
                         }
+                        foreach (var reference in operation.DescendantsAndSelf().OfType<IMethodReferenceOperation>())
+                            foreach (var t in dispatch.Targets(reference.Method, reference.IsVirtual, reference.Instance?.Type)) graph._methodGroups.Add(dispatch.Key(t));
                     }
                     catch (Exception e) when (e is not OperationCanceledException)
                     {
@@ -304,6 +315,8 @@ internal sealed class CallGraph
             foreach (var key in unit.CalleeKeys)
                 if (_bodies.TryGetValue(key, out var body) && seen.Add(body.Unit)) unit.Callees.Add(body.Unit);
             unit.CalleeKeys.Clear();
+            foreach (var callee in unit.Callees)
+                if (callee != unit) _called.Add(callee);
         }
         entries?.Connect();
         Components();

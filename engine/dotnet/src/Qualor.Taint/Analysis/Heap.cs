@@ -17,6 +17,11 @@ namespace Qualor.Taint;
 /// a constant writes the store's "any key" location, which a read of a constant key joins; a read whose key is not a
 /// constant joins every location of the store.
 ///
+/// Objects (Task 27, decision R-8): a member written through known objects is the member of those objects
+/// (ObjLocation), and also its field location (the member symbol's key, which a read through unknown objects joins); one
+/// written through unknown objects is its field location and its TopLocation (which a read through known objects joins).
+/// Request scoping applies to each of these locations alike.
+///
 /// The heap grows during the run; each symbol records the units that read it (with their Reach), and a write that
 /// changes a symbol's value under some Reach (in the lattice, paths and source locations aside) makes the readers that
 /// share an entry point with it dirty: SummaryComputer analyses them again, so the run ends at the joint fixed point of
@@ -70,14 +75,38 @@ internal sealed class Heap
     public object Key(object location) => location is ISymbol member ? _dispatch.Key(SymbolKeys.Definition(member)) : location;
 
     /// The request data written to `member` so far under a Reach that shares an entry point with `reach` (the reading
-    /// body's); `reader` is analysed again when that grows.
-    public TaintValue Read(ISymbol member, Unit reader, Reach reach) => reach.IsEmpty ? TaintValue.Clean : ReadKey(Key(member), reader, reach);
+    /// body's); `reader` is analysed again when that grows. With `objects` (Task 27: the known objects the member is read
+    /// through), the writes of the member on those objects and the writes through unknown objects; without (unknown
+    /// objects), the member's field location: every write of it.
+    public TaintValue Read(ISymbol member, Unit reader, Reach reach, IEnumerable<int>? objects = null)
+    {
+        if (reach.IsEmpty) return TaintValue.Clean;
+        var key = Key(member);
+        if (objects == null) return Final(ReadKey(key, reader, reach));
+        var value = ReadKey(new TopLocation(key), reader, reach);
+        foreach (var o in objects) value = value.Join(ReadKey(new ObjLocation(o, key), reader, reach));
+        return Final(value);
+    }
 
     /// The request data of a keyed store entry for a reader (as Read): a constant key's entry joined with the store's
     /// "any key" entry; for a key that is not a constant, every entry of the store.
-    public TaintValue Read(KeyedLocation location, Unit reader, Reach reach)
+    public TaintValue Read(KeyedLocation location, Unit reader, Reach reach) => reach.IsEmpty ? TaintValue.Clean : Final(ReadRaw(location, reader, reach));
+
+    /// The join of several keyed store entries for a reader (a view's model read under its type's entries: Task 27 keeps
+    /// what every one of them knows of the model's members).
+    /// A model no write has reached yet constrains nothing (its members: All), so a view analysed before the actions that
+    /// render it passes its partials a model that does not end what those actions know (the fixed point of a must-hold
+    /// fact starts from all of them); a reader of a member takes All as knowing none.
+    public TaintValue Read(IEnumerable<KeyedLocation> locations, Unit reader, Reach reach)
     {
         if (reach.IsEmpty) return TaintValue.Clean;
+        var value = TaintValue.Bottom;
+        foreach (var location in locations) value = value.Join(ReadRaw(location, reader, reach));
+        return ReferenceEquals(value, TaintValue.Bottom) ? TaintValue.Clean with { Members = MemberMap.All } : value;
+    }
+
+    private TaintValue ReadRaw(KeyedLocation location, Unit reader, Reach reach)
+    {
         if (location.Key != null) return ReadKey(location, reader, reach).Join(ReadKey(location.Any, reader, reach));
         var value = ReadKey(location.All, reader, reach);
         if (_stores.TryGetValue(location.Store, out var entries))
@@ -85,11 +114,16 @@ internal sealed class Heap
         return value;
     }
 
+    /// A read that found no write in the reader's requests is clean (it knows no member).
+    private static TaintValue Final(TaintValue value) => ReferenceEquals(value, TaintValue.Bottom) ? TaintValue.Clean : value;
+
+    /// The join of the writes of `key` in the reader's requests; Bottom when there is none (the identity of a join, so
+    /// the members a view model is known to hold survive the joins of the entries read together: Task 27).
     private TaintValue ReadKey(object key, Unit reader, Reach reach)
     {
         if (!_readers.TryGetValue(key, out var readers)) _readers[key] = readers = new HashSet<(Unit, Reach)>();
         readers.Add((reader, reach));
-        if (!_values.TryGetValue(key, out var writes)) return TaintValue.Clean;
+        if (!_values.TryGetValue(key, out var writes)) return TaintValue.Bottom;
         var value = Read(writes.Writer, writes.Value, reach);
         if (writes.More != null)
             foreach (var (writer, written) in writes.More) value = value.Join(Read(writer, written, reach));
@@ -99,22 +133,40 @@ internal sealed class Heap
     private static TaintValue Read(Reach writer, TaintValue written, Reach reach)
     {
         var scope = writer.Intersect(reach);
-        return scope.IsEmpty ? TaintValue.Clean : written.Narrowed(scope) with { FromHeap = true };
+        if (scope.IsEmpty) return TaintValue.Bottom;
+        return written.Request ? written.Narrowed(scope) with { FromHeap = true } : written;
+    }
+
+    /// What a heap location keeps of a written value: its request part; for a view model also the members it is known to
+    /// hold exactly (their request parts), so a view reads a member its action overwrote as that value (Task 27).
+    private static TaintValue Stored(object location, TaintValue value)
+    {
+        var request = value.Request ? value.RequestPart.WithoutIdentity() : TaintValue.Clean;
+        if (location is KeyedLocation { Store: KeyedStore.ViewModel } && value.Members is { } members)
+            return request with { Members = members.IsAll ? members : members.Select(m => m.Request ? m.RequestPart.WithoutIdentity() : TaintValue.Clean) };
+        return request;
     }
 
     /// Joins the request data of `value` into `member` under `writer` (the writing body's WriteReach), narrowed to the
     /// value's own Scope. A writer no entry point reaches (fix round 1, I1: a constructor or initializer the call graph
     /// cannot connect) writes data it did not read from the heap under that data's Scope, the requests it came from.
+    ///
+    /// Task 27: a member location is a member symbol (written through unknown objects: its field location and its
+    /// TopLocation) or an ObjLocation (a known object's member: that location and the member's field location, which
+    /// every read through unknown objects joins). A view model is written also without request data (what it knows of
+    /// its members, or that it knows none), so a member is known in a view only when every model it may render knew it.
     public void Write(object location, TaintValue value, Reach writer)
     {
         // A generic helper's view model is written at its callers under their types; no view reads the Generic entry.
-        if (!value.Request || Equals(location, KeyedLocation.Generic)) return;
+        if (Equals(location, KeyedLocation.Generic)) return;
+        var model = location is KeyedLocation { Store: KeyedStore.ViewModel };
+        if (!value.Request && !model) return;
         if (writer.IsEmpty)
         {
             if (value.Scope == null || value.FromHeap) return;
             writer = value.Scope;
         }
-        else if (value.Scope != null)
+        else if (value.Request && value.Scope != null)
         {
             var narrowed = writer.Intersect(value.Scope);
             // Heap data valid in none of the writer's requests is not written; data a helper read from the request (an
@@ -122,8 +174,24 @@ internal sealed class Heap
             if (narrowed.IsEmpty && value.FromHeap) return;
             if (!narrowed.IsEmpty) writer = narrowed;
         }
-        value = value.RequestPart.Narrowed(writer) with { FromHeap = false };
-        var key = Key(location);
+        value = Stored(location, value);
+        if (value.Request) value = value.Narrowed(writer) with { FromHeap = false };
+        switch (location)
+        {
+            case ISymbol member:
+                WriteKey(new TopLocation(Key(member)), value, writer);
+                break;
+            case ObjLocation at:
+                WriteKey(at, value, writer);
+                location = at.Member;
+                break;
+        }
+        WriteKey(location, value, writer);
+    }
+
+    private void WriteKey(object location, TaintValue value, Reach writer)
+    {
+        var key = location is ObjLocation or TopLocation ? location : Key(location);
         if (location is KeyedLocation keyed && (!_stores.TryGetValue(keyed.Store, out var entries) || !entries.Contains(keyed)))
         {
             // A new entry of a store: the readers of every entry (a key that is not a constant) read it too.
@@ -148,7 +216,7 @@ internal sealed class Heap
         if (ReferenceEquals(joined, old)) return;
         if (ReferenceEquals(writes.Writer, writer)) writes.Value = joined;
         else writes.More![writer] = joined;
-        if (!joined.SameFlow(old)) Changed(key, writer);
+        if (!joined.SameFlow(old) || !joined.SameIdentity(old)) Changed(key, writer);
     }
 
     /// A location's value changed under `writer`: its readers, and for a store entry the readers of every entry.

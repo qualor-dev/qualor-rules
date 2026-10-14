@@ -49,11 +49,25 @@ internal sealed record CallEffect(int Slot, Body Callee, int CalleeSlot, Immutab
 /// - Calls: the parameters passed on to a callee's parameters;
 /// - Heap: the label part this body writes to each heap location, a member or a keyed store entry (the request part goes
 ///   to the Heap at once).
+///
+/// Objects (Task 27, decision R-8), for a body whose parameters and `this` stand for the objects its calls give (a body
+/// SummaryComputer.IsSymbolic: called from source and not by the framework):
+/// - Return carries the objects the body returns (its own parameter objects among them) and the members of the returned
+///   object it knows exactly;
+/// - a slot may be a member slot (ObjectTable.MemberSlot: member M of parameter k's objects), read where the body reads a
+///   member through its parameter: a call site gives what its argument holds in M;
+/// - ObjWrites: what the body writes into member M of parameter k's objects (a call site writes it into its argument's
+///   objects); ParamExit: the members of parameter k's object the body overwrote on every path (the call site's argument
+///   holds them exactly after the call); TopWrites: the members written through unknown objects by the body, its
+///   component of the call graph and what that calls (one set per component, shared by its bodies); Escapes: the
+///   parameters whose objects (or what the body read from them) it gives to calls whose effects are unknown (External, a
+///   delegate, a dynamic call, a body not summarised so, a body of its own component). The last three tell a call site
+///   outside the component which strong updates the call may end.
 internal sealed class BodySummary
 {
     public static readonly BodySummary Empty = new();
 
-    public TaintValue Return { get; init; } = TaintValue.Clean;
+    public TaintValue Return { get; init; } = TaintValue.Bottom;
 
     public TaintValue ToThis { get; init; } = TaintValue.Clean;
 
@@ -75,13 +89,34 @@ internal sealed class BodySummary
     /// Heap symbols the body writes request data of its own to (for the public view).
     public ImmutableDictionary<object, ISymbol> RequestHeap { get; init; } = ImmutableDictionary<object, ISymbol>.Empty;
 
-    /// No local effect: a call site gets nothing back (a generic helper's view model aside, which the call site writes).
-    public bool NoLocalEffects => !Return.Any && !ToThis.Any && Refs.IsEmpty;
+    /// Whether the body's parameters and `this` are its own objects (Task 27): its effects on them are in ObjWrites,
+    /// ParamExit, TopWrites and GivenTypes.
+    public bool Symbolic { get; init; }
 
-    public bool IsEmpty => NoTaint && ReturnText == null;
+    public ImmutableDictionary<(int Slot, object Member), (ISymbol Symbol, TaintValue Value)> ObjWrites { get; init; } =
+        ImmutableDictionary<(int, object), (ISymbol, TaintValue)>.Empty;
+
+    /// Null: not analysed yet (every member known: the identity of a join).
+    public ImmutableDictionary<int, MemberMap>? ParamExit { get; init; }
+
+    /// The member keys (SymbolKeys.Of) of the body's component (SummaryComputer: complete once the component's fixed
+    /// point is done, which a caller outside it waits for); null before the body is analysed.
+    public HashSet<object>? TopWrites { get; init; }
+
+    /// The parameter slots (−1: `this`) whose objects, or what the body read from them, reach calls whose effects are
+    /// unknown.
+    public ImmutableHashSet<int> Escapes { get; init; } = ImmutableHashSet<int>.Empty;
+
+    /// The member slots the global effects use (a call site passes its argument's member for each).
+    public ImmutableArray<int> MemberSlots { get; init; } = ImmutableArray<int>.Empty;
+
+    /// No local effect: a call site gets nothing back (a generic helper's view model aside, which the call site writes).
+    public bool NoLocalEffects => !Return.Any && !ToThis.Any && Refs.IsEmpty && !Return.KnowsIdentity && ObjWrites.IsEmpty && (ParamExit == null || ParamExit.IsEmpty);
+
+    public bool IsEmpty => NoTaint && ReturnText == null && ParamExit == null && !Return.KnowsIdentity && TopWrites == null && Escapes.IsEmpty && ObjWrites.IsEmpty;
 
     /// No effect on taint at all (the public view lists only the bodies that have one).
-    public bool NoTaint => NoLocalEffects && Sinks.IsEmpty && Calls.IsEmpty && Heap.IsEmpty && RequestHeap.IsEmpty;
+    public bool NoTaint => !Return.Any && !ToThis.Any && Refs.IsEmpty && ObjWrites.IsEmpty && Sinks.IsEmpty && Calls.IsEmpty && Heap.IsEmpty && RequestHeap.IsEmpty;
 
     /// The text two sets of strings both start with: the common start of the two texts, followed by a Hole where they
     /// differ (a Hole in either ends the common part); null is no string at all.
@@ -113,7 +148,18 @@ internal sealed class BodySummary
         foreach (var (k, v) in other.Heap) heap = heap.SetItem(k, heap.TryGetValue(k, out var old) ? (old.Location, old.Value.Join(v.Value)) : v);
         var requestHeap = RequestHeap;
         foreach (var (k, v) in other.RequestHeap) if (!requestHeap.ContainsKey(k)) requestHeap = requestHeap.Add(k, v);
-        return new BodySummary
+        var objWrites = ObjWrites;
+        foreach (var (k, v) in other.ObjWrites) objWrites = objWrites.SetItem(k, objWrites.TryGetValue(k, out var old) ? (old.Symbol, old.Value.Join(v.Value)) : v);
+        var paramExit = ParamExit;
+        if (paramExit == null) paramExit = other.ParamExit;
+        else if (other.ParamExit != null && !ReferenceEquals(paramExit, other.ParamExit))
+        {
+            var met = ImmutableDictionary<int, MemberMap>.Empty;
+            foreach (var (slot, members) in paramExit)
+                if (other.ParamExit.TryGetValue(slot, out var theirs) && MemberMap.Meet(members, theirs) is { } m) met = met.Add(slot, m);
+            paramExit = met;
+        }
+        var summary = new BodySummary
         {
             Return = Return.Join(other.Return),
             ToThis = ToThis.Join(other.ToThis),
@@ -123,6 +169,61 @@ internal sealed class BodySummary
             Heap = heap,
             RequestHeap = requestHeap,
             ReturnText = JoinText(ReturnText, other.ReturnText),
+            Symbolic = Symbolic || other.Symbolic,
+            ObjWrites = objWrites,
+            ParamExit = paramExit,
+            TopWrites = TopWrites ?? other.TopWrites,
+            Escapes = Escapes.Union(other.Escapes),
+        };
+        return summary.WithMemberSlots();
+    }
+
+    private Dictionary<int, (List<SinkEffect> Sinks, List<CallEffect> Calls, List<(object Location, TaintValue Value)> Heap)>? _bySlot;
+
+    /// The global effects of one slot (a seed of it runs these): an index built once per summary (Task 27: member slots
+    /// make many seeds per body, each of which would otherwise scan all the body's effects).
+    public (List<SinkEffect> Sinks, List<CallEffect> Calls, List<(object Location, TaintValue Value)> Heap) EffectsOf(int slot, int owner)
+    {
+        if (_bySlot == null)
+        {
+            var index = new Dictionary<int, (List<SinkEffect>, List<CallEffect>, List<(object, TaintValue)>)>();
+            (List<SinkEffect>, List<CallEffect>, List<(object, TaintValue)>) Of(int k)
+            {
+                if (!index.TryGetValue(k, out var e)) index[k] = e = (new List<SinkEffect>(), new List<CallEffect>(), new List<(object, TaintValue)>());
+                return e;
+            }
+            foreach (var e in Sinks.Values) Of(e.Slot).Item1.Add(e);
+            foreach (var c in Calls.Values) Of(c.Slot).Item2.Add(c);
+            foreach (var h in Heap.Values)
+            {
+                var seen = new HashSet<int>();
+                foreach (var l in h.Value.Labels)
+                    if (l.Owner == owner && seen.Add(l.Slot)) Of(l.Slot).Item3.Add(h);
+            }
+            _bySlot = index;
+        }
+        return _bySlot.TryGetValue(slot, out var effects) ? effects : (EmptySinks, EmptyCalls, EmptyHeap);
+    }
+
+    private static readonly List<SinkEffect> EmptySinks = new();
+    private static readonly List<CallEffect> EmptyCalls = new();
+    private static readonly List<(object, TaintValue)> EmptyHeap = new();
+
+    /// The summary with MemberSlots computed from its global effects.
+    public BodySummary WithMemberSlots()
+    {
+        var slots = new SortedSet<int>();
+        foreach (var e in Sinks.Values) if (ObjectTable.IsMemberSlot(e.Slot)) slots.Add(e.Slot);
+        foreach (var c in Calls.Values) if (ObjectTable.IsMemberSlot(c.Slot)) slots.Add(c.Slot);
+        foreach (var (_, v) in Heap.Values)
+            foreach (var l in v.Labels)
+                if (ObjectTable.IsMemberSlot(l.Slot)) slots.Add(l.Slot);
+        if (slots.Count == MemberSlots.Length && slots.SequenceEqual(MemberSlots)) return this;
+        return new BodySummary
+        {
+            Return = Return, ToThis = ToThis, Refs = Refs, Sinks = Sinks, Calls = Calls, Heap = Heap, RequestHeap = RequestHeap,
+            ReturnText = ReturnText, Symbolic = Symbolic, ObjWrites = ObjWrites, ParamExit = ParamExit, TopWrites = TopWrites,
+            Escapes = Escapes, MemberSlots = slots.ToImmutableArray(),
         };
     }
 
@@ -133,6 +234,18 @@ internal sealed class BodySummary
         if (!Return.SameFlow(other.Return) || !ToThis.SameFlow(other.ToThis) || Refs.Count != other.Refs.Count) return false;
         if (ReturnText != other.ReturnText) return false;
         foreach (var (k, v) in Refs) if (!other.Refs.TryGetValue(k, out var o) || !v.SameFlow(o)) return false;
+        // Task 27: the objects and members a call gets back, what it writes into its arguments' objects, the strong updates
+        // it may end, and the member slots its global effects ask the call sites for.
+        if (!Return.SameIdentity(other.Return) || ObjWrites.Count != other.ObjWrites.Count
+            || Escapes.Count != other.Escapes.Count || !MemberSlots.SequenceEqual(other.MemberSlots)) return false;
+        foreach (var (k, v) in ObjWrites)
+            if (!other.ObjWrites.TryGetValue(k, out var o) || !v.Value.SameFlow(o.Value)) return false;
+        if ((ParamExit == null) != (other.ParamExit == null)) return false;
+        if (ParamExit != null)
+        {
+            if (ParamExit.Count != other.ParamExit!.Count) return false;
+            foreach (var (k, v) in ParamExit) if (!other.ParamExit.TryGetValue(k, out var o) || !v.SameFlow(o)) return false;
+        }
         // A generic helper's view model is written at its callers (MethodAnalyzer.GenericModels): a change of it is a
         // change of what a call site does (Task 22 fix round 1, I2).
         var mine = Heap.TryGetValue(KeyedLocation.Generic, out var a);
@@ -157,10 +270,34 @@ internal sealed class BodySummary
     /// `keep` accepts its owner. Request data the callee read from the heap reaches the call only for the entry points
     /// that also reach the caller (`caller`; TaintValue.Scope).
     public static TaintValue Substitute(TaintValue symbolic, int owner, Func<int, TaintValue> argument, Location site, string name, Func<int, bool> keep,
-        Reach caller, bool dropViaKey = false)
+        Reach caller, bool dropViaKey = false, ObjectTable? objects = null)
     {
-        if (!symbolic.Any) return TaintValue.Clean;
-        var own = symbolic.RequestPart.Within(caller);
+        if (!symbolic.Any) return symbolic.HasIdentity && objects != null ? SubstituteIdentity(TaintValue.Clean, symbolic, owner, argument, site, name, keep, caller, objects) : TaintValue.Clean;
+        var result = SubstituteTaint(symbolic, owner, argument, site, name, keep, caller, dropViaKey);
+        return symbolic.HasIdentity && objects != null ? SubstituteIdentity(result, symbolic, owner, argument, site, name, keep, caller, objects) : result;
+    }
+
+    /// The objects and members of a symbolic value at a call (Task 27): the callee's parameter objects become the objects
+    /// its arguments hold (unknown when an argument's are); another body's parameter objects are kept when `keep`
+    /// accepts the body (a capture of the enclosing body), else unknown; each known member's value is substituted.
+    private static TaintValue SubstituteIdentity(TaintValue result, TaintValue symbolic, int owner, Func<int, TaintValue> argument, Location site, string name,
+        Func<int, bool> keep, Reach caller, ObjectTable objects)
+    {
+        var objs = symbolic.Objects?.SelectMany(id =>
+        {
+            var (kind, body, slot) = objects.Describe(id);
+            if (kind != ObjKind.Param) return ObjSet.Of(id);
+            if (body == owner) return argument(slot).Objects;
+            return keep(body) ? ObjSet.Of(id) : null;
+        });
+        var members = symbolic.Members?.Select(v => Substitute(v, owner, argument, site, name, keep, caller, false, objects));
+        return result with { Objects = objs, Members = members };
+    }
+
+    private static TaintValue SubstituteTaint(TaintValue symbolic, int owner, Func<int, TaintValue> argument, Location site, string name, Func<int, bool> keep,
+        Reach caller, bool dropViaKey)
+    {
+        var own = symbolic.RequestPart.WithoutIdentity().Within(caller);
         if (dropViaKey && own.KeyOnly) own = TaintValue.Clean;
         var result = own.Request ? own.Step(site, $"returned by {name}") : TaintValue.Clean;
         foreach (var label in symbolic.Labels)
@@ -170,7 +307,7 @@ internal sealed class BodySummary
                 // A value-factory call (dropViaKey) loses what reached the result only as a lookup key (R-E23); any other
                 // call keeps it, its labels still marked so a caller's value-factory shape can drop them in turn.
                 if (label.ViaKey && dropViaKey) continue;
-                var a = argument(label.Slot);
+                var a = argument(label.Slot).WithoutIdentity();
                 if (!a.Any) continue;
                 var v = a.Step(site, $"passed to {name}").Extend(label.Path).CleanedFor(label.CleanFor);
                 result = result.Join(label.ViaKey ? v.ViaKey() : v);
@@ -197,7 +334,7 @@ internal sealed class BodySummary
 /// The summary of one body while it is analysed (and the bodies nested in it record effects on its labels).
 internal sealed class SummaryBuilder
 {
-    public TaintValue Return = TaintValue.Clean;
+    public TaintValue Return = TaintValue.Bottom;
     public TaintValue ToThis = TaintValue.Clean;
     public string? ReturnText;
     public readonly Dictionary<int, TaintValue> Refs = new();
@@ -205,6 +342,18 @@ internal sealed class SummaryBuilder
     public readonly Dictionary<(int Slot, int Callee, int CalleeSlot), CallEffect> Calls = new();
     public readonly Dictionary<object, (object Location, TaintValue Value)> Heap = new();
     public readonly Dictionary<object, ISymbol> RequestHeap = new();
+    public readonly Dictionary<(int Slot, object Member), (ISymbol Symbol, TaintValue Value)> ObjWrites = new();
+    public Dictionary<int, MemberMap>? ParamExit;
+    public HashSet<object>? TopWrites;
+    public readonly HashSet<int> Escapes = new();
+    public bool Symbolic;
+
+    public void AddObjWrite(int slot, object key, ISymbol member, TaintValue value)
+    {
+        if (!value.Any) return;
+        value = value.WithoutIdentity();
+        ObjWrites[(slot, key)] = ObjWrites.TryGetValue((slot, key), out var old) ? (old.Symbol, old.Value.Join(value)) : (member, value);
+    }
 
     public void AddSink(int slot, string rule, SyntaxNode site, ISymbol member, Trail path) =>
         Sinks.TryAdd((slot, rule, site.SyntaxTree, site.Span), new SinkEffect(slot, rule, site, member, path));
@@ -222,15 +371,23 @@ internal sealed class SummaryBuilder
         Heap[key] = Heap.TryGetValue(key, out var old) ? (old.Location, old.Value.Join(labels)) : (location, labels);
     }
 
-    public BodySummary Build() => new()
+    public BodySummary Build()
     {
-        Return = Return,
-        ToThis = ToThis,
-        Refs = Refs.ToImmutableDictionary(),
-        Sinks = Sinks.ToImmutableDictionary(),
-        Calls = Calls.ToImmutableDictionary(),
-        Heap = Heap.ToImmutableDictionary(),
-        RequestHeap = RequestHeap.ToImmutableDictionary(),
-        ReturnText = ReturnText,
-    };
+        return new BodySummary
+        {
+            Return = Return,
+            ToThis = ToThis,
+            Refs = Refs.ToImmutableDictionary(),
+            Sinks = Sinks.ToImmutableDictionary(),
+            Calls = Calls.ToImmutableDictionary(),
+            Heap = Heap.ToImmutableDictionary(),
+            RequestHeap = RequestHeap.ToImmutableDictionary(),
+            ReturnText = ReturnText,
+            Symbolic = Symbolic,
+            ObjWrites = ObjWrites.ToImmutableDictionary(),
+            ParamExit = Symbolic ? (ParamExit ?? new Dictionary<int, MemberMap>()).ToImmutableDictionary() : null,
+            TopWrites = TopWrites,
+            Escapes = Escapes.ToImmutableHashSet(),
+        }.WithMemberSlots();
+    }
 }

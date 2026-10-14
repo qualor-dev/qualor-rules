@@ -512,11 +512,9 @@ false positives (FP) or misses (FN) there.
   A call or constructor bound at run time (`Html.Raw(ViewBag.K)`, `new HtmlString(ViewBag.K)`) reports the
   unconditional sinks of its candidate members (named arguments are not matched). `TempData` crosses requests and is not
   followed. Data saved in one request and read in another
-  (settings, entities, stored XSS) is not followed (FN, as the OpenGrep rules). Within one request the heap stays
-  field-based and the call graph context-insensitive: request data written to one object's
-  member is request data in that member of every object of the type in the requests that reach the write (a cache key
-  built from request values makes every cache key of those requests request data; what is found by it, below), and an interface every action reaches joins most code
-  into one request (FP).
+  (settings, entities, stored XSS) is not followed (FN, as the OpenGrep rules). Within one request the heap is per
+  abstract object where the objects are known (Objects, below), and the call graph is context-insensitive: an interface
+  every action reaches joins most code into one request (FP).
 - Dispatch (since Task 26, decision R-7, ruling R-E25): a virtual or interface call runs the implementations whose type
   the solution creates: `new` (target-typed too), a DI registration (`Add{Scoped,Transient,Singleton}`, keyed, `TryAdd*`,
   `TryAddEnumerable`, `ServiceDescriptor`, `AddHostedService`, `AddDbContext`, `AddHttpClient`, Scrutor `Decorate`,
@@ -555,6 +553,29 @@ false positives (FP) or misses (FN) there.
     Jellyfin's plugin assemblies) is ignored, as split scans over unknown assemblies are. Their own interfaces are
     external, so only a source base or interface that their scanned classes share and that is also built elsewhere is
     affected.
+- Objects (decision R-8, since Task 27): an object made by `new` (a class or struct, an anonymous object, an array, a
+  collection expression) is its allocation site; the model the binder makes for an action parameter is one object per
+  action. A value knows at most 8 objects. A member written or read through known objects is that member of those
+  objects (a read also joins what was written through unknown objects); through unknown objects it is the member's field
+  location, as before Task 27, which every read joins (FP: a write through an unknown object reaches that member of
+  every object). Unknown: more than 8 objects, a value read from a member, an element of a collection, what an external
+  method returns, a `with` copy, objects DI or the framework make, `this` of a method the framework calls (one object per
+  type would split a controller between its base class and itself). A method other project code calls, where no entry
+  point starts and that is no method group and overrides or implements no external member, reads the members of its
+  parameters' and `this`'s objects as what each call's argument holds there, and writes into them at each call into the
+  call's objects; a constructor's `this` is the object its `new` makes. Collections stay element-insensitive per object.
+  Strong updates: a member assigned through a variable (`x.M = v`, `this.M = v`, an object initializer) is exactly v
+  where every path assigned it, until the variable is assigned, the member is written through any object, a lambda or
+  local function of the method touches it, or a call may change it: by the callee's summary for such a project method
+  (it writes the member, or gives the object, or something read from it, to code the engine does not see), by type for
+  any other call (as guards). What a callee assigns on every path to its parameters' members (a constructor: to its
+  object's) holds after the call; what a body returns carries the members it is known to hold; a view reads a member of
+  its model exactly when every model it may render in the reader's requests knew it. So a posted model whose member a
+  factory replaces before `View(model)` reads that member clean while its other members stay request data. Not
+  followed: a member assigned only under a condition the caller decides (nopCommerce's factories fill an order model
+  inside `if (order != null)`: FP); members two levels deep across a call or into a view; the objects of the variables
+  a lambda captures (unknown); a callee that changes the object through a field holding it, or a delegate it was handed
+  earlier that does (FN, as guards).
 - Guards hold for locals, parameters and members read on them (since Task 21, "Guards on members"); a call given the
   guarded object (or one of a related type, or something that holds one) between the check and the sink, an await of
   earlier work, or a nested body touching the object ends the guard (FP); a member read through a project property

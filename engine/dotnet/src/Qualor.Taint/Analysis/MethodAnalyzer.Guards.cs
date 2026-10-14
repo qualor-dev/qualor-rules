@@ -431,8 +431,9 @@ internal sealed partial class MethodAnalyzer
 
     /// The access path an operation reads (`x.M`, `x.M.N`, `this.M`, `T.S.M`; through conversions and a flow capture of
     /// one value), or null: a plain local or parameter (guarded as before), an indexer, a call, a path longer than
-    /// AccessPath.MaxMembers.
-    private AccessPath? PathOf(IOperation operation)
+    /// AccessPath.MaxMembers. With `captureRoot` (strong updates, Task 27) a flow capture of something that is no path (the
+    /// object an initializer fills, a call's result) is a root of its own.
+    private AccessPath? PathOf(IOperation operation, bool captureRoot = false)
     {
         while (operation is IConversionOperation conversion) operation = conversion.Operand;
         if (operation is IFlowCaptureReferenceOperation capture && _captured.TryGetValue(capture.Id, out var values) && values.Count > 1)
@@ -480,8 +481,12 @@ internal sealed partial class MethodAnalyzer
                     root = AccessPath.This;
                     if (i.Type != null) types.Add(i.Type);
                     break;
-                case IFlowCaptureReferenceOperation r when _captured.TryGetValue(r.Id, out var list) && list.Count == 1:
+                case IFlowCaptureReferenceOperation r when _captured.TryGetValue(r.Id, out var list) && list.Count == 1 && (!captureRoot || IsPathPart(list[0])):
                     op = list[0];
+                    break;
+                case IFlowCaptureReferenceOperation r when captureRoot:
+                    root = r.Id;
+                    if (MemberFacts.IsChangeable(r.Type)) types.Add(r.Type!);
                     break;
                 default:
                     return null;
@@ -491,6 +496,20 @@ internal sealed partial class MethodAnalyzer
         if (root == null || members.Count == 0 || members.Count > AccessPath.MaxMembers) return null;
         members.Reverse();
         return new AccessPath(root, members.ToImmutableArray(), types.ToImmutableArray());
+    }
+
+    private static bool IsPathPart(IOperation operation)
+    {
+        while (operation is IConversionOperation c) operation = c.Operand;
+        return operation is ILocalReferenceOperation or IParameterReferenceOperation or IInstanceReferenceOperation or IFieldReferenceOperation
+            or IPropertyReferenceOperation { Arguments.Length: 0 } or IFlowCaptureReferenceOperation;
+    }
+
+    /// Whether the body assigns a parameter (or writes it by ref): its strong updates at the exit are not its caller's.
+    internal bool IsReassigned(IParameterSymbol parameter)
+    {
+        Assignments(parameter);
+        return _assignments!.ContainsKey(parameter);
     }
 
     /// A member read on a path a guard cleaned on this branch: clean (for every rule, or for the guard's rules).
@@ -659,11 +678,14 @@ internal sealed partial class MethodAnalyzer
     /// ends (fix round 1, M1).
     private static void ForgetRoot(ISymbol symbol, TaintState state)
     {
-        if (!state.HasFacts) return;
         if (symbol is ILocalSymbol { RefKind: RefKind.Ref } or IParameterSymbol { RefKind: RefKind.Ref or RefKind.Out })
+        {
             state.ForgetAll();
-        else
-            state.Forget(p => SymbolOrCapture.Comparer.Equals(p.Root, symbol));
+            state.ForgetPointsTo();
+            return;
+        }
+        if (!state.HasFacts) return;
+        state.Forget(p => SymbolOrCapture.Comparer.Equals(p.Root, symbol));
     }
 
     /// What a write of `target` (an assignment, an increment, a ref or out argument, a collection write into it) ends: the
@@ -711,6 +733,72 @@ internal sealed partial class MethodAnalyzer
         }
     }
 
+    /// What a call (or a setter or getter with a body) does to the facts and to the body's own summary (Task 27):
+    /// - the facts it may end (ForgetForCall);
+    /// - for a symbolic body's summary, what its callers need to end theirs: the members its callees write through
+    ///   unknown objects, and its parameters whose objects (or what it read from them) reach calls whose effects are
+    ///   unknown (an external method, a body that is not symbolic, a delegate), also through the parameters of a
+    ///   symbolic callee that escape.
+    /// `targets` are the call's targets (null: a delegate's invocation, or a call without a method); `receiver` the
+    /// receiver's value. `guards`: the call ends guards' facts too (a getter does not, as before Task 27).
+    private void CallEffects(IOperation? instance, TaintValue receiver, Input[] inputs, TaintState state, IReadOnlyList<Target>? targets, bool guards = true)
+    {
+        // A body of this body's own component has no final summary yet: its call is one whose effects are unknown.
+        var summarised = targets is { Count: > 0 } && targets.All(t => t.Kind == TargetKind.Body && _body.IsSymbolic(t.Body!) && !_body.SameComponent(t.Body!));
+        var keepsMembers = targets is { Count: > 0 } && targets.All(t => t.Kind == TargetKind.External && KeepsMembers(t.Method));
+        if (_body.RootSymbolic && !keepsMembers)
+        {
+            if (summarised)
+            {
+                foreach (var t in targets!)
+                {
+                    var s = t.Body!.Summary;
+                    if (s.TopWrites != null) _body.AbsorbTopWrites(s.TopWrites);
+                    foreach (var slot in s.Escapes) EscapeArgument(slot, instance, receiver, inputs);
+                }
+            }
+            else if (targets == null || !targets.All(t => t.Kind == TargetKind.Auto))
+            {
+                if (instance != null) Escape(instance, receiver);
+                foreach (var i in inputs) if (i.RefKind != RefKind.Out) Escape(i.Operation, i.Value);
+            }
+        }
+        if (state.HasFacts) ForgetForCall(instance, inputs, state, summarised ? targets : null, guards, keepsMembers);
+    }
+
+    private static readonly HashSet<string> MemberKeepingNamespaces = new(StringComparer.Ordinal)
+    {
+        "System", "System.Collections", "System.Collections.Generic", "System.Collections.Concurrent", "System.Collections.Immutable",
+        "System.Collections.ObjectModel", "System.Linq", "System.Text", "System.Threading", "System.Threading.Tasks", "System.Globalization",
+        "Microsoft.Extensions.Logging",
+    };
+
+    /// Whether an external method leaves the members of the project's objects it is given as they are (Task 27): one of
+    /// .NET's core libraries (the System namespace itself, collections, LINQ, text, tasks, globalization) or logging, which
+    /// set no member of an object of the project (unlike reflection, serializers, binders, mappers). A lambda it is given
+    /// is analysed with the method that wrote it (a strong update its writes could end is not recorded there).
+    private static bool KeepsMembers(IMethodSymbol method) =>
+        !SymbolKeys.InSource(method) && method.ContainingNamespace?.ToDisplayString() is { } ns && MemberKeepingNamespaces.Contains(ns);
+
+    /// A callee's parameter `slot` escapes: what the call gives it escapes from this body.
+    private void EscapeArgument(int slot, IOperation? instance, TaintValue receiver, Input[] inputs)
+    {
+        if (slot == -1)
+        {
+            if (instance != null) Escape(instance, receiver);
+            return;
+        }
+        foreach (var i in inputs) if (i.Ordinal == slot && i.RefKind != RefKind.Out) Escape(i.Operation, i.Value);
+    }
+
+    /// A value given to a call whose effects are unknown escapes when its type may lead to an object (not a string or a
+    /// scalar, whose labels say only where its text came from).
+    private void Escape(IOperation? operation, TaintValue value)
+    {
+        while (operation is IConversionOperation { IsImplicit: true } c) operation = c.Operand;
+        if (MemberFacts.MayHold(operation?.Type)) _body.RecordEscape(value);
+    }
+
     /// A call (or a setter that is not an auto-property's) may change what it is given. The choice (conservative, by
     /// type): every fact of a static path ends; a ref or out argument is a write; and a fact ends when an object along
     /// its path (the root's or a member's) could be reached from the receiver or an argument: a type the value's type
@@ -718,9 +806,15 @@ internal sealed partial class MethodAnalyzer
     /// derived from the other, an implemented interface, or object or a type parameter (MemberFacts.MayChange). A
     /// struct receiver declared in source is written in place. Not covered: an object the callee reaches through the
     /// heap (a static, or a field typed object) without being given it or an object that holds it.
-    private void ForgetForCall(IOperation? instance, Input[] inputs, TaintState state)
+    ///
+    /// Task 27: a strong update ends, at a call whose every target is a symbolic body, when one of them (with its
+    /// callees) writes a member on its path into a parameter's object or through unknown objects, or when an object
+    /// along it could be reached (as above, by type) from an argument whose parameter escapes to a call whose effects are
+    /// unknown; at a call of external methods that keep members (KeepsMembers) none ends; at any other call as a guard's
+    /// fact does. A getter ends no guard's fact (`guards` false).
+    private void ForgetForCall(IOperation? instance, Input[] inputs, TaintState state, IReadOnlyList<Target>? summarised = null, bool guards = true, bool keepsMembers = false)
     {
-        state.Forget(p => ReferenceEquals(p.Root, AccessPath.Static));
+        state.ForgetParts(p => guards && ReferenceEquals(p.Root, AccessPath.Static), p => summarised == null && !keepsMembers && ReferenceEquals(p.Root, AccessPath.Static));
         if (!state.HasFacts) return;
         List<ITypeSymbol>? types = null;
         Given(instance, true);
@@ -729,9 +823,11 @@ internal sealed partial class MethodAnalyzer
             if (i.RefKind is RefKind.Ref or RefKind.Out) ForgetWritten(i.Operation, state);
             else if (!ReferenceEquals(i.Operation, instance)) Given(i.Operation, false);
         }
-        if (types == null || !state.HasFacts) return;
-        var reaches = types.Select(t => _ctx.TypeReach.Of(t)).ToList();
-        state.Forget(p => p.ObjectTypes.Any(held => reaches.Any(r => MemberFacts.MayChange(r, held))));
+        if (!state.HasFacts) return;
+        var reaches = types?.Select(t => _ctx.TypeReach.Of(t)).ToList();
+        bool ByArguments(AccessPath p) => reaches != null && p.ObjectTypes.Any(held => reaches.Any(r => MemberFacts.MayChange(r, held)));
+        var bySummary = summarised == null ? null : SummaryKill(summarised, instance, inputs);
+        state.ForgetParts(p => guards && ByArguments(p), p => bySummary != null ? bySummary(p) : !keepsMembers && ByArguments(p));
 
         void Given(IOperation? op, bool receiver)
         {
@@ -747,6 +843,41 @@ internal sealed partial class MethodAnalyzer
             // lead to the objects its type reaches (fix round 1, I3).
             if (receiver && op.Type!.IsValueType && MemberFacts.IsChangeable(op.Type)) ForgetWritten(op, state);
             (types ??= new List<ITypeSymbol>()).Add(op.Type!);
+        }
+    }
+
+    /// Which strong updates a call of these symbolic bodies may end (see ForgetForCall).
+    private Func<AccessPath, bool> SummaryKill(IReadOnlyList<Target> targets, IOperation? instance, Input[] inputs)
+    {
+        var members = new HashSet<object>();
+        var tops = new List<HashSet<object>>(1);
+        var escaped = new List<TypeReach.Result>();
+        foreach (var t in targets)
+        {
+            var s = t.Body!.Summary;
+            foreach (var (_, (symbol, _)) in s.ObjWrites) members.Add(SymbolKeys.Of(symbol));
+            if (s.TopWrites != null && !tops.Contains(s.TopWrites)) tops.Add(s.TopWrites);
+            foreach (var slot in s.Escapes)
+            {
+                if (slot == -1) Escaped(instance);
+                else foreach (var i in inputs) if (i.Ordinal == slot && i.RefKind != RefKind.Out) Escaped(i.Operation);
+            }
+        }
+        return p =>
+        {
+            foreach (var m in p.Members)
+            {
+                var key = SymbolKeys.Of(m);
+                if (members.Contains(key)) return true;
+                foreach (var top in tops) if (top.Contains(key)) return true;
+            }
+            return escaped.Count > 0 && p.ObjectTypes.Any(held => escaped.Any(r => MemberFacts.MayChange(r, held)));
+        };
+
+        void Escaped(IOperation? op)
+        {
+            while (op is IConversionOperation c) op = c.Operand;
+            if (op?.Type is { } type && MemberFacts.MayHold(type)) escaped.Add(_ctx.TypeReach.Of(type));
         }
     }
 

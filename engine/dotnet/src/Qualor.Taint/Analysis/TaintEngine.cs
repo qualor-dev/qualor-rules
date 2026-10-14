@@ -9,8 +9,9 @@ namespace Qualor.Taint;
 /// - Task 8: interprocedural. The call graph over every compilation (CallGraph: units, Dispatch narrowed to the types
 ///   the solution creates or registers, decision R-7)
 ///   gives the bottom-up order of its strongly connected components; SummaryComputer computes each body's summary in
-///   its parameters' labels and applies it at the call sites, together with a field-based heap scoped to the request
-///   entry point (Heap, EntryPoints: Task 20, decision R-6), to their joint fixed point; a lambda or local function is
+///   its parameters' labels and applies it at the call sites, together with a heap scoped to the request entry point
+///   (Heap, EntryPoints: Task 20, decision R-6) and kept per abstract object where a value's objects are known (Task 27,
+///   decision R-8: ObjectTable, member slots, strong updates), to their joint fixed point; a lambda or local function is
 ///   analysed with its enclosing body (its captures).
 /// Then the misuse rules' checks (MisuseChecks, Task 12) run over every tree. Findings are deduplicated by rule, file and
 /// line (a file compiled in several projects or target frameworks reports once, with the first input's path). A body

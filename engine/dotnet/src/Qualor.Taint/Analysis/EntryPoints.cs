@@ -775,6 +775,8 @@ internal sealed class EntryPoints
         if (entries.Count > explicitCount) reach = Propagate(graph, entries);
 
         Count = entries.Count;
+        foreach (var e in entries)
+            if (e.Units != null) _starts.UnionWith(e.Units);
         _words = (entries.Count + 63) / 64;
         var all = new ulong[_words];
         for (var i = 0; i < entries.Count; i++) all[i >> 6] |= 1UL << (i & 63);
@@ -876,4 +878,10 @@ internal sealed class EntryPoints
 
     /// The interned Reach sets of the run.
     public int ReachSets => _table.Count;
+
+    private readonly HashSet<Unit> _starts = new();
+
+    /// Whether an entry point starts in the unit (an action, a handler, a view, a component, a tag helper, a hub, code
+    /// around the actions): the framework calls it (Task 27: its parameters and `this` are not its callers' objects).
+    public bool StartsAt(Unit unit) => _starts.Contains(unit);
 }

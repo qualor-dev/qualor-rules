@@ -238,7 +238,7 @@ public sealed class SummaryTests
         """);
 
     [Fact]
-    public void A_constructor_storing_its_argument_taints_the_object_and_through_the_heap_every_instance() => Expect("""
+    public void A_constructor_storing_its_argument_taints_the_object_it_makes() => Expect("""
         public class Filter
         {
             private readonly string _text;
@@ -252,8 +252,8 @@ public sealed class SummaryTests
             {
                 var f = new Filter(q);
                 _c.Execute("DELETE FROM t " + f.Sql()); /*sink*/
-                // The heap is field-based (spec §5): Filter._text holds request data for every instance.
-                _c.Execute("DELETE FROM t " + new Filter("fixed").Sql()); /*sink*/
+                // Decision R-8 (Task 27): Filter._text is per allocation site; the other instance's is the constant.
+                _c.Execute("DELETE FROM t " + new Filter("fixed").Sql());
                 return Ok();
             }
         }
