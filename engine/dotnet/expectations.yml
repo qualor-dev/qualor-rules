@@ -27,6 +27,17 @@ must-find:
   # engine's `lookup:` sanitizer applies only to methods without a body and follows a helper that has one.
   - { rule: csharp.ssrf, line: 255, why: "this.GetTargetAsync(id): a helper with a body that hands the request data back" }
   - { rule: csharp.ssrf, line: 259, why: "UrlTools.LoadNormalizedAsync(id): a helper of another class with a body that hands it back" }
+  - { rule: csharp.xss, line: 326, why: "TextOf(Request): an expression-bodied helper that reads the request" }
+  - { rule: csharp.xss, line: 328, why: "Referrer: an expression-bodied property that reads the request" }
+  - { rule: csharp.xss, line: 330, why: "Channel: a property getter that reads the request" }
+  # PathString is escaped for a URI, not for HTML (Known limit of the OpenGrep rule, which cleans it everywhere): the
+  # engine's `string-prefix:` sanitizer cleans it only outside tags or in a double-quoted attribute value, and follows
+  # a PathString held in a variable.
+  - { rule: csharp.xss, line: 197, why: "held.Value: a PathString held in a variable, its unescaped Value" }
+  - { rule: csharp.xss, line: 201, why: "Request.Path in a single-quoted attribute value" }
+  - { rule: csharp.xss, line: 203, why: "Request.PathBase in a script string" }
+  # The content type's constants are followed through a local (`when: arg: 1`): one of them is HTML.
+  - { rule: csharp.xss, line: 318, why: "Content(html, type) with type = other == \"html\" ? \"text/html\" : \"text/plain\"" }
 must-stay-quiet:
   # Results.File given a stream is no path: the engine goes by the overload (`param-types`), OpenGrep cannot (Known limit).
   - { rule: csharp.path-traversal, line: 367, why: "Results.File(Request.Body, ...): the Stream overload is no sink" }

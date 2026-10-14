@@ -1,0 +1,114 @@
+# The engine's model of csharp.xss (format v1, models/README.md): the sinks and sanitizers of rules/csharp/xss/xss.yml
+# with types in place of names, the content-type checks as conditional sinks (`when:`). Sources and propagators:
+# sources.yml and propagators.yml (shared). Razor views and components (.cshtml, .razor) are plan Task 13.
+#
+# Sources (learn.microsoft.com): dotnet/api/microsoft.aspnetcore.http.results.content, .results.text,
+# microsoft.aspnetcore.http.typedresults, microsoft.aspnetcore.mvc.controllerbase.content,
+# microsoft.aspnetcore.mvc.razorpages.pagemodel.content, microsoft.aspnetcore.mvc.contentresult,
+# microsoft.aspnetcore.html.htmlstring, microsoft.aspnetcore.html.ihtmlcontentbuilder,
+# microsoft.aspnetcore.html.htmlcontentbuilderextensions, microsoft.aspnetcore.razor.taghelpers.taghelpercontent,
+# microsoft.aspnetcore.http.httpresponsewritingextensions.writeasync, microsoft.aspnetcore.http.pathstring,
+# system.text.encodings.web.textencoder.encode, system.net.webutility, system.web.httputility,
+# system.uri.escapedatastring, system.net.mime.mediatypenames.text.html; aspnet/core/security/cross-site-scripting.
+#
+# The HTML content type, as in the OpenGrep rule: a string starting with text/html or application/xhtml+xml
+# (MediaTypeNames.Text.Html is the constant "text/html").
+# Differences from the OpenGrep rule: the content type is followed by its constant values wherever they come from in
+# the method (a const, a local assigned literals, a ternary of them: a local chosen at run time between "text/html"
+# and "text/plain" may be HTML, so it is reported); the ContentType of a ContentResult or a response is the one set on
+# that object anywhere in the method (an initializer, an assignment, before or after).
+rule: csharp.xss
+kind: taint
+sinks:
+  # Results/TypedResults.Content and .Text, a controller's or page's Content, with an HTML content type.
+  - method: Microsoft.AspNetCore.Http.Results.Content
+    args: [0]
+    when:
+      - arg: 1
+        matches: '(?i)^\s*(text/html|application/xhtml\+xml)'
+  - method: Microsoft.AspNetCore.Http.Results.Text
+    args: [0]
+    param-types: [System.String]
+    when:
+      - arg: 1
+        matches: '(?i)^\s*(text/html|application/xhtml\+xml)'
+  - method: Microsoft.AspNetCore.Http.TypedResults.Content
+    args: [0]
+    when:
+      - arg: 1
+        matches: '(?i)^\s*(text/html|application/xhtml\+xml)'
+  - method: Microsoft.AspNetCore.Http.TypedResults.Text
+    args: [0]
+    param-types: [System.String]
+    when:
+      - arg: 1
+        matches: '(?i)^\s*(text/html|application/xhtml\+xml)'
+  - method: Microsoft.AspNetCore.Mvc.ControllerBase.Content
+    args: [0]
+    when:
+      - arg: 1
+        matches: '(?i)^\s*(text/html|application/xhtml\+xml)'
+  - method: Microsoft.AspNetCore.Mvc.RazorPages.PageModel.Content
+    args: [0]
+    when:
+      - arg: 1
+        matches: '(?i)^\s*(text/html|application/xhtml\+xml)'
+  # A ContentResult whose ContentType is HTML.
+  - property-set: Microsoft.AspNetCore.Mvc.ContentResult.Content
+    when:
+      - property: ContentType
+        matches: '(?i)^\s*(text/html|application/xhtml\+xml)'
+  # Raw HTML content: HtmlString, and AppendHtml, AppendHtmlLine and SetHtmlContent given a string (an
+  # IHtmlContentBuilder: TagBuilder.InnerHtml, HtmlContentBuilder, a tag helper's output content).
+  - method: Microsoft.AspNetCore.Html.HtmlString..ctor
+    args: [0]
+  - method: Microsoft.AspNetCore.Html.IHtmlContentBuilder.AppendHtml
+    args: [0]
+    param-types: [System.String]
+  - method: Microsoft.AspNetCore.Html.HtmlContentBuilderExtensions.AppendHtmlLine
+    args: [1]
+    param-types: [System.String]
+  - method: Microsoft.AspNetCore.Html.HtmlContentBuilderExtensions.SetHtmlContent
+    args: [1]
+    param-types: [System.String]
+  - method: Microsoft.AspNetCore.Razor.TagHelpers.TagHelperContent.SetHtmlContent
+    args: [0]
+    param-types: [System.String]
+  # The response body written when the response's ContentType is set to HTML in the method.
+  - method: Microsoft.AspNetCore.Http.HttpResponseWritingExtensions.WriteAsync
+    args: [1]
+    when:
+      - property: ContentType
+        of: 0
+        matches: '(?i)^\s*(text/html|application/xhtml\+xml)'
+# Shared C# sanitizers (as in every taint model; see sql-injection.yml), then the rule's own.
+# Not here (plan Task 11, guards): the shared allow-lists.
+sanitizers:
+  - method: System.Int32.Parse
+  - method: System.Int64.Parse
+  - method: System.Guid.Parse
+  - method: System.DateTime.Parse
+  - method: System.Convert.ToInt32
+  - method: System.Convert.ToInt64
+  - method: System.Enum.Parse
+  # HTML encoding: an HtmlEncoder (Default, Create(...) or injected) and the HtmlEncode helpers; URL encoding (a
+  # UrlEncoder, Uri.EscapeDataString, WebUtility.UrlEncode) percent-encodes ' " < > & too, so the value cannot leave an
+  # attribute or start a tag. Only the returned value is clean.
+  # Difference: HtmlEncoder.Encode and UrlEncoder.Encode are TextEncoder.Encode (declared there); the engine names
+  # that member, so JavaScriptEncoder.Encode, which escapes the same characters, is a sanitizer too.
+  - method: System.Text.Encodings.Web.TextEncoder.Encode
+  - method: System.Net.WebUtility.HtmlEncode
+  - method: System.Web.HttpUtility.HtmlEncode
+  - method: System.Net.WebUtility.UrlEncode
+  - method: System.Uri.EscapeDataString
+  # The request's Path and PathBase are PathString values, whose text is escaped for a URI: '<', '>', '"' and spaces
+  # are percent-encoded, so a PathString cannot open a tag or leave text or a double-quoted attribute value. It is not
+  # escaped for HTML (' ( ) = ; & pass), so it stays request data in a single-quoted or unquoted attribute value and
+  # inside a <script> or <style> element. Its .Value is the unescaped path (a string) and stays request data.
+  # Difference: OpenGrep cleans Request.Path and PathBase wherever they are written (a Known limit: a single-quoted
+  # attribute or a script string is missed) and misses a PathString held in a variable before its .Value is read; the
+  # engine cleans a PathString only by the HTML before it in the string being built: outside any tag (and not in a
+  # script or style element) or in a double-quoted attribute value.
+  - string-prefix: '(?is)^(?!.*<(script|style)\b(?:(?!</(script|style)).)*$)(?:(?!.*<[^>]*$)|.*<[^>]*=\s*"[^"]*$)'
+    type: Microsoft.AspNetCore.Http.PathString
+guards: []
