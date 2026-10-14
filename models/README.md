@@ -90,7 +90,7 @@ sanitizers:
   `string.Format` with a known format: its `arg0` to `arg2` and the elements of its params array) is clean when the text
   before it in that string, from the string's start, matches R; an earlier value in that text reads as U+FFFC (write
   `\uFFFC` in R) unless its text is known. A text is known for a constant, a static readonly field or get-only static
-  property initialised with a literal, and a call or read of a project member whose every return starts with the same
+  property initialised with a literal (in a type without a static constructor, which could assign it), and a call or read of a project member whose every return starts with the same
   text (its summary's returned text: the common start of what each `return` gives, a constant, a literal-initialised
   static, another such member, a `+` or interpolation of them; joined over the dispatch targets): `Api.Base + "/" + id`
   with `static string Base => "https://api.example/v1"` reads as written in place (Task 23). A string held in a variable
@@ -390,9 +390,12 @@ unmodelled-external: string-or-collection-return
   `[this, args]`, a constructor from `[args]`, a property read from `[this]`; to `[return]`.
 - `key`: parameter ordinals of a lookup key (not in `from`, which then has no `args`): the key reaches a `return` or
   `out` value only when that value's type can carry an injection by itself (ruling R-E18): a string-like type, a scalar
-  of `sources.yml` (a number, bool, char), an array or `IEnumerable<T>` of those (`StringValues`, `List<string>`,
-  `string[]`), also a Task's result; a type parameter or `dynamic` counts (it may be one). An object found by a request
-  key (a settings or tenant record, an entity, a content item, `object`) is not request data, nor are its members.
+  of `sources.yml` (a number, bool, char), a JSON value (`JToken`, `JsonNode`, `JsonElement`), an array or
+  `IEnumerable<T>` of those (`StringValues`, `List<string>`, `string[]`), also a Task's result; `dynamic` and a type
+  parameter count (it may be one), unless a constraint of the type parameter cannot (`where T : Entity`). An object
+  found by a request key (a settings or tenant record, an entity, a content item, `object`) is not request data, nor are
+  its members. A key that reaches a value typed by a type parameter is marked (ruling R-E23): a call of a value-factory
+  shaped method drops it from its result (below), any other call keeps it.
 - Entries take `method:` or `property-get:`.
 - Element reads of a collection are propagators of its indexer (`property-get: <type>.Item`, from
   `[this]`): `propagators.yml` names those of the dictionary and list interfaces and of the request
@@ -453,10 +456,12 @@ false positives (FP) or misses (FN) there.
   depends on its arguments (FP). A redirect to the request's own URL (scheme, host, path) is reported (FP): nopCommerce
   builds it from the Host header (a request header, so request data) and `Uri.SchemeDelimiter`, whose text is not known.
 - LINQ (since Task 23): `Select`, `SelectMany` and the element selectors of `ToDictionary`/`ToLookup` give what their
-  selector returns (a lambda, a method group, a delegate parameter), so an encoder in the selector cleans the result;
-  the other operators (`Where`, `OrderBy`, `Take`, `Distinct`, ...) pass the source on. A selector held in a field or
-  variable, `Queryable`'s operators, and the result selectors of `GroupBy`, `Join`, `Zip` and `Aggregate` keep the
-  source sequence (FP).
+  selector returns when it is a lambda or a method group given there, so an encoder in the selector cleans the result;
+  `SelectMany`'s result selector also gets the collection selector's elements (two `from` clauses); the other operators
+  (`Where`, `OrderBy`, `Take`, `Distinct`, ...) pass the source on. A selector that is a delegate parameter, a field or
+  a local (ruling R-E23: `Map(xs, n => Encode(n))` through a helper's `Select(f)` is reported), `Queryable`'s operators,
+  and the result selectors of `GroupBy`, `Join`, `Zip` and `Aggregate` keep the source sequence (FP). A lambda's
+  parameters are seeded alike: the outer element of a two-`from` query takes the inner elements' data too (FP).
 - Lookups by a request key (ruling R-E18, narrowing R-E9; since Task 23): the key's taint reaches what a lookup finds
   only when it can carry an injection by itself (a string, a number, a sequence of them: `key:` in `propagators.yml`).
   Cost: a record found by a request key (a settings or tenant object, an entity, a content item) whose string field
@@ -466,8 +471,11 @@ false positives (FP) or misses (FN) there.
   not request data (FN). Caches with a value factory give the factory's result, not the key: IMemoryCache's
   `GetOrCreate*`, `ConcurrentDictionary.GetOrAdd`/`AddOrUpdate`, and a project method shaped like `T Get(key, Func<T>
   acquire)` (it returns a type parameter or a Task of one, takes a delegate returning it and another parameter that is
-  not of that type; by shape, whatever its name), whose own body is not consulted for the result (FN if such a method
-  returns something else than what the factory or its cache holds). A literal allow-list table still cleans.
+  not of that type; by shape, whatever its name): its own return is kept, without what reached it only as the key of a
+  lookup whose element is typed by a type parameter (ruling R-E23), so `Parse<T>(raw, fallback)` still returns `raw`.
+  A GetOrCreate factory's `ICacheEntry.Key` is the key. A generic lookup without a factory (`Cache<T>.Find(key)`) keeps
+  the key's taint unless T is constrained to a type that cannot carry (FP for `Cache<Tenant>`; follow-up: a label
+  conditional on the type argument, resolved at the call). A literal allow-list table still cleans.
 - Not followed (FN): `TempData` entries (another request); a model that is not a collection, statically typed as an
   interface or a library base class and given to a view of a narrower type, whose members are never written in code
   (members written in code still reach the view through the field heap); `ViewData.Model = m` with an `object`/`dynamic` m (a view

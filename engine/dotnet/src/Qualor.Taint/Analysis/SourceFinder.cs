@@ -288,30 +288,52 @@ internal sealed class SourceFinder
         return type.AllInterfaces.Any(i => Enumerables.Contains(SymbolMatch.MetadataName(i)));
     }
 
-    private readonly Dictionary<ITypeSymbol, bool> _injectionCache = new(SymbolEqualityComparer.Default);
+    private readonly Dictionary<(ITypeSymbol, bool), bool> _injectionCache = new();
+
+    /// JSON values, which hold text or a number (fix round 1 of Task 23, M1): JToken (JValue, JObject, ...), JsonNode,
+    /// JsonElement.
+    private static readonly HashSet<string> JsonValues = new(StringComparer.Ordinal)
+    {
+        "Newtonsoft.Json.Linq.JToken", "System.Text.Json.Nodes.JsonNode", "System.Text.Json.JsonElement",
+    };
 
     /// Whether a value of this type can carry an injection by itself (ruling R-E18): a string-like type, a scalar of the
-    /// model (a number, bool, char, ...), or an array or sequence of such values (StringValues, List<string>, string[]),
-    /// also as a Task's or ValueTask's result; a type parameter or `dynamic` counts too (it may be one). Any other type (an
-    /// object such as a settings record, an entity, a content item; `object` itself) cannot.
-    public bool CanCarryInjection(ITypeSymbol? type) => type == null || CanCarryInjection(type, 0);
+    /// model (a number, bool, char, ...), a JSON value, or an array or sequence of such values (StringValues,
+    /// List<string>, string[]), also as a Task's or ValueTask's result; a type parameter (unless a constraint is a type
+    /// that cannot: `where T : Entity`, M4) or `dynamic` counts too (it may be one). Any other type (an object such as a
+    /// settings record, an entity, a content item; `object` itself) cannot.
+    public bool CanCarryInjection(ITypeSymbol? type) => type == null || CanCarryInjection(type, 0, typeParameters: true);
 
-    private bool CanCarryInjection(ITypeSymbol type, int depth)
+    /// Whether a type can carry an injection only because a type parameter in it may be one (CanCarryInjection with
+    /// type parameters taken as unable): a lookup into it is a Label.ViaKey flow (R-E23).
+    public bool CarriesOnlyAsTypeParameter(ITypeSymbol? type) =>
+        type != null && CanCarryInjection(type, 0, typeParameters: true) && !CanCarryInjection(type, 0, typeParameters: false);
+
+    private bool CanCarryInjection(ITypeSymbol type, int depth, bool typeParameters)
     {
-        if (_injectionCache.TryGetValue(type, out var cached)) return cached;
+        if (_injectionCache.TryGetValue((type, typeParameters), out var cached)) return cached;
         var t = UnwrapNullable(type);
         bool result;
-        if (t is ITypeParameterSymbol || t.TypeKind is TypeKind.Dynamic or TypeKind.Error) result = true;
-        else if (StringLike.Contains(SymbolMatch.MetadataName(t)) || IsScalar(t) || t.TypeKind == TypeKind.Enum) result = true;
+        if (t is ITypeParameterSymbol parameter)
+            result = typeParameters && (depth >= 3 || parameter.ConstraintTypes.All(c => CanCarryInjection(c, depth + 1, typeParameters)));
+        else if (t.TypeKind is TypeKind.Dynamic or TypeKind.Error) result = true;
+        else if (StringLike.Contains(SymbolMatch.MetadataName(t)) || IsScalar(t) || t.TypeKind == TypeKind.Enum || IsJsonValue(t)) result = true;
         else if (depth >= 3) result = false;
-        else if (t is IArrayTypeSymbol array) result = CanCarryInjection(array.ElementType, depth + 1);
+        else if (t is IArrayTypeSymbol array) result = CanCarryInjection(array.ElementType, depth + 1, typeParameters);
         else if (t is INamedTypeSymbol { TypeArguments.Length: 1 } task
             && SymbolMatch.MetadataName(task.OriginalDefinition) is "System.Threading.Tasks.Task`1" or "System.Threading.Tasks.ValueTask`1")
-            result = CanCarryInjection(task.TypeArguments[0], depth + 1);
+            result = CanCarryInjection(task.TypeArguments[0], depth + 1, typeParameters);
         else
-            result = Sequences(t).Any(e => CanCarryInjection(e, depth + 1));
-        _injectionCache[type] = result;
+            result = Sequences(t).Any(e => CanCarryInjection(e, depth + 1, typeParameters));
+        _injectionCache[(type, typeParameters)] = result;
         return result;
+    }
+
+    private static bool IsJsonValue(ITypeSymbol type)
+    {
+        for (var t = type as INamedTypeSymbol; t != null; t = t.BaseType)
+            if (JsonValues.Contains(SymbolMatch.MetadataName(t))) return true;
+        return false;
     }
 
     /// The element types of the IEnumerable<T> a type is or implements.

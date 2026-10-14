@@ -73,6 +73,30 @@ public sealed class HelperTextTests : ProbeModels
         """);
 
     [Fact]
+    public void A_literal_static_that_a_static_constructor_assigns_has_no_known_text() => Expect(OriginModels(), """
+        public static class Configured
+        {
+            public static readonly string Base = "https://api.contoso.test/";
+            public static string Root { get; } = "https://api.contoso.test/";
+            static Configured()
+            {
+                Base = Environment.GetEnvironmentVariable("API_BASE") ?? "";
+                Root = Environment.GetEnvironmentVariable("API_ROOT") ?? "";
+            }
+        }
+        public static class Fixed { public static readonly string Base = "https://api.contoso.test/"; }
+        public class FetchController : ControllerBase
+        {
+            public async Task Get(string q, HttpClient http)
+            {
+                await http.GetStringAsync(Configured.Base + q); /*sink*/
+                await http.GetStringAsync(Configured.Root + q); /*sink*/
+                await http.GetStringAsync(Fixed.Base + q);
+            }
+        }
+        """);
+
+    [Fact]
     public void A_member_with_several_implementations_gives_their_common_text() => Expect(OriginModels(), Endpoints + """
         public class FetchController : ControllerBase
         {

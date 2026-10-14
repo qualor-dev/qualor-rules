@@ -54,8 +54,8 @@ internal sealed class AnalysisContext
 
     private readonly Dictionary<IMethodSymbol, int[]?> _factories = new(SymbolEqualityComparer.Default);
 
-    /// The value factory parameters of a project method shaped like a cache's `T Get(key, Func<T> acquire)` (ruling
-    /// R-E18; MethodAnalyzer.Produced): it returns a type parameter T (or a Task or ValueTask of one), takes a delegate
+    /// The value factory parameters of a project method shaped like a cache's `T Get(key, Func<T> acquire)` (rulings
+    /// R-E18, R-E23; MethodAnalyzer.Apply drops from its result what only a lookup key gave it): it returns a type parameter T (or a Task or ValueTask of one), takes a delegate
     /// returning T (or a Task or ValueTask of it) and at least one parameter that is no delegate (the key); null for any
     /// other method. By the method's definition.
     public int[]? ValueFactories(IMethodSymbol definition)
@@ -1218,7 +1218,10 @@ internal sealed partial class MethodAnalyzer
                 }
                 // A lookup key reaches only an element that can carry an injection by itself (ruling R-E18).
                 if (p.Keys.Count > 0 && _ctx.Sources.CanCarryInjection(operation.Type))
-                    foreach (var i in index) if (p.Keys.Contains(i.Ordinal)) result = result.Join(i.Value);
+                {
+                    var later = _ctx.Sources.CarriesOnlyAsTypeParameter(operation.Type);
+                    foreach (var i in index) if (p.Keys.Contains(i.Ordinal)) result = result.Join(later ? i.Value.ViaKey() : i.Value);
+                }
             }
         }
         else if (_ctx.UnmodelledPasses && _ctx.Sources.IsStringOrCollection(property.Type))
@@ -1365,7 +1368,7 @@ internal sealed partial class MethodAnalyzer
         if (format != null) FormatPlaced(inputs, format);
         if (state.HasFacts) ForgetForCall(instance, inputs, state);
         if (method != null) GuardArguments(operation, method, inputs, state);
-        HigherOrder(inputs, instanceValue, state);
+        HigherOrder(inputs, instanceValue, state, definition);
 
         var all = JoinInputs(inputs);
         if (method == null || definition == null) return all;
@@ -1408,7 +1411,8 @@ internal sealed partial class MethodAnalyzer
                 {
                     case TargetKind.Body:
                         anyBody = true;
-                        result = result.Join(Apply(target.Body!, operation, method, Arguments(instanceValue, inputs), reduced ? null : instance, inputs, constructor, state));
+                        result = result.Join(Apply(target.Body!, operation, method, Arguments(instanceValue, inputs), reduced ? null : instance, inputs, constructor, state,
+                            dropViaKey: _ctx.ValueFactories(definition) != null));
                         break;
                     case TargetKind.External:
                         result = External(target.Method, operation, inputs, receiver, thisOperation, reduced && instance != null, all, result, state);
@@ -1552,8 +1556,10 @@ internal sealed partial class MethodAnalyzer
     /// SummaryComputer.Seed; a label as a call edge of the label's body). Its local effects are substituted: the result
     /// (the callee's return value, a constructor's object), what it writes into its receiver, its ref and out
     /// parameters.
+    /// With `dropViaKey` (a value-factory shaped call, ruling R-E23) the result loses what reached the callee's return
+    /// only as the key of a type-parameter-typed lookup (Label.ViaKey); the rest of its return is kept.
     private TaintValue Apply(Body callee, IOperation site, ISymbol member, Func<int, TaintValue> argument, IOperation? receiverOperation,
-        Input[] inputs, bool constructor, TaintState state)
+        Input[] inputs, bool constructor, TaintState state, bool dropViaKey = false)
     {
         _body.Depend(callee);
         Location? location = null;
@@ -1573,7 +1579,7 @@ internal sealed partial class MethodAnalyzer
         if (!s.Heap.IsEmpty) GenericModels(s, callee, site, name, inputs);
         if (s.NoLocalEffects) return TaintValue.Clean;
         location ??= site.Syntax.GetLocation();
-        var result = BodySummary.Substitute(s.Return, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach);
+        var result = BodySummary.Substitute(s.Return, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach, dropViaKey);
         if (s.ToThis.Any)
         {
             var written = BodySummary.Substitute(s.ToThis, callee.Id, argument, location, name, _body.Keeps, _body.WriteReach);
@@ -1591,8 +1597,10 @@ internal sealed partial class MethodAnalyzer
 
     /// Lambdas and method groups given to a call get the join of the call's receiver and other arguments in their
     /// parameters (open item (b) of Task 7, for external and source callees alike): a lambda through its seed, a method
-    /// group by applying its targets' summaries to it (that result is then the argument's value).
-    private void HigherOrder(Input[] inputs, TaintValue receiver, TaintState state)
+    /// group by applying its targets' summaries to it (that result is then the argument's value). SelectMany's result
+    /// selector also gets what its collection selector returns, the elements it pairs with each source element (fix
+    /// round 1 of Task 23, I1: the compiled form of a query with two `from` clauses).
+    private void HigherOrder(Input[] inputs, TaintValue receiver, TaintState state, IMethodSymbol? definition = null)
     {
         var any = false;
         foreach (var i in inputs) if (DelegateOf(i.Operation) != null) any = true;
@@ -1600,8 +1608,13 @@ internal sealed partial class MethodAnalyzer
         var others = receiver;
         foreach (var i in inputs)
             if (i.RefKind != RefKind.Out && DelegateOf(i.Operation) == null) others = others.Join(i.Value);
+        var (collection, resultSelector) = definition == null ? (-1, -1) : SelectManyPair(definition);
+        var outer = others;
         for (var k = 0; k < inputs.Length; k++)
         {
+            others = outer;
+            if (inputs[k].Ordinal == resultSelector)
+                foreach (var c in inputs) if (c.Ordinal == collection) others = others.Join(c.Value);
             switch (DelegateOf(inputs[k].Operation))
             {
                 case IFlowAnonymousFunctionOperation lambda:
@@ -1695,26 +1708,25 @@ internal sealed partial class MethodAnalyzer
         return Named(type) || type.AllInterfaces.Any(Named);
     }
 
-    /// What a call gives back when it is a LINQ projection or a cache with a value factory (Task 23): the join of the
-    /// values of its selectors or factories (a lambda's return, a method group's result, a delegate parameter's label),
-    /// or null when it is neither, or when one of them is a delegate the engine does not know (a field, a variable), whose
-    /// return it cannot see.
-    /// - System.Linq.Enumerable's Select (its selector), SelectMany (its result selector, else its collection selector),
-    ///   ToDictionary and ToLookup with an element selector (the key and element selectors); the other operators keep
-    ///   their source's elements and pass the source on (propagators.yml).
-    /// - A project method shaped like a cache's `T Get(key, Func<T> acquire)` (ruling R-E18, by its shape, whatever its
-    ///   name; AnalysisContext.ValueFactories): its result is the factory's, never the key's nor what the method keeps
-    ///   (its global effects, sinks and heap writes, still apply).
+    /// What a call gives back when it is a LINQ projection (Task 23): the join of the values of its selectors (a lambda's
+    /// return, a method group's result), or null when it is none, or when a selector is not a lambda or method group
+    /// given here (ruling R-E23: a delegate parameter, field or local was not seeded with this call's elements):
+    /// System.Linq.Enumerable's Select (its selector), SelectMany (its result selector, else its collection selector),
+    /// ToDictionary and ToLookup with an element selector (the key and element selectors); the other operators keep their
+    /// source's elements and pass the source on (propagators.yml). A value-factory shaped project method (AnalysisContext.
+    /// ValueFactories) is applied as any call, without what only a lookup key gave its result (Apply, dropViaKey).
     private TaintValue? Produced(IMethodSymbol definition, Input[] inputs)
     {
-        var ordinals = LinqSelectors(definition) ?? _ctx.ValueFactories(definition);
+        var ordinals = LinqSelectors(definition);
         if (ordinals == null) return null;
         var value = TaintValue.Clean;
         var found = false;
         foreach (var i in inputs)
         {
             if (Array.IndexOf(ordinals, i.Ordinal) < 0) continue;
-            if (!KnownDelegate(i.Operation)) return null;
+            // Ruling R-E23: only a lambda or a method group given here is a known selector (seeded with this call's
+            // source); a delegate parameter, field or local keeps the old rule, the source sequence passing on.
+            if (DelegateOf(i.Operation) == null) return null;
             value = value.Join(i.Value);
             found = true;
         }
@@ -1734,12 +1746,14 @@ internal sealed partial class MethodAnalyzer
         };
     }
 
-    /// A lambda, a method group, or a delegate parameter of this body (its label: the caller's lambda or method group).
-    private bool KnownDelegate(IOperation operation)
+    /// SelectMany's collection selector and result selector ordinals, or (-1, -1).
+    private static (int Collection, int Result) SelectManyPair(IMethodSymbol definition)
     {
-        if (DelegateOf(operation) != null) return true;
-        while (operation is IConversionOperation c) operation = c.Operand;
-        return operation is IParameterReferenceOperation { Type.TypeKind: TypeKind.Delegate };
+        if (definition.Name != "SelectMany" || definition.ContainingType is not { } type || SymbolMatch.MetadataName(type) != "System.Linq.Enumerable")
+            return (-1, -1);
+        int Ordinal(string name) => definition.Parameters.FirstOrDefault(p => p.Name == name)?.Ordinal ?? -1;
+        var result = Ordinal("resultSelector");
+        return result < 0 ? (-1, -1) : (Ordinal("collectionSelector"), result);
     }
 
     /// One propagator of an external call: the join of its `from` positions reaches its `to` positions.
@@ -1770,8 +1784,11 @@ internal sealed partial class MethodAnalyzer
         var site = operation.Syntax.GetLocation();
         var through = $"passed through {_ctx.Name(method)}";
         var keyed = key.Any ? from.Join(key).Step(site, through) : TaintValue.Clean;
+        var keyedLater = key.Any ? from.Join(key.ViaKey()).Step(site, through) : TaintValue.Clean;
         from = from.Any ? from.Step(site, through) : from;
-        TaintValue For(ITypeSymbol? type) => key.Any && _ctx.Sources.CanCarryInjection(type) ? keyed : from;
+        // An element typed by a type parameter may or may not carry: the key's labels pass marked (Label.ViaKey, R-E23).
+        TaintValue For(ITypeSymbol? type) => !key.Any || !_ctx.Sources.CanCarryInjection(type) ? from
+            : _ctx.Sources.CarriesOnlyAsTypeParameter(type) ? keyedLater : keyed;
         foreach (var t in p.To)
         {
             switch (t)

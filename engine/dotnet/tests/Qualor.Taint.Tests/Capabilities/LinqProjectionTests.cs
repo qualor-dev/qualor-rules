@@ -87,17 +87,49 @@ public sealed class LinqProjectionTests : ProbeModels
         }
         """);
 
+    // Ruling R-E23 (fix round 1): a selector that is a delegate parameter, a field or a local is no known selector, so
+    // the sequence passes through as before Task 23. A caller's lambda was seeded with the caller's own arguments, not
+    // with what the helper applies it to, and a delegate held in a field or a local was seeded by nobody. The cost is
+    // the first line: an encoder given to a helper's Select is reported (FP).
     [Fact]
     public void A_selector_held_in_a_variable_or_given_by_a_caller_keeps_the_sequence() => Expect(EncodedModels(), """
         using System.Net;
         public class NotesController : ControllerBase
         {
+            private static readonly Func<string, string> Same = s => s;
             private static IEnumerable<string> Map(IEnumerable<string> items, Func<string, string> f) => items.Select(f);
+            private IEnumerable<string> FromHeader(Func<string, string> f) => Request.Headers["X-Notes"].ToArray().Select(f!);
             public IActionResult Show([FromQuery] List<string> notes, Func<string, string>? injected)
             {
-                Content(string.Join(",", Map(notes, n => WebUtility.HtmlEncode(n))));
+                Content(string.Join(",", Map(notes, n => WebUtility.HtmlEncode(n)))); /*sink*/
                 Content(string.Join(",", Map(notes, n => n))); /*sink*/
                 Content(string.Join(",", notes.Select(injected ?? (n => n)))); /*sink*/
+                Func<string, string> same = s => s;
+                Content(string.Join(",", Map(notes, Same))); /*sink*/
+                Content(string.Join(",", Map(notes, same))); /*sink*/
+                Content(string.Join(",", notes.Select(Same))); /*sink*/
+                Content(string.Join(",", FromHeader(h => h))); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void A_result_selector_sees_the_elements_of_the_collection_selector() => Expect(EncodedModels(), """
+        using System.Net;
+        public class NotesController : ControllerBase
+        {
+            private static string Keep(string outer, string inner) => inner;
+            public IActionResult Show([FromQuery] List<string> notes)
+            {
+                var fixedList = new List<string> { "a", "b" };
+                Content(string.Join(",", fixedList.SelectMany(f => notes, (f, n) => n))); /*sink*/
+                Content(string.Join(",", from f in fixedList from n in notes select n)); /*sink*/
+                Content(string.Join(",", from f in fixedList from h in Request.Headers["X-Tags"].ToArray() select f + h)); /*sink*/
+                Content(string.Join(",", fixedList.SelectMany(f => notes, Keep))); /*sink*/
+                Content(string.Join(",", fixedList.SelectMany(f => notes, (f, n) => WebUtility.HtmlEncode(n))));
+                // A lambda's parameters are seeded alike, so the outer element takes the inner elements' data too (FP).
+                Content(string.Join(",", from f in fixedList from n in notes select f)); /*sink*/
                 return Ok();
             }
         }

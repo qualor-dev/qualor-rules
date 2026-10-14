@@ -133,7 +133,8 @@ internal static class KeyedStores
 
     /// The entry a key operation names: its constant (ViewData's in lower case), else the store's "any key" entry. A
     /// static member that is a constant in all but name counts as its constant: a property returning a string literal
-    /// (`static string K => "k";`, `static string K { get; } = "k";`), a static readonly field initialised with one.
+    /// (`static string K => "k";`, `static string K { get; } = "k";`), a static readonly field initialised with one, in a
+    /// type without a static constructor.
     public static KeyedLocation Location(KeyedStore store, IOperation? key)
     {
         while (key is IConversionOperation c) key = c.Operand;
@@ -151,6 +152,9 @@ internal static class KeyedStores
             _ => (null, false),
         };
         if (symbol == null || !isStatic || symbol.DeclaringSyntaxReferences.Length != 1) return null;
+        // A static constructor may assign it (a readonly static field or get-only static property can be assigned only
+        // there): no constant then (fix round 1 of Task 23, M3).
+        if (symbol.ContainingType is { } type && type.StaticConstructors.Any(c => !c.IsImplicitlyDeclared)) return null;
         ExpressionSyntax? value = symbol.DeclaringSyntaxReferences[0].GetSyntax() switch
         {
             VariableDeclaratorSyntax v => v.Initializer?.Value,

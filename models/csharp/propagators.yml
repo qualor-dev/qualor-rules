@@ -166,6 +166,8 @@ propagators:
   # system.collections.concurrent.concurrentdictionary-2.)
   - method: Microsoft.Extensions.Caching.Memory.CacheExtensions.GetOrCreate*   # GetOrCreate, GetOrCreateAsync
     from: [2]
+  # The entry a GetOrCreate factory is given holds the key it was created for.
+  - property-get: Microsoft.Extensions.Caching.Memory.ICacheEntry.Key
   - method: Microsoft.Extensions.Caching.Memory.CacheExtensions.Get
     from: [0]
     key: [1]

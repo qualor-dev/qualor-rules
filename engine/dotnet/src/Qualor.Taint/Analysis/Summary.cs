@@ -157,7 +157,7 @@ internal sealed class BodySummary
     /// `keep` accepts its owner. Request data the callee read from the heap reaches the call only for the entry points
     /// that also reach the caller (`caller`; TaintValue.Scope).
     public static TaintValue Substitute(TaintValue symbolic, int owner, Func<int, TaintValue> argument, Location site, string name, Func<int, bool> keep,
-        Reach caller)
+        Reach caller, bool dropViaKey = false)
     {
         if (!symbolic.Any) return TaintValue.Clean;
         var own = symbolic.RequestPart.Within(caller);
@@ -166,9 +166,13 @@ internal sealed class BodySummary
         {
             if (label.Owner == owner)
             {
+                // A value-factory call (dropViaKey) loses what reached the result only as a lookup key (R-E23); any other
+                // call keeps it, its labels still marked so a caller's value-factory shape can drop them in turn.
+                if (label.ViaKey && dropViaKey) continue;
                 var a = argument(label.Slot);
                 if (!a.Any) continue;
-                result = result.Join(a.Step(site, $"passed to {name}").Extend(label.Path).CleanedFor(label.CleanFor));
+                var v = a.Step(site, $"passed to {name}").Extend(label.Path).CleanedFor(label.CleanFor);
+                result = result.Join(label.ViaKey ? v.ViaKey() : v);
             }
             else if (keep(label.Owner))
             {

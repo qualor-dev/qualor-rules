@@ -41,6 +41,50 @@ public sealed class KeyedLookupTests
         """);
 
     [Fact]
+    public void A_json_value_found_by_a_request_key_is_request_data() => Expect("""
+        using Newtonsoft.Json.Linq;
+        public class SettingsController : ControllerBase
+        {
+            private static readonly JObject Stored = JObject.Parse("{}");
+            private readonly SqlConnection _c = new();
+            public IActionResult Show(string k)
+            {
+                _c.Execute("SELECT * FROM " + (string?)Stored[k]); /*sink*/
+                _c.Execute("SELECT * FROM " + Stored[k]?.ToString()); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void An_entity_constrained_type_parameter_found_by_a_request_key_is_not_request_data() => Expect("""
+        public abstract class Entity { public string Name { get; set; } = ""; }
+        public sealed class Shop : Entity { }
+        public sealed class EntityTable<T> where T : Entity
+        {
+            private readonly Dictionary<string, T> _byKey = new();
+            public T? Find(string key) => _byKey.TryGetValue(key, out var hit) ? hit : null;
+        }
+        public sealed class AnyTable<T> where T : class
+        {
+            private readonly Dictionary<string, T> _byKey = new();
+            public T? Find(string key) => _byKey.TryGetValue(key, out var hit) ? hit : null;
+        }
+        public class ShopsController : ControllerBase
+        {
+            private static readonly EntityTable<Shop> Shops = new();
+            private static readonly AnyTable<string> Names = new();
+            private readonly SqlConnection _c = new();
+            public IActionResult Show(string k)
+            {
+                _c.Execute("SELECT * FROM " + Shops.Find(k)?.Name);
+                _c.Execute("SELECT * FROM " + Names.Find(k)); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
     public void Text_and_sequences_of_text_found_by_a_request_key_are_request_data() => Expect("""
         public class LabelsController : ControllerBase
         {
@@ -144,6 +188,19 @@ public sealed class KeyedLookupTests
                 _c.Execute("SELECT * FROM " + Pick("k", slug, () => "pages")); /*sink*/
                 return Ok();
             }
+            // Fix round 1 (R-E23): a value-factory shape keeps its own return and loses only what a key lookup gave it.
+            private static T Parse<T>(string raw, Func<T> fallback) => raw.Length > 0 ? (T)(object)raw : fallback();
+            private static T Retry<T>(string operation, Func<T> action) { try { return action(); } catch { return action(); } }
+            private static async Task<T> Locked<T>(string name, Func<Task<T>> body) => await body();
+            public async Task<IActionResult> Shapes(string slug)
+            {
+                _c.Execute("SELECT * FROM " + Parse(slug, () => "pages")); /*sink*/
+                _c.Execute("SELECT * FROM " + Retry("load", () => slug)); /*sink*/
+                _c.Execute("SELECT * FROM " + Retry(slug, () => "pages"));
+                _c.Execute("SELECT * FROM " + await Locked("n", () => Task.FromResult(slug))); /*sink*/
+                _c.Execute("SELECT * FROM " + await Locked(slug, () => Task.FromResult("pages")));
+                return Ok();
+            }
         }
         """);
 
@@ -176,6 +233,11 @@ public sealed class KeyedLookupTests
             public IActionResult Name(string slug)
             {
                 _c.Execute("SELECT * FROM " + Names.GetOrAdd("n", k => slug)); /*sink*/
+                return Ok();
+            }
+            public IActionResult Entry(string slug)
+            {
+                _c.Execute("SELECT * FROM " + _cache.GetOrCreate(slug, e => (string)e.Key)); /*sink*/
                 return Ok();
             }
         }

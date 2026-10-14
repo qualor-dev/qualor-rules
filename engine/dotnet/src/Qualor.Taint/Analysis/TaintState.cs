@@ -69,13 +69,20 @@ internal sealed class Trail
 /// return value, sinks and heap writes expressed in its own labels; a call site substitutes its arguments for them.
 internal sealed class Label
 {
-    public Label(int owner, int slot, ImmutableHashSet<string> cleanFor, Trail path)
+    public Label(int owner, int slot, ImmutableHashSet<string> cleanFor, Trail path, bool viaKey = false)
     {
         Owner = owner;
         Slot = slot;
         CleanFor = cleanFor;
         Path = path;
+        ViaKey = viaKey;
     }
+
+    /// The parameter reaches the value only as the key of a lookup whose element is typed by a type parameter (fix round
+    /// 1 of Task 23, ruling R-E23): whether the key carries depends on the type argument. A call of a value-factory
+    /// shaped method drops such labels from its result; any other call keeps them. A join keeps the flag only when both
+    /// sides have it (a plain flow of the parameter wins).
+    public bool ViaKey { get; }
 
     public int Owner { get; }
 
@@ -226,6 +233,10 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     public static TaintValue Param(int owner, int slot) =>
         Clean with { Labels = ImmutableArray.Create(new Label(owner, slot, ImmutableHashSet<string>.Empty, Trail.Empty)) };
 
+    /// This value with every label marked as reaching it only through a type-parameter-typed key lookup (Label.ViaKey).
+    public TaintValue ViaKey() => Labels.Length == 0 || Labels.All(l => l.ViaKey) ? this
+        : this with { Labels = Labels.Select(l => l.ViaKey ? l : new Label(l.Owner, l.Slot, l.CleanFor, l.Path, true)).ToImmutableArray() };
+
     /// The request data of this value, without its labels.
     public TaintValue RequestPart => Labels.Length == 0 ? this : Request ? this with { Labels = ImmutableArray<Label>.Empty } : Clean;
 
@@ -332,9 +343,10 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                 var y = b[j++];
                 var cf = x.CleanFor.Count == 0 || y.CleanFor.Count == 0 ? ImmutableHashSet<string>.Empty : x.CleanFor.Intersect(y.CleanFor);
                 var p = y.Path.Count < x.Path.Count ? y.Path : x.Path;
-                if (cf.Count != x.CleanFor.Count || !ReferenceEquals(p, x.Path))
+                var viaKey = x.ViaKey && y.ViaKey;
+                if (cf.Count != x.CleanFor.Count || !ReferenceEquals(p, x.Path) || viaKey != x.ViaKey)
                 {
-                    result.Add(new Label(x.Owner, x.Slot, cf.Count == x.CleanFor.Count ? x.CleanFor : cf, p));
+                    result.Add(new Label(x.Owner, x.Slot, cf.Count == x.CleanFor.Count ? x.CleanFor : cf, p, viaKey));
                     changed = true;
                 }
                 else
@@ -364,7 +376,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         {
             var x = Labels[k];
             var y = other.Labels[k];
-            if (x.Owner != y.Owner || x.Slot != y.Slot || !x.CleanFor.SetEquals(y.CleanFor)) return false;
+            if (x.Owner != y.Owner || x.Slot != y.Slot || x.ViaKey != y.ViaKey || !x.CleanFor.SetEquals(y.CleanFor)) return false;
         }
         return true;
     }
@@ -379,7 +391,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         {
             value = value with
             {
-                Labels = Labels.Select(l => rules.All(l.CleanFor.Contains) ? l : new Label(l.Owner, l.Slot, l.CleanFor.Union(rules), l.Path)).ToImmutableArray(),
+                Labels = Labels.Select(l => rules.All(l.CleanFor.Contains) ? l : new Label(l.Owner, l.Slot, l.CleanFor.Union(rules), l.Path, l.ViaKey)).ToImmutableArray(),
             };
         }
         return value;
@@ -409,7 +421,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         if (Labels.Length > 0 && Labels.Any(l => Fits(l.Path, location)))
         {
             var s = step ?? new PathStep(location, message);
-            value = value with { Labels = Labels.Select(l => Fits(l.Path, location) ? new Label(l.Owner, l.Slot, l.CleanFor, l.Path.Add(s)) : l).ToImmutableArray() };
+            value = value with { Labels = Labels.Select(l => Fits(l.Path, location) ? new Label(l.Owner, l.Slot, l.CleanFor, l.Path.Add(s), l.ViaKey) : l).ToImmutableArray() };
         }
         return value;
     }
@@ -433,7 +445,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                 value = value with { Path = witnesses[0].Path, Witnesses = witnesses };
             }
         }
-        if (Labels.Length > 0) value = value with { Labels = Labels.Select(l => new Label(l.Owner, l.Slot, l.CleanFor, l.Path.Concat(steps))).ToImmutableArray() };
+        if (Labels.Length > 0) value = value with { Labels = Labels.Select(l => new Label(l.Owner, l.Slot, l.CleanFor, l.Path.Concat(steps), l.ViaKey)).ToImmutableArray() };
         return value;
     }
 }
