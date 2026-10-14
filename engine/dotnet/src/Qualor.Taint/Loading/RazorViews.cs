@@ -25,6 +25,9 @@ namespace Qualor.Taint;
 ///   folders (MVC's import feature), the project's tag helpers (`@addTagHelper`, discovered once per project in its own
 ///   compilation and references) and `#line` directives into the `.cshtml`, so findings are reported there.
 ///   `_ViewStart.cshtml` is a view of its own, as the build compiles it.
+/// - The code is MVC 3.0+'s whatever the ASP.NET Core: an assembly or class attribute whose type the project's references
+///   lack is left out (ASP.NET Core 1.x/2.0 has no `Microsoft.AspNetCore.Razor.Hosting` and no
+///   `CreateNewOnMetadataUpdateAttribute`; EntryPoints then knows the view by its `#line` file).
 /// - Nothing here throws: a view that cannot be read or generated, or whose generated code has Razor or C# errors, is
 ///   counted (ProjectCompilation.EngineViewErrors); its code joins the compilation as far as it was generated.
 internal static class RazorViews
@@ -80,6 +83,7 @@ internal static class RazorViews
         }
 
         var views = new List<View>();
+        var known = new Dictionary<string, bool>(StringComparer.Ordinal);
         foreach (var (path, _) in candidates)
         {
             ct.ThrowIfCancellationRequested();
@@ -94,7 +98,8 @@ internal static class RazorViews
                 var document = engine.Process(item).GetCSharpDocument();
                 var errors = document.Diagnostics.Where(d => d.Severity == RazorDiagnosticSeverity.Error).Select(d => d.ToString()).ToList();
                 var text = SourceText.From(document.GeneratedCode, Encoding.UTF8, SourceHashAlgorithm.Sha256);
-                views.Add(new View(path, CSharpSyntaxTree.ParseText(text, parseOptions, path + ".g.cs", ct), errors));
+                var tree = WithoutUnknownAttributes(CSharpSyntaxTree.ParseText(text, parseOptions, path + ".g.cs", ct), compilation, known, ct);
+                views.Add(new View(path, tree, errors));
             }
             catch (Exception e) when (e is not OperationCanceledException)
             {
@@ -102,6 +107,32 @@ internal static class RazorViews
             }
         }
         return new Batch(views, failed);
+    }
+
+    /// The tree without the assembly and type attributes (`[global::N.T(…)]`, as Razor writes them) whose type the
+    /// compilation does not have; `#line` and other directives are kept.
+    private static SyntaxTree WithoutUnknownAttributes(SyntaxTree tree, Compilation compilation, Dictionary<string, bool> known, CancellationToken ct)
+    {
+        var root = tree.GetRoot(ct);
+        var remove = new List<SyntaxNode>();
+        foreach (var list in root.DescendantNodes(n => n is CompilationUnitSyntax or BaseNamespaceDeclarationSyntax or TypeDeclarationSyntax)
+                     .OfType<AttributeListSyntax>())
+        {
+            var unknown = list.Attributes.Where(a => a.Name.ToString() is var name
+                && name.StartsWith("global::", StringComparison.Ordinal) && !Known(name["global::".Length..])).ToList();
+            if (unknown.Count == 0) continue;
+            if (unknown.Count == list.Attributes.Count) remove.Add(list);
+            else remove.AddRange(unknown);
+        }
+        if (remove.Count == 0) return tree;
+        var rewritten = root.RemoveNodes(remove, SyntaxRemoveOptions.KeepDirectives | SyntaxRemoveOptions.KeepExteriorTrivia)!;
+        return tree.WithRootAndOptions(rewritten, tree.Options);
+
+        bool Known(string name)
+        {
+            if (!known.TryGetValue(name, out var found)) known[name] = found = compilation.GetTypeByMetadataName(name) != null;
+            return found;
+        }
     }
 
     private static bool IsImports(string path) =>

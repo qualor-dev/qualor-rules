@@ -181,6 +181,44 @@ public sealed class RuntimeViewTests : TempDirs
     }
 
     [Fact]
+    public void Against_references_without_Razor_Hosting_the_attributes_they_lack_are_left_out()
+    {
+        // ASP.NET Core 2.0 has no Microsoft.AspNetCore.Razor.Hosting (RazorCompiledItem and the like came with 2.1): the
+        // view's code leaves those attributes out instead of failing on them; the action still reaches the view, known by
+        // its `#line` file.
+        var dir = TempDir();
+        Directory.CreateDirectory(Path.Combine(dir, "Views", "Home"));
+        File.WriteAllText(Path.Combine(dir, "HomeController.cs"), """
+            using Microsoft.AspNetCore.Mvc;
+            namespace Old.Web;
+            public class HomeController : Controller
+            {
+                public IActionResult Index(string q) => View(new Box { Text = q });
+            }
+            public class Box { public string Text { get; set; } }
+            """);
+        File.WriteAllText(Path.Combine(dir, "Views", "_ViewImports.cshtml"), "@using Old.Web\n");
+        File.WriteAllText(Path.Combine(dir, "Views", "Home", "Index.cshtml"), "@model Box\n<p>@Html.Raw(Model.Text)</p>\n");
+        var usings = Path.Combine(dir, "GlobalUsings.g.cs");
+        File.WriteAllText(usings, FixtureRunner.ImplicitUsings);
+        var references = FixtureReferences.All.Select(r => ((PortableExecutableReference)r).FilePath!)
+            .Where(p => Path.GetFileName(p) != "Microsoft.AspNetCore.Razor.Runtime.dll").ToList();
+        var input = new CompilationInput(Path.Combine(dir, "Old.Web.csproj"), "net8.0", "Old.Web", OutputKind.DynamicallyLinkedLibrary,
+            LanguageVersion.CSharp12, NullableContextOptions.Disable, Array.Empty<string>(), false, null,
+            new[] { Path.Combine(dir, "HomeController.cs"), usings }, references, Array.Empty<string>(), Path.Combine(dir, "in.txt"))
+        {
+            RazorViews = new[] { Path.Combine(dir, "Views", "_ViewImports.cshtml"), Path.Combine(dir, "Views", "Home", "Index.cshtml") },
+        };
+        var solution = SolutionLoader.Load(new[] { input }, CancellationToken.None);
+        var project = Assert.Single(solution.Projects);
+        Assert.Single(project.EngineViews);
+        Assert.True(project.EngineViewErrors.Count == 0, string.Join("; ", project.EngineViewErrors));
+        Assert.DoesNotContain("Razor.Hosting", project.Compilation.SyntaxTrees.Single(t => t.FilePath.EndsWith(".cshtml.g.cs", StringComparison.Ordinal)).ToString(), StringComparison.Ordinal);
+        var result = new TaintEngine(Models.Value, new TaintEngineOptions(TimeSpan.FromMinutes(2), 4L << 30)).Analyze(solution, CancellationToken.None);
+        Assert.Contains(("Index.cshtml", 2), Reported(result, "csharp.xss"));
+    }
+
+    [Fact]
     public void Views_the_build_compiled_are_not_compiled_again()
     {
         // razor-xss commits the source generator's code for its views, with `#line` paths of the machine that generated
