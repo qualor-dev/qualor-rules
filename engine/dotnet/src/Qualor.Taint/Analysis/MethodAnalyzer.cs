@@ -1390,7 +1390,7 @@ internal sealed partial class MethodAnalyzer
     /// A value reaches a sink: its request data is a finding, each label tainted for the rule a sink of its body.
     private void SinkReached(string rule, SyntaxNode site, TaintValue value, ISymbol member)
     {
-        if (value.TaintedFor(rule)) _ctx.Report(rule, site, value.WitnessFor(_body.Reach), member);
+        if (value.TaintedFor(rule)) _ctx.Report(rule, site, value.WitnessFor(_body.Reach, rule), member);
         foreach (var label in value.Labels)
             if (label.TaintedFor(rule)) _body.RecordSink(label, rule, site, member);
     }
@@ -1466,8 +1466,8 @@ internal sealed partial class MethodAnalyzer
                 result = result.Join(Note(target.Kind switch
                 {
                     TargetKind.Body => Apply(target.Body!, operation, property, Arguments(receiver, inputs), operation.Instance, inputs, false, state, exits: targets.Count == 1, kind: target.StepKind),
-                    TargetKind.Auto => ReadMember(operation, target.Method.AssociatedSymbol!, receiver, state),
-                    TargetKind.External => ExternalRead((IPropertySymbol?)target.Method.AssociatedSymbol ?? property, operation, receiver, inputs),
+                    TargetKind.Auto => ThroughFallback(target, operation, property, ReadMember(operation, target.Method.AssociatedSymbol!, receiver, state)),
+                    TargetKind.External => ThroughFallback(target, operation, property, ExternalRead((IPropertySymbol?)target.Method.AssociatedSymbol ?? property, operation, receiver, inputs)),
                     _ => Through(operation, property, receiver.Join(JoinInputs(inputs)), target.StepKind),
                 }));
             }
@@ -1652,6 +1652,11 @@ internal sealed partial class MethodAnalyzer
         return value ?? TaintValue.Clean;
     };
 
+    /// The value an auto-property or external target gives a call the class-hierarchy fallback resolved to it (fix round
+    /// 1 of Task 28, M2): with a dispatch-fallback step, as a body target's call steps have (R-9); other targets as is.
+    private TaintValue ThroughFallback(Target target, IOperation site, ISymbol member, TaintValue value) =>
+        target.Fallback && value.Any ? value.Step(site.Syntax.GetLocation(), $"passed through {_ctx.Name(member)}", StepKind.DispatchFallback) : value;
+
     /// What passes through a member that has no body to analyse: its receiver and arguments, to its result.
     private TaintValue Through(IOperation site, ISymbol member, TaintValue inputs, StepKind kind = StepKind.Plain) =>
         inputs.Any ? inputs.Step(site.Syntax.GetLocation(), $"passed to {_ctx.Name(member)}", kind) : inputs;
@@ -1751,7 +1756,9 @@ internal sealed partial class MethodAnalyzer
                     }
                     case TargetKind.External:
                         unknownIdentity = true;
-                        result = External(target.Method, operation, inputs, receiver, thisOperation, reduced && instance != null, all, result, state);
+                        result = target.Fallback
+                            ? result.Join(ThroughFallback(target, operation, method, External(target.Method, operation, inputs, receiver, thisOperation, reduced && instance != null, all, TaintValue.Clean, state)))
+                            : External(target.Method, operation, inputs, receiver, thisOperation, reduced && instance != null, all, result, state);
                         break;
                     default:
                     {
@@ -2116,7 +2123,8 @@ internal sealed partial class MethodAnalyzer
                         value = value.Join(target.Kind == TargetKind.Body
                             ? Apply(target.Body!, inputs[k].Operation, reference.Method, slot => slot == -1 ? instance : others, reference.Instance, Array.Empty<Input>(), false, state, kind: target.StepKind)
                             : _ctx.Sources.IsScalar(reference.Method.ReturnType) || !others.Any ? TaintValue.Clean
-                            : others.CleanedFor(_ctx.Sinks.Sanitizes(reference.Method, Access.Call)).CleanedFor(_ctx.Sinks.SanitizesByName(reference.Method)));
+                            : ThroughFallback(target, inputs[k].Operation, reference.Method,
+                                others.CleanedFor(_ctx.Sinks.Sanitizes(reference.Method, Access.Call)).CleanedFor(_ctx.Sinks.SanitizesByName(reference.Method))));
                     }
                     inputs[k] = inputs[k] with { Value = inputs[k].Value.Join(value) };
                     break;

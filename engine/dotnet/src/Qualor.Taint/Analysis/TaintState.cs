@@ -124,10 +124,12 @@ internal sealed class Label
 /// its CleanFor, the higher; labels form a set lattice of their own (per label, the smaller its CleanFor, the higher).
 /// Join is the union of the request flags and the intersection of CleanFor (over the request values only: a clean
 /// operand does not make a cleaned one dirty); Sources are united; labels are united, CleanFor intersected per label.
-/// Paths take part in the order only by their confidence (R-9): of two witnesses the high one is kept, then the shorter
-/// (Trail.Better), and a value whose path became high is above the same value with a medium path (a value rises so at
-/// most once), so the fixed point ends when Request, CleanFor, Scope, Sources, labels and the paths' confidence stop
-/// changing.
+/// Paths take part in the order only by their confidence (R-9): HighClean, the rules no high witness is request data
+/// for (null: no high witness), is part of the lattice. A join intersects it (a rule gains a high witness and never
+/// loses it: Merge's bound keeps one per rule), so the order is lexicographic on (CleanFor, then HighClean, each the
+/// smaller the higher) and well-founded. A value's confidence can fall again only when its CleanFor strictly shrinks
+/// (a dirtier part joins) or a transfer step takes a medium step anew; the fixed point ends when Request, CleanFor,
+/// Scope, Sources, labels and HighClean stop changing.
 ///
 /// Scope (Task 20, the request-scoped heap): the entry points the request data is valid for — those that reach the body
 /// that read it from the request (ScopedTo), or, for data read from the heap, the writers' entry points the reading body
@@ -138,11 +140,13 @@ internal sealed class Label
 /// does (a caller the call graph cannot connect, a typed HTTP client built by DI, still runs in the request that built
 /// it). FromHeap joins by "and".
 ///
-/// Witnesses (fix round 1, I4): Path is one witness, valid for Scope. When request data of different scopes is joined,
-/// Witnesses keeps up to MaxWitnesses (scope, best path) pairs, Path the best of them (high first, then shortest); every narrowing (Within,
-/// a heap read or write) drops the witnesses whose scope it leaves, so a reported path (WitnessFor) starts in a request
-/// that reaches the sink. Witnesses, like paths, do not take part in the order.
-internal readonly record struct Witness(Reach? Scope, Trail Path);
+/// Witnesses (fix round 1 of Task 20, I4; Task 28 fix round 1, R-E32 revised): Path is one witness, valid for Scope and
+/// the value's CleanFor. When request data of different scopes or of different cleanliness is joined, Witnesses keeps
+/// (scope, best path, CleanFor) triples, one per scope and cleanliness, best first (high, then shortest), Path the first:
+/// at most MaxWitnesses, plus those that keep a witness, and a high one, for every rule some witness had one for. Every
+/// narrowing (Within, a heap read or write) drops the witnesses whose scope it leaves, so a reported path
+/// (WitnessFor(reach, rule)) starts in a request that reaches the sink and is not cleaned for the finding's rule.
+internal readonly record struct Witness(Reach? Scope, Trail Path, ImmutableHashSet<string> CleanFor);
 
 internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFor, Trail Path)
 {
@@ -210,11 +214,36 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
 
     public const int MaxWitnesses = 4;
 
-    /// The alternative witnesses (scope, path), best first (Trail.Better), Path the first; empty: Path is the only one, valid for
-    /// Scope.
+    /// The alternative witnesses (scope, path, cleanliness), best first (Trail.Better), Path the first; empty: Path is the
+    /// only one, valid for Scope and CleanFor.
     public ImmutableArray<Witness> Witnesses { get; init; } = ImmutableArray<Witness>.Empty;
 
-    private ImmutableArray<Witness> AllWitnesses => Witnesses.IsDefaultOrEmpty ? ImmutableArray.Create(new Witness(Scope, Path)) : Witnesses;
+    private ImmutableArray<Witness> AllWitnesses => Witnesses.IsDefaultOrEmpty ? ImmutableArray.Create(new Witness(Scope, Path, CleanFor)) : Witnesses;
+
+    /// The rules no high witness of the request data is request data for (the intersection of the high witnesses'
+    /// CleanFor); null when no witness is high. Part of the lattice (see the type's documentation).
+    public ImmutableHashSet<string>? HighClean
+    {
+        get
+        {
+            if (!Request) return null;
+            if (Witnesses.IsDefaultOrEmpty) return Path.Medium ? null : CleanFor;
+            ImmutableHashSet<string>? h = null;
+            foreach (var w in Witnesses)
+                if (!w.Path.Medium) h = h == null ? w.CleanFor : Intersect(h, w.CleanFor);
+            return h;
+        }
+    }
+
+    private static ImmutableHashSet<string> Intersect(ImmutableHashSet<string> a, ImmutableHashSet<string> b) =>
+        a.Count == 0 || b.Count == 0 ? ImmutableHashSet<string>.Empty : ReferenceEquals(a, b) ? a : a.Intersect(b);
+
+    private static bool SameHigh(TaintValue a, TaintValue b)
+    {
+        var x = a.HighClean;
+        var y = b.HighClean;
+        return x == null ? y == null : y != null && x.SetEquals(y);
+    }
 
     /// The request data narrowed to the entry points of `reach` (assumed to share some with Scope): its scope and its
     /// witnesses (those whose scope shares none are dropped, unless none would be left).
@@ -226,39 +255,81 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         var kept = ImmutableArray.CreateBuilder<Witness>(Witnesses.Length);
         foreach (var w in Witnesses)
         {
-            if (w.Scope == null) kept.Add(new Witness(reach, w.Path));
-            else if (w.Scope.Intersects(reach)) kept.Add(new Witness(w.Scope.Intersect(reach), w.Path));
+            if (w.Scope == null) kept.Add(new Witness(reach, w.Path, w.CleanFor));
+            else if (w.Scope.Intersects(reach)) kept.Add(new Witness(w.Scope.Intersect(reach), w.Path, w.CleanFor));
         }
         if (kept.Count == 0) return this with { Scope = scope, Witnesses = ImmutableArray<Witness>.Empty };
         var witnesses = Merge(kept, ImmutableArray<Witness>.Empty);
         return this with { Scope = scope, Path = witnesses[0].Path, Witnesses = witnesses.Length > 1 ? witnesses : ImmutableArray<Witness>.Empty };
     }
 
-    /// This value with the path of a witness whose scope shares an entry point with `reach` (the sink's body): what a
-    /// finding reports.
-    public TaintValue WitnessFor(Reach reach)
+    /// This value with the path a finding of `rule` in a body `reach` reaches reports (R-E32 revised): the best witness
+    /// (high, then shortest) whose scope shares an entry point with `reach` and that is not cleaned for `rule`; else the
+    /// best one in reach (with no rule: any).
+    public TaintValue WitnessFor(Reach reach, string? rule = null)
     {
         if (!Request || Witnesses.IsDefaultOrEmpty) return this;
         var target = Scope == null ? reach : Scope.Intersect(reach);
+        Witness? best = null, any = null;
         foreach (var w in Witnesses)
-            if (w.Scope == null || w.Scope.Intersects(target))
-                return ReferenceEquals(w.Path, Path) ? this : this with { Path = w.Path };
-        return this;
+        {
+            if (w.Scope != null && !w.Scope.Intersects(target)) continue;
+            if (any == null || Trail.Better(w.Path, any.Value.Path)) any = w;
+            if ((rule == null || !w.CleanFor.Contains(rule)) && (best == null || Trail.Better(w.Path, best.Value.Path))) best = w;
+        }
+        var chosen = best ?? any;
+        return chosen == null || ReferenceEquals(chosen.Value.Path, Path) ? this : this with { Path = chosen.Value.Path };
     }
 
-    /// Two witness lists merged: one per scope (the better path: high, then shorter), best first, at most MaxWitnesses.
-    private static ImmutableArray<Witness> Merge(IEnumerable<Witness> a, IEnumerable<Witness> b)
+    /// Two witness lists merged: one per scope and cleanliness (the better path: high, then shorter), best first (the
+    /// unscoped ones first when `unscopedFirst`), at most MaxWitnesses plus those that keep, for every rule, a witness
+    /// and a high witness the full list has for it (so HighClean and the per-rule choice survive the bound).
+    private static ImmutableArray<Witness> Merge(IEnumerable<Witness> a, IEnumerable<Witness> b, bool unscopedFirst = false)
     {
-        var byScope = new List<Witness>();
+        var all = new List<Witness>();
         foreach (var w in a.Concat(b))
         {
-            var i = byScope.FindIndex(x => Equals(x.Scope, w.Scope));
-            if (i < 0) byScope.Add(w);
-            else if (Trail.Better(w.Path, byScope[i].Path)) byScope[i] = w;
+            var i = all.FindIndex(x => Equals(x.Scope, w.Scope) && (ReferenceEquals(x.CleanFor, w.CleanFor) || x.CleanFor.SetEquals(w.CleanFor)));
+            if (i < 0) all.Add(w);
+            else if (Trail.Better(w.Path, all[i].Path)) all[i] = w;
         }
-        byScope.Sort((x, y) => x.Path.Medium != y.Path.Medium ? (x.Path.Medium ? 1 : -1) : x.Path.Count.CompareTo(y.Path.Count));
-        if (byScope.Count > MaxWitnesses) byScope.RemoveRange(MaxWitnesses, byScope.Count - MaxWitnesses);
-        return byScope.ToImmutableArray();
+        all.Sort((x, y) =>
+            unscopedFirst && (x.Scope == null) != (y.Scope == null) ? (x.Scope == null ? -1 : 1)
+            : x.Path.Medium != y.Path.Medium ? (x.Path.Medium ? 1 : -1)
+            : x.Path.Count.CompareTo(y.Path.Count));
+        if (all.Count <= MaxWitnesses) return all.ToImmutableArray();
+        var kept = all.Take(MaxWitnesses).ToList();
+        Cover(all, kept, high: true);
+        Cover(all, kept, high: false);
+        kept.Sort((x, y) => all.IndexOf(x).CompareTo(all.IndexOf(y)));
+        return kept.ToImmutableArray();
+    }
+
+    /// Adds to `kept`, in `all`'s order, witnesses of `all` until every rule some witness of `all` (a high one, when
+    /// `high`) is request data for has such a witness in `kept`.
+    private static void Cover(List<Witness> all, List<Witness> kept, bool high)
+    {
+        ImmutableHashSet<string>? CleanOf(IEnumerable<Witness> ws)
+        {
+            ImmutableHashSet<string>? h = null;
+            foreach (var w in ws)
+                if (!high || !w.Path.Medium) h = h == null ? w.CleanFor : Intersect(h, w.CleanFor);
+            return h;
+        }
+        var target = CleanOf(all);
+        if (target == null) return;
+        var have = CleanOf(kept);
+        foreach (var w in all)
+        {
+            if (have != null && have.SetEquals(target)) return;
+            if ((high && w.Path.Medium) || kept.Contains(w)) continue;
+            // A witness that is request data for a rule `kept` has none for.
+            if (have == null || have.Any(r => !w.CleanFor.Contains(r)))
+            {
+                kept.Add(w);
+                have = have == null ? w.CleanFor : Intersect(have, w.CleanFor);
+            }
+        }
     }
 
     private static bool SameWitnesses(ImmutableArray<Witness> a, ImmutableArray<Witness> b)
@@ -266,7 +337,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         if (a.IsDefaultOrEmpty || b.IsDefaultOrEmpty) return a.IsDefaultOrEmpty && b.IsDefaultOrEmpty;
         if (a.Length != b.Length) return false;
         for (var i = 0; i < a.Length; i++)
-            if (!ReferenceEquals(a[i].Path, b[i].Path) || !Equals(a[i].Scope, b[i].Scope)) return false;
+            if (!ReferenceEquals(a[i].Path, b[i].Path) || !Equals(a[i].Scope, b[i].Scope) || !ReferenceEquals(a[i].CleanFor, b[i].CleanFor)) return false;
         return true;
     }
 
@@ -355,27 +426,23 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                 sources = sources.Add(s);
             }
             path = Trail.Better(other.Path, Path) ? other.Path : Path;
-            if (Dirtier(other.CleanFor, CleanFor) || Dirtier(CleanFor, other.CleanFor))
+            var mine = AllWitnesses;
+            var theirs = other.AllWitnesses;
+            // One cleanliness on both sides: unscoped data keeps its best unscoped witness (valid everywhere) as before.
+            var oneCleanliness = mine.Concat(theirs).All(w => w.CleanFor.SetEquals(CleanFor));
+            if (scope == null && oneCleanliness)
             {
-                // One side is cleaned for rules the other is not: its paths are no witness for those rules, while the
-                // dirtier side's are one for every rule the join is request data for (R-9: a finding's confidence is
-                // its path's). That side's witnesses are kept.
-                var d = Dirtier(other.CleanFor, CleanFor) ? other : this;
-                path = d.Path;
-                witnesses = scope == null ? ImmutableArray<Witness>.Empty : d.Witnesses;
-            }
-            else if (scope == null)
-            {
-                // Unscoped data is valid everywhere: its best witness is the one kept.
                 witnesses = ImmutableArray<Witness>.Empty;
                 var best = (Trail?)null;
-                foreach (var w in AllWitnesses.Concat(other.AllWitnesses))
+                foreach (var w in mine.Concat(theirs))
                     if (w.Scope == null && (best == null || Trail.Better(w.Path, best))) best = w.Path;
                 if (best != null) path = best;
             }
-            else if (!Witnesses.IsDefaultOrEmpty || !other.Witnesses.IsDefaultOrEmpty || !ReferenceEquals(Scope, other.Scope))
+            else if (!Witnesses.IsDefaultOrEmpty || !other.Witnesses.IsDefaultOrEmpty || !Equals(Scope, other.Scope) || !oneCleanliness)
             {
-                var merged = Merge(AllWitnesses, other.AllWitnesses);
+                // Both sides' witnesses, each with its scope and cleanliness: a finding picks the one for its request
+                // and its rule (WitnessFor; R-E32 revised).
+                var merged = Merge(mine, theirs, unscopedFirst: scope == null);
                 path = merged[0].Path;
                 witnesses = merged.Length > 1 ? merged : ImmutableArray<Witness>.Empty;
             }
@@ -454,20 +521,20 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     }
 
     /// Whether data cleaned for `a` is request data for strictly more rules than data cleaned for `b` (a ⊂ b): its path
-    /// is a witness for every rule the other's is.
+    /// is a witness for every rule the other's is (a label has one path: MergeLabels keeps the dirtier side's).
     private static bool Dirtier(ImmutableHashSet<string> a, ImmutableHashSet<string> b) => a.Count < b.Count && a.IsSubsetOf(b);
 
     /// Equal in the lattice (paths aside but for their confidence, R-9).
     public bool SameTaint(TaintValue other) =>
         ReferenceEquals(this, other)
-        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Sources.SetEquals(other.Sources) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly && Path.Medium == other.Path.Medium))
+        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Sources.SetEquals(other.Sources) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly && SameHigh(this, other)))
             && SameLabels(other));
 
     /// Equal in the lattice, paths (but for their confidence) and source locations aside: what decides whether a summary
     /// or the heap changed.
     public bool SameFlow(TaintValue other) =>
         ReferenceEquals(this, other)
-        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly && Path.Medium == other.Path.Medium)) && SameLabels(other));
+        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly && SameHigh(this, other))) && SameLabels(other));
 
     private bool SameLabels(TaintValue other)
     {
@@ -486,7 +553,13 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     {
         if (!Any || rules.Count == 0) return this;
         var value = this;
-        if (Request && !rules.All(CleanFor.Contains)) value = value with { CleanFor = CleanFor.Union(rules) };
+        if (Request && !rules.All(CleanFor.Contains))
+        {
+            value = value with { CleanFor = CleanFor.Union(rules) };
+            // Each witness is cleaned too (its cleanliness is a superset of the value's).
+            if (!Witnesses.IsDefaultOrEmpty)
+                value = value with { Witnesses = Witnesses.Select(w => rules.All(w.CleanFor.Contains) ? w : w with { CleanFor = w.CleanFor.Union(rules) }).ToImmutableArray() };
+        }
         if (Labels.Length > 0 && Labels.Any(l => !rules.All(l.CleanFor.Contains)))
         {
             value = value with
@@ -515,7 +588,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             else
             {
                 var s0 = step;
-                var witnesses = Witnesses.Select(w => Fits(w.Path, location, medium) ? new Witness(w.Scope, w.Path.Add(s0)) : w).ToImmutableArray();
+                var witnesses = Witnesses.Select(w => Fits(w.Path, location, medium) ? w with { Path = w.Path.Add(s0) } : w).ToImmutableArray();
                 value = value with { Path = witnesses[0].Path, Witnesses = witnesses };
             }
         }
@@ -543,7 +616,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             }
             else
             {
-                var witnesses = Witnesses.Select(w => new Witness(w.Scope, w.Path.Concat(steps))).ToImmutableArray();
+                var witnesses = Witnesses.Select(w => w with { Path = w.Path.Concat(steps) }).ToImmutableArray();
                 value = value with { Path = witnesses[0].Path, Witnesses = witnesses };
             }
         }

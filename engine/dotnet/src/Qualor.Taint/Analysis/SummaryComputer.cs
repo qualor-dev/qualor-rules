@@ -329,7 +329,7 @@ internal sealed class SummaryComputer
             foreach (var e in sinks)
             {
                 if (!value.TaintedFor(e.RuleId)) continue;
-                _ctx.Report(e.RuleId, e.Site, value.WitnessFor(_entries.Of(body)).Extend(e.Path), e.Member);
+                _ctx.Report(e.RuleId, e.Site, value.WitnessFor(_entries.Of(body), e.RuleId).Extend(e.Path), e.Member);
             }
             foreach (var (location, symbolic) in heap)
             {
@@ -713,9 +713,9 @@ internal sealed class SummaryComputer
             if (methods.Count == 1)
                 return new[] { TargetOf(SymbolEqualityComparer.Default.Equals(methods[0], SymbolKeys.Definition(method)) ? method : methods[0]) };
             if (methods.Count == 0) return new[] { new Target(TargetKind.Opaque, method, null) };
-            var fallback = _computer._dispatch.IsFallback(method, isVirtual, receiverType);
             var targets = new Target[methods.Count];
-            for (var i = 0; i < methods.Count; i++) targets[i] = TargetOf(methods[i]) with { Fallback = fallback };
+            for (var i = 0; i < methods.Count; i++)
+                targets[i] = TargetOf(methods[i]) with { Fallback = _computer._dispatch.IsFallback(method, isVirtual, receiverType, methods[i]) };
             return targets;
         }
 

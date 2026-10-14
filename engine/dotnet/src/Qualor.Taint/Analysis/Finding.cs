@@ -18,9 +18,9 @@ public sealed record TaintEngineOptions(TimeSpan TimeLimit, long MemoryLimitByte
 /// edge (`View(model)` to the view's Model), a keyed request store entry with a constant key (ViewData, ViewBag,
 /// HttpContext.Items). The others are `medium`: a field or property read from the heap, an entry written or read under a
 /// key that is not a constant (a store's "any key" entry), a lookup whose key carries the request data (R-E9/R-E18), a
-/// keyed store entry or view model a view reads only through an unresolved view name's fallback edges, and a call
-/// resolved by the class-hierarchy fallback (no implementation known, or projects/types opened by scanning: R-7, Task 26)
-/// to more than one implementation.
+/// keyed store entry or view model a view reads only through an unresolved view name's fallback edges, and a call of
+/// more than one candidate into a target the class-hierarchy fallback gives (no implementation known) or only types
+/// opened by scanning or reflection run (R-7, Task 26; ruling R-E32 as revised).
 public enum StepKind
 {
     /// A local flow, a resolved call, a source, a sink.

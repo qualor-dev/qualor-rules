@@ -84,6 +84,115 @@ public sealed class ConfidenceTests
         }
         """, "csharp.xss");
 
+    // ---- Fix round 1 (I1, R-E32 revised): the witness is chosen per finding, for its rule and its request ----
+
+    [Fact]
+    public void A_high_path_cleaned_only_for_another_rule_is_the_witness_of_this_rule() => Expect("""
+        using System.Text.Encodings.Web;
+        public class Holder { public string Value = ""; }
+        public class C1Controller : ControllerBase
+        {
+            private readonly Holder _h = new();
+            private readonly SqlConnection _c = new();
+            public IActionResult Run(string q)
+            {
+                _h.Value = q;
+                var s = q.Length > 3 ? HtmlEncoder.Default.Encode(q) : _h.Value;
+                _c.Execute("SELECT * FROM t WHERE v = '" + s + "'"); /*high*/
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void The_reported_path_starts_in_the_request_that_reaches_the_sink()
+    {
+        const string code = """
+            using System.Text.Encodings.Web;
+            public class Holder { public string X = ""; public string Y = ""; public string Z = ""; }
+            public class C7Controller : ControllerBase
+            {
+                private static readonly Holder H = new();
+                private readonly SqlConnection _c = new();
+                public IActionResult A(string q)
+                {
+                    H.X = HtmlEncoder.Default.Encode(q);
+                    Shared(q.Length);
+                    UseA();
+                    return Ok();
+                }
+                public IActionResult B(string r)
+                {
+                    H.Y = r;
+                    Shared(r.Length);
+                    return Ok();
+                }
+                private void Shared(int n) => H.Z = n > 3 ? H.X : H.Y;
+                private void UseA() => _c.Execute("SELECT * FROM t WHERE v = '" + H.Z + "'");
+            }
+            """;
+        var finding = Assert.Single(Snippet.Analyze(code).Findings, f => f.RuleId == "csharp.sql-injection");
+
+        // UseA runs only in A's request: the path starts at A's parameter q (line 7), never at B's r (line 14).
+        Assert.Equal(7, finding.Path[0].Span.StartLinePosition.Line + 1);
+    }
+
+    [Fact]
+    public void A_target_only_reflection_opens_is_medium_beside_a_registered_one() => Expect("""
+        public interface IExporter { void Export(string filter); }
+        public class CsvExporter : IExporter
+        {
+            private readonly SqlConnection _c = new();
+            public void Export(string filter) => _c.Execute("SELECT * FROM csv WHERE " + filter); /*high*/
+        }
+        public class XmlExporter : IExporter
+        {
+            private readonly SqlConnection _c = new();
+            public void Export(string filter) => _c.Execute("SELECT * FROM xml WHERE " + filter); /*medium*/
+        }
+        public class ExportController : ControllerBase
+        {
+            private readonly IExporter _exporter;
+            public ExportController(IExporter exporter) => _exporter = exporter;
+            public IActionResult Run(string q)
+            {
+                _exporter.Export(q);
+                return Ok();
+            }
+        }
+        public static class Registration
+        {
+            public static void Add(IServiceCollection services) => services.AddScoped<IExporter, CsvExporter>();
+            public static object Make() => System.Activator.CreateInstance(typeof(XmlExporter))!;
+        }
+        """);
+
+    [Fact]
+    public void An_auto_property_read_through_a_fallback_call_is_medium_also_for_a_value_tracked_in_the_body() => Expect("""
+        public interface IHas { string Name { get; } }
+        public class A1 : IHas
+        {
+            private readonly SqlConnection _c = new();
+            public string Name { get; set; } = "";
+            public void Use(string q)
+            {
+                Name = q;
+                IHas me = this;
+                _c.Execute("SELECT * FROM t WHERE v = '" + me.Name + "'"); /*medium*/
+            }
+        }
+        public class B1 : IHas { public string Name { get; set; } = ""; }
+        public class HasController : ControllerBase
+        {
+            public IActionResult Run(string q)
+            {
+                ((A1)System.Activator.CreateInstance(typeof(A1))!).Use(q);
+                System.Activator.CreateInstance(typeof(B1));
+                return Ok();
+            }
+        }
+        """);
+
     [Fact]
     public void An_element_found_by_a_request_key_is_medium_and_the_tables_own_data_high() => Expect("""
         public class LookupController : ControllerBase

@@ -493,14 +493,19 @@ key (`ViewData["k"]`, `ViewBag.K`, `HttpContext.Items["k"]`). A path is medium w
 | `any-key-entry` | a keyed store entry written or read with a key that is not a constant, or a view model of type object |
 | `key-lookup` | an element found by a request key (R-E9/R-E18: a dictionary or JSON lookup, `GetValueOrDefault`, a `key:` propagator) |
 | `view-fallback` | a keyed entry or view model a view shares with its writer only through an unresolved view name (every view of the project) |
-| `dispatch-fallback` | a call resolved by the class-hierarchy fallback (no implementation created or registered, or projects and types opened by scanning: R-7) to more than one implementation |
+| `dispatch-fallback` | a call of more than one candidate resolved by the class-hierarchy fallback (no implementation created or registered), or a target of it only types opened by scanning or reflection run (R-7, Task 26), also beside registered ones (R-E32 as revised); a body's call steps, and an auto-property's or external member's result |
 
 (`keyed-entry` and `view-model` steps are named too; they are high.) Of the paths to one sink the engine reports a high
-one when it finds one: a join keeps the path of the side that is request data for more rules (a path cleaned for a rule,
-an encoded value or a rule's own source of another rule, is no witness of that rule's finding), else the high one, else
-the shorter; witnesses prefer a high path to a shorter medium one, and a value, a summary's sink or call edge,
-a heap location or a finding whose path becomes high counts as changed (each at most once), so the fixed point carries
-the high path on. A misuse finding is high. SARIF: `result.properties.confidence` is `"high"` or `"medium"`; a medium
+one when it finds one (R-E32 as revised). A join keeps the witnesses of both sides, each with its scope and its
+cleanliness (the rules it is cleaned for), best first (high, then shorter), at most four plus those that keep a
+witness, and a high one, for every rule some witness had one for; a finding reports the best witness that reaches its
+sink and is not cleaned for its rule (an encoded value is no witness of an xss finding, but is one of a SQL finding; a
+rule's own source of another rule is none). A label (a parameter's path inside a summary) has one path: the one of the
+side that is request data for more rules, else the high one, else the shorter; so is a summary's call edge. The rules a
+value has a high witness for are part of the analysis's order: a value, a summary's sink or call edge, a heap location
+or a finding whose path becomes high counts as changed. A value's confidence can fall again only with a strict shrink
+of its cleanliness (a dirtier part joins) or a medium step taken anew, so the order, lexicographic on (cleanliness,
+then the rules with a high witness), is well-founded and the fixed point ends. A misuse finding is high. SARIF: `result.properties.confidence` is `"high"` or `"medium"`; a medium
 result's `level` is `warning`, a high one keeps the rule's `error`; `analysisStats` counts `highFindings` and
 `mediumFindings`. Qualor shows a medium finding as "possible".
 

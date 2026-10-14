@@ -64,8 +64,12 @@ internal sealed partial class Dispatch
     private readonly Dictionary<(object Method, object Root), Resolution> _cache = new();
     private readonly Dictionary<ISymbol, object> _keys = new(SymbolEqualityComparer.Default);
 
-    /// The targets of one (method, receiver type) pair and how they were found.
-    private sealed record Resolution(IReadOnlyList<IMethodSymbol> Targets, DispatchKind Kind, bool Narrowed);
+    /// The targets of one (method, receiver type) pair and how they were found; OpenOnly: the keys of the targets only
+    /// types opened by scanning, reflection or a missing registration run (none of them created or registered).
+    private sealed record Resolution(IReadOnlyList<IMethodSymbol> Targets, DispatchKind Kind, bool Narrowed)
+    {
+        public IReadOnlySet<object> OpenOnly { get; init; } = new HashSet<object>();
+    }
 
     public Dispatch(IEnumerable<Compilation> compilations, CancellationToken ct)
     {
@@ -144,11 +148,13 @@ internal sealed partial class Dispatch
     public IReadOnlyList<IMethodSymbol> Targets(IMethodSymbol method, bool isVirtual, ITypeSymbol? receiverType) =>
         Resolve(method, isVirtual, receiverType)?.Targets ?? new[] { (IMethodSymbol)SymbolKeys.Definition(method) };
 
-    /// Whether a call is resolved by a fallback to more than one implementation (R-9, ruling R-E29): the class hierarchy
-    /// (no implementation known) or the implementations of projects and types opened by scanning, reflection or a
-    /// missing registration (Task 26). A path through such a call is medium; a call with one candidate is not a guess.
-    public bool IsFallback(IMethodSymbol method, bool isVirtual, ITypeSymbol? receiverType) =>
-        Resolve(method, isVirtual, receiverType) is { Kind: DispatchKind.Hierarchy or DispatchKind.Scanning, Targets.Count: > 1 };
+    /// Whether a call reaches `target` by a fallback, one of more than one candidate (R-9, rulings R-E29 and R-E32 as
+    /// revised): resolved by the class hierarchy (no implementation known), or a target only types opened by scanning,
+    /// reflection or a missing registration run (Task 26), also beside registered or created ones. A path through such
+    /// a call is medium; a registered or created target, and a call with one candidate, are no guess.
+    public bool IsFallback(IMethodSymbol method, bool isVirtual, ITypeSymbol? receiverType, IMethodSymbol target) =>
+        Resolve(method, isVirtual, receiverType) is { Targets.Count: > 1 } r
+        && (r.Kind is DispatchKind.Hierarchy or DispatchKind.Scanning || r.OpenOnly.Contains(Key(SymbolKeys.Definition(target))));
 
     /// Counts one call site of the call graph in the stats (once per site, CallGraph.Build).
     public void Count(CallSite site)
@@ -185,6 +191,7 @@ internal sealed partial class Dispatch
         var seenTypes = new HashSet<object>();
         var seenTargets = new HashSet<object>();
         var seenKnown = new HashSet<object>();
+        var createdTargets = new HashSet<object>();
         var anyCreated = false;
         var queue = new Queue<INamedTypeSymbol>();
         queue.Enqueue(root);
@@ -202,6 +209,7 @@ internal sealed partial class Dispatch
                 if (created != Known.None)
                 {
                     anyCreated |= created == Known.Created;
+                    if (created == Known.Created) createdTargets.Add(implKey);
                     if (seenKnown.Add(implKey)) known.Add(target);
                 }
             }
@@ -211,7 +219,10 @@ internal sealed partial class Dispatch
         }
         Resolution result;
         if (known.Count > 0)
-            result = new Resolution(known, anyCreated ? DispatchKind.Registrations : DispatchKind.Scanning, known.Count < hierarchy.Count);
+            result = new Resolution(known, anyCreated ? DispatchKind.Registrations : DispatchKind.Scanning, known.Count < hierarchy.Count)
+            {
+                OpenOnly = seenKnown.Where(k => !createdTargets.Contains(k)).ToHashSet(),
+            };
         else if (hierarchy.Count > 0)
             result = new Resolution(hierarchy, DispatchKind.Hierarchy, false);
         else

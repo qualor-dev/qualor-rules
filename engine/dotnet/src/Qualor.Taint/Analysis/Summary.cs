@@ -32,12 +32,15 @@ internal sealed record SinkEffect(int Slot, string RuleId, SyntaxNode Site, ISym
 /// the caller: request data that reaches the parameter flows on along these edges (SummaryComputer.Seed).
 internal sealed record CallEffect(int Slot, Body Callee, int CalleeSlot, ImmutableHashSet<string> CleanFor, Trail Path)
 {
-    /// `old` joined with another edge of the same parameters: CleanFor intersected, the first path kept unless the other
-    /// is high and it is not (R-9); null when nothing changes.
+    /// `old` joined with another edge of the same parameters: CleanFor intersected; the path of the edge that is request
+    /// data for strictly more rules (its path is a witness for every rule the joined edge is; fix round 1 of Task 28,
+    /// M3), else the first path unless the other is high and it is not (R-9); null when nothing changes.
     public static CallEffect? Joined(CallEffect old, ImmutableHashSet<string> cleanFor, Trail path)
     {
         var narrower = !old.CleanFor.IsSubsetOf(cleanFor);
-        var better = old.Path.Medium && !path.Medium;
+        var newDirtier = cleanFor.Count < old.CleanFor.Count && cleanFor.IsSubsetOf(old.CleanFor);
+        var oldDirtier = old.CleanFor.Count < cleanFor.Count && old.CleanFor.IsSubsetOf(cleanFor);
+        var better = !ReferenceEquals(path, old.Path) && (newDirtier || (!oldDirtier && old.Path.Medium && !path.Medium));
         if (!narrower && !better) return null;
         return old with { CleanFor = narrower ? old.CleanFor.Intersect(cleanFor) : old.CleanFor, Path = better ? path : old.Path };
     }
