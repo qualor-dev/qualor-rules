@@ -154,6 +154,16 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     /// same object as the operand it was computed from).
     public TaintValue WithoutIdentity() => HasIdentity ? this with { Objects = null, Members = null } : this;
 
+    /// This value with `other`'s request data and labels joined in, keeping this value's objects and members: what adds a
+    /// source to a value without changing which object it is (Task 27 at the rebase onto Task 29: a rule's own source joined
+    /// into a call's result; Clean added nothing, and a plain Join with Clean would make the result's objects unknown).
+    public TaintValue WithTaintOf(TaintValue other)
+    {
+        if (!other.Any) return this;
+        var joined = WithoutIdentity().Join(other.WithoutIdentity());
+        return HasIdentity ? joined with { Objects = Objects, Members = Members } : joined;
+    }
+
     /// Equal objects and members (members' values in the lattice).
     public bool SameIdentity(TaintValue other) =>
         ReferenceEquals(this, other)

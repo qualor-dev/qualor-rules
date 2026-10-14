@@ -978,6 +978,39 @@ public sealed class AllocationSiteHeapTests
         }
         """);
 
+    [Fact]
+    public void A_rule_source_beside_a_builder_chain_keeps_the_chains_objects()
+    {
+        // Task 27 at the rebase onto Task 29: a call's result joined with a rule's own source (ssrf's Request.Host) keeps
+        // its objects and members, so the fixed builder stays clean while the host reaches the request.
+        const string code = """
+            public class UrlBuilder
+            {
+                private string _path = "";
+                public UrlBuilder Path(string p) { _path += "/" + p; return this; }
+                public string Build() => _path;
+            }
+            public class ProxyController : ControllerBase
+            {
+                private readonly SqlConnection _c = new();
+                private readonly HttpClient _http = new();
+                public async Task<IActionResult> Go(string page)
+                {
+                    var fixedPath = new UrlBuilder().Path("status").Build();
+                    var askedPath = new UrlBuilder().Path(page).Build();
+                    var host = Request.Host.Value;
+                    await _http.GetAsync("https://" + host + fixedPath); /*ssrf*/
+                    _c.Execute("SELECT * FROM pages WHERE p = '" + fixedPath + "'");
+                    _c.Execute("SELECT * FROM pages WHERE p = '" + askedPath + "'"); /*sink*/
+                    return Ok();
+                }
+            }
+            """;
+        Assert.Equal(Snippet.Marked(code), Snippet.Findings(code));
+        var ssrf = code.Split('\n').Select((l, i) => (l, i)).Where(x => x.l.Contains("/*ssrf*/")).Select(x => x.i + 1).ToList();
+        Assert.Equal(ssrf, Snippet.Findings(code, "csharp.ssrf"));
+    }
+
     // ---- Helpers ----
 
     private const string WebUsings = """

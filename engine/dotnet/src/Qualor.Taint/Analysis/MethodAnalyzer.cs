@@ -1457,7 +1457,7 @@ internal sealed partial class MethodAnalyzer
         // A keyed read the rule takes for no request data (`key:`/`key-is:` sanitizers: the request's Host header, R-E22).
         if (property.IsIndexer && result.Any && operation.Arguments.Length > 0)
             result = result.CleanedFor(_ctx.Sinks.SanitizesKey(property, operation.Arguments[0].Value));
-        return result.CleanedFor(_ctx.Sinks.Sanitizes(property, Access.Get)).Join(ownSource);
+        return result.CleanedFor(_ctx.Sinks.Sanitizes(property, Access.Get)).WithTaintOf(ownSource);
     }
 
     /// The request data a read or call is for the rules whose own source it is (a rule's `sources:`, Task 29): request
@@ -1752,7 +1752,7 @@ internal sealed partial class MethodAnalyzer
             while (receiverOperation is IConversionOperation { Operand: { } inner }) receiverOperation = inner;
             result = result.CleanedFor(_ctx.Sinks.SanitizesOnReceiver(method, receiverOperation?.Type));
         }
-        return result.Join(ownSource);
+        return result.WithTaintOf(ownSource);
     }
 
     /// A lookup in an allow-list table: GetValueOrDefault gives one of its constants or the default value given (the
