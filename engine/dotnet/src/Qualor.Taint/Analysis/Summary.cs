@@ -212,6 +212,9 @@ internal sealed class BodySummary
     /// The summary with MemberSlots computed from its global effects.
     public BodySummary WithMemberSlots()
     {
+        if (MemberSlots.IsEmpty && !Sinks.Values.Any(e => ObjectTable.IsMemberSlot(e.Slot)) && !Calls.Values.Any(c => ObjectTable.IsMemberSlot(c.Slot))
+            && !Heap.Values.Any(h => h.Value.Labels.Any(l => ObjectTable.IsMemberSlot(l.Slot))))
+            return this;
         var slots = new SortedSet<int>();
         foreach (var e in Sinks.Values) if (ObjectTable.IsMemberSlot(e.Slot)) slots.Add(e.Slot);
         foreach (var c in Calls.Values) if (ObjectTable.IsMemberSlot(c.Slot)) slots.Add(c.Slot);
@@ -286,9 +289,9 @@ internal sealed class BodySummary
         var objs = symbolic.Objects?.SelectMany(id =>
         {
             var (kind, body, slot) = objects.Describe(id);
-            if (kind != ObjKind.Param) return ObjSet.Of(id);
+            if (kind != ObjKind.Param) return objects.Single(id);
             if (body == owner) return argument(slot).Objects;
-            return keep(body) ? ObjSet.Of(id) : null;
+            return keep(body) ? objects.Single(id) : null;
         });
         var members = symbolic.Members?.Select(v => Substitute(v, owner, argument, site, name, keep, caller, false, objects));
         return result with { Objects = objs, Members = members };

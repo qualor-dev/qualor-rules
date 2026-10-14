@@ -665,6 +665,319 @@ public sealed class AllocationSiteHeapTests
         Assert.Equal(new[] { "/src/App/Views/Profile/Save.cshtml:1", "/src/App/Views/Profile/Save.cshtml:2" }, Found(result));
     }
 
+    // ---- Fix round 1 (task-27-review.md): findings the strong updates must not lose ----
+
+    private const string Shapes = """
+        public class Address { public string City { get; set; } = ""; }
+        public class Order { public Address Shipping { get; set; } = new(); public string Note { get; set; } = ""; }
+        public struct Tag { public string Text; }
+
+        """;
+
+    [Fact]
+    public void A_nested_member_written_through_a_longer_path_is_its_new_value() => Expect(Shapes + """
+        public class OrdersController : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            public IActionResult Ship(string city)
+            {
+                var order = new Order();
+                order.Shipping = new Address { City = "Oslo" };
+                order.Shipping.City = city;
+                _c.Execute("SELECT * FROM rates WHERE city = '" + order.Shipping.City + "'"); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void A_nested_member_written_through_an_alias_is_seen_through_the_longer_path() => Expect(Shapes + """
+        public class OrdersController : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            public IActionResult Ship(string city)
+            {
+                var order = new Order();
+                order.Shipping = new Address { City = "Oslo" };
+                var shipping = order.Shipping;
+                shipping.City = city;
+                _c.Execute("SELECT * FROM rates WHERE city = '" + order.Shipping.City + "'"); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void A_nested_object_initializer_does_not_outlive_a_later_write() => Expect(Shapes + """
+        public class OrdersController : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            public IActionResult Ship(string city)
+            {
+                var order = new Order { Shipping = new Address { City = "Oslo" } };
+                order.Shipping.City = city;
+                _c.Execute("SELECT * FROM rates WHERE city = '" + order.Shipping.City + "'"); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void A_callee_that_may_write_a_member_and_then_reads_it_sees_its_own_write() => Expect("""
+        public class Contact { public string Name { get; set; } = ""; }
+        public class Normalizer
+        {
+            private readonly SqlConnection _c = new();
+            public void Apply(Contact c, string candidate)
+            {
+                if (candidate.Length > 3) c.Name = candidate;
+                _c.Execute("UPDATE contacts SET n = '" + c.Name + "'"); /*sink*/
+            }
+        }
+        public class ContactsController : ControllerBase
+        {
+            private readonly Normalizer _normalizer = new();
+            public IActionResult Save(string name)
+            {
+                var c = new Contact();
+                c.Name = "anonymous";
+                _normalizer.Apply(c, name);
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void A_callee_whose_own_callee_may_write_the_member_sees_that_write() => Expect("""
+        public class Contact { public string Name { get; set; } = ""; }
+        public class Normalizer
+        {
+            private readonly SqlConnection _c = new();
+            public void Apply(Contact c, string candidate)
+            {
+                Maybe(c, candidate);
+                _c.Execute("UPDATE contacts SET n = '" + c.Name + "'"); /*sink*/
+            }
+            public void Maybe(Contact c, string candidate) { if (candidate.Length > 3) c.Name = candidate; }
+        }
+        public class ContactsController : ControllerBase
+        {
+            private readonly Normalizer _normalizer = new();
+            public IActionResult Save(string name)
+            {
+                var c = new Contact();
+                c.Name = "anonymous";
+                _normalizer.Apply(c, name);
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void A_struct_passed_by_value_keeps_its_own_member() => Expect(Shapes + """
+        public class Tags { public void Reset(Tag t) { t.Text = "none"; } }
+        public class TagsController : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            private readonly Tags _tags = new();
+            public IActionResult Add(string text)
+            {
+                var t = new Tag();
+                t.Text = text;
+                _tags.Reset(t);
+                _c.Execute("INSERT INTO tags VALUES ('" + t.Text + "')"); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void A_member_written_after_View_reaches_the_view()
+    {
+        var result = AnalyzeWeb(ProfileModel + """
+            public class ProfileController : Controller
+            {
+                public IActionResult Show([FromQuery] string banner)
+                {
+                    var model = new ProfileModel();
+                    model.Banner = "<b>Hello</b>";
+                    var result = View(model);
+                    model.Banner = banner;
+                    return result;
+                }
+            }
+            """, View("Views_Profile_Show", "ProfileModel", "/src/App/Views/Profile/Show.cshtml", ProfileView));
+
+        Assert.Equal(new[] { "/src/App/Views/Profile/Show.cshtml:1" }, Found(result));
+    }
+
+    /// The action overwrites the contact's name after giving it request data, calls `call`, and reads the name into SQL.
+    private static string AfterCall(string call, string extra = "") => """
+        public class Contact { public string Name { get; set; } = ""; }
+
+        """ + extra + $$"""
+        public class ContactsController : Controller
+        {
+            private readonly SqlConnection _c = new();
+            public async Task<IActionResult> Save(string name)
+            {
+                var c = new Contact();
+                c.Name = name;
+                c.Name = "anonymous";
+                {{call}}
+                _c.Execute("SELECT * FROM t WHERE n = '" + c.Name + "'"); /*sink*/
+                await Task.CompletedTask;
+                return Ok();
+            }
+        }
+        """;
+
+    [Fact]
+    public void Reflection_through_Type_InvokeMember_ends_a_strong_update() =>
+        Expect(AfterCall("typeof(Contact).InvokeMember(\"Name\", System.Reflection.BindingFlags.SetProperty, null, c, new object[] { name });"));
+
+    [Fact]
+    public void A_delegate_run_by_DynamicInvoke_ends_a_strong_update() =>
+        Expect(AfterCall("Action<Contact> set = x => { }; set.DynamicInvoke(c);"));
+
+    [Fact]
+    public void A_method_group_given_to_List_ForEach_ends_a_strong_update() =>
+        Expect(AfterCall("Renames.Value = name; new List<Contact> { c }.ForEach(Renames.Apply);",
+            "public static class Renames { public static string Value = \"\"; public static void Apply(Contact x) { x.Name = Value; } }\n"));
+
+    [Fact]
+    public void A_method_group_given_to_Parallel_ForEach_ends_a_strong_update() =>
+        Expect(AfterCall("Renames.Value = name; Parallel.ForEach(new[] { c }, Renames.Apply);",
+            "public static class Renames { public static string Value = \"\"; public static void Apply(Contact x) { x.Name = Value; } }\n"));
+
+    [Fact]
+    public void An_instance_method_group_given_to_Select_ends_a_strong_update() =>
+        Expect(AfterCall("var renamer = new Renamer { Value = name }; var all = new[] { c }.Select(renamer.Apply).ToList();",
+            "public class Renamer { public string Value = \"\"; public Contact Apply(Contact x) { x.Name = Value; return x; } }\n"));
+
+    [Fact]
+    public void A_delegate_parameter_given_to_List_ForEach_ends_a_strong_update() => Expect("""
+        public class Contact { public string Name { get; set; } = ""; }
+        public class Batch
+        {
+            private readonly SqlConnection _c = new();
+            public void Run(Contact c, Action<Contact> step)
+            {
+                c.Name = "anonymous";
+                new List<Contact> { c }.ForEach(step);
+                _c.Execute("UPDATE contacts SET n = '" + c.Name + "'"); /*sink*/
+            }
+        }
+        public class ContactsController : ControllerBase
+        {
+            private readonly Batch _batch = new();
+            public IActionResult Save(string name)
+            {
+                _batch.Run(new Contact(), x => x.Name = name);
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void A_callee_that_assigns_its_parameter_first_does_not_overwrite_the_callers_object() => Expect("""
+        public class Contact { public string Name { get; set; } = ""; }
+        public class Defaults { public void Reset(Contact c) { c = new Contact(); c.Name = "anonymous"; } }
+        public class ContactsController : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            private readonly Defaults _defaults = new();
+            public IActionResult Save(string name)
+            {
+                var c = new Contact();
+                c.Name = name;
+                _defaults.Reset(c);
+                _c.Execute("SELECT * FROM t WHERE n = '" + c.Name + "'"); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void An_async_callee_not_awaited_where_it_is_called_has_not_overwritten_the_member_yet() => Expect("""
+        public class Contact { public string Name { get; set; } = ""; }
+        public class Defaults { public async Task ResetLater(Contact c) { await Task.Yield(); c.Name = "anonymous"; } }
+        public class ContactsController : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            private readonly Defaults _defaults = new();
+            public async Task<IActionResult> Save(string name)
+            {
+                var c = new Contact();
+                c.Name = name;
+                var pending = _defaults.ResetLater(c);
+                _c.Execute("SELECT * FROM t WHERE n = '" + c.Name + "'"); /*sink*/
+                await pending;
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void A_variable_a_lambda_assigns_holds_unknown_objects() => Expect("""
+        public class Contact { public string Name { get; set; } = ""; }
+        public class ContactsController : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            public IActionResult Swap(string name)
+            {
+                var c = new Contact();
+                var other = new Contact();
+                if (name.Length > 1) other.Name = name;
+                Action swap = () => c = other;
+                swap();
+                _c.Execute("SELECT * FROM t WHERE n = '" + c.Name + "'"); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    // ---- Ruling R-E31 ----
+
+    [Fact]
+    public void A_record_with_copy_starts_with_the_source_members_and_takes_its_initializer() => Expect("""
+        public record Filter(string Column, string Value);
+        public class ReportsController : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            public IActionResult Run(string value, string column)
+            {
+                var asked = new Filter("name", value);
+                var sorted = asked with { Column = "created" };
+                var other = new Filter(column, "x") with { Value = "y" };
+                _c.Execute("SELECT * FROM t ORDER BY " + sorted.Column);
+                _c.Execute("SELECT * FROM t WHERE v = '" + sorted.Value + "'"); /*sink*/
+                _c.Execute("SELECT * FROM t ORDER BY " + other.Column); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void TryUpdateModelAsync_fills_the_model_with_request_data() => Expect("""
+        public class Contact { public string Name { get; set; } = ""; }
+        public class ContactsController : Controller
+        {
+            private readonly SqlConnection _c = new();
+            public async Task<IActionResult> Edit()
+            {
+                var c = new Contact();
+                c.Name = "anonymous";
+                if (await TryUpdateModelAsync(c))
+                    _c.Execute("SELECT * FROM t WHERE n = '" + c.Name + "'"); /*sink*/
+                var d = new Contact();
+                await TryUpdateModelAsync(d, "contact");
+                _c.Execute("SELECT * FROM t WHERE n = '" + d.Name + "'"); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
     // ---- Helpers ----
 
     private const string WebUsings = """

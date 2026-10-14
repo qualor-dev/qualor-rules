@@ -553,29 +553,48 @@ false positives (FP) or misses (FN) there.
     Jellyfin's plugin assemblies) is ignored, as split scans over unknown assemblies are. Their own interfaces are
     external, so only a source base or interface that their scanned classes share and that is also built elsewhere is
     affected.
-- Objects (decision R-8, since Task 27): an object made by `new` (a class or struct, an anonymous object, an array, a
-  collection expression) is its allocation site; the model the binder makes for an action parameter is one object per
-  action. A value knows at most 8 objects. A member written or read through known objects is that member of those
-  objects (a read also joins what was written through unknown objects); through unknown objects it is the member's field
-  location, as before Task 27, which every read joins (FP: a write through an unknown object reaches that member of
-  every object). Unknown: more than 8 objects, a value read from a member, an element of a collection, what an external
-  method returns, a `with` copy, objects DI or the framework make, `this` of a method the framework calls (one object per
-  type would split a controller between its base class and itself). A method other project code calls, where no entry
-  point starts and that is no method group and overrides or implements no external member, reads the members of its
-  parameters' and `this`'s objects as what each call's argument holds there, and writes into them at each call into the
-  call's objects; a constructor's `this` is the object its `new` makes. Collections stay element-insensitive per object.
-  Strong updates: a member assigned through a variable (`x.M = v`, `this.M = v`, an object initializer) is exactly v
-  where every path assigned it, until the variable is assigned, the member is written through any object, a lambda or
-  local function of the method touches it, or a call may change it: by the callee's summary for such a project method
-  (it writes the member, or gives the object, or something read from it, to code the engine does not see), by type for
-  any other call (as guards). What a callee assigns on every path to its parameters' members (a constructor: to its
-  object's) holds after the call; what a body returns carries the members it is known to hold; a view reads a member of
-  its model exactly when every model it may render in the reader's requests knew it. So a posted model whose member a
-  factory replaces before `View(model)` reads that member clean while its other members stay request data. Not
-  followed: a member assigned only under a condition the caller decides (nopCommerce's factories fill an order model
-  inside `if (order != null)`: FP); members two levels deep across a call or into a view; the objects of the variables
-  a lambda captures (unknown); a callee that changes the object through a field holding it, or a delegate it was handed
-  earlier that does (FN, as guards).
+- Objects (decision R-8, since Task 27; rulings R-E30, R-E31): an object made by `new` (a class or struct, an
+  anonymous object, an array, a collection expression) is its allocation site; a record's `with` copy is a new site whose
+  members start as the source's (its known members, and reads through the source's objects too, since the heap is
+  flow-insensitive: a write through the copy reaches the source's members as well, FP) and then take the initializer's
+  writes; the model the binder makes for an action parameter is one object per action, and `TryUpdateModelAsync(model)`
+  of a controller or page model makes every member of the model request data. A value knows at most 8 objects. A member
+  written or read through known objects is that member of those objects (a read also joins what was written through
+  unknown objects); through unknown objects it is the member's field location, as before Task 27, which every read joins
+  (FP: a write through an unknown object reaches that member of every object). Unknown: more than 8 objects, a value
+  read from a member, an element of a collection, what an external method returns, objects DI or the framework make,
+  `this` of a method the framework calls (one object per type would split a controller between its base class and
+  itself). A method other project code calls, where no entry point starts and that is no method group and overrides or
+  implements no external member, reads the members of its parameters' and `this`'s objects as what each call's argument
+  holds there, and writes into them at each call into the call's objects; a constructor's `this` is the object its `new`
+  makes. Collections stay element-insensitive per object.
+  Strong updates: a member path assigned through a variable (`x.M = v`, `x.M.N = v`, `this.M = v`, an object
+  initializer) is exactly v where every path assigned it, until the variable is assigned, a member on the path is
+  written through any object, a lambda or local function of the method touches it, or a call may change it. A value held
+  so keeps its objects but not what it knew of its own members, so `x.M` known exactly says nothing of `x.M.N`, which a
+  write through an alias of `x.M` may change (exactness is one level deep). Calls:
+  - a project method (symbolic, outside the caller's component of the call graph) ends it when its summary writes the
+    member into a parameter's object, its component writes the member through unknown objects, or the parameter's object
+    (or something read from it) escapes to code the engine does not see; a caller's exact member is given to such a
+    method only when the method does none of these, else joined with what it writes;
+  - .NET's core libraries end nothing: external methods of the namespaces System, System.Collections(.Generic,
+    .Concurrent, .Immutable, .ObjectModel), System.Linq, System.Text, System.Threading(.Tasks), System.Globalization and
+    Microsoft.Extensions.Logging set no member of a project's object. Not exempt: System.Type (`InvokeMember`),
+    System.Delegate and MulticastDelegate (`DynamicInvoke`), and any call given a delegate that is no lambda or local
+    function of the calling method (a method group, a delegate parameter or variable: `ForEach(Rename)`,
+    `Parallel.ForEach`, `Task.Run`, LINQ with a method group); reflection, serializers, binders, mappers and ASP.NET Core
+    are outside these namespaces;
+  - any other call ends it by type, as guards.
+  What a callee assigns on every path to the members of a reference-type parameter it never assigns (a constructor: of
+  its object; an async method: only when the call is awaited where it is made) holds after the call; what a body returns
+  carries the members it is known to hold. A view reads a member of its model as what every model it may render in the
+  reader's requests knew of it when given to the view, joined with what was written into that member of the model's
+  objects (after `View(model)`, in a filter, in the view). So a posted model whose member a factory replaces before
+  `View(model)` reads that member clean while its other members stay request data. Not followed: a member assigned only
+  under a condition the caller decides (nopCommerce's factories fill an order model inside `if (order != null)`: FP);
+  a write through a `ref` return or a `ref` local (FN); the objects of the variables a lambda captures (unknown); a
+  callee that changes the object through a field holding it, or a delegate it was handed earlier that does (FN, as
+  guards).
 - Guards hold for locals, parameters and members read on them (since Task 21, "Guards on members"); a call given the
   guarded object (or one of a related type, or something that holds one) between the check and the sink, an await of
   earlier work, or a nested body touching the object ends the guard (FP); a member read through a project property

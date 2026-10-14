@@ -745,7 +745,7 @@ internal sealed partial class MethodAnalyzer
     {
         // A body of this body's own component has no final summary yet: its call is one whose effects are unknown.
         var summarised = targets is { Count: > 0 } && targets.All(t => t.Kind == TargetKind.Body && _body.IsSymbolic(t.Body!) && !_body.SameComponent(t.Body!));
-        var keepsMembers = targets is { Count: > 0 } && targets.All(t => t.Kind == TargetKind.External && KeepsMembers(t.Method));
+        var keepsMembers = targets is { Count: > 0 } && targets.All(t => t.Kind == TargetKind.External && KeepsMembers(t.Method)) && !GivesDelegate(instance, inputs);
         if (_body.RootSymbolic && !keepsMembers)
         {
             if (summarised)
@@ -778,7 +778,32 @@ internal sealed partial class MethodAnalyzer
     /// set no member of an object of the project (unlike reflection, serializers, binders, mappers). A lambda it is given
     /// is analysed with the method that wrote it (a strong update its writes could end is not recorded there).
     private static bool KeepsMembers(IMethodSymbol method) =>
-        !SymbolKeys.InSource(method) && method.ContainingNamespace?.ToDisplayString() is { } ns && MemberKeepingNamespaces.Contains(ns);
+        !SymbolKeys.InSource(method) && method.ContainingNamespace?.ToDisplayString() is { } ns && MemberKeepingNamespaces.Contains(ns)
+        // Reflection and delegates run what they are told (fix round 1, I3): Type.InvokeMember, Delegate.DynamicInvoke.
+        && method.ContainingType is { } type && SymbolMatch.MetadataName(type.OriginalDefinition) is not ("System.Type" or "System.Delegate" or "System.MulticastDelegate");
+
+    /// Whether a call is given a delegate that is no lambda or local function of this method (a method group, a
+    /// delegate held in a variable or parameter): the core library runs it, and it may set any member (fix round 1, I3).
+    private bool GivesDelegate(IOperation? instance, Input[] inputs)
+    {
+        if (Foreign(instance)) return true;
+        foreach (var i in inputs) if (Foreign(i.Operation)) return true;
+        return false;
+
+        bool Foreign(IOperation? op)
+        {
+            if (op == null) return false;
+            var unwrapped = op;
+            while (unwrapped is IConversionOperation c) unwrapped = c.Operand;
+            if (unwrapped.Type?.TypeKind != TypeKind.Delegate && op.Type?.TypeKind != TypeKind.Delegate) return false;
+            return DelegateOf(op) switch
+            {
+                IFlowAnonymousFunctionOperation => false,
+                IMethodReferenceOperation { Method.MethodKind: MethodKind.LocalFunction } => false,
+                _ => true,
+            };
+        }
+    }
 
     /// A callee's parameter `slot` escapes: what the call gives it escapes from this body.
     private void EscapeArgument(int slot, IOperation? instance, TaintValue receiver, Input[] inputs)

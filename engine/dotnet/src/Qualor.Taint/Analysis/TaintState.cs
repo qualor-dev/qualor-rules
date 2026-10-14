@@ -525,35 +525,46 @@ internal sealed class TaintState
 
     private ImmutableArray<MemberFact> _facts = ImmutableArray<MemberFact>.Empty;
 
-    private ImmutableArray<(object Key, ObjSet Objects)> _points = ImmutableArray<(object, ObjSet)>.Empty;
+    private static readonly ImmutableDictionary<object, ObjSet> NoPoints = ImmutableDictionary.Create<object, ObjSet>(SymbolOrCapture.Comparer);
+
+    private ImmutableDictionary<object, ObjSet> _points = NoPoints;
 
     public TaintState() { }
 
-    private TaintState(object? root, ImmutableArray<MemberFact> facts, ImmutableArray<(object, ObjSet)> points)
+    private TaintState(object? root, ImmutableArray<MemberFact> facts, ImmutableDictionary<object, ObjSet> points)
     {
         _root = root;
         _facts = facts;
         _points = points;
     }
 
-    /// The objects a variable is known to hold (null: unknown).
-    public ObjSet? PointsTo(object key)
+    /// Whether a fact holds a strong update (Identity skips its scan otherwise).
+    public bool HasHolds
     {
-        foreach (var (k, o) in _points)
-            if (SymbolOrCapture.Comparer.Equals(k, key)) return o;
-        return null;
+        get
+        {
+            foreach (var f in _facts) if (f.Holds != null) return true;
+            return false;
+        }
     }
+
+    /// The objects a variable is known to hold (null: unknown).
+    public ObjSet? PointsTo(object key) => _points.Count == 0 ? null : _points.TryGetValue(key, out var o) ? o : null;
 
     /// Records the objects a variable holds after an assignment (null: unknown).
     public void SetPointsTo(object key, ObjSet? objects)
     {
-        for (var i = 0; i < _points.Length; i++)
+        if (objects == null)
         {
-            if (!SymbolOrCapture.Comparer.Equals(_points[i].Key, key)) continue;
-            _points = objects == null ? _points.RemoveAt(i) : Equals(_points[i].Objects, objects) ? _points : _points.SetItem(i, (key, objects));
+            if (_points.Count > 0) _points = _points.Remove(key);
             return;
         }
-        if (objects != null && _points.Length < MaxPointsTo) _points = _points.Add((key, objects));
+        if (_points.TryGetValue(key, out var old))
+        {
+            if (!Equals(old, objects)) _points = _points.SetItem(key, objects);
+            return;
+        }
+        if (_points.Count < MaxPointsTo) _points = _points.Add(key, objects);
     }
 
     /// Records a strong update of a member path (Task 27).
@@ -577,7 +588,7 @@ internal sealed class TaintState
     public void ForgetAll() => _facts = ImmutableArray<MemberFact>.Empty;
 
     /// Forgets what every variable holds (a write through a `ref` may assign any of them).
-    public void ForgetPointsTo() => _points = ImmutableArray<(object, ObjSet)>.Empty;
+    public void ForgetPointsTo() => _points = NoPoints;
 
     public IEnumerable<KeyValuePair<object, TaintValue>> Entries =>
         TaintMap.Entries(_root).Select(e => new KeyValuePair<object, TaintValue>(e.Key, e.Value));
@@ -628,25 +639,19 @@ internal sealed class TaintState
             _facts = MemberFacts.Meet(_facts, other._facts, out var lost);
             changed |= lost;
         }
-        if (!_points.IsEmpty && _points != other._points)
+        if (_points.Count > 0 && !ReferenceEquals(_points, other._points))
         {
-            ImmutableArray<(object, ObjSet)>.Builder? kept = null;
-            for (var i = 0; i < _points.Length; i++)
+            var met = _points;
+            foreach (var (key, objects) in _points)
             {
-                var (key, objects) = _points[i];
                 var theirs = other.PointsTo(key);
-                var met = theirs == null ? null : ObjSet.Union(objects, theirs);
-                if (kept == null && ReferenceEquals(met, objects)) continue;
-                if (kept == null)
-                {
-                    kept = ImmutableArray.CreateBuilder<(object, ObjSet)>(_points.Length);
-                    for (var j = 0; j < i; j++) kept.Add(_points[j]);
-                }
-                if (met != null) kept.Add((key, met));
+                var united = theirs == null ? null : ObjSet.Union(objects, theirs);
+                if (ReferenceEquals(united, objects)) continue;
+                met = united == null ? met.Remove(key) : met.SetItem(key, united);
             }
-            if (kept != null)
+            if (!ReferenceEquals(met, _points))
             {
-                _points = kept.ToImmutable();
+                _points = met;
                 changed = true;
             }
         }

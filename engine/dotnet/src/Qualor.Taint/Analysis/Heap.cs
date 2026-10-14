@@ -78,14 +78,35 @@ internal sealed class Heap
     /// body's); `reader` is analysed again when that grows. With `objects` (Task 27: the known objects the member is read
     /// through), the writes of the member on those objects and the writes through unknown objects; without (unknown
     /// objects), the member's field location: every write of it.
-    public TaintValue Read(ISymbol member, Unit reader, Reach reach, IEnumerable<int>? objects = null)
+    ///
+    /// The reader is registered once, on the member's key: a change of any of its object locations marks the member's
+    /// readers (fix round 1, M4: one reader set per member, not per object location).
+    public TaintValue Read(ISymbol member, Unit reader, Reach reach, ObjSet? objects = null, ObjectTable? table = null)
     {
         if (reach.IsEmpty) return TaintValue.Clean;
         var key = Key(member);
         if (objects == null) return Final(ReadKey(key, reader, reach));
-        var value = ReadKey(new TopLocation(key), reader, reach);
-        foreach (var o in objects) value = value.Join(ReadKey(new ObjLocation(o, key), reader, reach));
+        Register(key, reader, reach);
+        var value = ReadValue(TopKey(key), reach);
+        foreach (var o in objects.Ids)
+            if (table == null || !table.IsParam(o)) value = value.Join(ReadValue(ObjKey(o, key), reach));
         return Final(value);
+    }
+
+    private readonly Dictionary<object, object> _topKeys = new();
+    private readonly Dictionary<(int, object), object> _objKeys = new();
+
+    /// The boxed TopLocation and ObjLocation keys, interned (fix round 1, M4).
+    private object TopKey(object member)
+    {
+        if (!_topKeys.TryGetValue(member, out var key)) _topKeys[member] = key = new TopLocation(member);
+        return key;
+    }
+
+    private object ObjKey(int o, object member, ISymbol? symbol = null)
+    {
+        if (!_objKeys.TryGetValue((o, member), out var key)) _objKeys[(o, member)] = key = new ObjLocation(o, member, symbol);
+        return key;
     }
 
     /// The request data of a keyed store entry for a reader (as Read): a constant key's entry joined with the store's
@@ -94,15 +115,15 @@ internal sealed class Heap
 
     /// The join of several keyed store entries for a reader (a view's model read under its type's entries: Task 27 keeps
     /// what every one of them knows of the model's members).
-    /// A model no write has reached yet constrains nothing (its members: All), so a view analysed before the actions that
-    /// render it passes its partials a model that does not end what those actions know (the fixed point of a must-hold
-    /// fact starts from all of them); a reader of a member takes All as knowing none.
+    /// A model no write has reached yet is Bottom (no objects, all members): it constrains nothing, so a view analysed
+    /// before the actions that render it passes its partials a model that does not end what those actions know (the
+    /// fixed point of a must-hold fact starts from all of them); a reader of a member takes it as knowing none.
     public TaintValue Read(IEnumerable<KeyedLocation> locations, Unit reader, Reach reach)
     {
         if (reach.IsEmpty) return TaintValue.Clean;
         var value = TaintValue.Bottom;
         foreach (var location in locations) value = value.Join(ReadRaw(location, reader, reach));
-        return ReferenceEquals(value, TaintValue.Bottom) ? TaintValue.Clean with { Members = MemberMap.All } : value;
+        return value;
     }
 
     private TaintValue ReadRaw(KeyedLocation location, Unit reader, Reach reach)
@@ -121,8 +142,18 @@ internal sealed class Heap
     /// the members a view model is known to hold survive the joins of the entries read together: Task 27).
     private TaintValue ReadKey(object key, Unit reader, Reach reach)
     {
+        Register(key, reader, reach);
+        return ReadValue(key, reach);
+    }
+
+    private void Register(object key, Unit reader, Reach reach)
+    {
         if (!_readers.TryGetValue(key, out var readers)) _readers[key] = readers = new HashSet<(Unit, Reach)>();
         readers.Add((reader, reach));
+    }
+
+    private TaintValue ReadValue(object key, Reach reach)
+    {
         if (!_values.TryGetValue(key, out var writes)) return TaintValue.Bottom;
         var value = Read(writes.Writer, writes.Value, reach);
         if (writes.More != null)
@@ -142,8 +173,12 @@ internal sealed class Heap
     private static TaintValue Stored(object location, TaintValue value)
     {
         var request = value.Request ? value.RequestPart.WithoutIdentity() : TaintValue.Clean;
-        if (location is KeyedLocation { Store: KeyedStore.ViewModel } && value.Members is { } members)
-            return request with { Members = members.IsAll ? members : members.Select(m => m.Request ? m.RequestPart.WithoutIdentity() : TaintValue.Clean) };
+        if (location is KeyedLocation { Store: KeyedStore.ViewModel })
+            return request with
+            {
+                Objects = value.Objects,
+                Members = value.Members is not { } members ? null : members.IsAll ? members : members.Select(m => m.Request ? m.RequestPart.WithoutIdentity() : TaintValue.Clean),
+            };
         return request;
     }
 
@@ -176,20 +211,23 @@ internal sealed class Heap
         }
         value = Stored(location, value);
         if (value.Request) value = value.Narrowed(writer) with { FromHeap = false };
+        var objectChanged = false;
         switch (location)
         {
             case ISymbol member:
-                WriteKey(new TopLocation(Key(member)), value, writer);
+                objectChanged = WriteKey(TopKey(Key(member)), value, writer);
                 break;
             case ObjLocation at:
-                WriteKey(at, value, writer);
+                objectChanged = WriteKey(ObjKey(at.Object, at.Member, at.Symbol), value, writer);
                 location = at.Member;
                 break;
         }
-        WriteKey(location, value, writer);
+        // The member's readers read its object locations (Read): a change there is a change for them.
+        if (!WriteKey(location, value, writer) && objectChanged) Changed(Key(location), writer);
     }
 
-    private void WriteKey(object location, TaintValue value, Reach writer)
+    /// Joins a write into one key; true when its value changed.
+    private bool WriteKey(object location, TaintValue value, Reach writer)
     {
         var key = location is ObjLocation or TopLocation ? location : Key(location);
         if (location is KeyedLocation keyed && (!_stores.TryGetValue(keyed.Store, out var entries) || !entries.Contains(keyed)))
@@ -202,7 +240,7 @@ internal sealed class Heap
         {
             _values[key] = new Writes(writer, value);
             Changed(key, writer);
-            return;
+            return true;
         }
         TaintValue old;
         if (ReferenceEquals(writes.Writer, writer)) old = writes.Value;
@@ -210,13 +248,15 @@ internal sealed class Heap
         {
             (writes.More ??= new Dictionary<Reach, TaintValue>())[writer] = value;
             Changed(key, writer);
-            return;
+            return true;
         }
         var joined = old.Join(value);
-        if (ReferenceEquals(joined, old)) return;
+        if (ReferenceEquals(joined, old)) return false;
         if (ReferenceEquals(writes.Writer, writer)) writes.Value = joined;
         else writes.More![writer] = joined;
-        if (!joined.SameFlow(old) || !joined.SameIdentity(old)) Changed(key, writer);
+        if (joined.SameFlow(old) && joined.SameIdentity(old)) return false;
+        Changed(key, writer);
+        return true;
     }
 
     /// A location's value changed under `writer`: its readers, and for a store entry the readers of every entry.

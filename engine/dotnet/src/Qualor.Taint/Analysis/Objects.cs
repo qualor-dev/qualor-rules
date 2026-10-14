@@ -108,8 +108,15 @@ internal sealed class MemberMap
 
     public bool IsAll { get; }
 
-    public static MemberMap? Of(ImmutableDictionary<ISymbol, TaintValue> values) =>
-        values.IsEmpty ? null : new MemberMap(values.WithComparers(SymbolEqualityComparer.Default), false);
+    public static MemberMap? Of(ImmutableDictionary<ISymbol, TaintValue> values)
+    {
+        if (values.IsEmpty) return null;
+        if (values.Values.Any(v => v.Members != null)) values = values.ToImmutableDictionary(kv => kv.Key, kv => Flat(kv.Value), SymbolEqualityComparer.Default);
+        return new MemberMap(values.WithComparers(SymbolEqualityComparer.Default), false);
+    }
+
+    /// A member's value without what it knows of its own members: exactness is one level deep (fix round 1, C1).
+    public static TaintValue Flat(TaintValue value) => value.Members == null ? value : value with { Members = null };
 
     public bool TryGet(ISymbol member, out TaintValue value) => Values.TryGetValue(member, out value!);
 
@@ -176,6 +183,23 @@ internal sealed class ObjectTable
     private readonly record struct SiteKey(SyntaxTree Tree, Microsoft.CodeAnalysis.Text.TextSpan Span);
 
     public int Count => _objects.Count;
+
+    private readonly List<ObjSet> _singles = new();
+    private readonly Dictionary<(int Owner, int Slot), TaintValue> _slotLabels = new();
+
+    /// The one-object set of an object, interned (fix round 1, M4).
+    public ObjSet Single(int id)
+    {
+        while (_singles.Count <= id) _singles.Add(ObjSet.Of(_singles.Count));
+        return _singles[id];
+    }
+
+    /// The label of member slot `slot` of body `owner`, interned (fix round 1, M4).
+    public TaintValue SlotLabel(int owner, int slot)
+    {
+        if (!_slotLabels.TryGetValue((owner, slot), out var label)) _slotLabels[(owner, slot)] = label = TaintValue.Param(owner, slot);
+        return label;
+    }
 
     public int MemberSlotCount => _slots.Count;
 

@@ -264,8 +264,8 @@ internal sealed class SummaryComputer
     private ObjSet? EntryObjects(Body body, IParameterSymbol p, bool symbolic)
     {
         if (!MemberFacts.MayHold(p.Type) || p.RefKind != RefKind.None) return null;
-        if (_ctx.Sources.IsSourceParameter(p)) return ObjSet.Of(_ctx.Objects.Bound(body.Id, p.Ordinal));
-        return symbolic ? ObjSet.Of(_ctx.Objects.Param(body.Id, p.Ordinal)) : null;
+        if (_ctx.Sources.IsSourceParameter(p)) return _ctx.Objects.Single(_ctx.Objects.Bound(body.Id, p.Ordinal));
+        return symbolic ? _ctx.Objects.Single(_ctx.Objects.Param(body.Id, p.Ordinal)) : null;
     }
 
     // ---- Seeds: request data at a body's parameters ----
@@ -511,7 +511,9 @@ internal sealed class SummaryComputer
             if (fact.Holds == null || fact.Path.Members.Length != 1) continue;
             int slot;
             if (ReferenceEquals(fact.Path.Root, AccessPath.This) && !method.IsStatic) slot = -1;
-            else if (fact.Path.Root is IParameterSymbol { RefKind: RefKind.None } p && SymbolEqualityComparer.Default.Equals(p.ContainingSymbol, method) && !analyzer.IsReassigned(p)) slot = p.Ordinal;
+            // A parameter passed by value that is no reference (a struct, an unconstrained type parameter) is the caller's
+            // copy (fix round 1, I1); `this` of a struct is the caller's variable itself.
+            else if (fact.Path.Root is IParameterSymbol { RefKind: RefKind.None, Type.IsReferenceType: true } p && SymbolEqualityComparer.Default.Equals(p.ContainingSymbol, method) && !analyzer.IsReassigned(p)) slot = p.Ordinal;
             else continue;
             if (!builders.TryGetValue(slot, out var b)) builders[slot] = b = ImmutableDictionary.CreateBuilder<ISymbol, TaintValue>(SymbolEqualityComparer.Default);
             b[fact.Path.Members[0]] = fact.Holds;
@@ -591,7 +593,7 @@ internal sealed class SummaryComputer
             _body = body;
             var root = unit.RootBody;
             This = root.Symbol is { IsStatic: false } ? TaintValue.Param(root.Id, -1) : TaintValue.Clean;
-            if (root.Symbol is { IsStatic: false } && computer.IsSymbolic(root)) This = This with { Objects = ObjSet.Of(computer._ctx.Objects.Param(root.Id, -1)) };
+            if (root.Symbol is { IsStatic: false } && computer.IsSymbolic(root)) This = This with { Objects = computer._ctx.Objects.Single(computer._ctx.Objects.Param(root.Id, -1)) };
             Reach = computer._entries.Of(body);
             WriteReach = computer._entries.WriteReach(body);
         }
@@ -754,14 +756,7 @@ internal sealed class SummaryComputer
         /// unknown objects.
         public TaintValue HeapRead(ISymbol member, ObjSet? objects = null)
         {
-            List<int>? concrete = null;
-            if (objects != null)
-            {
-                concrete = new List<int>(objects.Count);
-                foreach (var o in objects.Ids)
-                    if (!Objects.IsParam(o)) concrete.Add(o);
-            }
-            var value = _computer._heap.Read(member, _unit, Reach, concrete);
+            var value = _computer._heap.Read(member, _unit, Reach, objects, Objects);
             // Code around every action reads heap data in every request.
             if (value.Scope is not { } scope) return value;
             var widened = _computer._entries.Widen(scope);
@@ -803,7 +798,9 @@ internal sealed class SummaryComputer
                 var (kind, owner, slot) = Objects.Describe(o);
                 if (kind == ObjKind.Param)
                 {
+                    // Another body's parameter object (none is known to reach here): the member's field location.
                     if (Keeps(owner)) _computer.Builder(owner).AddObjWrite(slot, heap.Key(member), definition, value);
+                    else Store(member, value);
                 }
                 else
                 {
@@ -816,6 +813,17 @@ internal sealed class SummaryComputer
         /// of its members: Task 27).
         public void KeyedWrite(KeyedLocation location, TaintValue value)
         {
+            if (location.Store == KeyedStore.ViewModel && value.Objects is { } objects)
+            {
+                // The model's objects go with it (fix round 1, I2: a view reads what is written into them after View());
+                // a parameter object is this body's own, unknown anywhere else.
+                foreach (var o in objects.Ids)
+                    if (Objects.IsParam(o))
+                    {
+                        value = value with { Objects = null };
+                        break;
+                    }
+            }
             if (value.Any || location.Store == KeyedStore.ViewModel) Store(location, value);
         }
 

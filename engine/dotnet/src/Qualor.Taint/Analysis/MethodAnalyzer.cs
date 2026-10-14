@@ -484,7 +484,7 @@ internal sealed partial class MethodAnalyzer
                 // The CFG lowers initializers into assignments on a flow capture; one left here is evaluated as such.
                 if (creation.Initializer != null) value = value.Join(Value(creation.Initializer, state));
                 // Task 27: the object made here is its allocation site; its constructor's strong updates of `this` are known.
-                return value with { Objects = ObjSet.Of(_ctx.Objects.Site(creation.Syntax)), Members = value.Members };
+                return value with { Objects = _ctx.Objects.Single(_ctx.Objects.Site(creation.Syntax)), Members = value.Members };
             }
 
             case IBinaryOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String } concatenation:
@@ -545,19 +545,19 @@ internal sealed partial class MethodAnalyzer
                 return Value(declaration.Expression, state);
             case IArrayCreationOperation array:
                 foreach (var size in array.DimensionSizes) Value(size, state);
-                return Value(array.Initializer, state).WithoutIdentity() with { Objects = ObjSet.Of(_ctx.Objects.Site(array.Syntax)) };
+                return Value(array.Initializer, state).WithoutIdentity() with { Objects = _ctx.Objects.Single(_ctx.Objects.Site(array.Syntax)) };
             case IAnonymousObjectCreationOperation anonymous:
             {
                 var value = TaintValue.Clean;
                 foreach (var initializer in anonymous.Initializers)
                     value = value.Join(initializer is ISimpleAssignmentOperation a ? Value(a.Value, state) : Value(initializer, state));
-                return value.WithoutIdentity() with { Objects = ObjSet.Of(_ctx.Objects.Site(anonymous.Syntax)) };
+                return value.WithoutIdentity() with { Objects = _ctx.Objects.Single(_ctx.Objects.Site(anonymous.Syntax)) };
             }
             case ICollectionExpressionOperation collection:
             {
                 var value = TaintValue.Clean;
                 foreach (var child in collection.ChildOperations) value = value.Join(Value(child, state));
-                return value.WithoutIdentity() with { Objects = ObjSet.Of(_ctx.Objects.Site(collection.Syntax)) };
+                return value.WithoutIdentity() with { Objects = _ctx.Objects.Single(_ctx.Objects.Site(collection.Syntax)) };
             }
 
             case IDynamicMemberReferenceOperation member when KeyedStores.IsViewBag(member.Instance):
@@ -873,7 +873,7 @@ internal sealed partial class MethodAnalyzer
     {
         var objects = ReferenceEquals(root, AccessPath.This) ? _body.This.Objects : state.PointsTo(root);
         MemberMap? members = null;
-        if (state.HasFacts)
+        if (state.HasFacts && state.HasHolds)
         {
             ImmutableDictionary<ISymbol, TaintValue>.Builder? known = null;
             foreach (var f in state.Facts)
@@ -954,10 +954,10 @@ internal sealed partial class MethodAnalyzer
     /// substituted at each call). Empty objects (null itself) read nothing.
     private TaintValue MemberHeap(ISymbol member, ObjSet? objects, IOperation at, bool neverSource)
     {
-        if (!member.IsStatic && objects != null && objects.IsEmpty) return TaintValue.Clean;
         var heap = TaintValue.Clean;
         var labels = TaintValue.Clean;
-        var unknown = member.IsStatic || objects == null;
+        // No object at all (a view model no write has reached yet, null) is read as unknown, as before Task 27.
+        var unknown = member.IsStatic || objects == null || objects.IsEmpty;
         var concrete = false;
         if (!unknown)
         {
@@ -965,7 +965,7 @@ internal sealed partial class MethodAnalyzer
             {
                 var (kind, owner, slot) = _ctx.Objects.Describe(o);
                 if (kind != ObjKind.Param) concrete = true;
-                else if (!neverSource && _body.Keeps(owner)) labels = labels.Join(TaintValue.Param(owner, _ctx.Objects.MemberSlot(slot, SymbolKeys.Definition(member))));
+                else if (!neverSource && _body.Keeps(owner)) labels = labels.Join(_ctx.Objects.SlotLabel(owner, _ctx.Objects.MemberSlot(slot, SymbolKeys.Definition(member))));
                 else unknown = true;
             }
         }
@@ -973,6 +973,19 @@ internal sealed partial class MethodAnalyzer
         else if (concrete) heap = _body.HeapRead(member, objects);
         var value = heap.Join(labels);
         return value.Any ? value.Step(at.Syntax.GetLocation(), $"read from {_ctx.Name(member)}") : value;
+    }
+
+    /// A view's known model members joined with what is written into those members of the model's objects.
+    private MemberMap? KnownLater(MemberMap known, ObjSet? objects, IOperation at)
+    {
+        var builder = ImmutableDictionary.CreateBuilder<ISymbol, TaintValue>(SymbolEqualityComparer.Default);
+        foreach (var (member, value) in known.Values)
+        {
+            var type = member is IFieldSymbol f ? f.Type : (member as IPropertySymbol)?.Type;
+            var neverSource = type != null && _ctx.Sources.IsNeverSourceType(type);
+            builder[member] = _body.IsHeapMember(member) ? value.Join(MemberHeap(member, objects, at, neverSource)) : value;
+        }
+        return MemberMap.Of(builder.ToImmutable());
     }
 
     private static TaintValue IdentityOf(TaintValue value) => value.HasIdentity ? TaintValue.Clean with { Objects = value.Objects, Members = value.Members } : TaintValue.Clean;
@@ -1429,6 +1442,10 @@ internal sealed partial class MethodAnalyzer
         {
             // The model given to the view, with the members every model it may render is known to hold (Task 27).
             var model = Keyed(_ctx.ModelKeys.Reads(operation.Type), operation);
+            // A member known when View() was called may be written later (in the action, a filter, the view itself):
+            // what was written into the model's objects joins it (fix round 1, I2).
+            if (model.Members is { IsAll: false } known)
+                model = model with { Members = KnownLater(known, model.Objects, operation) };
             result = result.Join(model.WithoutIdentity());
             identity = IdentityOf(model);
             unknownIdentity = !model.HasIdentity;
@@ -1622,6 +1639,10 @@ internal sealed partial class MethodAnalyzer
         if (n < inputs.Length) Array.Resize(ref inputs, n);
         if (format != null) FormatPlaced(inputs, format);
         var targets = method == null || method.MethodKind == MethodKind.DelegateInvoke ? null : _body.Targets(method, isVirtual, instance?.Type);
+        // A record's `with` copies its receiver (ruling R-E31): it changes nothing; the copy is a new allocation site whose
+        // members start as the source's.
+        var copy = instance != null && method is { Name: "<Clone>$", Parameters.Length: 0 };
+        if (copy) return CopyOf(operation, receiver);
         if (state.HasFacts || _body.RootSymbolic) CallEffects(instance, receiver, inputs, state, targets);
         if (method != null) GuardArguments(operation, method, inputs, state);
         HigherOrder(inputs, instanceValue, state, definition);
@@ -1722,6 +1743,7 @@ internal sealed partial class MethodAnalyzer
         }
 
         KeyedCall(operation, method, instance, inputs, state);
+        if (IsUpdateModel(method)) UpdateModel(operation, method, inputs, state);
         result = result.CleanedFor(_ctx.Sinks.Sanitizes(method, Access.Call));
         if (result.Any)
         {
@@ -1853,7 +1875,7 @@ internal sealed partial class MethodAnalyzer
         var s = callee.Summary;
         if (constructor && site is IObjectCreationOperation)
         {
-            var created = TaintValue.Clean with { Objects = ObjSet.Of(_ctx.Objects.Site(site.Syntax)) };
+            var created = TaintValue.Clean with { Objects = _ctx.Objects.Single(_ctx.Objects.Site(site.Syntax)) };
             var given = argument;
             argument = slot => slot == -1 ? created : given(slot);
         }
@@ -1863,8 +1885,9 @@ internal sealed partial class MethodAnalyzer
         {
             if (!ObjectTable.IsMemberSlot(slot)) return raw(slot);
             members ??= new Dictionary<int, TaintValue>();
-            if (!members.TryGetValue(slot, out var v)) members[slot] = v = MemberArg(slot, raw, site);
-            return v;
+            if (members.TryGetValue(slot, out var v)) return v;
+            members[slot] = TaintValue.Clean; // a write of the member that reads it (`p.M += x`) asks for it again
+            return members[slot] = MemberArg(slot, raw, site, callee, argument!);
         };
         if (callee.Symbol is { } symbol)
         {
@@ -1928,19 +1951,63 @@ internal sealed partial class MethodAnalyzer
         return result;
     }
 
+    /// A record copy (`source with { ... }`, ruling R-E31): the source's taint, a new allocation site whose members start
+    /// as the source's (its objects too, so a read of a member the copy did not set reads the source's; a write through
+    /// the copy reaches them as well, weakly) and the members the source knew exactly. The initializer's assignments
+    /// follow on the copy.
+    private TaintValue CopyOf(IOperation operation, TaintValue source)
+    {
+        var site = _ctx.Objects.Single(_ctx.Objects.Site(operation.Syntax));
+        return source.WithoutIdentity() with { Objects = source.Objects == null ? null : ObjSet.Union(site, source.Objects), Members = source.Members is { IsAll: false } m ? m : null };
+    }
+
+    /// `TryUpdateModelAsync(model, ...)` of a controller or page model: the model binder sets the model's members from the
+    /// request (ruling R-E31).
+    private static bool IsUpdateModel(IMethodSymbol method) =>
+        method.Name is "TryUpdateModelAsync" or "TryUpdateModel" && !SymbolKeys.InSource(method)
+        && method.ContainingType is { } type && SymbolMatch.MetadataName(type.OriginalDefinition) is
+            "Microsoft.AspNetCore.Mvc.ControllerBase" or "Microsoft.AspNetCore.Mvc.RazorPages.PageModel";
+
+    /// The model given to the binder (its first argument) holds request data in every member, as a bound parameter does.
+    private void UpdateModel(IOperation operation, IMethodSymbol method, Input[] inputs, TaintState state)
+    {
+        foreach (var i in inputs)
+        {
+            if (i.Ordinal != 0 || i.RefKind == RefKind.Out) continue;
+            var bound = TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(method)}").ScopedTo(_body.WriteReach);
+            Write(i.Operation, bound, state);
+        }
+    }
+
     /// What a call's argument holds in member M, for the callee's member slot of (k, M) (Task 27): the member's exact
     /// value when the argument knows it; else the argument's whole taint (unless the member's type is
     /// never request data) and the heap's part of the member through the argument's objects (MemberHeap: a parameter
     /// object of the caller becomes the caller's own member slot).
-    private TaintValue MemberArg(int slot, Func<int, TaintValue> argument, IOperation site)
+    ///
+    /// The exact member stands only when the callee cannot change it on its way (fix round 1 of Task 27, C2): its summary
+    /// writes no (k, M) into the parameter's objects, its component writes no M through unknown objects, and k does not
+    /// escape. Otherwise the exact value is joined with what the callee writes there and with the heap's part.
+    private TaintValue MemberArg(int slot, Func<int, TaintValue> argument, IOperation site, Body callee, Func<int, TaintValue> substituted)
     {
         var (k, member) = _ctx.Objects.OfMemberSlot(slot);
         var a = argument(k);
-        if (a.Members is { IsAll: false } known && known.TryGet(member, out var exact)) return exact.WithoutIdentity();
         var type = member is IFieldSymbol f ? f.Type : (member as IPropertySymbol)?.Type;
         var neverSource = type != null && _ctx.Sources.IsNeverSourceType(type);
-        var value = neverSource ? TaintValue.Clean : a.WithoutIdentity();
-        return value.Join(MemberHeap(member, a.Objects, site, neverSource));
+        if (a.Members is { IsAll: false } known && known.TryGet(member, out var exact))
+        {
+            var s = callee.Summary;
+            TaintValue? written = null;
+            foreach (var ((wslot, _), (symbol, value)) in s.ObjWrites)
+                if (wslot == k && SymbolEqualityComparer.Default.Equals(symbol, member)) written = value;
+            var top = s.TopWrites?.Contains(SymbolKeys.Of(member)) == true;
+            if (written == null && !top && !s.Escapes.Contains(k)) return exact.WithoutIdentity();
+            var joined = exact.WithoutIdentity().Join(MemberHeap(member, a.Objects, site, neverSource));
+            if (written != null)
+                joined = joined.Join(BodySummary.Substitute(written, callee.Id, substituted, site.Syntax.GetLocation(), _ctx.Name(callee.Symbol ?? member), _body.Keeps, _body.WriteReach).WithoutIdentity());
+            return joined;
+        }
+        var whole = neverSource ? TaintValue.Clean : a.WithoutIdentity();
+        return whole.Join(MemberHeap(member, a.Objects, site, neverSource));
     }
 
     /// Whether a call is awaited where it is made (an async callee's writes are done when the await returns).

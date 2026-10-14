@@ -135,6 +135,9 @@ internal static class MemberFacts
     /// The facts with the strong update of `path` set to `value` (a fact for the path is kept for its guard part).
     public static ImmutableArray<MemberFact> SetHolds(ImmutableArray<MemberFact> facts, AccessPath path, TaintValue value)
     {
+        // Exactness is one level deep (fix round 1 of Task 27, C1): a held value keeps its objects, not what it knows of
+        // its own members, which a write through a longer path or an alias would leave stale.
+        value = MemberMap.Flat(value);
         for (var i = 0; i < facts.Length; i++)
             if (facts[i].Path.Equals(path)) return facts.SetItem(i, facts[i] with { Holds = value });
         return facts.Length >= MaxFacts ? facts : facts.Add(new MemberFact(path, false, ImmutableHashSet<string>.Empty, ImmutableHashSet<IOperation>.Empty) { Holds = value });
