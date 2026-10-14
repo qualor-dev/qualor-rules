@@ -117,6 +117,14 @@ public class OpenGrepFixtureTests
         ("csharp.sql-injection", "sql-injection.cs", 763, "unexpected", "Task 11 (allow-list): SortColumns.GetValueOrDefault(sort, literal)"),
         ("csharp.sql-injection", "sql-injection.cs", 765, "unexpected", "Task 11 (allow-list): Filters.GetValueOrDefault(filter)"),
         ("csharp.sql-injection", "sql-injection.cs", 769, "unexpected", "Task 11 (allow-list): SortColumns.TryGetValue(sort, out var column)"),
+        ("csharp.path-traversal", "path-traversal.cs", 214, "unexpected", "Task 11 (guard): GetFullPath then !full.StartsWith(Storage + Path.DirectorySeparatorChar) return"),
+        ("csharp.path-traversal", "path-traversal.cs", 218, "unexpected", "Task 11 (allow-list): Reports[report], a lookup in a table of literals"),
+        ("csharp.path-traversal", "path-traversal.cs", 232, "unexpected", "Task 11 (guard): GetFullPath then !first.StartsWith(_root + \"/\") return"),
+        ("csharp.path-traversal", "path-traversal.cs", 239, "unexpected", "Task 11 (guard): GetFullPath then !second.StartsWith(Storage + '/') throw"),
+        ("csharp.path-traversal", "path-traversal.cs", 247, "unexpected", "Task 11 (guard): GetFullPath then !third.StartsWith(Storage + Path.AltDirectorySeparatorChar) return"),
+        ("csharp.path-traversal", "path-traversal.cs", 255, "unexpected", "Task 11 (guard): GetFullPath then !fourth.StartsWith(StorageRoot) throw"),
+        ("csharp.path-traversal", "path-traversal.cs", 259, "unexpected", "Task 11 (guard): GetFullPath then !fifth.StartsWith(Storage + '\\\\') return"),
+        ("csharp.path-traversal", "path-traversal.cs", 268, "unexpected", "Task 11 (guard): GetFullPath then !resolved.StartsWith(\"/var/app/storage/\") throw"),
     };
 
     /// The engine runs to completion (no internal error, no iteration cap) on every fixture, modelled or not.

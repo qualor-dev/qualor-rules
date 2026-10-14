@@ -1,0 +1,120 @@
+# The engine's model of csharp.path-traversal (format v1, models/README.md): the sinks and sanitizers of
+# rules/csharp/path/path-traversal.yml with types in place of names. Sources and propagators: sources.yml and
+# propagators.yml (shared; Path.Combine and Path.Join pass every argument to their result, so a rooted later
+# argument that replaces the base is request data too).
+#
+# Sources (learn.microsoft.com): dotnet/api/system.io.file, system.io.directory, system.io.filestream,
+# system.io.fileinfo, system.io.directoryinfo, system.io.streamreader, system.io.streamwriter, system.io.path,
+# microsoft.aspnetcore.mvc.controllerbase.physicalfile, microsoft.aspnetcore.mvc.razorpages.pagemodel.physicalfile,
+# microsoft.aspnetcore.http.typedresults.physicalfile, microsoft.aspnetcore.http.results.file,
+# microsoft.aspnetcore.mvc.physicalfileresult; aspnet/core/mvc/models/file-uploads.
+rule: csharp.path-traversal
+kind: taint
+sinks:
+  # System.IO.File: the path it reads, writes, appends to, opens, creates or deletes (parameter 0); Copy, Move,
+  # Replace and CreateSymbolicLink: both paths. Not File.Exists, which only tests for existence (an `ok:` line).
+  # The text written (WriteAllText's contents) is no path.
+  - method: System.IO.File.ReadAll*            # ReadAllText, ReadAllBytes, ReadAllLines (and their Async forms)
+    args: [0]
+  - method: System.IO.File.ReadLines*          # ReadLines, ReadLinesAsync
+    args: [0]
+  - method: System.IO.File.WriteAll*           # WriteAllText, WriteAllBytes, WriteAllLines (and Async)
+    args: [0]
+  - method: System.IO.File.AppendAll*          # AppendAllText, AppendAllLines (and Async)
+    args: [0]
+  - method: System.IO.File.AppendText
+    args: [0]
+  - method: System.IO.File.Open*               # Open, OpenRead, OpenWrite, OpenText, OpenHandle
+    args: [0]
+  - method: System.IO.File.Create*             # Create, CreateText, CreateSymbolicLink
+    args: [0]
+  - method: System.IO.File.Delete
+    args: [0]
+  - method: System.IO.File.Copy
+    args: [0, 1]
+  - method: System.IO.File.Move
+    args: [0, 1]
+  - method: System.IO.File.Replace
+    args: [0, 1]
+  - method: System.IO.File.CreateSymbolicLink
+    args: [0, 1]
+  - method: System.IO.File.SetAttributes
+    args: [0]
+  - method: System.IO.File.SetLastWriteTime
+    args: [0]
+  # System.IO.Directory: the folder it creates, lists, moves or deletes (Move: both). Not Directory.Exists.
+  - method: System.IO.Directory.CreateDirectory
+    args: [0]
+  - method: System.IO.Directory.Delete
+    args: [0]
+  - method: System.IO.Directory.GetFiles
+    args: [0]
+  - method: System.IO.Directory.GetDirectories
+    args: [0]
+  - method: System.IO.Directory.GetFileSystemEntries
+    args: [0]
+  - method: System.IO.Directory.EnumerateFiles
+    args: [0]
+  - method: System.IO.Directory.EnumerateDirectories
+    args: [0]
+  - method: System.IO.Directory.EnumerateFileSystemEntries
+    args: [0]
+  - method: System.IO.Directory.Move
+    args: [0, 1]
+  - method: System.IO.Directory.CreateSymbolicLink
+    args: [0]
+  - method: System.IO.Directory.SetCurrentDirectory
+    args: [0]
+  # The FileStream, FileInfo and DirectoryInfo constructors: the path (FileStream's SafeFileHandle overloads have
+  # no path: `param-types`).
+  - method: System.IO.FileStream..ctor
+    args: [0]
+    param-types: [System.String]
+  - method: System.IO.FileInfo..ctor
+    args: [0]
+  - method: System.IO.DirectoryInfo..ctor
+    args: [0]
+  # StreamReader and StreamWriter given a path.
+  # Difference: the OpenGrep rule leaves them out (a Known limit) because without types it cannot tell their path
+  # overloads from their Stream overloads, which take request bodies; the engine goes by the overload the compiler
+  # chose (`param-types`), so only a path is a sink.
+  - method: System.IO.StreamReader..ctor
+    args: [0]
+    param-types: [System.String]
+  - method: System.IO.StreamWriter..ctor
+    args: [0]
+    param-types: [System.String]
+  # ASP.NET Core results that send a file from disk: PhysicalFile of controllers and Razor Pages,
+  # TypedResults.PhysicalFile, PhysicalFileResult, and Results.File given a path (a rooted path is read from disk).
+  # Differences: Results.File given bytes or a stream is no path (`param-types`; the OpenGrep rule reports it, a
+  # Known limit). The OpenGrep rule names Results.PhysicalFile, which the ASP.NET Core 8 reference assemblies do not
+  # have (TypedResults.PhysicalFile is the method). Not sinks, as in the OpenGrep rule: ControllerBase.File given a
+  # virtual path and IFileProvider.GetFileInfo, which resolve below the web root and refuse paths outside it.
+  - method: Microsoft.AspNetCore.Mvc.ControllerBase.PhysicalFile
+    args: [0]
+  - method: Microsoft.AspNetCore.Mvc.RazorPages.PageModel.PhysicalFile
+    args: [0]
+  - method: Microsoft.AspNetCore.Http.TypedResults.PhysicalFile
+    args: [0]
+  - method: Microsoft.AspNetCore.Mvc.PhysicalFileResult..ctor
+    args: [0]
+  - method: Microsoft.AspNetCore.Http.Results.File
+    args: [0]
+    param-types: [System.String]
+# Shared C# sanitizers (as in every taint model; see sql-injection.yml), then the rule's own: Path.GetFileName
+# keeps only the last segment (no folder, no root); so does GetFileNameWithoutExtension, and GetExtension returns
+# only the extension.
+# Not here (plan Task 11, guards): the containment check (`var full = Path.GetFullPath(...)` and
+# `if (!full.StartsWith(base + separator)) return/throw`) and the shared allow-lists.
+sanitizers:
+  - method: System.Int32.Parse
+  - method: System.Int64.Parse
+  - method: System.Guid.Parse
+  - method: System.DateTime.Parse
+  - method: System.Convert.ToInt32
+  - method: System.Convert.ToInt64
+  - method: System.Enum.Parse
+  - method: System.IO.Path.GetFileName
+  - method: System.IO.Path.GetFileNameWithoutExtension
+  - method: System.IO.Path.GetExtension
+guards: []

@@ -8,7 +8,15 @@ must-find:
   - { rule: csharp.sql-injection, line: 870, why: "BuildFilter(term): an expression-bodied helper that passes its argument on" }
   - { rule: csharp.sql-injection, line: 872, why: "Region: an expression-bodied property that reads the request" }
   - { rule: csharp.sql-injection, line: 874, why: "Channel: a property getter that reads the request" }
-must-stay-quiet: []
+  - { rule: csharp.path-traversal, line: 375, why: "PathOf(Request): an expression-bodied helper that reads the request" }
+  - { rule: csharp.path-traversal, line: 377, why: "Section: an expression-bodied property that reads the request" }
+  - { rule: csharp.path-traversal, line: 379, why: "Channel: a property getter that reads the request" }
+  # OpenGrep cannot tell a StreamReader's path overload from its Stream overload (Known limit); the engine goes by the
+  # overload (`param-types` in models/csharp/path-traversal.yml).
+  - { rule: csharp.path-traversal, line: 332, why: "new StreamReader(path): the path overload is a sink" }
+must-stay-quiet:
+  # Results.File given a stream is no path: the engine goes by the overload (`param-types`), OpenGrep cannot (Known limit).
+  - { rule: csharp.path-traversal, line: 367, why: "Results.File(Request.Body, ...): the Stream overload is no sink" }
 # Fixture lines that cannot compile in any form (an intentionally invalid shape); excluded from the engine comparison.
 uncompilable:
   - { rule: csharp.open-redirect, file: open-redirect.cs, line: 51, reason: "RedirectHttpResult.IsLocalUrl is not public in the ASP.NET Core 8 reference assemblies (added in .NET 10); the call does not bind" }
@@ -45,6 +53,7 @@ uncompilable:
 # Lines that compile, but whose annotation rests on an uncompilable line; excluded from the engine comparison too.
 excluded:
   - { rule: csharp.open-redirect, file: open-redirect.cs, line: 54, reason: "its ok: rests on the guard at line 51 (RedirectHttpResult.IsLocalUrl does not bind); the engine cannot know the call is a guard" }
+  - { rule: csharp.path-traversal, file: path-traversal.cs, line: 90, reason: "its ruleid: is an argument of the call at line 88 (Results.PhysicalFile does not exist in the ASP.NET Core 8 reference assemblies): the call does not bind, so it is no sink" }
 
 # Names the models use that do not resolve against FixtureReferences.All (a test checks this list matches exactly).
 # All are APIs of libraries older than the ones the fixtures compile against, modelled so a project that still uses
