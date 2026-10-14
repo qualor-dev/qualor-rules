@@ -158,8 +158,10 @@ guard (ruling R-E13).
 ### Guards on members
 
 Every guard above (a model guard, the not-null guard, the equality guard, an allow-list's membership) also holds for a
-member read on a local, a parameter or `this`: an access path `x.M`, `x.M.N` (up to four members; fields and
-properties that are not indexers; `x?.M` too; a static member's path `T.M` as well). On the branch where the check
+member read on a local, a parameter or `this`: an access path `x.M`, `x.M.N` (up to four members; fields,
+auto-properties, and properties of referenced assemblies that are not indexers; `x?.M` too; a static member's path
+`T.M` as well). A property of the project with a getter body (computed, `Full => Base + Tail`, or backed by a field)
+is no member guard: a write of what it reads would not end the fact. On the branch where the check
 holds, a read of that path is clean for the guard's rule (for every rule after an equality); the other members of x
 keep their taint. `if (Url.IsLocalUrl(model.ReturnUrl)) return Redirect(model.ReturnUrl);`,
 `if (!Sorts.Contains(dto.Sort)) return BadRequest();` and `if (req.Kind == "a" || req.Kind == "b")` are guards.
@@ -173,21 +175,32 @@ ends at:
 - a write of any member on the path (`x.M = ...`, `x.M.N = ...`, `x.M++`, `ref x.F`, a collection write into it), on
   whatever object it is written: `alias.M = ...` ends the fact of `x.M` (an alias of x is not tracked, its member is);
 - a call (or a setter that is not an auto-property's) that may change an object along the path. The choice, by type:
-  the call's receiver or an argument has the type of the root or of a member on the path (string, scalars, enums and
-  delegates aside), a type derived from it or one it derives from, an interface it implements, or `object` or a type
-  parameter; a struct of the project called in place is written. Every call ends the facts of static paths. A call
-  given other objects (`_audit.NoteAsync(form.User, form.Remember)`, `_mail.SendAsync(new Notice(...))`)
-  keeps them.
-- A path whose root or member a lambda or local function of the method writes gets no fact (the delegate may run at
-  any call).
+  the call's receiver or an argument (string, scalars, enums and delegates aside; a struct or tuple passed by value
+  too) may reach an object of the type of the root or of a member on the path, of a type derived from it or one it
+  derives from, of an interface it implements, or `object` or a type parameter. What a value reaches: its own type,
+  an array's elements, a generic type's type arguments (`List<Form>`, `Dictionary<string, Form>`, `(Form, int)`), and
+  the instance fields of the project's types (`new Holder(form)` then `holder.Reset()`), up to three steps; a field
+  typed `object` or a type parameter is not followed. A struct of the project called in place is written. Every call
+  ends the facts of static paths. A call given other objects (`_audit.NoteAsync(form.User,
+  form.Remember)`, `_mail.SendAsync(new Notice(...))`, a `CancellationToken`, a `List<string>`) keeps them.
+- a write through a `ref` local or a `ref`/`out` parameter, a dynamic call (`Reset(d)` with `d` dynamic, a dynamic
+  member assignment), a call through a function pointer: every fact ends;
+- an `await` of anything but a call made right there and given no task (`await pending`, `await Task.WhenAll(tasks)`):
+  every fact ends, since work started earlier and given the object may change it while the method waits.
+- A path gets no fact when a lambda or local function of the method writes its root or one of its members, calls a
+  method on its root (or on an object read from it), or gives the root to a call or a constructor
+  (`xs.ForEach(x => form.Reset())`, `Task.Run(() => Reset(form))`), or when a method-group delegate of the method is
+  bound to it (`Action a = form.Reset;`): the delegate may run at any call.
 
 The not-null guard on a member: its call records the path as given to it; the null check of the call's held result
 makes the path clean only if that record survived every write and call in between.
 
 Not covered (by design): a guarded path read through another variable (`var copy = x;` then `copy.M`: still request
-data); an object changed through the heap or a collection it was stored in by a callee that receives neither it nor an
-object of a related type; a write through a `ref` local taken to a member; a guard on a member read through a getter
-that computes a different value each time.
+data); a computed property of a referenced assembly whose inputs change (`UriBuilder.Uri` after a write of `Path`), or
+whose getter computes a different value each time. Follow-up: a callee that changes the guarded object through the heap
+without being given it or an object whose type reaches it (the object kept in a static, or in a field typed `object`,
+then changed there) is not seen (FN); the member writes the callee summaries already record (the heap writes of each
+body, closed over its calls) could end the facts of the members a call may write.
 
 ### Allow-lists
 
@@ -387,8 +400,11 @@ false positives (FP) or misses (FN) there.
   built from request values make cached lookups request data), and an interface every action reaches joins most code
   into one request (FP).
 - Guards hold for locals, parameters and members read on them (since Task 21, "Guards on members"); a call given the
-  guarded object (or one of a related type) between the check and the sink ends the guard (FP). A guard inside a
-  project's own helper (`CheckIsLocalUrl(x)` that calls `IsLocalUrl`) is no guard (FP).
+  guarded object (or one of a related type, or something that holds one) between the check and the sink, an await of
+  earlier work, or a nested body touching the object ends the guard (FP); a member read through a project property
+  with a getter body is no guard (FP). A callee that changes the guarded object through the heap without being given
+  it or something holding it keeps the guard (FN; follow-up: the member writes recorded in summaries). A guard inside
+  a project's own helper (`CheckIsLocalUrl(x)` that calls `IsLocalUrl`) is no guard (FP).
 - Validation in another method or by an attribute is not seen: a filename sanitizer, a child-path or containment check,
   `[RegularExpression]` on a bound parameter, a hash used as a file name, an allow-list lookup (FP).
 - The fixed-origin prefix (ssrf, open-redirect) is read only where the URL is built in place, not through a helper that

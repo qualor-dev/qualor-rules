@@ -425,9 +425,9 @@ internal sealed partial class MethodAnalyzer
 
     // ---- Guards on members (Task 21) ----
 
-    /// The members written inside the lambdas and local functions of the analysed method (and the locals and parameters
-    /// they assign): a guard on a path that mentions one is not recorded, since the delegate may run at any call.
-    private HashSet<ISymbol>? _nestedWrites;
+    /// What the nested bodies and method-group delegates of the analysed method may change (NestedEffects): a guard on
+    /// a path that mentions one is not recorded, since the delegate may run at any call.
+    private HashSet<object>? _nestedEffects;
 
     /// The access path an operation reads (`x.M`, `x.M.N`, `this.M`, `T.S.M`; through conversions and a flow capture of
     /// one value), or null: a plain local or parameter (guarded as before), an indexer, a call, a path longer than
@@ -500,62 +500,164 @@ internal sealed partial class MethodAnalyzer
         return fact.All ? TaintValue.Clean : value.CleanedFor(fact.Rules);
     }
 
-    /// Whether a guard on this path may be recorded: no lambda or local function of the method writes its root or one of
-    /// its members.
+    /// Whether a guard on this path may be recorded:
+    /// - no lambda or local function of the method writes its root or one of its members, or gives its root (or an
+    ///   object read from it) to a call, a constructor or as a receiver; and no method-group delegate of the method is
+    ///   bound to an object read from its root (the delegate may run at any call; fix round 1, I1);
+    /// - no member on it is a property declared in source that is not an auto-property: a computed or field-backed
+    ///   getter reads state a write of another member changes (fix round 1, I2).
     private bool CanHold(AccessPath path)
     {
-        _nestedWrites ??= NestedWrites();
-        if (_nestedWrites.Count == 0) return true;
-        if (path.Root is ISymbol root && _nestedWrites.Contains(root)) return false;
-        foreach (var m in path.Members) if (_nestedWrites.Contains(m)) return false;
+        foreach (var m in path.Members)
+            if (m is IPropertySymbol property && SymbolKeys.InSource(property) && !_body.IsHeapMember(property)) return false;
+        _nestedEffects ??= NestedEffects();
+        if (_nestedEffects.Count == 0) return true;
+        if (_nestedEffects.Contains(path.Root)) return false;
+        foreach (var m in path.Members) if (_nestedEffects.Contains(m)) return false;
         return true;
     }
 
-    private HashSet<ISymbol> NestedWrites()
+    /// The roots and members the nested bodies of the method may change (see CanHold): the locals, parameters, members
+    /// and `this` (AccessPath.This) that a lambda or local function assigns or gives to a call, and the roots of the
+    /// objects method-group delegates are bound to.
+    private HashSet<object> NestedEffects()
     {
-        var set = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+        var set = new HashSet<object>(SymbolOrCapture.Comparer);
         var g = _cfg;
         while (g.Parent != null) g = g.Parent;
-        foreach (var nested in g.OriginalOperation.Descendants())
+        foreach (var o in g.OriginalOperation.Descendants())
         {
-            if (nested is not (IAnonymousFunctionOperation or ILocalFunctionOperation)) continue;
-            foreach (var o in nested.Descendants())
+            if (o is IMethodReferenceOperation { Instance: { } bound }) AddRoot(bound);
+            if (o is not (IAnonymousFunctionOperation or ILocalFunctionOperation)) continue;
+            foreach (var n in o.Descendants())
             {
-                IOperation? target = o switch
+                switch (n)
                 {
-                    IAssignmentOperation a => a.Target,
-                    IIncrementOrDecrementOperation i => i.Target,
-                    IArgumentOperation { Parameter.RefKind: RefKind.Ref or RefKind.Out } r => r.Value,
-                    _ => null,
-                };
-                if (target == null) continue;
-                foreach (var t in target.DescendantsAndSelf())
-                {
-                    switch (t)
-                    {
-                        case ILocalReferenceOperation l:
-                            set.Add(l.Local);
-                            break;
-                        case IParameterReferenceOperation p:
-                            set.Add(p.Parameter);
-                            break;
-                        case IFieldReferenceOperation f:
-                            set.Add(f.Field.OriginalDefinition);
-                            break;
-                        case IPropertyReferenceOperation p:
-                            set.Add(p.Property.OriginalDefinition);
-                            break;
-                    }
+                    case IAssignmentOperation a:
+                        AddTarget(a.Target);
+                        break;
+                    case IIncrementOrDecrementOperation i:
+                        AddTarget(i.Target);
+                        break;
+                    case IArgumentOperation { Parameter.RefKind: RefKind.Ref or RefKind.Out } r:
+                        AddTarget(r.Value);
+                        break;
+                    case IArgumentOperation a:
+                        AddRoot(a.Value);
+                        break;
+                    case IInvocationOperation { Instance: { } receiver }:
+                        AddRoot(receiver);
+                        break;
+                    case IDynamicInvocationOperation or IDynamicObjectCreationOperation or IDynamicIndexerAccessOperation:
+                        foreach (var child in n.ChildOperations) AddRoot(child);
+                        break;
                 }
             }
         }
         return set;
+
+        void AddTarget(IOperation target)
+        {
+            foreach (var t in target.DescendantsAndSelf())
+            {
+                switch (t)
+                {
+                    case ILocalReferenceOperation l:
+                        set.Add(l.Local);
+                        break;
+                    case IParameterReferenceOperation p:
+                        set.Add(p.Parameter);
+                        break;
+                    case IFieldReferenceOperation f:
+                        set.Add(f.Field.OriginalDefinition);
+                        break;
+                    case IPropertyReferenceOperation p:
+                        set.Add(p.Property.OriginalDefinition);
+                        break;
+                    case IInstanceReferenceOperation { ReferenceKind: InstanceReferenceKind.ContainingTypeInstance }:
+                        set.Add(AccessPath.This);
+                        break;
+                }
+            }
+        }
+
+        // The root an object given to a call is read from (`f`, `f.Paging`, `this`), when it may lead to an object.
+        void AddRoot(IOperation value)
+        {
+            var op = value;
+            for (var depth = 0; depth < 16 && op != null; depth++)
+            {
+                while (op is IConversionOperation c) op = c.Operand;
+                if (depth == 0 && !MemberFacts.MayHold(op?.Type)) return;
+                switch (op)
+                {
+                    case IFieldReferenceOperation f when !f.Field.IsStatic:
+                        op = f.Instance;
+                        continue;
+                    case IPropertyReferenceOperation p when !p.Property.IsStatic:
+                        op = p.Instance;
+                        continue;
+                    case ILocalReferenceOperation l:
+                        set.Add(l.Local);
+                        return;
+                    case IParameterReferenceOperation p:
+                        set.Add(p.Parameter);
+                        return;
+                    case IInstanceReferenceOperation { ReferenceKind: InstanceReferenceKind.ContainingTypeInstance }:
+                        set.Add(AccessPath.This);
+                        return;
+                    default:
+                        return;
+                }
+            }
+        }
+    }
+
+    /// Whether an await waits for a call made right there (through conversions and ConfigureAwait) that is given no task:
+    /// otherwise it may wait for work started earlier (fix round 1, M3).
+    private static bool AwaitsFreshCall(IOperation awaited)
+    {
+        var op = awaited;
+        for (var depth = 0; depth < 8; depth++)
+        {
+            while (op is IConversionOperation c) op = c.Operand;
+            if (op is IInvocationOperation { TargetMethod.Name: "ConfigureAwait", Instance: { } task }) op = task;
+            else break;
+        }
+        if (op is not IInvocationOperation call) return false;
+        if (call.Instance != null && HoldsTask(call.Instance.Type)) return false;
+        foreach (var a in call.Arguments)
+            if (HoldsTask(Unwrapped(a.Value).Type)) return false;
+        return true;
+
+        static bool HoldsTask(ITypeSymbol? type)
+        {
+            for (var depth = 0; type != null && depth < 4; depth++)
+            {
+                if (type is IArrayTypeSymbol array)
+                {
+                    type = array.ElementType;
+                    continue;
+                }
+                if (type is not INamedTypeSymbol named) return false;
+                if (named.ContainingNamespace?.ToDisplayString() == "System.Threading.Tasks" && named.Name is "Task" or "ValueTask") return true;
+                if (named.TypeArguments.Length != 1) return false;
+                type = named.TypeArguments[0];
+            }
+            return false;
+        }
     }
 
     /// A local or parameter assigned: its paths' facts end.
+    /// A `ref` local or a `ref`/`out` parameter writes through to whatever it refers to (a root, a member): every fact
+    /// ends (fix round 1, M1).
     private static void ForgetRoot(ISymbol symbol, TaintState state)
     {
-        if (state.HasFacts) state.Forget(p => SymbolOrCapture.Comparer.Equals(p.Root, symbol));
+        if (!state.HasFacts) return;
+        if (symbol is ILocalSymbol { RefKind: RefKind.Ref } or IParameterSymbol { RefKind: RefKind.Ref or RefKind.Out })
+            state.ForgetAll();
+        else
+            state.Forget(p => SymbolOrCapture.Comparer.Equals(p.Root, symbol));
     }
 
     /// What a write of `target` (an assignment, an increment, a ref or out argument, a collection write into it) ends: the
@@ -605,10 +707,11 @@ internal sealed partial class MethodAnalyzer
 
     /// A call (or a setter that is not an auto-property's) may change what it is given. The choice (conservative, by
     /// type): every fact of a static path ends; a ref or out argument is a write; and a fact ends when an object along
-    /// its path (the root's or a member's) could be the receiver or an argument: the same type, one derived from the
-    /// other, an implemented interface, or an argument typed object or a type parameter (MemberFacts.MayChange). A
-    /// struct receiver declared in source is written in place. Not covered: an object reached from the heap or a
-    /// collection that the callee changes (the guarded object stored in a field, then changed through it).
+    /// its path (the root's or a member's) could be reached from the receiver or an argument: a type the value's type
+    /// reaches (itself, elements, type arguments, the fields of a project's type; TypeReach) is the same type, one
+    /// derived from the other, an implemented interface, or object or a type parameter (MemberFacts.MayChange). A
+    /// struct receiver declared in source is written in place. Not covered: an object the callee reaches through the
+    /// heap (a static, or a field typed object) without being given it or an object that holds it.
     private void ForgetForCall(IOperation? instance, Input[] inputs, TaintState state)
     {
         state.Forget(p => ReferenceEquals(p.Root, AccessPath.Static));
@@ -620,7 +723,9 @@ internal sealed partial class MethodAnalyzer
             if (i.RefKind is RefKind.Ref or RefKind.Out) ForgetWritten(i.Operation, state);
             else if (!ReferenceEquals(i.Operation, instance)) Given(i.Operation, false);
         }
-        if (types != null && state.HasFacts) state.Forget(p => p.ObjectTypes.Any(held => types.Any(t => MemberFacts.MayChange(t, held))));
+        if (types == null || !state.HasFacts) return;
+        var reaches = types.Select(t => _ctx.TypeReach.Of(t)).ToList();
+        state.Forget(p => p.ObjectTypes.Any(held => reaches.Any(r => MemberFacts.MayChange(r, held))));
 
         void Given(IOperation? op, bool receiver)
         {
@@ -631,13 +736,11 @@ internal sealed partial class MethodAnalyzer
                 foreach (var e in initializer.ElementValues) Given(e, false);
                 return;
             }
-            if (!MemberFacts.IsChangeable(op.Type)) return;
-            if (op.Type!.IsValueType)
-            {
-                if (receiver) ForgetWritten(op, state);
-                return;
-            }
-            (types ??= new List<ITypeSymbol>()).Add(op.Type);
+            if (!MemberFacts.MayHold(op.Type)) return;
+            // A struct of the project called in place is written; any value given (a struct or tuple by value too) may
+            // lead to the objects its type reaches (fix round 1, I3).
+            if (receiver && op.Type!.IsValueType && MemberFacts.IsChangeable(op.Type)) ForgetWritten(op, state);
+            (types ??= new List<ITypeSymbol>()).Add(op.Type!);
         }
     }
 

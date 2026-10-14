@@ -41,6 +41,27 @@ public sealed class MemberGuardTests : ProbeModels
                 public string FallbackUrl { get; set; } = "";
                 public Paging Paging { get; set; } = new();
                 public void UseFallback() => ReturnUrl = FallbackUrl;
+                public string Host { get; set; } = "";
+                public string Path { get; set; } = "";
+                public string Joined => Host + Path;
+                public string Raw = "";
+                public string Alias { get => FallbackUrl; set { ReturnUrl = value; } }
+            }
+            public class Holder
+            {
+                public SignInForm Form;
+                public Holder(SignInForm form) { Form = form; }
+                public void Reset() => Form.ReturnUrl = Form.FallbackUrl;
+            }
+            public struct FormRef { public SignInForm Form; }
+            public static class FormOps
+            {
+                public static void Reset(SignInForm form) => form.ReturnUrl = form.FallbackUrl;
+                public static void ResetMany(List<SignInForm> forms) { foreach (var f in forms) f.ReturnUrl = f.FallbackUrl; }
+                public static void ResetPair((SignInForm Form, int N) pair) => pair.Form.ReturnUrl = pair.Form.FallbackUrl;
+                public static void ResetRef(FormRef r) => r.Form.ReturnUrl = r.Form.FallbackUrl;
+                public static async Task ResetLaterAsync(SignInForm form) { await Task.Yield(); form.ReturnUrl = form.FallbackUrl; }
+                public static int Count(List<string> names, (string Name, int N) pair, CancellationToken token) => names.Count + pair.N;
             }
             public class ListQuery { public string Sort { get; set; } = ""; public string Dir { get; set; } = ""; public string Kind { get; set; } = ""; }
         }
@@ -339,6 +360,181 @@ public sealed class MemberGuardTests : ProbeModels
                     Redirect(f.ReturnUrl); /*sink*/
                     f = g;
                 }
+            }
+        }
+        """);
+
+    /// Fix round 1 (review I1): a lambda or local function that calls a method on the object or gives it to a call, a
+    /// method-group delegate bound to it, a task started with it in a lambda: each may change the member at any later
+    /// call, so the check on it is no guard. A lambda that only reads the object keeps the guard.
+    [Fact]
+    public void Nested_bodies_and_method_groups_that_may_change_the_object_end_a_member_guard() => Check("""
+        public class NestedController : Controller
+        {
+            public IActionResult Bound(SignInForm f)
+            {
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                Action later = f.UseFallback;
+                later();
+                return Redirect(f.ReturnUrl); /*sink*/
+            }
+            public IActionResult LambdaCallsOn(SignInForm f, List<string> names)
+            {
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                names.ForEach(n => f.UseFallback());
+                return Redirect(f.ReturnUrl); /*sink*/
+            }
+            public IActionResult LambdaGives(SignInForm f, List<string> names)
+            {
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                names.ForEach(n => FormOps.Reset(f));
+                return Redirect(f.ReturnUrl); /*sink*/
+            }
+            public async Task<IActionResult> Started(SignInForm f)
+            {
+                var work = Task.Run(() => FormOps.Reset(f));
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                await work;
+                return Redirect(f.ReturnUrl); /*sink*/
+            }
+            public IActionResult LocalFunction(SignInForm f)
+            {
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                Restore();
+                return Redirect(f.ReturnUrl); /*sink*/
+                void Restore() => f.UseFallback();
+            }
+            public IActionResult ReadOnlyLambda(SignInForm f, List<string> names)
+            {
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                var hits = names.Count(n => n == f.User);
+                return Redirect(f.ReturnUrl);
+            }
+        }
+        """);
+
+    /// Fix round 1 (review I2): a property of the project with a getter body (computed, or backed by a field) reads
+    /// state that a write of something else changes: a check on it is no guard.
+    [Fact]
+    public void A_path_through_a_computed_or_field_backed_property_is_no_guard() => Check("""
+        public class ComputedController : Controller
+        {
+            private string _next = "";
+            public string Next { get => _next; set => _next = value; }
+            public IActionResult Computed(SignInForm f)
+            {
+                if (!Url.IsLocalUrl(f.Joined)) return BadRequest();
+                f.Path = f.FallbackUrl;
+                return Redirect(f.Joined); /*sink*/
+            }
+            public IActionResult Backed(SignInForm f)
+            {
+                Next = f.ReturnUrl;
+                if (!Url.IsLocalUrl(Next)) return BadRequest();
+                _next = f.FallbackUrl;
+                return Redirect(Next); /*sink*/
+            }
+        }
+        """);
+
+    /// Fix round 1 (review I3): a call given a collection, a tuple, a struct or an object that holds the guarded object
+    /// may change it; one given only strings, numbers, a token and a collection of strings does not.
+    [Fact]
+    public void A_call_given_what_holds_the_object_ends_a_member_guard() => Check("""
+        public class HeldController : Controller
+        {
+            public IActionResult Wrapped(SignInForm f)
+            {
+                var holder = new Holder(f);
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                holder.Reset();
+                return Redirect(f.ReturnUrl); /*sink*/
+            }
+            public IActionResult InAList(SignInForm f)
+            {
+                var forms = new List<SignInForm> { f };
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                FormOps.ResetMany(forms);
+                return Redirect(f.ReturnUrl); /*sink*/
+            }
+            public IActionResult InATuple(SignInForm f)
+            {
+                var pair = (f, 1);
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                FormOps.ResetPair(pair);
+                return Redirect(f.ReturnUrl); /*sink*/
+            }
+            public IActionResult InAStruct(SignInForm f)
+            {
+                var r = new FormRef { Form = f };
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                FormOps.ResetRef(r);
+                return Redirect(f.ReturnUrl); /*sink*/
+            }
+            public IActionResult Unrelated(SignInForm f, List<string> names, CancellationToken token)
+            {
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                FormOps.Count(names, ("a", 1), token);
+                return Redirect(f.ReturnUrl);
+            }
+        }
+        """);
+
+    /// Fix round 1 (review M1, M2, M3): a write through a ref local (to the member or to the variable), a dynamic call,
+    /// and an await of a task started before the check (it was given the object) end every member guard.
+    [Fact]
+    public void Ref_locals_dynamic_calls_and_earlier_tasks_end_member_guards() => Check("""
+        public class IndirectController : Controller
+        {
+            public IActionResult RefToMember(SignInForm f)
+            {
+                if (!Url.IsLocalUrl(f.Raw)) return BadRequest();
+                ref string slot = ref f.Raw;
+                slot = f.FallbackUrl;
+                return Redirect(f.Raw); /*sink*/
+            }
+            public IActionResult RefToVariable(SignInForm f, SignInForm g)
+            {
+                ref SignInForm slot = ref f;
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                slot = g;
+                return Redirect(f.ReturnUrl); /*sink*/
+            }
+            public IActionResult Dynamic(SignInForm f)
+            {
+                dynamic d = f;
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                FormOps.Reset(d);
+                return Redirect(f.ReturnUrl); /*sink*/
+            }
+            public async Task<IActionResult> EarlierTask(SignInForm f)
+            {
+                var pending = FormOps.ResetLaterAsync(f);
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                await pending;
+                return Redirect(f.ReturnUrl); /*sink*/
+            }
+        }
+        """);
+
+    /// Fix round 1 (review M4): a setter with a body runs code on its object (here it writes the guarded member), and an
+    /// assignment the engine does not follow (a dynamic member) may write anything.
+    [Fact]
+    public void A_setter_with_a_body_and_an_unfollowed_assignment_end_a_member_guard() => Check("""
+        public class SetterController : Controller
+        {
+            public IActionResult Setter(SignInForm f)
+            {
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                f.Alias = f.FallbackUrl;
+                return Redirect(f.ReturnUrl); /*sink*/
+            }
+            public IActionResult DynamicMember(SignInForm f)
+            {
+                dynamic d = f;
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                d.ReturnUrl = f.FallbackUrl;
+                return Redirect(f.ReturnUrl); /*sink*/
             }
         }
         """);

@@ -36,6 +36,9 @@ internal sealed class AnalysisContext
     /// The allow-list tables (`allow-list: literal-tables`), found once per field.
     public AllowLists AllowLists { get; } = new();
 
+    /// The types each type reaches (guards on members: what a call given a value may change).
+    public TypeReach TypeReach { get; } = new();
+
     /// The `unmodelled-external` policy: an external member no propagator names passes its receiver's and arguments'
     /// taint to a string-like or collection result.
     public bool UnmodelledPasses { get; }
@@ -410,6 +413,9 @@ internal sealed partial class MethodAnalyzer
                 // An awaited `lookup:` (`awaited: true`): what a call without a body so named gives, awaited (also through
                 // ConfigureAwait), is stored data for those rules.
                 var value = Value(await.Operation, state);
+                // A task started earlier (held in a variable, or given to the awaited call) may change anything it was
+                // given while the method waits: every member fact ends (fix round 1, M3).
+                if (state.HasFacts && !AwaitsFreshCall(await.Operation)) state.ForgetAll();
                 if (value.Any && _ctx.Sinks.HasAwaitedLookups && Awaited(await) is { } lookup && _bodyless.Contains(lookup))
                     value = value.CleanedFor(_ctx.Sinks.AwaitedLookups(lookup.TargetMethod.Name));
                 return value;
@@ -464,6 +470,11 @@ internal sealed partial class MethodAnalyzer
                 // invalid operations, ...): conservatively the join of their children.
                 var value = TaintValue.Clean;
                 foreach (var child in operation.ChildOperations) value = value.Join(Value(child, state));
+                // A call the engine does not bind (dynamic, a function pointer) may change anything: every member fact
+                // ends (fix round 1, M2).
+                if (operation is IDynamicInvocationOperation or IDynamicObjectCreationOperation or IDynamicIndexerAccessOperation
+                    or IFunctionPointerInvocationOperation)
+                    state.ForgetAll();
                 return value;
             }
         }
