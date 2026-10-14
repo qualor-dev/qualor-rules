@@ -79,8 +79,9 @@ The tarball also carries the C# taint engine: `dotnet/engine/` (the published, f
 files; the older fields are unchanged. `npm run release` first runs `npm run build:engine`
 (`dotnet publish` in `engine/dotnet`, restore locked to the committed `packages.lock.json`), so it
 needs the .NET SDK of `engine/dotnet/global.json` (8.0.425; locally any newer SDK is accepted,
-CI installs exactly that one and builds twice and compares the tarballs). A newer local SDK may
-compile different bytes than CI's, so a pin always uses the tag's CI build. `npm run test:engine`
+CI installs exactly that one and builds twice and compares the tarballs). A newer local SDK compiles different
+bytes than CI's, so the sha256 Qualor pins is always the tag's CI build (a local check builds twice with
+exactly the pinned SDK, see the release-pack skill). `npm run test:engine`
 runs the engine's tests; it is not part of `npm test` (the Docker gate has no .NET), CI runs it
 as its own step. Adding or upgrading an engine dependency means updating the lock files
 (`dotnet restore` in `engine/dotnet`) and the licence texts and `NOTICE`.
