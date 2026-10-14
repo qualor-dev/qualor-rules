@@ -94,8 +94,10 @@ internal sealed class BodySummary
     public ImmutableDictionary<(int Slot, string Rule, SyntaxTree Tree, TextSpan Span), SinkEffect> Sinks { get; init; } =
         ImmutableDictionary<(int, string, SyntaxTree, TextSpan), SinkEffect>.Empty;
 
-    public ImmutableDictionary<(int Slot, int Callee, int CalleeSlot), CallEffect> Calls { get; init; } =
-        ImmutableDictionary<(int, int, int), CallEffect>.Empty;
+    /// Keyed also by the edge's cleanliness (Clean: its CleanFor sorted and comma-joined; fix round 3 of Task 28, RR2):
+    /// a parameter passed on through paths of different cleanliness keeps one edge, and one path, per cleanliness.
+    public ImmutableDictionary<(int Slot, int Callee, int CalleeSlot, string Clean), CallEffect> Calls { get; init; } =
+        ImmutableDictionary<(int, int, int, string), CallEffect>.Empty;
 
     public ImmutableDictionary<object, (object Location, TaintValue Value)> Heap { get; init; } =
         ImmutableDictionary<object, (object, TaintValue)>.Empty;
@@ -371,7 +373,11 @@ internal sealed class SummaryBuilder
     public string? ReturnText;
     public readonly Dictionary<int, TaintValue> Refs = new();
     public readonly Dictionary<(int Slot, string Rule, SyntaxTree Tree, TextSpan Span), SinkEffect> Sinks = new();
-    public readonly Dictionary<(int Slot, int Callee, int CalleeSlot), CallEffect> Calls = new();
+    public readonly Dictionary<(int Slot, int Callee, int CalleeSlot, string Clean), CallEffect> Calls = new();
+
+    /// A cleanliness as a key: its rules sorted and comma-joined.
+    public static string CleanKey(ImmutableHashSet<string> cleanFor) =>
+        cleanFor.Count == 0 ? "" : string.Join(",", cleanFor.OrderBy(r => r, StringComparer.Ordinal));
     public readonly Dictionary<object, (object Location, TaintValue Value)> Heap = new();
     public readonly Dictionary<object, ISymbol> RequestHeap = new();
     public readonly Dictionary<(int Slot, object Member), (ISymbol Symbol, TaintValue Value)> ObjWrites = new();
@@ -396,7 +402,7 @@ internal sealed class SummaryBuilder
 
     public void AddCall(int slot, Body callee, int calleeSlot, ImmutableHashSet<string> cleanFor, Trail path)
     {
-        var key = (slot, callee.Id, calleeSlot);
+        var key = (slot, callee.Id, calleeSlot, CleanKey(cleanFor));
         if (!Calls.TryGetValue(key, out var old)) Calls[key] = new CallEffect(slot, callee, calleeSlot, cleanFor, path);
         else if (CallEffect.Joined(old, cleanFor, path) is { } joined) Calls[key] = joined;
     }

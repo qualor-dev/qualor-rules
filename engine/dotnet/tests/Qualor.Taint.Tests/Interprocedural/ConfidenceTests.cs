@@ -273,6 +273,33 @@ public sealed class ConfidenceTests
         }
         """, "csharp.xss"));
 
+    // ---- Fix round 3 (RR2): a call edge keeps one path per cleanliness ----
+
+    [Fact]
+    public void R5_an_xss_finding_in_a_callee_given_the_request_value_never_reports_the_encoded_path() =>
+        Assert.Equal((Confidence.Medium, true), Only(Fmt + """
+            public class R5Controller : Controller
+            {
+                private readonly IFmt _f;
+                public R5Controller(IFmt f) => _f = f;
+                public IActionResult Run(string p) => Sink(p.Length > 3 ? HtmlEncoder.Default.Encode(p) : _f.F(System.IO.Path.GetFileName(p)));
+                private IActionResult Sink(string s) => Content(s, "text/html");
+            }
+            """, "csharp.xss"));
+
+    [Fact]
+    public void L5_an_xss_finding_two_calls_deep_never_reports_the_encoded_path() =>
+        Assert.Equal((Confidence.Medium, true), Only(Fmt + """
+            public class L5Controller : Controller
+            {
+                private readonly IFmt _f;
+                public L5Controller(IFmt f) => _f = f;
+                public IActionResult Run(string q) => Mid(q);
+                private IActionResult Mid(string p) => Sink(p.Length > 3 ? HtmlEncoder.Default.Encode(p) : _f.F(System.IO.Path.GetFileName(p)));
+                private IActionResult Sink(string s) => Content(s, "text/html");
+            }
+            """, "csharp.xss"));
+
     [Fact]
     public void An_element_found_by_a_request_key_is_medium_and_the_tables_own_data_high() => Expect("""
         public class LookupController : ControllerBase

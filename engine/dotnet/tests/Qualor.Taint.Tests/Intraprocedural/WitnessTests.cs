@@ -207,6 +207,23 @@ public sealed class WitnessTests
     }
 
     [Fact]
+    public void A_label_alternative_that_turns_high_is_a_change_in_the_lattice()
+    {
+        // Fix round 3 (RM1): the label's first path (high, clean for xss) stays; its xss path turns high.
+        var encoded = TaintValue.Param(1, 0).CleanedFor(Xss);
+        var medium = TaintValue.Param(1, 0).Step(At(2), "passed to F", StepKind.DispatchFallback);
+        var high = TaintValue.Param(1, 0).Step(At(3), "h1").Step(At(4), "h2").Step(At(5), "h3");
+
+        var before = encoded.Join(medium);
+        var after = before.Join(high);
+
+        Assert.True(before.Labels[0].PathFor("csharp.xss").Medium);
+        Assert.False(after.Labels[0].PathFor("csharp.xss").Medium);
+        Assert.False(after.SameFlow(before));
+        Assert.True(after.Join(high).SameFlow(after));
+    }
+
+    [Fact]
     public void A_call_edge_joined_with_a_dirtier_one_takes_its_path()
     {
         var cleaned = Trail.Of(new PathStep(At(1), "encoded"));

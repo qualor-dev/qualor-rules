@@ -740,7 +740,9 @@ internal sealed class SummaryComputer
         {
             if (value.Request) _computer.Seed(callee, slot, value);
             foreach (var l in value.Labels)
-                if (Keeps(l.Owner)) _computer.Builder(l.Owner).AddCall(l.Slot, callee, slot, l.CleanFor, l.Path);
+                if (Keeps(l.Owner))
+                    // One edge per path of the label, with its cleanliness (fix round 3 of Task 28, RR2).
+                    foreach (var w in l.AllPaths) _computer.Builder(l.Owner).AddCall(l.Slot, callee, slot, w.CleanFor, w.Path);
         }
 
         public void RecordSink(Label label, string rule, SyntaxNode site, ISymbol member)

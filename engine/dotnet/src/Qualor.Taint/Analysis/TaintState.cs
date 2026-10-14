@@ -88,8 +88,8 @@ internal sealed class Trail
 /// Alternatives (fix round 2 of Task 28, RR1): as request data keeps witnesses, a label keeps its paths of different
 /// cleanliness (Witness with no scope), best first, Path the first, bounded as TaintValue.Merge bounds witnesses; empty:
 /// Path is the only one, valid for CleanFor. A sink effect records the path for its rule (PathFor), and a call site
-/// substitutes the argument through each path with its own cleanliness. The lattice compares a label's Path.Medium as
-/// before (CleanFor already takes part in it).
+/// substitutes the argument through each path with its own cleanliness, and a call edge is kept per path. The lattice
+/// compares a label's Path.Medium, CleanFor and HighClean (fix round 3, RM1).
 internal sealed class Label
 {
     public Label(int owner, int slot, ImmutableHashSet<string> cleanFor, Trail path, bool viaKey = false, ImmutableArray<Witness> alternatives = default)
@@ -107,6 +107,20 @@ internal sealed class Label
 
     /// Every path with its cleanliness: the alternatives, or Path with CleanFor.
     public ImmutableArray<Witness> AllPaths => Alternatives.IsEmpty ? ImmutableArray.Create(new Witness(null, Path, CleanFor)) : Alternatives;
+
+    /// The rules no high path of the label is a path for (the intersection of its high paths' CleanFor); null when no
+    /// path is high. Part of the lattice (TaintValue.SameLabels), as TaintValue.HighClean is for request data.
+    public ImmutableHashSet<string>? HighClean
+    {
+        get
+        {
+            if (Alternatives.IsEmpty) return Path.Medium ? null : CleanFor;
+            ImmutableHashSet<string>? h = null;
+            foreach (var w in Alternatives)
+                if (!w.Path.Medium) h = h == null ? w.CleanFor : h.Count == 0 || w.CleanFor.Count == 0 ? ImmutableHashSet<string>.Empty : h.Intersect(w.CleanFor);
+            return h;
+        }
+    }
 
     /// The path a sink of `rule` records: the best one (high, then shortest) not cleaned for `rule`, else Path.
     public Trail PathFor(string rule)
@@ -594,6 +608,10 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             var x = Labels[k];
             var y = other.Labels[k];
             if (x.Owner != y.Owner || x.Slot != y.Slot || x.ViaKey != y.ViaKey || x.Path.Medium != y.Path.Medium || !x.CleanFor.SetEquals(y.CleanFor)) return false;
+            // A rule's path that turned high is a change (fix round 3 of Task 28, RM1), as for request data (SameHigh).
+            var hx = x.HighClean;
+            var hy = y.HighClean;
+            if (hx == null ? hy != null : hy == null || !hx.SetEquals(hy)) return false;
         }
         return true;
     }
