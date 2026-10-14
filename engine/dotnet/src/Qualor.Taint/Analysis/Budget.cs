@@ -33,7 +33,7 @@ internal sealed class Budget
         if (Exceeded != null) return false;
         if (_ct.IsCancellationRequested) Exceeded = "cancelled";
         else if (_clock.Elapsed >= _options.TimeLimit) Exceeded = $"time limit of {_options.TimeLimit} exceeded";
-        else if (++_checks % SampleEvery == 0 && Sample() > _options.MemoryLimitBytes)
+        else if (_checks++ % SampleEvery == 0 && Sample() > _options.MemoryLimitBytes)
             Exceeded = $"memory limit of {_options.MemoryLimitBytes} bytes exceeded";
         return Exceeded == null;
     }
