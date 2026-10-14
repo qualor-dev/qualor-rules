@@ -942,6 +942,30 @@ public sealed class AllocationSiteHeapTests
         Expect(AfterCall("var renamer = new Renamer(); new List<Contact> { c }.ForEach(x => renamer.Apply(x, name));",
             "public class Renamer { public void Apply(Contact x, string value) { x.Name = value; } }\n"));
 
+    [Fact]
+    public void A_lambda_handing_a_method_group_to_a_nested_ForEach_ends_a_strong_update() =>
+        Expect(AfterCall("Renames.Value = name; var box = new Box(); box.Items.Add(c); new List<Box> { box }.ForEach(b => b.Items.ForEach(Renames.Apply));",
+            "public static class Renames { public static string Value = \"\"; public static void Apply(Contact x) { x.Name = Value; } }\npublic class Box { public List<Contact> Items = new(); }\n"));
+
+    [Fact]
+    public void A_lambda_calling_only_core_library_methods_keeps_a_strong_update() => Expect("""
+        public class Contact { public string Name { get; set; } = ""; public string Note = ""; }
+        public class ContactsController : ControllerBase
+        {
+            private readonly SqlConnection _c = new();
+            public IActionResult Save(string name)
+            {
+                var c = new Contact();
+                c.Name = name;
+                c.Name = "anonymous";
+                var notes = new List<string>();
+                new List<Contact> { c }.ForEach(x => notes.Add(x.Note.Trim()));
+                _c.Execute("SELECT * FROM t WHERE n = '" + c.Name + "'");
+                return Ok();
+            }
+        }
+        """);
+
     // ---- Ruling R-E31 ----
 
     [Fact]

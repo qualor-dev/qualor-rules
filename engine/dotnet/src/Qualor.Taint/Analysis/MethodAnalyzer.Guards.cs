@@ -822,7 +822,8 @@ internal sealed partial class MethodAnalyzer
             {
                 case IInvocationOperation call:
                     if (call.TargetMethod.MethodKind == MethodKind.DelegateInvoke
-                        || _body.Targets(call.TargetMethod, call.IsVirtual, call.Instance?.Type).Any(t => t.Kind != TargetKind.External || !KeepsMembers(t.Method)))
+                        || _body.Targets(call.TargetMethod, call.IsVirtual, call.Instance?.Type).Any(t => t.Kind != TargetKind.External || !KeepsMembers(t.Method))
+                        || HandsForeignDelegate(call))
                         result = true;
                     break;
                 case IObjectCreationOperation { Constructor: { } constructor } when SymbolKeys.InSource(constructor):
@@ -840,6 +841,32 @@ internal sealed partial class MethodAnalyzer
         }
         _callsUnknown[body] = result;
         return result;
+    }
+
+    /// Whether a member-keeping call inside a lambda's body is given a delegate that is no lambda or local function written
+    /// there (fix round 3, R2-I1: `b => b.Items.ForEach(Rename)` hands the core library a method group): a nested lambda
+    /// is part of the body already scanned, a local function is scanned in turn.
+    private bool HandsForeignDelegate(IInvocationOperation call)
+    {
+        foreach (var operand in call.Arguments.Select(a => a.Value).Prepend(call.Instance))
+        {
+            var op = operand;
+            if (op == null || (op.Type?.TypeKind != TypeKind.Delegate && op is not (IDelegateCreationOperation or IConversionOperation))) continue;
+            while (op is IConversionOperation or IDelegateCreationOperation)
+                op = op is IConversionOperation c ? c.Operand : ((IDelegateCreationOperation)op).Target;
+            switch (op)
+            {
+                case IAnonymousFunctionOperation:
+                    continue;
+                case IMethodReferenceOperation { Method: { MethodKind: MethodKind.LocalFunction } local }:
+                    if (CallsUnknown(BodyOf(local))) return true;
+                    continue;
+                default:
+                    if (op.Type?.TypeKind == TypeKind.Delegate || op is IMethodReferenceOperation) return true;
+                    continue;
+            }
+        }
+        return false;
     }
 
     /// The operation tree of a lambda's or local function's body, or null.
