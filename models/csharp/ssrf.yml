@@ -1,0 +1,98 @@
+# The engine's model of csharp.ssrf (format v1, models/README.md): the sinks and sanitizers of
+# rules/csharp/ssrf/ssrf.yml with types in place of names. Sources and propagators: sources.yml and propagators.yml
+# (shared; Uri and UriBuilder pass their parts to the URI).
+#
+# Sources (learn.microsoft.com): dotnet/api/system.net.http.httpclient, system.net.http.json.httpclientjsonextensions,
+# system.net.http.httprequestmessage, system.net.http.httpclient.baseaddress, system.net.webrequest.create,
+# system.net.webrequest.createhttp, system.uri, system.uribuilder, system.uri.escapedatastring,
+# system.net.webutility.urlencode, system.web.httputility.urlencode; aspnet/core/fundamentals/http-requests.
+rule: csharp.ssrf
+kind: taint
+sinks:
+  # HttpClient's request methods and the System.Net.Http.Json extensions: the URL (a string or a Uri). A request
+  # message given to SendAsync is checked where its URL is set.
+  # Difference: OpenGrep checks these names on a receiver it can see is an HttpClient (a declared field, parameter
+  # or local, `new HttpClient()`, a client from CreateClient in the method); the engine knows every receiver's type,
+  # so a client reached through another member counts too and a look-alike class's GetAsync does not.
+  - method: System.Net.Http.HttpClient.GetAsync
+    args: [0]
+    param-types: [System.String, System.Uri]
+  - method: System.Net.Http.HttpClient.GetStringAsync
+    args: [0]
+    param-types: [System.String, System.Uri]
+  - method: System.Net.Http.HttpClient.GetByteArrayAsync
+    args: [0]
+    param-types: [System.String, System.Uri]
+  - method: System.Net.Http.HttpClient.GetStreamAsync
+    args: [0]
+    param-types: [System.String, System.Uri]
+  - method: System.Net.Http.HttpClient.PostAsync
+    args: [0]
+    param-types: [System.String, System.Uri]
+  - method: System.Net.Http.HttpClient.PutAsync
+    args: [0]
+    param-types: [System.String, System.Uri]
+  - method: System.Net.Http.HttpClient.PatchAsync
+    args: [0]
+    param-types: [System.String, System.Uri]
+  - method: System.Net.Http.HttpClient.DeleteAsync
+    args: [0]
+    param-types: [System.String, System.Uri]
+  - method: System.Net.Http.Json.HttpClientJsonExtensions.GetFromJsonAsync
+    args: [1]
+    param-types: [System.String, System.Uri]
+  - method: System.Net.Http.Json.HttpClientJsonExtensions.GetFromJsonAsAsyncEnumerable
+    args: [1]
+    param-types: [System.String, System.Uri]
+  - method: System.Net.Http.Json.HttpClientJsonExtensions.PostAsJsonAsync
+    args: [1]
+    param-types: [System.String, System.Uri]
+  - method: System.Net.Http.Json.HttpClientJsonExtensions.PutAsJsonAsync
+    args: [1]
+    param-types: [System.String, System.Uri]
+  - method: System.Net.Http.Json.HttpClientJsonExtensions.PatchAsJsonAsync
+    args: [1]
+    param-types: [System.String, System.Uri]
+  - method: System.Net.Http.Json.HttpClientJsonExtensions.DeleteFromJsonAsync
+    args: [1]
+    param-types: [System.String, System.Uri]
+  # HttpRequestMessage: the URL given to its constructor or RequestUri; a client's BaseAddress; WebRequest.Create and
+  # CreateHttp (HttpWebRequest.Create is WebRequest.Create).
+  - method: System.Net.Http.HttpRequestMessage..ctor
+    args: [1]
+  - property-set: System.Net.Http.HttpRequestMessage.RequestUri
+  - property-set: System.Net.Http.HttpClient.BaseAddress
+  - method: System.Net.WebRequest.Create
+    args: [0]
+  - method: System.Net.WebRequest.CreateHttp
+    args: [0]
+# Shared C# sanitizers (as in every taint model; see sql-injection.yml), then the rule's own.
+# Not here (plan Task 11, guards): the shared allow-lists.
+sanitizers:
+  - method: System.Int32.Parse
+  - method: System.Int64.Parse
+  - method: System.Guid.Parse
+  - method: System.DateTime.Parse
+  - method: System.Convert.ToInt32
+  - method: System.Convert.ToInt64
+  - method: System.Enum.Parse
+  # A fixed origin: a value placed into a URL after a literal scheme and host followed by a separator
+  # ("https://api.example.com/" + x, also in an interpolated string or a string.Format format), or after a relative
+  # path that cannot become a host ("v1/items/" + x, "/v1/items/" + x; not "/" + x, which makes "//host"). The text
+  # before the value is matched from the URL's start; an earlier value in it (U+FFFC) may be the host (that value is
+  # reported itself), but cannot begin a relative path.
+  # Difference: OpenGrep requires the origin to be a literal written in place; the engine also takes a constant
+  # (`const string Api = "https://..."`), whose text it knows.
+  - string-prefix: '^(https?://[^/?#"\s]+[/?#]|/[^/\\"\uFFFC]|[^/\\"\s:\uFFFC][^"\s:]*[/?#])'
+  # Percent-encoding leaves no ':' or '/' to form a scheme or a host.
+  - method: System.Uri.EscapeDataString
+  - method: System.Net.WebUtility.UrlEncode
+  - method: System.Web.HttpUtility.UrlEncode
+  # The value of a lookup (GetXxxAsync, FindXxxAsync, LoadXxxAsync: a stored record found by an id, a fetched body)
+  # is stored data, not request data.
+  # Difference: OpenGrep takes any awaited call of these names on another object for a lookup, so a helper that hands
+  # request data back is missed (a Known limit); the engine applies the name only where it has no body to analyse (an
+  # external method, an interface or abstract method without an implementation in the solution) and follows a helper
+  # with a body, on `this` too.
+  - lookup: '^(Get|Find|Load)\w*Async$'
+guards: []

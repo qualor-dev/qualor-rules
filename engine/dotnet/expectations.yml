@@ -20,6 +20,13 @@ must-find:
   # A shell chosen by a ternary given to Process.Start (OpenGrep Known limit): the conditional sink's `arg: 0` takes the
   # constants of both branches.
   - { rule: csharp.command-injection, line: 443, why: "Process.Start(windows ? \"cmd.exe\" : \"/bin/sh\", ...): both branches are shells" }
+  - { rule: csharp.ssrf, line: 274, why: "UrlOf(Request): an expression-bodied helper that reads the request" }
+  - { rule: csharp.ssrf, line: 276, why: "Endpoint: an expression-bodied property that reads the request" }
+  - { rule: csharp.ssrf, line: 278, why: "Channel: a property getter that reads the request" }
+  # OpenGrep takes every awaited Get/Find/Load*Async call on another object for a stored-data lookup (Known limit); the
+  # engine's `lookup:` sanitizer applies only to methods without a body and follows a helper that has one.
+  - { rule: csharp.ssrf, line: 255, why: "this.GetTargetAsync(id): a helper with a body that hands the request data back" }
+  - { rule: csharp.ssrf, line: 259, why: "UrlTools.LoadNormalizedAsync(id): a helper of another class with a body that hands it back" }
 must-stay-quiet:
   # Results.File given a stream is no path: the engine goes by the overload (`param-types`), OpenGrep cannot (Known limit).
   - { rule: csharp.path-traversal, line: 367, why: "Results.File(Request.Body, ...): the Stream overload is no sink" }

@@ -16,7 +16,7 @@
 # values), since `from: [this]` only matters on a tainted collection.
 #
 # Sources (learn.microsoft.com): dotnet/api/system.string, system.text.stringbuilder, system.io.path,
-# system.uri, system.linq.enumerable, system.collections.generic.idictionary-2,
+# system.uri, system.uribuilder, system.linq.enumerable, system.collections.generic.idictionary-2,
 # microsoft.extensions.primitives.stringvalues, microsoft.aspnetcore.http.iquerycollection,
 # system.io.streamreader, system.collections.generic.collectionextensions.getvalueordefault,
 # system.collections.generic.ienumerator-1, system.collections.generic.keyvaluepair-2.
@@ -59,6 +59,8 @@ propagators:
     from: [args]
     to: [out]
   - property-get: System.Uri.*              # AbsoluteUri, AbsolutePath, PathAndQuery, Query, Host, ...
+  - method: System.UriBuilder..ctor         # (scheme, host, ...), (uri)
+  - property-get: System.UriBuilder.*       # Uri, Host, Path, Query, ...
   # Request collections and their values. Element reads (ruling R-E9): the element of a tainted collection, and
   # the element found by a tainted key (OpenGrep's taint passes through a lookup by its key; a table of literals that
   # no method changes is an allow-list, the engine's Task 11), so TryGetValue's out value comes from the dictionary

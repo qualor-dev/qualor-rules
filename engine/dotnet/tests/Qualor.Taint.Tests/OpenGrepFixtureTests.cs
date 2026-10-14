@@ -128,6 +128,7 @@ public class OpenGrepFixtureTests
         ("csharp.command-injection", "command-injection.cs", 375, "unexpected", "Task 11 (allow-list): Commands.Contains(command) ? command : literal"),
         ("csharp.command-injection", "command-injection.cs", 385, "unexpected", "Task 11 (guard): !Commands.Contains(name) then return"),
         ("csharp.command-injection", "command-injection.cs", 400, "unexpected", "Task 11 (guard): !Commands.Contains(command) then return"),
+        ("csharp.ssrf", "ssrf.cs", 184, "unexpected", "Task 11 (allow-list): Mirrors[region], a lookup in a table of literals"),
     };
 
     /// The engine runs to completion (no internal error, no iteration cap) on every fixture, modelled or not.
