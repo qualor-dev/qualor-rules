@@ -161,7 +161,8 @@ Every guard above (a model guard, the not-null guard, the equality guard, an all
 member read on a local, a parameter or `this`: an access path `x.M`, `x.M.N` (up to four members; fields,
 auto-properties, and properties of referenced assemblies that are not indexers; `x?.M` too; a static member's path
 `T.M` as well). A property of the project with a getter body (computed, `Full => Base + Tail`, or backed by a field)
-is no member guard: a write of what it reads would not end the fact. On the branch where the check
+is no member guard: a write of what it reads would not end the fact; nor is a virtual, abstract or interface property
+one of whose overrides or implementations has a getter body. On the branch where the check
 holds, a read of that path is clean for the guard's rule (for every rule after an equality); the other members of x
 keep their taint. `if (Url.IsLocalUrl(model.ReturnUrl)) return Redirect(model.ReturnUrl);`,
 `if (!Sorts.Contains(dto.Sort)) return BadRequest();` and `if (req.Kind == "a" || req.Kind == "b")` are guards.
@@ -179,8 +180,11 @@ ends at:
   too) may reach an object of the type of the root or of a member on the path, of a type derived from it or one it
   derives from, of an interface it implements, or `object` or a type parameter. What a value reaches: its own type,
   an array's elements, a generic type's type arguments (`List<Form>`, `Dictionary<string, Form>`, `(Form, int)`), and
-  the instance fields of the project's types (`new Holder(form)` then `holder.Reset()`), up to three steps; a field
-  typed `object` or a type parameter is not followed. A struct of the project called in place is written. Every call
+  the instance fields of the project's types (`new Holder(form)` then `holder.Reset()`). The walk goes at most three
+  steps and 32 types; a value whose walk is cut off at either bound with types left may reach anything, so only past
+  the bound does a call end every fact. A field typed `object`, `dynamic` or a type parameter is not followed, and a
+  field typed an interface or a base class reaches only that type (not below). A struct of the project called in place
+  is written. Every call
   ends the facts of static paths. A call given other objects (`_audit.NoteAsync(form.User,
   form.Remember)`, `_mail.SendAsync(new Notice(...))`, a `CancellationToken`, a `List<string>`) keeps them.
 - a write through a `ref` local or a `ref`/`out` parameter, a dynamic call (`Reset(d)` with `d` dynamic, a dynamic
@@ -197,7 +201,12 @@ makes the path clean only if that record survived every write and call in betwee
 
 Not covered (by design): a guarded path read through another variable (`var copy = x;` then `copy.M`: still request
 data); a computed property of a referenced assembly whose inputs change (`UriBuilder.Uri` after a write of `Path`), or
-whose getter computes a different value each time. Follow-up: a callee that changes the guarded object through the heap
+whose getter computes a different value each time; work started before the check and not awaited (fire-and-forget,
+`_ = ResetAsync(form);`) that changes the object while the method awaits something else later (concurrency is not
+modelled); an object held in a field typed `object`, `dynamic` or a type parameter, or by an implementation or subclass
+behind a field typed an interface or a base class (`new Outer(new FormHolder(form))` with `Outer.Holder` an
+`IHolder`), changed by a call given the holder: the guard is kept (FN; following the project's implementations of such
+a field through the call graph's dispatch is a follow-up). Follow-up: a callee that changes the guarded object through the heap
 without being given it or an object whose type reaches it (the object kept in a static, or in a field typed `object`,
 then changed there) is not seen (FN); the member writes the callee summaries already record (the heap writes of each
 body, closed over its calls) could end the facts of the members a call may write.
@@ -403,7 +412,9 @@ false positives (FP) or misses (FN) there.
   guarded object (or one of a related type, or something that holds one) between the check and the sink, an await of
   earlier work, or a nested body touching the object ends the guard (FP); a member read through a project property
   with a getter body is no guard (FP). A callee that changes the guarded object through the heap without being given
-  it or something holding it keeps the guard (FN; follow-up: the member writes recorded in summaries). A guard inside
+  it or something holding it keeps the guard (FN; follow-up: the member writes recorded in summaries), and so does one
+  that reaches it only through a field typed `object`, an interface or a base class, or fire-and-forget work started
+  before the check. A guard inside
   a project's own helper (`CheckIsLocalUrl(x)` that calls `IsLocalUrl`) is no guard (FP).
 - Validation in another method or by an attribute is not seen: a filename sanitizer, a child-path or containment check,
   `[RegularExpression]` on a bound parameter, a hash used as a file name, an allow-list lookup (FP).

@@ -54,6 +54,15 @@ public sealed class MemberGuardTests : ProbeModels
                 public void Reset() => Form.ReturnUrl = Form.FallbackUrl;
             }
             public struct FormRef { public SignInForm Form; }
+            public class Hop1 { public Hop2 Next = null!; }
+            public class Hop2 { public Hop3 Next = null!; }
+            public class Hop3 { public Hop4 Next = null!; }
+            public class Hop4 { public SignInForm Form = null!; }
+            public static class Chain { public static void Reset(Hop1 h) => h.Next.Next.Next.Form.ReturnUrl = h.Next.Next.Next.Form.FallbackUrl; }
+            public class Ticket { public virtual string Target { get; set; } = ""; public string Seed = ""; }
+            public class SeededTicket : Ticket { public override string Target { get => Seed; set { } } }
+            public class PlainTicket { public virtual string Target { get; set; } = ""; public string Seed = ""; }
+            public class SealedTicket : PlainTicket { public sealed override string Target { get; set; } = ""; }
             public static class FormOps
             {
                 public static void Reset(SignInForm form) => form.ReturnUrl = form.FallbackUrl;
@@ -534,6 +543,45 @@ public sealed class MemberGuardTests : ProbeModels
                 dynamic d = f;
                 if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
                 d.ReturnUrl = f.FallbackUrl;
+                return Redirect(f.ReturnUrl); /*sink*/
+            }
+        }
+        """);
+
+    /// Fix round 2 (re-review RR1, RR2, RR4): an object held four links away from what a call is given (past the reach
+    /// bound: the call may change anything); a virtual auto-property one override computes from another field; a task
+    /// held as a dictionary's values and awaited through Task.WhenAll. An auto-property whose overrides are all
+    /// auto-properties stays a guard.
+    [Fact]
+    public void Bounds_overrides_and_held_tasks_end_a_member_guard() => Check("""
+        public class BoundsController : Controller
+        {
+            public IActionResult FarAway(SignInForm f, Hop1 h)
+            {
+                h.Next.Next.Next.Form = f;
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                Chain.Reset(h);
+                return Redirect(f.ReturnUrl); /*sink*/
+            }
+            public IActionResult Overridden(Ticket t, SignInForm g)
+            {
+                t.Target = g.ReturnUrl;
+                if (!Url.IsLocalUrl(t.Target)) return BadRequest();
+                t.Seed = g.FallbackUrl;
+                return Redirect(t.Target); /*sink*/
+            }
+            public IActionResult OnlyAutoOverrides(PlainTicket t, SignInForm g)
+            {
+                t.Target = g.ReturnUrl;
+                if (!Url.IsLocalUrl(t.Target)) return BadRequest();
+                t.Seed = g.FallbackUrl;
+                return Redirect(t.Target);
+            }
+            public async Task<IActionResult> HeldTasks(SignInForm f)
+            {
+                var work = new Dictionary<string, Task> { ["a"] = FormOps.ResetLaterAsync(f) };
+                if (!Url.IsLocalUrl(f.ReturnUrl)) return BadRequest();
+                await Task.WhenAll(work.Values);
                 return Redirect(f.ReturnUrl); /*sink*/
             }
         }

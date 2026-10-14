@@ -152,11 +152,13 @@ internal static class MemberFacts
     /// type arguments, the instance fields of a type declared in source; TypeReach) is the held type, one derived from it
     /// or one it derives from, an interface the held type implements, or object, dynamic or a type parameter (either
     /// side). A subclass of the held type that would implement an interface only it names is not considered.
-    public static bool MayChange(ImmutableArray<ITypeSymbol> reach, ITypeSymbol held)
+    public static bool MayChange(TypeReach.Result reach, ITypeSymbol held)
     {
+        // A reach cut off at its bounds may lead anywhere (fix round 2, RR1).
+        if (reach.Open) return true;
         held = held.OriginalDefinition;
         if (held.SpecialType == SpecialType.System_Object || held.TypeKind is TypeKind.Dynamic or TypeKind.TypeParameter) return true;
-        foreach (var t in reach)
+        foreach (var t in reach.Types)
             if (Related(t.OriginalDefinition, held)) return true;
         return false;
     }
@@ -212,16 +214,20 @@ internal static class MemberFacts
 /// The types a value of a type may reach (Task 21 fix round 1, I3), cached per type for one run: the type itself, an
 /// array's element type, a generic type's type arguments (List<Form>, Dictionary<_, Form>, a tuple), and the instance
 /// fields of a type declared in source (its bases' too; an auto-property's hidden field included), recursively, at most
-/// MaxDepth steps and MaxTypes types. A field typed object, dynamic or a type parameter is not followed (a lock object
-/// or a cache would otherwise reach every object; the heap gap of models/README.md "Guards on members").
+/// MaxDepth steps and MaxTypes types. A walk cut off at either bound with types left to expand is Open: it may reach
+/// anything (fix round 2, RR1). A field typed object, dynamic or a type parameter is not followed, and an interface- or
+/// base-typed field reaches only its declared type, not the implementations that may hold the object (a lock object or
+/// a cache would otherwise reach every object; the heap gap of models/README.md "Guards on members").
 internal sealed class TypeReach
 {
     public const int MaxDepth = 3;
     public const int MaxTypes = 32;
 
-    private readonly Dictionary<ITypeSymbol, ImmutableArray<ITypeSymbol>> _cache = new(SymbolEqualityComparer.IncludeNullability);
+    internal readonly record struct Result(ImmutableArray<ITypeSymbol> Types, bool Open);
 
-    public ImmutableArray<ITypeSymbol> Of(ITypeSymbol type)
+    private readonly Dictionary<ITypeSymbol, Result> _cache = new(SymbolEqualityComparer.IncludeNullability);
+
+    public Result Of(ITypeSymbol type)
     {
         if (_cache.TryGetValue(type, out var cached)) return cached;
         var seen = new HashSet<ITypeSymbol>(SymbolEqualityComparer.Default) { type };
@@ -229,32 +235,48 @@ internal sealed class TypeReach
         result.Add(type);
         var queue = new Queue<(ITypeSymbol Type, int Depth)>();
         queue.Enqueue((type, 0));
-        while (queue.Count > 0 && result.Count < MaxTypes)
+        var open = false;
+        while (queue.Count > 0 && !open)
         {
             var (t, depth) = queue.Dequeue();
-            if (depth >= MaxDepth) continue;
-            if (t is IArrayTypeSymbol array)
+            foreach (var child in Children(t))
             {
-                Add(array.ElementType, depth, false);
-                continue;
+                if (seen.Contains(child)) continue;
+                if (depth >= MaxDepth || result.Count >= MaxTypes)
+                {
+                    open = true;
+                    break;
+                }
+                seen.Add(child);
+                result.Add(child);
+                queue.Enqueue((child, depth + 1));
             }
-            if (t is not INamedTypeSymbol named) continue;
-            foreach (var a in named.TypeArguments) Add(a, depth, false);
-            for (var b = named; b != null && b.Locations.Any(l => l.IsInSource); b = b.BaseType)
-                foreach (var f in b.GetMembers().OfType<IFieldSymbol>())
-                    if (!f.IsStatic && !f.IsConst) Add(f.Type, depth, true);
         }
-        var built = result.ToImmutable();
+        var built = new Result(result.ToImmutable(), open);
         _cache[type] = built;
         return built;
+    }
 
-        void Add(ITypeSymbol t, int depth, bool field)
+    /// The types a value of type `t` holds directly: an array's elements, the type arguments, the instance fields of a
+    /// type of the project (and of its bases in source).
+    private static IEnumerable<ITypeSymbol> Children(ITypeSymbol t)
+    {
+        if (t is IArrayTypeSymbol array)
         {
-            if (!MemberFacts.MayHold(t)) return;
-            if (field && (t.SpecialType == SpecialType.System_Object || t.TypeKind is TypeKind.Dynamic or TypeKind.TypeParameter)) return;
-            if (!seen.Add(t) || result.Count >= MaxTypes) return;
-            result.Add(t);
-            queue.Enqueue((t, depth + 1));
+            if (MemberFacts.MayHold(array.ElementType)) yield return array.ElementType;
+            yield break;
+        }
+        if (t is not INamedTypeSymbol named) yield break;
+        foreach (var a in named.TypeArguments)
+            if (MemberFacts.MayHold(a)) yield return a;
+        for (var b = named; b != null && b.Locations.Any(l => l.IsInSource); b = b.BaseType)
+        {
+            foreach (var f in b.GetMembers().OfType<IFieldSymbol>())
+            {
+                if (f.IsStatic || f.IsConst || !MemberFacts.MayHold(f.Type)) continue;
+                if (f.Type.SpecialType == SpecialType.System_Object || f.Type.TypeKind is TypeKind.Dynamic or TypeKind.TypeParameter) continue;
+                yield return f.Type;
+            }
         }
     }
 }

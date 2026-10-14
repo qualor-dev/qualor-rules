@@ -505,11 +505,21 @@ internal sealed partial class MethodAnalyzer
     ///   object read from it) to a call, a constructor or as a receiver; and no method-group delegate of the method is
     ///   bound to an object read from its root (the delegate may run at any call; fix round 1, I1);
     /// - no member on it is a property declared in source that is not an auto-property: a computed or field-backed
-    ///   getter reads state a write of another member changes (fix round 1, I2).
+    ///   getter reads state a write of another member changes (fix round 1, I2); nor a virtual, abstract or interface
+    ///   property one of whose overrides or implementations has a getter body (fix round 2, RR2).
     private bool CanHold(AccessPath path)
     {
         foreach (var m in path.Members)
-            if (m is IPropertySymbol property && SymbolKeys.InSource(property) && !_body.IsHeapMember(property)) return false;
+        {
+            if (m is not IPropertySymbol property) continue;
+            if (SymbolKeys.InSource(property) && !_body.IsHeapMember(property)) return false;
+            // A virtual, abstract or interface property: every override or implementation (Dispatch) must be an
+            // auto-property or external (fix round 2, RR2).
+            if ((property.IsVirtual || property.IsAbstract || property.IsOverride || property.ContainingType?.TypeKind == TypeKind.Interface)
+                && property.GetMethod is { } getter
+                && _body.Targets(getter, true, property.ContainingType).Any(t => t.Kind is TargetKind.Body or TargetKind.Opaque))
+                return false;
+        }
         _nestedEffects ??= NestedEffects();
         if (_nestedEffects.Count == 0) return true;
         if (_nestedEffects.Contains(path.Root)) return false;
@@ -630,21 +640,17 @@ internal sealed partial class MethodAnalyzer
             if (HoldsTask(Unwrapped(a.Value).Type)) return false;
         return true;
 
-        static bool HoldsTask(ITypeSymbol? type)
+        // A task, or a type holding one in an element type, a type argument or a containing type's type argument
+        // (`Dictionary<string, Task>.ValueCollection`; fix round 2, RR4).
+        static bool HoldsTask(ITypeSymbol? type, int depth = 0)
         {
-            for (var depth = 0; type != null && depth < 4; depth++)
-            {
-                if (type is IArrayTypeSymbol array)
-                {
-                    type = array.ElementType;
-                    continue;
-                }
-                if (type is not INamedTypeSymbol named) return false;
-                if (named.ContainingNamespace?.ToDisplayString() == "System.Threading.Tasks" && named.Name is "Task" or "ValueTask") return true;
-                if (named.TypeArguments.Length != 1) return false;
-                type = named.TypeArguments[0];
-            }
-            return false;
+            if (type == null || depth > 6) return false;
+            if (type is IArrayTypeSymbol array) return HoldsTask(array.ElementType, depth + 1);
+            if (type is not INamedTypeSymbol named) return false;
+            if (named.ContainingNamespace?.ToDisplayString() == "System.Threading.Tasks" && named.Name is "Task" or "ValueTask") return true;
+            foreach (var a in named.TypeArguments)
+                if (HoldsTask(a, depth + 1)) return true;
+            return named.ContainingType != null && HoldsTask(named.ContainingType, depth + 1);
         }
     }
 
