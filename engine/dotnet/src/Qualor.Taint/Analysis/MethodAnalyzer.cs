@@ -39,6 +39,9 @@ internal sealed class AnalysisContext
     /// The types each type reaches (guards on members: what a call given a value may change).
     public TypeReach TypeReach { get; } = new();
 
+    /// The view-model entries of types (Task 22), cached for the run.
+    public ModelKeys ModelKeys { get; } = new();
+
     /// The `unmodelled-external` policy: an external member no propagator names passes its receiver's and arguments'
     /// taint to a string-like or collection result.
     public bool UnmodelledPasses { get; }
@@ -466,7 +469,19 @@ internal sealed partial class MethodAnalyzer
                 var value = Value(dynamic.Operation, state);
                 var arguments = new TaintValue[dynamic.Arguments.Length];
                 for (var k = 0; k < arguments.Length; k++) value = value.Join(arguments[k] = Value(dynamic.Arguments[k], state));
-                DynamicSinks(dynamic, arguments);
+                DynamicSinks(dynamic, dynamic.Arguments, k => dynamic.GetArgumentName(k), arguments);
+                state.ForgetAll();
+                return value;
+            }
+            case IDynamicObjectCreationOperation creation:
+            {
+                // A constructor bound at run time (`new HtmlString(ViewBag.K)`): as a dynamic call, its candidates are the
+                // type's constructors (Task 22 fix round 1, M2).
+                var arguments = new TaintValue[creation.Arguments.Length];
+                var value = TaintValue.Clean;
+                for (var k = 0; k < arguments.Length; k++) value = value.Join(arguments[k] = Value(creation.Arguments[k], state));
+                if (creation.Initializer != null) value = value.Join(Value(creation.Initializer, state));
+                DynamicSinks(creation, creation.Arguments, k => creation.GetArgumentName(k), arguments);
                 state.ForgetAll();
                 return value;
             }
@@ -891,7 +906,7 @@ internal sealed partial class MethodAnalyzer
                 if (i.Ordinal != label.Slot || i.RefKind == RefKind.Out || !i.Value.Any) continue;
                 var value = i.Value.Step(site.Syntax.GetLocation(), $"passed to {name}").Extend(label.Path).CleanedFor(label.CleanFor);
                 if (!value.Any) continue;
-                foreach (var model in KeyedStores.ModelWrites(StaticType(i.Operation))) _body.KeyedWrite(model, value);
+                foreach (var model in _ctx.ModelKeys.Writes(StaticType(i.Operation))) _body.KeyedWrite(model, value);
             }
         }
     }
@@ -923,11 +938,11 @@ internal sealed partial class MethodAnalyzer
             {
                 if (i.Ordinal != model || !i.Value.Any) continue;
                 var named = Named(i.Value, operation, "the view's model");
-                foreach (var entry in KeyedStores.ModelWrites(StaticType(i.Operation))) _body.KeyedWrite(entry, named);
+                foreach (var entry in _ctx.ModelKeys.Writes(StaticType(i.Operation))) _body.KeyedWrite(entry, named);
             }
             return;
         }
-        if (KeyedStores.MethodStore(method, instance) is not { } store) return;
+        if (KeyedStores.MethodStore(method, instance, Model()?.Compilation) is not { } store) return;
         IOperation? key = null;
         foreach (var i in inputs) if (i.Ordinal == 0) key = i.Operation;
         var location = KeyedStores.Location(store, key);
@@ -945,13 +960,16 @@ internal sealed partial class MethodAnalyzer
         }
     }
 
-    /// The sinks of a call bound at run time: Roslyn's candidate members of the call (late bound) whose sink argument at
-    /// the same position is given request data. Only unconditional sinks (a `when:` condition reads the call's own
+    /// The sinks of a call or constructor bound at run time: Roslyn's candidate members of the call (late bound; for a
+    /// constructor, the type's constructors of that arity) whose sink argument at the same position is given request data. Only unconditional sinks (a `when:` condition reads the call's own
     /// operation tree); an argument passed by name is not matched.
-    private void DynamicSinks(IDynamicInvocationOperation operation, TaintValue[] arguments)
+    private void DynamicSinks(IOperation operation, ImmutableArray<IOperation> operands, Func<int, string?> argumentName, TaintValue[] arguments)
     {
         if (!Array.Exists(arguments, a => a.Any)) return;
         var candidates = Model()?.GetSymbolInfo(operation.Syntax).CandidateSymbols ?? ImmutableArray<ISymbol>.Empty;
+        // A constructor bound at run time: the constructors of the type created that take that many arguments.
+        if (candidates.IsEmpty && operation is IDynamicObjectCreationOperation { Type: INamedTypeSymbol created })
+            candidates = created.InstanceConstructors.Where(c => c.Parameters.Length == arguments.Length).Cast<ISymbol>().ToImmutableArray();
         foreach (var candidate in candidates.OfType<IMethodSymbol>())
         {
             foreach (var hit in _ctx.Sinks.Sinks(candidate, Access.Call))
@@ -959,9 +977,9 @@ internal sealed partial class MethodAnalyzer
                 if (hit.Sink.When.Count > 0) continue;
                 for (var k = 0; k < arguments.Length; k++)
                 {
-                    if (!arguments[k].Any || operation.GetArgumentName(k) != null) continue;
+                    if (!arguments[k].Any || argumentName(k) != null) continue;
                     if (k < candidate.Parameters.Length && SinkFinder.IsSinkArgument(hit.Sink, candidate.Parameters[k]))
-                        SinkReached(hit.RuleId, operation.Arguments[k].Syntax, arguments[k], candidate);
+                        SinkReached(hit.RuleId, operands[k].Syntax, arguments[k], candidate);
                 }
             }
         }
@@ -1047,10 +1065,10 @@ internal sealed partial class MethodAnalyzer
             result = result.Join(ExternalRead(property, operation, receiver, IndexInputs(operation, state, null)));
         }
         // A keyed request store entry (ViewData, HttpContext.Items) or the view's model (Task 22).
-        if (KeyedStores.IndexerStore(operation) is { } store)
+        if (KeyedStores.IndexerStore(operation, Model()?.Compilation) is { } store)
             result = result.Join(Keyed(KeyedStores.Location(store, operation.Arguments[0].Value), operation));
         else if (KeyedStores.IsViewModel(property))
-            result = result.Join(Keyed(KeyedStores.ModelRead(operation.Type), operation));
+            foreach (var entry in _ctx.ModelKeys.Reads(operation.Type)) result = result.Join(Keyed(entry, operation));
         // An element of an allow-list table is one of its constants (`allow-list: literal-tables`).
         if (property.IsIndexer && result.Any && _ctx.Sinks.AllowListRules.Length > 0 && _ctx.AllowLists.IsTable(operation.Instance, Model()?.Compilation))
             result = result.CleanedFor(_ctx.Sinks.AllowListRules);
@@ -1102,16 +1120,23 @@ internal sealed partial class MethodAnalyzer
         var property = operation.Property;
         var receiver = Value(operation.Instance, state);
         var inputs = IndexInputs(operation, state, (value, assignment));
-        if (KeyedStores.IndexerStore(operation) is { } store)
+        if (KeyedStores.IndexerStore(operation, Model()?.Compilation) is { } store)
         {
             var location = KeyedStores.Location(store, operation.Arguments[0].Value);
             _body.KeyedWrite(location, Named(value, assignment, Describe(location)));
         }
-        else if (KeyedStores.IsPartialModel(property) && value.Any)
+        else if (value.Any && (KeyedStores.IsPartialModel(property) || (KeyedStores.IsViewModel(property) && KeyedStores.IsViewData(operation.Instance?.Type))))
         {
-            var named = Named(value, assignment, "the partial view's model");
+            // `<partial model="…">` gives the partial its model; `ViewData.Model = m` sets the view's model. A view data
+            // dictionary given an object or dynamic model is a view engine's own plumbing (a shape renderer that every
+            // view goes through): not written, or every view of the solution would read it (fix round 1, M1).
             var model = assignment is ISimpleAssignmentOperation simple ? simple.Value : null;
-            foreach (var location in KeyedStores.ModelWrites(StaticType(model))) _body.KeyedWrite(location, named);
+            var type = StaticType(model);
+            if (KeyedStores.IsPartialModel(property) || !(type == null || type.SpecialType == SpecialType.System_Object || type.TypeKind is TypeKind.Dynamic or TypeKind.Error))
+            {
+                var named = Named(value, assignment, "the view's model");
+                foreach (var location in _ctx.ModelKeys.Writes(type)) _body.KeyedWrite(location, named);
+            }
         }
         // A setter other than an auto-property's runs code on its receiver: as a call given the receiver (Task 21).
         if (state.HasFacts && !(SymbolKeys.InSource(property) && _body.IsHeapMember(property))) ForgetForCall(operation.Instance, inputs, state);

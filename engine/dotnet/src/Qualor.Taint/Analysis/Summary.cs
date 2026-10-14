@@ -68,7 +68,7 @@ internal sealed class BodySummary
     /// Heap symbols the body writes request data of its own to (for the public view).
     public ImmutableDictionary<object, ISymbol> RequestHeap { get; init; } = ImmutableDictionary<object, ISymbol>.Empty;
 
-    /// No local effect: a call site gets nothing back.
+    /// No local effect: a call site gets nothing back (a generic helper's view model aside, which the call site writes).
     public bool NoLocalEffects => !Return.Any && !ToThis.Any && Refs.IsEmpty;
 
     public bool IsEmpty => NoLocalEffects && Sinks.IsEmpty && Calls.IsEmpty && Heap.IsEmpty && RequestHeap.IsEmpty;
@@ -110,7 +110,11 @@ internal sealed class BodySummary
         if (ReferenceEquals(this, other)) return true;
         if (!Return.SameFlow(other.Return) || !ToThis.SameFlow(other.ToThis) || Refs.Count != other.Refs.Count) return false;
         foreach (var (k, v) in Refs) if (!other.Refs.TryGetValue(k, out var o) || !v.SameFlow(o)) return false;
-        return true;
+        // A generic helper's view model is written at its callers (MethodAnalyzer.GenericModels): a change of it is a
+        // change of what a call site does (Task 22 fix round 1, I2).
+        var mine = Heap.TryGetValue(KeyedLocation.Generic, out var a);
+        var theirs = other.Heap.TryGetValue(KeyedLocation.Generic, out var b);
+        return mine == theirs && (!mine || a.Value.SameFlow(b.Value));
     }
 
     /// Equal in the global effects: what decides whether the request data at the body's parameters flows on again.

@@ -12,12 +12,16 @@ namespace Qualor.Taint;
 /// - Items: `HttpContext.Items`, the request's own dictionary (keys compared as given).
 /// - ViewModel: the model a view renders: what an action gives `View(model)` / `PartialView(model)`, a view component
 ///   its `View(model)`, a view `Html.Partial*(name, model)` or `<partial model="…">`; read as the view's `Model` (and
-///   `ViewData.Model`). Its key is a type (with its generic arguments): a model is written under its static type, that
-///   type's base classes (not object) and its interfaces, and a view reads the key of its own model type, so only a model
-///   a view of that type can be given reaches it; a model whose static type is object or dynamic is written to the "any
-///   key" entry, which every view reads, and a view whose model type is object or dynamic reads only that entry. A model
-///   typed by a type parameter (a generic helper's `View(name, model)`) is written to the Generic entry, which no view
-///   reads: each call of the helper writes its argument under the argument's own type (MethodAnalyzer.Apply).
+///   `ViewData.Model`, and written by `ViewData.Model = m`). Its key is a type (with its generic arguments): a model is
+///   written under its static type, that type's base classes (not object) and its interfaces, and under the exact entry
+///   of its static type; a view reads the key of its own model type and the exact entries of its model type's base
+///   classes and interfaces. So a model reaches a view whose type it may have at run time (statically typed as the view's
+///   type, a subtype, or a supertype of it), and never a view of a sibling type. A model whose static type is object or
+///   dynamic is written to the "any key" entry, which every view reads, and a view whose model type is object or dynamic
+///   reads only that entry. A model whose type holds a type parameter (`T`, `List<T>`, `T[]`: a generic helper's
+///   `View(name, model)`) is written to the Generic entry, which no view reads: each call of the helper writes its
+///   argument under the argument's own type (MethodAnalyzer.GenericModels; a change of a summary's Generic entry is a
+///   change of its local effects, so the callers are analysed again).
 /// Each entry is a heap location (Heap, KeyedLocation), so it is request data only where code reachable from the same
 /// entry point reads it (R-6); an action reaches the views it renders through the view edges (EntryPoints). A key that
 /// is not a constant writes the store's "any key" entry, which every read of the store joins; a read with a key that is
@@ -54,12 +58,48 @@ internal static class KeyedStores
         return false;
     }
 
-    /// Whether an operation is `<HttpContext>.Items` (through conversions).
-    public static bool IsItems(IOperation? operation)
+    /// Whether an operation is `<HttpContext>.Items` (through conversions), or a local initialised with it and never
+    /// assigned again (`var items = HttpContext.Items;`), when `compilation` is given to bind the initializer.
+    public static bool IsItems(IOperation? operation, Compilation? compilation = null)
     {
         while (operation is IConversionOperation c) operation = c.Operand;
+        if (operation is ILocalReferenceOperation { Local: { IsRef: false } local } && compilation != null)
+        {
+            // Only a local of the Items type (IDictionary<object, object?>) can hold it; the answer is kept per local.
+            if (local.Type is not INamedTypeSymbol { Arity: 2 } dictionary || SymbolMatch.MetadataName(dictionary) != "System.Collections.Generic.IDictionary`2"
+                || dictionary.TypeArguments[0].SpecialType != SpecialType.System_Object || dictionary.TypeArguments[1].SpecialType != SpecialType.System_Object)
+                return false;
+            if (Aliases.TryGetValue(local, out var known)) return (bool)known;
+            var alias = AliasOf(local, compilation) is { } initializer && IsItems(initializer);
+            Aliases.AddOrUpdate(local, alias);
+            return alias;
+        }
         return operation is IPropertyReferenceOperation { Property: { Name: "Items" } p } && !SymbolKeys.InSource(p)
             && p.ContainingType is { } t && SymbolMatch.MetadataName(t) == HttpContext;
+    }
+
+    /// Locals already checked for holding HttpContext.Items (weakly keyed: a run's symbols go with its compilations).
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<ILocalSymbol, object> Aliases = new();
+
+    /// The initializer of a local that no other statement assigns (by name in its declaring member), bound; else null.
+    private static IOperation? AliasOf(ILocalSymbol local, Compilation compilation)
+    {
+        if (local.DeclaringSyntaxReferences.Length != 1
+            || local.DeclaringSyntaxReferences[0].GetSyntax() is not VariableDeclaratorSyntax { Initializer.Value: { } value } declarator)
+            return null;
+        var scope = declarator.Ancestors().FirstOrDefault(a => a is MemberDeclarationSyntax or LocalFunctionStatementSyntax or AnonymousFunctionExpressionSyntax);
+        if (scope == null) return null;
+        foreach (var node in scope.DescendantNodes())
+        {
+            var written = node switch
+            {
+                AssignmentExpressionSyntax a => a.Left,
+                ArgumentSyntax { RefKindKeyword.RawKind: not 0 } r => r.Expression,
+                _ => null,
+            };
+            if (written is IdentifierNameSyntax id && id.Identifier.ValueText == local.Name) return null;
+        }
+        return compilation.GetSemanticModel(declarator.SyntaxTree).GetOperation(value);
     }
 
     /// Whether an operation is a framework `ViewBag` (the dynamic view of ViewData: a Controller's, a view's, a view
@@ -71,22 +111,22 @@ internal static class KeyedStores
     }
 
     /// The store an indexer access reads or writes: a view data dictionary's, or `HttpContext.Items`'s; else null.
-    public static KeyedStore? IndexerStore(IPropertyReferenceOperation operation)
+    public static KeyedStore? IndexerStore(IPropertyReferenceOperation operation, Compilation? compilation = null)
     {
         var property = operation.Property;
         if (!property.IsIndexer || SymbolKeys.InSource(property) || property.Parameters.Length != 1) return null;
         if (IsViewData(property.ContainingType) || IsViewData(operation.Instance?.Type)) return KeyedStore.ViewData;
-        if (IsItems(operation.Instance)) return KeyedStore.Items;
+        if (IsItems(operation.Instance, compilation)) return KeyedStore.Items;
         return null;
     }
 
     /// The store a dictionary method of a call works on (`Add`, `TryAdd`, `TryGetValue` of a view data dictionary or of
     /// `HttpContext.Items`), else null.
-    public static KeyedStore? MethodStore(IMethodSymbol method, IOperation? instance)
+    public static KeyedStore? MethodStore(IMethodSymbol method, IOperation? instance, Compilation? compilation = null)
     {
         if (method.Name is not ("Add" or "TryAdd" or "TryGetValue") || SymbolKeys.InSource(method) || method.Parameters.Length != 2) return null;
         if (IsViewData(method.ContainingType) || IsViewData(instance?.Type)) return KeyedStore.ViewData;
-        if (IsItems(instance)) return KeyedStore.Items;
+        if (IsItems(instance, compilation)) return KeyedStore.Items;
         return null;
     }
 
@@ -156,32 +196,67 @@ internal static class KeyedStores
         return -1;
     }
 
-    /// The view-model entries a model of static type `type` is written to: the type, its base classes but object, its
-    /// interfaces (with their generic arguments); the "any key" entry for object, dynamic or an unknown type; the Generic
-    /// entry for a type parameter.
-    public static IEnumerable<KeyedLocation> ModelWrites(ITypeSymbol? type)
+    /// Whether a type holds a type parameter (itself, a type argument, an array's element, a containing type).
+    public static bool ContainsTypeParameter(ITypeSymbol type) => type switch
     {
-        if (type == null || type.SpecialType == SpecialType.System_Object || type.TypeKind is TypeKind.Dynamic or TypeKind.Error)
-        {
-            yield return new KeyedLocation(KeyedStore.ViewModel, null);
-            yield break;
-        }
-        if (type is ITypeParameterSymbol)
-        {
-            yield return KeyedLocation.Generic;
-            yield break;
-        }
-        for (var t = type; t != null && t.SpecialType != SpecialType.System_Object; t = t.BaseType)
-            yield return ModelRead(t);
-        foreach (var i in type.AllInterfaces) yield return ModelRead(i);
-    }
-
-    /// The view-model entry a view whose model has static type `type` reads (with the "any key" entry, Heap.Read).
-    public static KeyedLocation ModelRead(ITypeSymbol? type) => new(KeyedStore.ViewModel,
-        type == null || type.TypeKind is TypeKind.Dynamic or TypeKind.Error ? "System.Object" : type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
+        ITypeParameterSymbol => true,
+        IArrayTypeSymbol a => ContainsTypeParameter(a.ElementType),
+        INamedTypeSymbol n => n.TypeArguments.Any(ContainsTypeParameter) || (n.ContainingType != null && ContainsTypeParameter(n.ContainingType)),
+        _ => false,
+    };
 
     /// Whether a property set gives a partial tag helper its model (`<partial name="…" model="…">`; `for="…"` is a
     /// model expression, not followed).
     public static bool IsPartialModel(IPropertySymbol property) =>
         property.Name == "Model" && property.ContainingType is { } t && SymbolMatch.MetadataName(t) == PartialTagHelper;
+}
+
+/// The view-model entries of types, cached per type for one run (AnalysisContext.ModelKeys).
+internal sealed class ModelKeys
+{
+    private readonly Dictionary<ITypeSymbol, string> _names = new(SymbolEqualityComparer.Default);
+    private readonly Dictionary<ITypeSymbol, KeyedLocation[]> _writes = new(SymbolEqualityComparer.Default);
+    private readonly Dictionary<ITypeSymbol, KeyedLocation[]> _reads = new(SymbolEqualityComparer.Default);
+
+    private static readonly KeyedLocation[] AnyEntry = { new(KeyedStore.ViewModel, null) };
+    private static readonly KeyedLocation[] GenericEntry = { KeyedLocation.Generic };
+    private static readonly KeyedLocation[] ObjectView = { new(KeyedStore.ViewModel, "System.Object") };
+
+    private string Name(ITypeSymbol type)
+    {
+        if (!_names.TryGetValue(type, out var name)) _names[type] = name = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        return name;
+    }
+
+    private KeyedLocation Key(ITypeSymbol type) => new(KeyedStore.ViewModel, Name(type));
+
+    private KeyedLocation Exact(ITypeSymbol type) => new(KeyedStore.ViewModel, "=" + Name(type));
+
+    /// The entries a model of static type `type` is written to: the type, its base classes but object and its interfaces
+    /// (with their generic arguments), and the type's exact entry; the "any key" entry for object, dynamic or an unknown
+    /// type; the Generic entry for a type holding a type parameter.
+    public IReadOnlyList<KeyedLocation> Writes(ITypeSymbol? type)
+    {
+        if (type == null || type.SpecialType == SpecialType.System_Object || type.TypeKind is TypeKind.Dynamic or TypeKind.Error) return AnyEntry;
+        if (KeyedStores.ContainsTypeParameter(type)) return GenericEntry;
+        if (_writes.TryGetValue(type, out var cached)) return cached;
+        var list = new List<KeyedLocation>();
+        for (var t = type; t != null && t.SpecialType != SpecialType.System_Object; t = t.BaseType) list.Add(Key(t));
+        foreach (var i in type.AllInterfaces) list.Add(Key(i));
+        list.Add(Exact(type));
+        return _writes[type] = list.ToArray();
+    }
+
+    /// The entries a view whose model has static type `type` reads (each joined with the "any key" entry, Heap.Read): its
+    /// type's key, and the exact entries of its base classes but object and of its interfaces (a model statically typed
+    /// wider than the view's type). An object or dynamic view reads only the "any key" entry.
+    public IReadOnlyList<KeyedLocation> Reads(ITypeSymbol? type)
+    {
+        if (type == null || type.SpecialType == SpecialType.System_Object || type.TypeKind is TypeKind.Dynamic or TypeKind.Error) return ObjectView;
+        if (_reads.TryGetValue(type, out var cached)) return cached;
+        var list = new List<KeyedLocation> { Key(type) };
+        for (var t = type.BaseType; t != null && t.SpecialType != SpecialType.System_Object; t = t.BaseType) list.Add(Exact(t));
+        foreach (var i in type.AllInterfaces) list.Add(Exact(i));
+        return _reads[type] = list.ToArray();
+    }
 }

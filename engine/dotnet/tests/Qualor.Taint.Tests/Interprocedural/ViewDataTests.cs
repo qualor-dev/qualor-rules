@@ -610,4 +610,261 @@ public sealed class ViewDataTests
         // TryGetValue); the region entry is a constant. Mark's entry is not Read's (another request, R-6).
         Assert.Equal(Marked(code), Found(result, "csharp.sql-injection"));
     }
+
+    // ---- Fix round 1 (task-22-review.md) ----
+
+    /// I1: a model whose static type is wider than the view's model type (an IEnumerable<string> local, a helper's
+    /// IEnumerable<string> parameter) reaches a view of a type it may be at run time; a view of an unrelated type does not.
+    [Fact]
+    public void A_model_typed_wider_than_the_view_reaches_it()
+    {
+        const string web = """
+            public class Page { public string Headline { get; set; } = ""; }
+            public class NewsPage : Page { }
+            public class RowsController : Controller
+            {
+                public IActionResult Typed([FromBody] NewsPage page)
+                {
+                    Page wide = page;
+                    return View(wide);
+                }
+                public IActionResult Local([FromQuery] string q)
+                {
+                    IEnumerable<string> rows = new List<string> { q };
+                    return View(rows);
+                }
+                public IActionResult Helper([FromQuery] string q) => Show(new List<string> { q });
+                private IActionResult Show(IEnumerable<string> rows) => View("Helper", rows);
+                public IActionResult Numbers([FromQuery] string q)
+                {
+                    IEnumerable<string> rows = new List<string> { q };
+                    return View(rows);
+                }
+            }
+            """;
+        var result = Analyze(web,
+            View("Views_Rows_Local", "List<string>", "/src/App/Views/Rows/Local.cshtml", """
+                foreach (var x in Model) { Write(Html.Raw(x)); }
+                """),
+            View("Views_Rows_Helper", "IList<string>", "/src/App/Views/Rows/Helper.cshtml", """
+                foreach (var x in Model) { Write(Html.Raw(x)); }
+                """),
+            View("Views_Rows_Numbers", "List<int>", "/src/App/Views/Rows/Numbers.cshtml", """
+                foreach (var x in Model) { Write(Html.Raw(x.ToString())); }
+                """),
+            View("Views_Rows_Typed", "NewsPage", "/src/App/Views/Rows/Typed.cshtml", """
+                Write(Html.Raw(Model.Headline));
+                """));
+
+        // An IEnumerable<string> may be a List<string> or an IList<string>; it is never a List<int>. A Page may be a
+        // NewsPage (a base class's exact entry).
+        Assert.Equal(new[] { "/src/App/Views/Rows/Helper.cshtml:1", "/src/App/Views/Rows/Local.cshtml:1", "/src/App/Views/Rows/Typed.cshtml:1" },
+            Found(result));
+    }
+
+    /// I2 (a): a generic helper's parameter typed over its type parameter (List<T>, T[]) is a Generic model too.
+    [Fact]
+    public void A_generic_helpers_parameter_built_over_its_type_parameter_keeps_the_callers_type()
+    {
+        const string web = """
+            public abstract class ListBase : Controller
+            {
+                protected IActionResult Rows<T>(string view, List<T> rows) => View(view, rows);
+                protected IActionResult Cells<T>(string view, T[] cells) => View(view, cells);
+            }
+            public class SheetController : ListBase
+            {
+                public IActionResult Rows([FromQuery] string q) => Rows("Rows", new List<string> { q });
+                public IActionResult Cells([FromQuery] string q) => Cells("Cells", new[] { q });
+            }
+            """;
+        var result = Analyze(web,
+            View("Views_Sheet_Rows", "List<string>", "/src/App/Views/Sheet/Rows.cshtml", """
+                foreach (var x in Model) { Write(Html.Raw(x)); }
+                """),
+            View("Views_Sheet_Cells", "string[]", "/src/App/Views/Sheet/Cells.cshtml", """
+                foreach (var x in Model) { Write(Html.Raw(x)); }
+                """));
+
+        Assert.Equal(new[] { "/src/App/Views/Sheet/Cells.cshtml:1", "/src/App/Views/Sheet/Rows.cshtml:1" }, Found(result));
+    }
+
+    /// I2 (b): generic helpers that call each other (a recursive cycle) keep the caller's type whatever their order: a
+    /// change of the Generic entry of a summary analyses its callers again.
+    [Fact]
+    public void Generic_helpers_in_a_cycle_keep_the_callers_type_whatever_their_order()
+    {
+        const string web = """
+            public abstract class TreeBase : Controller
+            {
+                protected IActionResult Walk<T>(string view, T model, int depth) => Draw(view, model, depth);
+                protected IActionResult Draw<T>(string view, T model, int depth) => depth > 0 ? Walk(view, model, depth - 1) : View(view, model);
+            }
+            public class TreeController : TreeBase
+            {
+                public IActionResult Show([FromQuery] string q) => Walk("Show", new List<string> { q }, 3);
+            }
+            """;
+        var result = Analyze(web,
+            View("Views_Tree_Show", "List<string>", "/src/App/Views/Tree/Show.cshtml", """
+                foreach (var x in Model) { Write(Html.Raw(x)); }
+                """));
+
+        Assert.Equal(new[] { "/src/App/Views/Tree/Show.cshtml:1" }, Found(result));
+    }
+
+    /// M5 (a): a reader of every entry (a key that is not a constant) that is analysed before the entry is written still
+    /// gets it: the write marks the readers of every entry for another round.
+    [Fact]
+    public void A_reader_of_every_entry_analysed_before_the_write_reads_it()
+    {
+        const string web = """
+            public class ProbeController : Controller
+            {
+                private readonly SqlConnection _c = new();
+                public IActionResult Run([FromQuery] string q)
+                {
+                    ViewData["a"] = q;
+                    Lookup();
+                    return Ok();
+                }
+                private void Lookup()
+                {
+                    var key = System.DateTime.Now.Ticks.ToString();
+                    _c.Execute("SELECT * FROM t WHERE x = '" + ViewData[key] + "'"); /*sink*/
+                }
+            }
+            """;
+        var code = "using Microsoft.Data.SqlClient;\nusing Dapper;\n" + web;
+        Assert.Equal(Marked(code), Found(Analyze(code), "csharp.sql-injection"));
+    }
+
+    /// M5 (b): `<partial name="…" model="…">` gives the partial its model (the tag helper's Model property).
+    [Fact]
+    public void A_partial_tag_helpers_model_is_the_partials_Model()
+    {
+        const string web = """
+            public class LineController : Controller
+            {
+                public IActionResult Show([FromQuery] string q) { ViewData["Line"] = q; return View(); }
+            }
+            """;
+        var result = Analyze(web,
+            View("Views_Line_Show", "object", "/src/App/Views/Line/Show.cshtml", """
+                var partial = CreateTagHelper<Microsoft.AspNetCore.Mvc.TagHelpers.PartialTagHelper>(); partial.Name = "_Line"; partial.Model = (string)ViewData["Line"];
+                """),
+            View("Views_Line__Line", "string", "/src/App/Views/Line/_Line.cshtml", """
+                Write(Html.Raw(Model));
+                """));
+
+        Assert.Equal(new[] { "/src/App/Views/Line/_Line.cshtml:1" }, Found(result));
+    }
+
+    /// M5 (c): `ViewBag.K = v` runs no code of the application, so a guard on a member holds across it (Task 21).
+    [Fact]
+    public void A_ViewBag_assignment_keeps_a_member_guard()
+    {
+        const string web = """
+            public class BackForm { public string ReturnUrl { get; set; } = ""; }
+            public class BackController : Controller
+            {
+                [HttpPost]
+                public IActionResult Go(BackForm form)
+                {
+                    if (!Url.IsLocalUrl(form.ReturnUrl)) return BadRequest();
+                    ViewBag.Note = "going back";
+                    return Redirect(form.ReturnUrl);
+                }
+                [HttpPost]
+                public IActionResult Unchecked(BackForm form)
+                {
+                    ViewBag.Note = "going back";
+                    return Redirect(form.ReturnUrl); /*sink*/
+                }
+            }
+            """;
+        Assert.Equal(Marked(web), Found(Analyze(web), "csharp.open-redirect"));
+    }
+
+    /// M1: `ViewData.Model = m` before `View()` sets the view's model, when m is statically typed.
+    [Fact]
+    public void A_ViewData_Model_assignment_is_the_views_model()
+    {
+        const string web = """
+            public class ListController : Controller
+            {
+                public IActionResult Show([FromQuery] string q)
+                {
+                    ViewData.Model = new List<string> { q };
+                    return View();
+                }
+                public IActionResult Plain([FromQuery] string q)
+                {
+                    object model = new List<string> { q };
+                    ViewData.Model = model;
+                    return View();
+                }
+            }
+            """;
+        var result = Analyze(web,
+            View("Views_List_Show", "List<string>", "/src/App/Views/List/Show.cshtml", """
+                foreach (var x in Model) { Write(Html.Raw(x)); }
+                """),
+            View("Views_List_Plain", "List<string>", "/src/App/Views/List/Plain.cshtml", """
+                foreach (var x in Model) { Write(Html.Raw(x)); }
+                """));
+
+        // An object-typed value set as ViewData.Model is not followed (a view engine's plumbing would reach every view).
+        Assert.Equal(new[] { "/src/App/Views/List/Show.cshtml:1" }, Found(result));
+    }
+
+    /// M2: a constructor bound at run time (`new HtmlString(ViewBag.K)`) is checked for the sinks of its candidates.
+    [Fact]
+    public void A_constructor_bound_at_run_time_reports_its_candidates_sinks()
+    {
+        const string web = """
+            public class NoteController : Controller
+            {
+                public IActionResult Show([FromQuery] string q) { ViewBag.Note = q; ViewBag.Fixed = "x"; return View(); }
+            }
+            """;
+        var result = Analyze(web,
+            View("Views_Note_Show", "object", "/src/App/Views/Note/Show.cshtml", """
+                Write(new Microsoft.AspNetCore.Html.HtmlString(ViewBag.Note));
+                Write(new Microsoft.AspNetCore.Html.HtmlString(ViewBag.Fixed));
+                """));
+
+        Assert.Equal(new[] { "/src/App/Views/Note/Show.cshtml:1" }, Found(result));
+    }
+
+    /// M3: HttpContext.Items through a local that holds it (and is never assigned again; a local assigned another
+    /// dictionary is not the store).
+    [Fact]
+    public void HttpContext_Items_through_a_local_alias_is_the_same_store()
+    {
+        const string web = """
+            public class AliasController : ControllerBase
+            {
+                private readonly SqlConnection _c = new();
+                public IActionResult Run([FromQuery] string q)
+                {
+                    var items = HttpContext.Items;
+                    items["k"] = q;
+                    Use();
+                    return Ok();
+                }
+                private void Use() => _c.Execute("SELECT * FROM t WHERE x = '" + HttpContext.Items["k"] + "'"); /*sink*/
+                public IActionResult Other([FromQuery] string q)
+                {
+                    var items = HttpContext.Items;
+                    items = new Dictionary<object, object?>();
+                    items["k"] = q;
+                    _c.Execute("SELECT * FROM t WHERE x = '" + HttpContext.Items["k"] + "'");
+                    return Ok();
+                }
+            }
+            """;
+        var code = "using Microsoft.Data.SqlClient;\nusing Dapper;\n" + web;
+        Assert.Equal(Marked(code), Found(Analyze(code), "csharp.sql-injection"));
+    }
 }

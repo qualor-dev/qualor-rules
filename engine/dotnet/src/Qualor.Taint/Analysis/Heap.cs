@@ -107,7 +107,8 @@ internal sealed class Heap
     /// cannot connect) writes data it did not read from the heap under that data's Scope, the requests it came from.
     public void Write(object location, TaintValue value, Reach writer)
     {
-        if (!value.Request) return;
+        // A generic helper's view model is written at its callers under their types; no view reads the Generic entry.
+        if (!value.Request || Equals(location, KeyedLocation.Generic)) return;
         if (writer.IsEmpty)
         {
             if (value.Scope == null || value.FromHeap) return;
