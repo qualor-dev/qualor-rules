@@ -1,0 +1,10 @@
+@{
+    ViewData["Title"] = "Search";
+}
+<h1>Results</h1>
+<section class="query">
+    @* ruleid: csharp.xss *@
+    <p>@Html.Raw(ViewData["term"] as string)</p>
+    @* ok: csharp.xss *@
+    <p>@ViewData["term"]</p>
+</section>

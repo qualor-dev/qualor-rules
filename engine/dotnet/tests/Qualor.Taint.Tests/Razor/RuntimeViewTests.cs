@@ -89,8 +89,8 @@ public sealed class RuntimeViewTests : TempDirs
         var web = Assert.Single(loaded.Solution.Projects);
         // Every view but the imports files; _ViewStart and the layout are views of their own.
         Assert.Equal(
-            new[] { "Web/Areas/Admin/Views/Notes/Edit.cshtml", "Web/Views/Home/Broken.cshtml", "Web/Views/Home/Show.cshtml",
-                "Web/Views/Home/Unclosed.cshtml", "Web/Views/Shared/_Layout.cshtml", "Web/Views/_ViewStart.cshtml" },
+            new[] { "Web/Areas/Admin/Views/Notes/Edit.cshtml", "Web/Views/Home/Broken.cshtml", "Web/Views/Home/Search.cshtml",
+                "Web/Views/Home/Show.cshtml", "Web/Views/Home/Unclosed.cshtml", "Web/Views/Shared/_Layout.cshtml", "Web/Views/_ViewStart.cshtml" },
             web.EngineViews.Select(v => Rel(dir, v)).OrderBy(v => v, StringComparer.Ordinal));
         Assert.Empty(web.Errors);   // the views' errors are theirs, not the build's
 
@@ -103,8 +103,27 @@ public sealed class RuntimeViewTests : TempDirs
         Assert.True(show.SinkSpan.HasMappedPath);
         Assert.Equal(Path.Combine(dir, "Web", "Views", "Home", "Show.cshtml"), show.SinkSpan.Path.Replace('/', Path.DirectorySeparatorChar));
         Assert.EndsWith("HomeController.cs", show.Path[0].Span.Path, StringComparison.Ordinal);
-        Assert.Equal(6, result.Stats.CompiledByEngineViews);
+        Assert.Equal(7, result.Stats.CompiledByEngineViews);
         Assert.Equal(0, result.Stats.UncompiledViews);
+    }
+
+    [Fact]
+    public void A_ViewData_entry_the_action_writes_reaches_an_engine_compiled_view()
+    {
+        // Review I1(a): Search(term) writes ViewData["term"] and renders a view no build compiled; the entry's raw output
+        // there is found (Task 22's keyed request stores through Task 30's compiled view), its encoded output stays quiet.
+        // Without the recorded views nothing is found (below).
+        var loaded = Load(Path.Combine(ViewsDir, "runtime-compiled"));
+        var result = Analyze(loaded);
+        Assert.True(result.Complete, result.IncompleteReason);
+        var reported = Reported(result, "csharp.xss");
+        var annotated = loaded.Annotations.Where(a => a.File == "Search.cshtml" && a.RuleId == "csharp.xss").ToList();
+        Assert.Contains(annotated, a => a.Kind == "ruleid");
+        Assert.Contains(annotated, a => a.Kind == "ok");
+        foreach (var a in annotated) Assert.Equal(a.Kind == "ruleid", reported.Contains((a.File, a.Line)));
+        var finding = result.Findings.Single(f => Path.GetFileName(f.SinkSpan.Path) == "Search.cshtml");
+        Assert.EndsWith("HomeController.cs", finding.Path[0].Span.Path, StringComparison.Ordinal);
+        Assert.Contains(finding.Path, s => s.Message.Contains("ViewData", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -176,7 +195,7 @@ public sealed class RuntimeViewTests : TempDirs
         SarifWriter.Write(stream, Models.Value, result, "t", null, Array.Empty<string>());
         using var doc = JsonDocument.Parse(stream.ToArray());
         var stats = doc.RootElement.GetProperty("runs")[0].GetProperty("properties").GetProperty("analysisStats");
-        Assert.Equal(6, stats.GetProperty("compiledByEngineViews").GetInt32());
+        Assert.Equal(7, stats.GetProperty("compiledByEngineViews").GetInt32());
         Assert.Equal(2, stats.GetProperty("engineViewErrors").GetInt32());
     }
 

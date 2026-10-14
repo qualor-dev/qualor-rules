@@ -16,4 +16,11 @@ public class HomeController : Controller
     public IActionResult Broken(string q) => View(new ProfileModel { Bio = q });
 
     public IActionResult Unclosed(string q) => View(new ProfileModel { Bio = q });
+
+    /// The search term reaches the view through ViewData only (no model).
+    public IActionResult Search(string term)
+    {
+        ViewData["term"] = term;
+        return View();
+    }
 }
