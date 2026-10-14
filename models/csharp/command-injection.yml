@@ -1,0 +1,118 @@
+# The engine's model of csharp.command-injection (format v1, models/README.md): the sinks of
+# rules/csharp/command/command-injection.yml with types in place of names, written as conditional sinks (`when:`)
+# where the OpenGrep rule checks the program or the command switch. Sources and propagators: sources.yml and
+# propagators.yml (shared).
+#
+# Sources (learn.microsoft.com): dotnet/api/system.diagnostics.process.start,
+# dotnet/api/system.diagnostics.processstartinfo, dotnet/api/system.diagnostics.processstartinfo.argumentlist,
+# windows-server/administration/windows-commands/cmd, powershell/module/microsoft.powershell.core/about/about_pwsh,
+# powershell/module/microsoft.powershell.core/about/about_powershell_exe; www.gnu.org/software/bash/manual
+# (Invoking Bash).
+#
+# The patterns the conditions use, as in the OpenGrep rule:
+# - a shell: cmd, sh, bash, dash, zsh, ksh, mksh, ash, pwsh or powershell, with a path and .exe;
+# - a command switch in an arguments string: /c, /k, -c (also -lc, -ec: any letters ending in c), -Command,
+#   -CommandWithArgs (-cwa), -EncodedCommand;
+# - in an argument vector, for a POSIX shell (and PowerShell's -CommandWithArgs, -EncodedCommand) the element right
+#   after -c (-lc, -ec, -cwa, -e, ...) is the script and the later ones are positional parameters; for cmd /c or /k
+#   and PowerShell -Command (-c) every later element is part of the command.
+# Differences from the OpenGrep rule:
+# - the program is followed by its constant values wherever they come from in the method (a literal, a const, a local
+#   assigned literals, both branches of a ternary given to Process.Start too: an OpenGrep Known limit), and the
+#   FileName of a ProcessStartInfo is the one set on that object anywhere in the method (an initializer, a
+#   constructor, an assignment before or after);
+# - FileName and Arguments are sinks on a real ProcessStartInfo only (look-alike classes are not), wherever it was
+#   created; Process.Start given a ProcessStartInfo is no sink (its parts are checked where they are set), which the
+#   engine knows from the overload.
+# Argument injection into a fixed program that is not a shell (CWE-88) is out of scope, as in the OpenGrep rule.
+rule: csharp.command-injection
+kind: taint
+sinks:
+  # The program: the file name given to Process.Start or a ProcessStartInfo.
+  - method: System.Diagnostics.Process.Start
+    args: [0]
+    param-types: [System.String]
+  - method: System.Diagnostics.ProcessStartInfo..ctor
+    args: [0]
+  - property-set: System.Diagnostics.ProcessStartInfo.FileName
+  # The command line of a shell given as one arguments string (or an argument vector held in a variable, taken as a
+  # whole): when the program is a shell, and the arguments hold a command switch or no string literal at all.
+  - method: System.Diagnostics.Process.Start
+    args: [1]
+    param-types: [System.String, System.Collections.Generic.IEnumerable`1]
+    when:
+      - arg: 0
+        matches: '(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$'
+      - literal-text: '(?i)(^|[\s"''(])(/[ck]|-[a-z]*c|-command|-commandwithargs|-cwa|-encodedcommand)([\s"'']|$)'
+  - method: System.Diagnostics.ProcessStartInfo..ctor
+    args: [1]
+    param-types: [System.String, System.Collections.Generic.IEnumerable`1]
+    when:
+      - arg: 0
+        matches: '(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$'
+      - literal-text: '(?i)(^|[\s"''(])(/[ck]|-[a-z]*c|-command|-commandwithargs|-cwa|-encodedcommand)([\s"'']|$)'
+  - property-set: System.Diagnostics.ProcessStartInfo.Arguments
+    when:
+      - property: FileName
+        matches: '(?i)^(.*[\\/])?(cmd|sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$'
+      - literal-text: '(?i)(^|[\s"''(])(/[ck]|-[a-z]*c|-command|-commandwithargs|-cwa|-encodedcommand)([\s"'']|$)'
+  # A shell's argument vector written in place (an array, a List<string>, a collection expression): the script
+  # after the switch, element by element.
+  - method: System.Diagnostics.Process.Start
+    args: [1]
+    param-types: [System.Collections.Generic.IEnumerable`1]
+    when:
+      - arg: 0
+        matches: '(?i)^(.*[\\/])?(sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$'
+      - after: '(?i)^-([a-z]*c[a-z]*|cwa|commandwithargs|e|encodedcommand)$'
+        next: true
+  - method: System.Diagnostics.Process.Start
+    args: [1]
+    param-types: [System.Collections.Generic.IEnumerable`1]
+    when:
+      - arg: 0
+        matches: '(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$'
+      - after: '(?i)^(/[ck]|-c|-command)$'
+  - method: System.Diagnostics.ProcessStartInfo..ctor
+    args: [1]
+    param-types: [System.Collections.Generic.IEnumerable`1]
+    when:
+      - arg: 0
+        matches: '(?i)^(.*[\\/])?(sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$'
+      - after: '(?i)^-([a-z]*c[a-z]*|cwa|commandwithargs|e|encodedcommand)$'
+        next: true
+  - method: System.Diagnostics.ProcessStartInfo..ctor
+    args: [1]
+    param-types: [System.Collections.Generic.IEnumerable`1]
+    when:
+      - arg: 0
+        matches: '(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$'
+      - after: '(?i)^(/[ck]|-c|-command)$'
+  # ProcessStartInfo.ArgumentList of a shell (statements `psi.ArgumentList.Add(x)` or a collection initializer
+  # `ArgumentList = { "-c", x }`): the element added right after -c (POSIX), or any element after /c, /k or -Command.
+  - method: System.Collections.ObjectModel.Collection`1.Add
+    args: [0]
+    when:
+      - receiver: System.Diagnostics.ProcessStartInfo.ArgumentList
+      - property: FileName
+        matches: '(?i)^(.*[\\/])?(sh|bash|dash|zsh|ksh|mksh|ash|pwsh|powershell)(\.exe)?$'
+      - after: '(?i)^-([a-z]*c[a-z]*|cwa|commandwithargs|e|encodedcommand)$'
+        next: true
+  - method: System.Collections.ObjectModel.Collection`1.Add
+    args: [0]
+    when:
+      - receiver: System.Diagnostics.ProcessStartInfo.ArgumentList
+      - property: FileName
+        matches: '(?i)^(.*[\\/])?(cmd|pwsh|powershell)(\.exe)?$'
+      - after: '(?i)^(/[ck]|-c|-command)$'
+# Shared C# sanitizers (as in every taint model; see sql-injection.yml). The rule has none of its own.
+# Not here (plan Task 11, guards): the shared allow-lists.
+sanitizers:
+  - method: System.Int32.Parse
+  - method: System.Int64.Parse
+  - method: System.Guid.Parse
+  - method: System.DateTime.Parse
+  - method: System.Convert.ToInt32
+  - method: System.Convert.ToInt64
+  - method: System.Enum.Parse
+guards: []

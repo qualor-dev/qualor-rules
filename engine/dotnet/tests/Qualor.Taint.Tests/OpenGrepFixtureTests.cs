@@ -125,6 +125,9 @@ public class OpenGrepFixtureTests
         ("csharp.path-traversal", "path-traversal.cs", 255, "unexpected", "Task 11 (guard): GetFullPath then !fourth.StartsWith(StorageRoot) throw"),
         ("csharp.path-traversal", "path-traversal.cs", 259, "unexpected", "Task 11 (guard): GetFullPath then !fifth.StartsWith(Storage + '\\\\') return"),
         ("csharp.path-traversal", "path-traversal.cs", 268, "unexpected", "Task 11 (guard): GetFullPath then !resolved.StartsWith(\"/var/app/storage/\") throw"),
+        ("csharp.command-injection", "command-injection.cs", 375, "unexpected", "Task 11 (allow-list): Commands.Contains(command) ? command : literal"),
+        ("csharp.command-injection", "command-injection.cs", 385, "unexpected", "Task 11 (guard): !Commands.Contains(name) then return"),
+        ("csharp.command-injection", "command-injection.cs", 400, "unexpected", "Task 11 (guard): !Commands.Contains(command) then return"),
     };
 
     /// The engine runs to completion (no internal error, no iteration cap) on every fixture, modelled or not.

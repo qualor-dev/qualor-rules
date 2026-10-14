@@ -14,6 +14,12 @@ must-find:
   # OpenGrep cannot tell a StreamReader's path overload from its Stream overload (Known limit); the engine goes by the
   # overload (`param-types` in models/csharp/path-traversal.yml).
   - { rule: csharp.path-traversal, line: 332, why: "new StreamReader(path): the path overload is a sink" }
+  - { rule: csharp.command-injection, line: 465, why: "ToolOf(Request): an expression-bodied helper that reads the request" }
+  - { rule: csharp.command-injection, line: 471, why: "Tool: an expression-bodied property that reads the request" }
+  - { rule: csharp.command-injection, line: 473, why: "Channel: a property getter that reads the request" }
+  # A shell chosen by a ternary given to Process.Start (OpenGrep Known limit): the conditional sink's `arg: 0` takes the
+  # constants of both branches.
+  - { rule: csharp.command-injection, line: 443, why: "Process.Start(windows ? \"cmd.exe\" : \"/bin/sh\", ...): both branches are shells" }
 must-stay-quiet:
   # Results.File given a stream is no path: the engine goes by the overload (`param-types`), OpenGrep cannot (Known limit).
   - { rule: csharp.path-traversal, line: 367, why: "Results.File(Request.Body, ...): the Stream overload is no sink" }
