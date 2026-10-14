@@ -96,11 +96,10 @@ public class OpenGrepFixtureTests
         Models.Value.Rules.Select(r => new object[] { r.RuleId["csharp.".Length..] });
 
     /// Ruling R-E7: the lines the engine does not get right yet, each with its reason and the task that closes it —
-    /// Missing ruleid lines that need the interprocedural analysis (Task 8), Unexpected ok lines whose safety rests on
-    /// an allow-list or a guard (Task 11). A listed line the engine gets right fails the test too (remove the entry).
+    /// Unexpected ok lines whose safety rests on an allow-list or a guard (Task 11); no Missing line is left after the
+    /// interprocedural analysis (Task 8). A listed line the engine gets right fails the test too (remove the entry).
     private static readonly (string Rule, string File, int Line, string Kind, string Why)[] Pending =
     {
-        ("csharp.sql-injection", "sql-injection.cs", 862, "missing", "Task 8 (summaries): TermOf(Request) reads the request in a helper"),
         ("csharp.sql-injection", "sql-injection.cs", 515, "unexpected", "Task 11 (guard): !Directions.Contains(dir) then return"),
         ("csharp.sql-injection", "sql-injection.cs", 523, "unexpected", "Task 11 (guard): !Directions.Contains(dir) return"),
         ("csharp.sql-injection", "sql-injection.cs", 532, "unexpected", "Task 11 (guard): !Regions.Contains(region) throw"),

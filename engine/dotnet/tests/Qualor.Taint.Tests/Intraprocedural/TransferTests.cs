@@ -2,7 +2,7 @@ namespace Qualor.Taint.Tests.Intraprocedural;
 
 /// The transfer functions of the intraprocedural core: assignments and compound assignments (a property's get and set
 /// patterns by the access), out arguments, receivers written by fluent builders and collection writes, loops,
-/// exception regions, lambdas, and the temporary in-source call rule (replaced by summaries in Task 8).
+/// exception regions, lambdas, and a call to a source helper (its summary, Task 8).
 public sealed class TransferTests
 {
     private static void Expect(string code) => Assert.Equal(Snippet.Marked(code), Snippet.Findings(code));
@@ -214,7 +214,7 @@ public sealed class TransferTests
         """);
 
     [Fact]
-    public void A_call_to_a_source_method_returns_its_arguments_taint_until_summaries_exist() => Expect("""
+    public void A_call_to_a_source_helper_returns_what_its_summary_passes_on() => Expect("""
         public class C
         {
             private static string Wrap(string s) => "[" + s + "]";

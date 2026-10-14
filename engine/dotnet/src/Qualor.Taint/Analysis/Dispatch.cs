@@ -1,0 +1,189 @@
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
+
+namespace Qualor.Taint;
+
+/// A symbol's identity across the compilations of one solution. A project reference is a CompilationReference, so a
+/// referencing project usually sees the referenced compilation's own symbols; when Roslyn retargets them (another
+/// core library) they are other objects with the same declaring syntax. A symbol declared in source is therefore keyed
+/// by its declaring syntax (tree and span; a partial method by its implementation part), an external one by its
+/// documentation comment id and assembly name.
+internal static class SymbolKeys
+{
+    private readonly record struct SourceKey(SyntaxTree Tree, TextSpan Span);
+
+    private readonly record struct MetadataKey(string Id, string? Assembly);
+
+    /// The symbol a key and a body are taken from: a reduced extension method's static form, a partial method's
+    /// implementation part, the original definition of a constructed generic.
+    public static ISymbol Definition(ISymbol symbol)
+    {
+        if (symbol is IMethodSymbol m)
+        {
+            m = (m.ReducedFrom ?? m).OriginalDefinition;
+            return m.PartialImplementationPart ?? m;
+        }
+        return symbol.OriginalDefinition;
+    }
+
+    public static object Of(ISymbol symbol)
+    {
+        symbol = Definition(symbol);
+        var references = symbol.DeclaringSyntaxReferences;
+        if (references.Length > 0) return new SourceKey(references[0].SyntaxTree, references[0].Span);
+        return new MetadataKey(symbol.GetDocumentationCommentId() ?? symbol.ToDisplayString(), symbol.ContainingAssembly?.Identity.Name);
+    }
+
+    /// The key of the body declared by this syntax (a lambda or local function, a member's declaration).
+    public static object Of(SyntaxNode syntax) => new SourceKey(syntax.SyntaxTree, syntax.Span);
+
+    public static bool InSource(ISymbol symbol) => Definition(symbol).DeclaringSyntaxReferences.Length > 0;
+}
+
+/// Virtual and interface dispatch by class hierarchy over every compilation of the solution (spec §5 "Dispatch"): a
+/// virtual call's targets are the implementations of the method in its receiver's static type and every source type
+/// derived from it or implementing it, in any project. No DI registration analysis. A call of an external virtual
+/// method on an external receiver type (`object.ToString()`, `IDisposable.Dispose()`) keeps its external target: its
+/// propagator model stands for every implementation (known limit: a source implementation reached only through an
+/// external interface is not followed).
+internal sealed class Dispatch
+{
+    private readonly Dictionary<object, List<INamedTypeSymbol>> _subtypes = new();
+    private readonly Dictionary<(object Method, object Root), IReadOnlyList<IMethodSymbol>> _cache = new();
+    private readonly Dictionary<ISymbol, object> _keys = new(SymbolEqualityComparer.Default);
+
+    public Dispatch(IEnumerable<Compilation> compilations, CancellationToken ct)
+    {
+        foreach (var compilation in compilations)
+        {
+            ct.ThrowIfCancellationRequested();
+            foreach (var type in Types(compilation.Assembly.GlobalNamespace))
+            {
+                if (type.BaseType is { } baseType) AddSubtype(baseType, type);
+                foreach (var i in type.Interfaces) AddSubtype(i, type);
+            }
+        }
+    }
+
+    private void AddSubtype(INamedTypeSymbol super, INamedTypeSymbol type)
+    {
+        var key = Key(super.OriginalDefinition);
+        if (!_subtypes.TryGetValue(key, out var list)) _subtypes[key] = list = new List<INamedTypeSymbol>();
+        list.Add(type);
+    }
+
+    private static IEnumerable<INamedTypeSymbol> Types(INamespaceOrTypeSymbol container)
+    {
+        foreach (var member in container.GetMembers())
+        {
+            if (member is INamespaceSymbol ns)
+            {
+                foreach (var t in Types(ns)) yield return t;
+            }
+            else if (member is INamedTypeSymbol type)
+            {
+                yield return type;
+                foreach (var t in Types(type)) yield return t;
+            }
+        }
+    }
+
+    public object Key(ISymbol symbol)
+    {
+        if (_keys.TryGetValue(symbol, out var key)) return key;
+        key = SymbolKeys.Of(symbol);
+        _keys[symbol] = key;
+        return key;
+    }
+
+    /// The brief's form: every override or implementation of a virtual or interface method in the solution's source
+    /// compilations (the receiver type taken as the method's containing type); the method itself when it is not virtual.
+    public IReadOnlyList<IMethodSymbol> Targets(IMethodSymbol method) => Targets(method, true, method.ContainingType);
+
+    /// The methods a call may run: the method itself (its definition) for a non-virtual call (`base.M()`, a static or
+    /// sealed member); for a virtual call, the implementation in the receiver's static type and in every source type
+    /// derived from it (class hierarchy analysis), abstract ones left out.
+    public IReadOnlyList<IMethodSymbol> Targets(IMethodSymbol method, bool isVirtual, ITypeSymbol? receiverType)
+    {
+        var def = (IMethodSymbol)SymbolKeys.Definition(method);
+        var containing = def.ContainingType;
+        if (!isVirtual || def.IsStatic || containing == null
+            || !(def.IsVirtual || def.IsAbstract || def.IsOverride || containing.TypeKind == TypeKind.Interface))
+            return new[] { def };
+        var root = receiverType is INamedTypeSymbol named && named.TypeKind != TypeKind.TypeParameter ? named.OriginalDefinition : containing.OriginalDefinition;
+        if (!SymbolKeys.InSource(def) && !SymbolKeys.InSource(root)) return new[] { def };
+
+        var cacheKey = (Key(def), Key(root));
+        if (_cache.TryGetValue(cacheKey, out var cached)) return cached;
+        var result = new List<IMethodSymbol>();
+        var seenTypes = new HashSet<object>();
+        var seenTargets = new HashSet<object>();
+        var queue = new Queue<INamedTypeSymbol>();
+        queue.Enqueue(root);
+        seenTypes.Add(Key(root));
+        while (queue.Count > 0)
+        {
+            var type = queue.Dequeue();
+            if (type.TypeKind is TypeKind.Class or TypeKind.Struct && Implementation(type, def) is { } impl && seenTargets.Add(Key(impl)))
+                result.Add((IMethodSymbol)SymbolKeys.Definition(impl));
+            if (_subtypes.TryGetValue(Key(type.OriginalDefinition), out var subtypes))
+                foreach (var s in subtypes)
+                    if (seenTypes.Add(Key(s))) queue.Enqueue(s);
+        }
+        // An interface member with a default body, or a virtual method no source type was found for.
+        if (result.Count == 0 && !def.IsAbstract) result.Add(def);
+        _cache[cacheKey] = result;
+        return result;
+    }
+
+    /// The method that runs for `def` on an instance of `type`: the interface member's implementation, or the most
+    /// derived override (or `def` itself) up the base chain; null when it is abstract there.
+    private IMethodSymbol? Implementation(INamedTypeSymbol type, IMethodSymbol def)
+    {
+        var defKey = Key(def);
+        if (def.ContainingType.TypeKind == TypeKind.Interface)
+        {
+            var interfaceKey = Key(def.ContainingType.OriginalDefinition);
+            foreach (var i in type.AllInterfaces)
+            {
+                if (!Equals(Key(i.OriginalDefinition), interfaceKey)) continue;
+                foreach (var member in i.GetMembers(def.Name))
+                {
+                    if (member is not IMethodSymbol m || !Equals(Key(m.OriginalDefinition), defKey)) continue;
+                    var impl = type.FindImplementationForInterfaceMember(m) as IMethodSymbol ?? AccessorImplementation(type, m);
+                    return impl is { IsAbstract: false } ? impl : null;
+                }
+            }
+            return null;
+        }
+        for (var t = type; t != null; t = t.BaseType)
+        {
+            foreach (var member in t.GetMembers(def.Name))
+            {
+                if (member is not IMethodSymbol m) continue;
+                if (Equals(Key(m), defKey)) return m.IsAbstract ? null : m;
+                for (var o = m.OverriddenMethod; o != null; o = o.OverriddenMethod)
+                    if (Equals(Key(o), defKey)) return m.IsAbstract ? null : m;
+            }
+        }
+        return null;
+    }
+
+    /// An interface property accessor's implementation through its property (when the accessor itself is not found).
+    private static IMethodSymbol? AccessorImplementation(INamedTypeSymbol type, IMethodSymbol accessor)
+    {
+        if (accessor.AssociatedSymbol is not IPropertySymbol property) return null;
+        if (type.FindImplementationForInterfaceMember(property) is not IPropertySymbol impl) return null;
+        return accessor.MethodKind == MethodKind.PropertyGet ? impl.GetMethod : impl.SetMethod;
+    }
+
+    /// Whether an access of a member through `instance` dispatches virtually: a virtual, abstract, override or
+    /// interface member not reached through `base`.
+    public static bool IsVirtualAccess(ISymbol member, IOperation? instance)
+    {
+        if (member.IsStatic || instance == null) return false;
+        if (instance.Syntax is BaseExpressionSyntax) return false;
+        return member.IsVirtual || member.IsAbstract || member.IsOverride || member.ContainingType?.TypeKind == TypeKind.Interface;
+    }
+}

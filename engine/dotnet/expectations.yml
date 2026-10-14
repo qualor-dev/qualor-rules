@@ -1,6 +1,13 @@
 # Which todo lines of the OpenGrep fixtures the engine must turn into findings (todoruleid) or keep quiet (todook).
 # The OpenGrep fixtures are never edited for the engine (spec §6.1).
-must-find: []        # entries: { rule: csharp.sql-injection, line: 123, why: "expression-bodied member" }
+# entries: { rule: csharp.sql-injection, line: 123, why: "expression-bodied member" }
+must-find:
+  # OpenGrep carries no taint out of an expression-bodied method or a property getter (Known limit); the engine's
+  # summaries do (Task 8).
+  - { rule: csharp.sql-injection, line: 867, why: "TagOf(Request): an expression-bodied helper that reads the request" }
+  - { rule: csharp.sql-injection, line: 870, why: "BuildFilter(term): an expression-bodied helper that passes its argument on" }
+  - { rule: csharp.sql-injection, line: 872, why: "Region: an expression-bodied property that reads the request" }
+  - { rule: csharp.sql-injection, line: 874, why: "Channel: a property getter that reads the request" }
 must-stay-quiet: []
 # Fixture lines that cannot compile in any form (an intentionally invalid shape); excluded from the engine comparison.
 uncompilable:

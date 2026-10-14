@@ -46,7 +46,7 @@ internal sealed class AnalysisContext
         var key = (rule, site.SyntaxTree.FilePath ?? "", site.Span);
         if (_findings.ContainsKey(key)) return;
         var sink = site.GetLocation();
-        var path = value.Path.Add(new PathStep(sink, $"reaches the {rule} sink {Name(member)}"));
+        var path = value.Path.Add(new PathStep(sink, $"reaches the {rule} sink {Name(member)}")).ToList();
         var others = value.Sources.Where(s => !s.Equals(path[0].Location)).OrderBy(s => s.SourceSpan.Start).ToList();
         _findings[key] = new Finding(rule, sink, path, others);
     }
@@ -61,10 +61,12 @@ internal sealed class AnalysisContext
     }
 }
 
-/// The intraprocedural taint analysis of one control-flow graph (a method, accessor, initializer, lambda or local
-/// function body; spec §5): a forward dataflow over its basic blocks to a fixed point, with a TaintState per block
-/// entry. Within a block the operations are evaluated in order; Value() is the transfer function of an operation
-/// (side effects on the state, sinks reported on the way) and returns the operation's TaintValue.
+/// The taint analysis of one control-flow graph (a method, accessor, initializer, lambda or local function body; spec
+/// §5): a forward dataflow over its basic blocks to a fixed point, with a TaintState per block entry. Within a block the
+/// operations are evaluated in order; Value() is the transfer function of an operation (side effects on the state,
+/// sinks reported on the way) and returns the operation's TaintValue. The interprocedural side (Task 8) is the body's
+/// SummaryComputer.BodyRun: the body's parameters carry labels, and what reaches its return value, its sinks, its
+/// receiver, its ref and out parameters and the heap becomes its summary.
 ///
 /// - Join at block entries: TaintState.JoinWith. Branches are not yet told apart (guards: Task 11).
 /// - Exception regions: the first block of a catch, filter or finally gets the state at every point of its try region
@@ -73,31 +75,41 @@ internal sealed class AnalysisContext
 /// - Assignments through flow captures: the CFG spills the target of an assignment whose value has control flow
 ///   (`x = c ? a : b`, `??`, switch expressions, `?.`, `??=`) into a capture; an assignment to that capture assigns the
 ///   captured variable (strong for a local, a parameter, a static field or a field of `this`).
-/// - Fields: of `this` or static, by symbol within this body (the heap across methods is Task 8); of another instance (a
-///   tuple element, a struct or object in a variable) the instance's value, element-insensitive, and a write into it.
+/// - `this` is the label of the receiver; a field or auto-property read is its instance's value (element-insensitive
+///   objects: `this` for an own one), its state in this body (strong updates for own and static ones), and the heap's
+///   request data for it (Heap: field-based, across methods and projects). A write goes to the state, into the
+///   instance, and to the heap.
 /// - Values of a scalar type (sources.yml `scalars`, enums, void) are always clean.
-/// - Calls of members declared in source and delegate invocations: TEMPORARY (Task 7, until Task 8's summaries) the
-///   result is the join of the receiver's and the arguments' taint (InSourceResult, the one hook to replace), also
-///   written to out and ref arguments; properties declared in source likewise return their object's taint.
+/// - Calls and property accessors of members declared in source: their targets (Dispatch: class hierarchy) apply their
+///   summaries: the arguments are substituted for the callee's labels in its local effects (result, receiver, ref and
+///   out parameters), and passed to its parameters for its global effects (request data seeds them, a label becomes a
+///   call edge of its body; SummaryComputer reports the callee's sinks at their site); a member in source without a
+///   body (abstract with no implementation, synthesized) passes its receiver and arguments to its result; an
+///   auto-property is a heap location. Delegate invocations pass the delegate's and the arguments' taint.
 /// - Calls of external (metadata-only) members: the propagators of propagators.yml (review note M2: only external
 ///   members), else the `unmodelled-external` default; a collection or interpolated-string-handler write
-///   (`list.Add(x)`, `dict[k] = x`, `arr[i] = x`, `handler.AppendFormatted(x)`) taints the collection.
-/// - Sources: parameters (seeded at the entry by the engine), source members (sources.yml (6)) and bound properties
-///   (sources.yml (3)) at their reads. Sanitizers clean their result for their rule.
+///   (`list.Add(x)`, `dict[k] = x`, `arr[i] = x`, `handler.AppendFormatted(x)`) taints the collection (engine policy,
+///   not the models: open item (a) of Task 7).
+/// - Lambdas and method groups given to a call get the call's receiver and other arguments in their parameters (a
+///   method group: its summary applied to them); a lambda's value is what it returns.
+/// - Sources: parameters (seeded at the entry), source members (sources.yml (6)) and bound properties (sources.yml (3))
+///   at their reads. Sanitizers clean their result for their rule.
 /// - Sinks: the arguments at a sink's ordinals, and the value assigned to a property-set sink (for `+=` the joined
-///   value), reported when tainted for the sink's rule at the argument's (or assignment's) location.
+///   value): reported when request data reaches them; a label that reaches them is a sink of the label's body.
 internal sealed class MethodAnalyzer
 {
     private readonly AnalysisContext _ctx;
     private readonly ControlFlowGraph _cfg;
+    private readonly SummaryComputer.BodyRun _body;
 
     /// What each flow capture captured (a capture is assigned in several blocks for `c ? a : b`).
     private readonly Dictionary<CaptureId, List<IOperation>> _captured = new();
 
-    public MethodAnalyzer(AnalysisContext ctx, ControlFlowGraph cfg)
+    public MethodAnalyzer(AnalysisContext ctx, ControlFlowGraph cfg, SummaryComputer.BodyRun body)
     {
         _ctx = ctx;
         _cfg = cfg;
+        _body = body;
         foreach (var block in cfg.Blocks)
         {
             foreach (var operation in block.Operations) Collect(operation);
@@ -116,6 +128,12 @@ internal sealed class MethodAnalyzer
 
     /// False when the fixed point hit its iteration cap (the result is then partial).
     public bool Complete { get; private set; } = true;
+
+    /// The join of the values the body returns (`return x`, an expression body, `yield return x`).
+    public TaintValue ReturnValue { get; private set; } = TaintValue.Clean;
+
+    /// The state at the body's exit (null when the exit is unreachable).
+    public TaintState? ExitState { get; private set; }
 
     /// Runs the dataflow from `entry`. With `collectAll`, returns the join of the states at every block entry and exit
     /// (what a lambda or local function declared here may capture); null otherwise.
@@ -150,7 +168,8 @@ internal sealed class MethodAnalyzer
             }
             if (block.BranchValue != null)
             {
-                Value(block.BranchValue, state);
+                var value = Value(block.BranchValue, state);
+                if (block.FallThroughSuccessor?.Semantics == ControlFlowBranchSemantics.Return) ReturnValue = ReturnValue.Join(value);
                 Feed(handlers, state);
             }
             if (outStates != null) outStates[ordinal] = state;
@@ -160,6 +179,7 @@ internal sealed class MethodAnalyzer
             if (finallyExits.TryGetValue(ordinal, out var after))
                 foreach (var destination in after) Flow(destination, state);
         }
+        ExitState = inStates[blocks.Length - 1];
 
         if (!collectAll) return null;
         var all = new TaintState();
@@ -241,7 +261,7 @@ internal sealed class MethodAnalyzer
     {
         if (operation == null) return TaintValue.Clean;
         var value = Transfer(operation, state);
-        return value.Request && operation.Type is { } type && _ctx.Sources.IsScalar(type) ? TaintValue.Clean : value;
+        return value.Any && operation.Type is { } type && _ctx.Sources.IsScalar(type) ? TaintValue.Clean : value;
     }
 
     private TaintValue Transfer(IOperation operation, TaintState state)
@@ -249,34 +269,34 @@ internal sealed class MethodAnalyzer
         switch (operation)
         {
             case ILiteralOperation:
-            case IInstanceReferenceOperation:
             case IDefaultValueOperation:
             case ITypeOfOperation:
             case ISizeOfOperation:
             case INameOfOperation:
             case ICaughtExceptionOperation:
             case IMethodReferenceOperation:
-            case IFlowAnonymousFunctionOperation:
             case IAnonymousFunctionOperation:
-            case IDelegateCreationOperation:
             case IInterpolatedStringTextOperation:
             case IInterpolatedStringHandlerArgumentPlaceholderOperation:
             case IStaticLocalInitializationSemaphoreOperation:
             case IDiscardOperation:
                 return TaintValue.Clean;
 
+            case IInstanceReferenceOperation instance:
+                return instance.ReferenceKind == InstanceReferenceKind.ContainingTypeInstance ? _body.This : TaintValue.Clean;
+            case IFlowAnonymousFunctionOperation lambda:
+                return _body.LambdaReturn(lambda.Symbol);
+            case IDelegateCreationOperation creation:
+                return Value(creation.Target, state);
+
             case ILocalReferenceOperation local:
-                return state.Get(local.Local);
+                return _body.Local(local.Local, state.Get(local.Local));
             case IParameterReferenceOperation parameter:
-                return state.Get(parameter.Parameter);
+                return _body.Local(parameter.Parameter, state.Get(parameter.Parameter));
             case IFlowCaptureReferenceOperation capture:
                 return state.Get(capture.Id);
             case IFieldReferenceOperation field:
-            {
-                var instance = Value(field.Instance, state);
-                var own = state.Get(field.Field.OriginalDefinition);
-                return IsOwnField(field) ? own : instance.Join(own);
-            }
+                return ReadMember(field, field.Field, Value(field.Instance, state), state);
 
             case IFlowCaptureOperation capture:
                 state.Set(capture.Id, Value(capture.Value, state));
@@ -316,7 +336,7 @@ internal sealed class MethodAnalyzer
             case IVariableDeclaratorOperation declarator:
             {
                 var value = Value(declarator.Initializer?.Value, state);
-                state.Set(declarator.Symbol, Named(LocalValue(declarator.Symbol, value), declarator, declarator.Symbol.Name));
+                SetLocal(declarator.Symbol, Named(LocalValue(declarator.Symbol, value), declarator, declarator.Symbol.Name), state);
                 return TaintValue.Clean;
             }
 
@@ -329,10 +349,10 @@ internal sealed class MethodAnalyzer
                 return array;
             }
             case IInvocationOperation invocation:
-                return Call(invocation, invocation.TargetMethod, invocation.Instance, invocation.Arguments, state);
+                return Call(invocation, invocation.TargetMethod, invocation.Instance, invocation.Arguments, state, invocation.IsVirtual);
             case IObjectCreationOperation creation:
             {
-                var value = Call(creation, creation.Constructor, null, creation.Arguments, state);
+                var value = Call(creation, creation.Constructor, null, creation.Arguments, state, false);
                 // The CFG lowers initializers into assignments on a flow capture; one left here is evaluated as such.
                 if (creation.Initializer != null) value = value.Join(Value(creation.Initializer, state));
                 return value;
@@ -396,7 +416,12 @@ internal sealed class MethodAnalyzer
             }
 
             case IReturnOperation ret:
-                return Value(ret.ReturnedValue, state);
+            {
+                var value = Value(ret.ReturnedValue, state);
+                // The CFG turns `return x` into a branch value; `yield return x` stays an operation.
+                if (ret.Kind == OperationKind.YieldReturn) ReturnValue = ReturnValue.Join(value);
+                return value;
+            }
 
             default:
             {
@@ -422,15 +447,15 @@ internal sealed class MethodAnalyzer
         switch (pattern)
         {
             case IDeclarationPatternOperation { DeclaredSymbol: ILocalSymbol local }:
-                state.Set(local, LocalValue(local, value));
+                SetLocal(local, LocalValue(local, value), state);
                 break;
             case IRecursivePatternOperation recursive:
-                if (recursive.DeclaredSymbol is ILocalSymbol r) state.Set(r, LocalValue(r, value));
+                if (recursive.DeclaredSymbol is ILocalSymbol r) SetLocal(r, LocalValue(r, value), state);
                 foreach (var p in recursive.DeconstructionSubpatterns) Bind(p, value, state);
                 foreach (var p in recursive.PropertySubpatterns) Bind(p.Pattern, value, state);
                 break;
             case IListPatternOperation list:
-                if (list.DeclaredSymbol is ILocalSymbol l) state.Set(l, LocalValue(l, value));
+                if (list.DeclaredSymbol is ILocalSymbol l) SetLocal(l, LocalValue(l, value), state);
                 foreach (var p in list.Patterns) Bind(p, value, state);
                 break;
             case ISlicePatternOperation { Pattern: { } inner }:
@@ -449,6 +474,54 @@ internal sealed class MethodAnalyzer
     private TaintValue LocalValue(ILocalSymbol local, TaintValue value) =>
         _ctx.Sources.IsScalar(local.Type) ? TaintValue.Clean : value;
 
+    /// A strong update of a local or parameter (a captured one is also a captured write of this body).
+    private void SetLocal(ISymbol symbol, TaintValue value, TaintState state)
+    {
+        state.Set(symbol, value);
+        _body.Assigned(symbol, value);
+    }
+
+    // ---- Fields and auto-properties ----
+
+    /// A field of the analysed object or a static one (`this._f`, `_f`, `T._s`): tracked by its symbol in this body.
+    private static bool IsOwn(IOperation? instance) =>
+        instance is null or IInstanceReferenceOperation { ReferenceKind: InstanceReferenceKind.ContainingTypeInstance };
+
+    /// The value of a field or auto-property: its instance's (the object, element-insensitive; `this` for an own one),
+    /// its state in this body, and the heap's request data for it. An own member of a type that is never request data
+    /// (sources.yml `parameter-types`: an interface is a DI service, a scalar) does not take the receiver's value: a
+    /// request-bound object's data members carry it, its injected services do not.
+    private TaintValue ReadMember(IOperation operation, ISymbol member, TaintValue instance, TaintState state)
+    {
+        if (instance.Any && member is IFieldSymbol or IPropertySymbol && !member.IsStatic
+            && _ctx.Sources.IsNeverSourceType(member is IFieldSymbol f ? f.Type : ((IPropertySymbol)member).Type))
+            instance = TaintValue.Clean;
+        var value = instance.Join(state.Get(member.OriginalDefinition));
+        if (_body.IsHeapMember(member))
+        {
+            var heap = _body.HeapRead(member);
+            if (heap.Any) value = value.Join(heap.Step(operation.Syntax.GetLocation(), $"read from {_ctx.Name(member)}"));
+        }
+        return value;
+    }
+
+    /// An assignment of a field or auto-property (its instance already evaluated): a strong update of an own one in this
+    /// body (and a write into the receiver), a write into another instance, and a heap write.
+    private void AssignMember(ISymbol member, IOperation? instance, TaintValue value, TaintState state, IOperation assignment)
+    {
+        var named = Named(value, assignment, member.Name);
+        if (IsOwn(instance))
+        {
+            state.Set(member.OriginalDefinition, named);
+            if (instance != null) _body.RecordThis(named);
+        }
+        else
+        {
+            Write(instance!, named, state);
+        }
+        _body.HeapWrite(member, named);
+    }
+
     // ---- Assignments ----
 
     /// The current value of an assignment's target (the read half of `x += v`; M1: a property's get patterns).
@@ -458,18 +531,15 @@ internal sealed class MethodAnalyzer
         _ => Value(target, state),
     };
 
-    /// A field of the analysed object or a static field: tracked by its symbol.
-    private static bool IsOwnField(IFieldReferenceOperation field) => field.Instance is null or IInstanceReferenceOperation;
-
     private void Assign(IOperation target, TaintValue value, TaintState state, IOperation assignment)
     {
         switch (target)
         {
             case ILocalReferenceOperation local:
-                state.Set(local.Local, Named(value, assignment, local.Local.Name));
+                SetLocal(local.Local, Named(value, assignment, local.Local.Name), state);
                 break;
             case IParameterReferenceOperation parameter:
-                state.Set(parameter.Parameter, Named(value, assignment, parameter.Parameter.Name));
+                SetLocal(parameter.Parameter, Named(value, assignment, parameter.Parameter.Name), state);
                 break;
             case IFlowCaptureReferenceOperation capture:
             {
@@ -487,25 +557,12 @@ internal sealed class MethodAnalyzer
                 break;
             }
             case IFieldReferenceOperation field:
-            {
                 Value(field.Instance, state);
-                var named = Named(value, assignment, field.Field.Name);
-                // A static field or one of `this`: a strong update of its symbol (within this body; the heap across
-                // methods is Task 8). Another instance's field: a write into that instance (element-insensitive).
-                if (IsOwnField(field)) state.Set(field.Field.OriginalDefinition, named);
-                else Write(field.Instance!, named, state);
+                AssignMember(field.Field, field.Instance, value, state, assignment);
                 break;
-            }
             case IPropertyReferenceOperation property:
-            {
-                Value(property.Instance, state);
-                foreach (var a in property.Arguments) Value(a.Value, state);
-                foreach (var hit in _ctx.Sinks.Sinks(property.Property, Access.Set))
-                    if (value.TaintedFor(hit.RuleId)) _ctx.Report(hit.RuleId, assignment.Syntax, value, property.Property);
-                // An indexer write is a collection write (`dict[k] = v`).
-                if (property.Property.IsIndexer && property.Instance != null) Write(property.Instance, value, state);
+                AssignProperty(property, value, state, assignment);
                 break;
-            }
             case IArrayElementReferenceOperation element:
                 foreach (var index in element.Indices) Value(index, state);
                 Write(element.ArrayReference, value, state);
@@ -530,37 +587,33 @@ internal sealed class MethodAnalyzer
         or IFieldReferenceOperation or IFlowCaptureReferenceOperation or IPropertyReferenceOperation or IArrayElementReferenceOperation;
 
     private TaintValue Named(TaintValue value, IOperation assignment, string name) =>
-        value.Request ? value.Step(assignment.Syntax.GetLocation(), $"assigned to '{name}'") : value;
-
-    /// What holds the value of an operation in the state, when it is a variable this body tracks: a local, a parameter,
-    /// a static field or a field of `this`.
-    internal static object? Holder(IOperation operation) => operation switch
-    {
-        ILocalReferenceOperation l => l.Local,
-        IParameterReferenceOperation p => p.Parameter,
-        IFieldReferenceOperation f when IsOwnField(f) => f.Field.OriginalDefinition,
-        IConversionOperation c => Holder(c.Operand),
-        _ => null,
-    };
+        value.Any ? value.Step(assignment.Syntax.GetLocation(), $"assigned to '{name}'") : value;
 
     /// A weak write into what `operation` refers to (a collection, a builder, a tuple or object in a variable): the
-    /// variable that holds it, a flow capture and what it captured, the instance of another object's field, or the
-    /// receiver of a fluent call that returns its receiver (a propagator to both `this` and `return`:
-    /// `sb.Append(a).Append(b)`).
+    /// variable that holds it, a flow capture and what it captured, a field or auto-property (its state, its instance,
+    /// the heap), the receiver (`this`), or the receiver of a fluent call that returns its receiver (a propagator to
+    /// both `this` and `return`: `sb.Append(a).Append(b)`).
     private void Write(IOperation operation, TaintValue value, TaintState state)
     {
-        if (!value.Request) return;
+        if (!value.Any) return;
         switch (operation)
         {
             case ILocalReferenceOperation l:
                 state.Add(l.Local, value);
+                _body.Assigned(l.Local, state.Get(l.Local));
                 break;
             case IParameterReferenceOperation p:
                 state.Add(p.Parameter, value);
+                _body.Assigned(p.Parameter, state.Get(p.Parameter));
                 break;
             case IFieldReferenceOperation f:
-                if (IsOwnField(f)) state.Add(f.Field.OriginalDefinition, value);
-                else Write(f.Instance!, value, state);
+                WriteMember(f.Field, f.Instance, value, state);
+                break;
+            case IPropertyReferenceOperation p when _body.IsHeapMember(p.Property):
+                WriteMember(p.Property, p.Instance, value, state);
+                break;
+            case IInstanceReferenceOperation { ReferenceKind: InstanceReferenceKind.ContainingTypeInstance }:
+                _body.RecordThis(value);
                 break;
             case IFlowCaptureReferenceOperation c:
                 state.Add(c.Id, value);
@@ -576,9 +629,23 @@ internal sealed class MethodAnalyzer
         }
     }
 
+    private void WriteMember(ISymbol member, IOperation? instance, TaintValue value, TaintState state)
+    {
+        if (IsOwn(instance))
+        {
+            state.Add(member.OriginalDefinition, value);
+            if (instance != null) _body.RecordThis(value);
+        }
+        else
+        {
+            Write(instance!, value, state);
+        }
+        _body.HeapWrite(member, value);
+    }
+
     private bool IsFluent(IMethodSymbol method)
     {
-        if (IsInSource(method)) return false;
+        if (SymbolKeys.InSource(method)) return false;
         foreach (var p in _ctx.Propagators.Match(method, Access.Call))
             if (p.To.Contains("this") && p.To.Contains("return")) return true;
         return false;
@@ -587,69 +654,167 @@ internal sealed class MethodAnalyzer
     private static IOperation? ThisOperation(IInvocationOperation invocation) =>
         invocation.Instance ?? (invocation.TargetMethod.IsExtensionMethod && invocation.Arguments.Length > 0 ? invocation.Arguments[0].Value : null);
 
-    // ---- Members ----
+    // ---- Sinks ----
 
-    private static bool IsInSource(ISymbol member) => MemberTable<object>.Definition(member).DeclaringSyntaxReferences.Length > 0;
+    /// A value reaches a sink: its request data is a finding, each label tainted for the rule a sink of its body.
+    private void SinkReached(string rule, SyntaxNode site, TaintValue value, ISymbol member)
+    {
+        if (value.TaintedFor(rule)) _ctx.Report(rule, site, value, member);
+        foreach (var label in value.Labels)
+            if (label.TaintedFor(rule)) _body.RecordSink(label, rule, site, member);
+    }
 
-    /// TEMPORARY (Task 7): what a call or property read of a member declared in source (or a delegate invocation)
-    /// gives: the join of its receiver's and arguments' taint. The one place Task 8 replaces with summaries.
-    private TaintValue InSourceResult(IOperation site, ISymbol member, TaintValue inputs) =>
-        inputs.Request ? inputs.Step(site.Syntax.GetLocation(), $"passed to {_ctx.Name(member)}") : inputs;
+    // ---- Properties ----
 
     private TaintValue ReadProperty(IPropertyReferenceOperation operation, TaintState state)
     {
         var property = operation.Property;
-        var receiver = Value(operation.Instance, state);
-        var index = TaintValue.Clean;
-        foreach (var a in operation.Arguments) index = index.Join(Value(a.Value, state));
-
         var result = TaintValue.Clean;
         if (_ctx.Sources.SourceMember(property, Access.Get) != null)
             result = TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: {_ctx.Name(property)}");
         if (_ctx.Sources.IsBoundProperty(property))
             result = result.Join(TaintValue.Source(operation.Syntax.GetLocation(), $"request data enters here: bound property {_ctx.Name(property)}"));
 
-        if (IsInSource(property))
+        var receiver = Value(operation.Instance, state);
+        var isVirtual = Dispatch.IsVirtualAccess(property, operation.Instance);
+        if (SymbolKeys.InSource(property) && !isVirtual && _body.IsHeapMember(property))
         {
-            result = result.Join(InSourceResult(operation, property, receiver.Join(index)));
+            foreach (var a in operation.Arguments) Value(a.Value, state);
+            result = result.Join(ReadMember(operation, property, receiver, state));
+        }
+        else if (SymbolKeys.InSource(property) && property.GetMethod is { } getter)
+        {
+            var inputs = IndexInputs(operation, state, null);
+            foreach (var target in _body.Targets(getter, isVirtual, operation.Instance?.Type))
+            {
+                result = result.Join(target.Kind switch
+                {
+                    TargetKind.Body => Apply(target.Body!, operation, property, Arguments(receiver, inputs), operation.Instance, inputs, false, state),
+                    TargetKind.Auto => ReadMember(operation, target.Method.AssociatedSymbol!, receiver, state),
+                    TargetKind.External => ExternalRead((IPropertySymbol?)target.Method.AssociatedSymbol ?? property, operation, receiver, inputs),
+                    _ => Through(operation, property, receiver.Join(JoinInputs(inputs))),
+                });
+            }
         }
         else
         {
-            var propagators = _ctx.Propagators.Match(property, Access.Get);
-            if (propagators.Length > 0)
-            {
-                foreach (var p in propagators)
-                {
-                    if (!p.To.Contains("return")) continue;
-                    foreach (var f in p.From)
-                        result = result.Join(f switch { "this" => receiver, "args" => index, _ => IndexArgument(operation, f, state) });
-                }
-            }
-            else if (_ctx.UnmodelledPasses && _ctx.Sources.IsStringOrCollection(property.Type))
-            {
-                _ctx.CountUnmodelled(operation.Syntax);
-                result = result.Join(receiver.Join(index));
-            }
+            result = result.Join(ExternalRead(property, operation, receiver, IndexInputs(operation, state, null)));
         }
         return result.CleanedFor(_ctx.Sinks.Sanitizes(property, Access.Get));
     }
 
-    private TaintValue IndexArgument(IPropertyReferenceOperation operation, string ordinal, TaintState state)
+    /// A read of an external property: its `Get` propagators (from this, args or an index ordinal), else the
+    /// `unmodelled-external` default for a string-like or collection type.
+    private TaintValue ExternalRead(IPropertySymbol property, IPropertyReferenceOperation operation, TaintValue receiver, Input[] index)
     {
-        foreach (var a in operation.Arguments)
-            if (a.Parameter != null && IsOrdinal(ordinal, a.Parameter.Ordinal)) return Value(a.Value, state);
-        return TaintValue.Clean;
+        var result = TaintValue.Clean;
+        var propagators = _ctx.Propagators.Match(property, Access.Get);
+        if (propagators.Length > 0)
+        {
+            foreach (var p in propagators)
+            {
+                if (!p.To.Contains("return")) continue;
+                foreach (var f in p.From)
+                {
+                    if (f == "this") result = result.Join(receiver);
+                    else foreach (var i in index) if (f == "args" || IsOrdinal(f, i.Ordinal)) result = result.Join(i.Value);
+                }
+            }
+        }
+        else if (_ctx.UnmodelledPasses && _ctx.Sources.IsStringOrCollection(property.Type))
+        {
+            _ctx.CountUnmodelled(operation.Syntax);
+            result = receiver.Join(JoinInputs(index));
+        }
+        return result;
     }
+
+    /// The index arguments of a property access as inputs (by the property parameter's ordinal), plus the assigned
+    /// value as the setter's last parameter when `value` is given.
+    private Input[] IndexInputs(IPropertyReferenceOperation operation, TaintState state, (TaintValue Value, IOperation Site)? assigned)
+    {
+        var count = operation.Arguments.Length + (assigned == null ? 0 : 1);
+        if (count == 0) return Array.Empty<Input>();
+        var inputs = new Input[count];
+        var n = 0;
+        foreach (var a in operation.Arguments)
+            inputs[n++] = new Input(a.Parameter?.Ordinal ?? -2, a.Parameter, a.Value, a.Syntax, Value(a.Value, state), RefKind.None);
+        if (assigned is { } v) inputs[n] = new Input(operation.Property.Parameters.Length, null, v.Site, v.Site.Syntax, v.Value, RefKind.None);
+        return inputs;
+    }
+
+    private void AssignProperty(IPropertyReferenceOperation operation, TaintValue value, TaintState state, IOperation assignment)
+    {
+        var property = operation.Property;
+        var receiver = Value(operation.Instance, state);
+        var inputs = IndexInputs(operation, state, (value, assignment));
+        foreach (var hit in _ctx.Sinks.Sinks(property, Access.Set)) SinkReached(hit.RuleId, assignment.Syntax, value, property);
+
+        if (SymbolKeys.InSource(property))
+        {
+            var isVirtual = Dispatch.IsVirtualAccess(property, operation.Instance);
+            if (property.SetMethod is not { } setter || (!isVirtual && _body.IsHeapMember(property)))
+            {
+                // A get-only auto-property assigned in a constructor has no setter: its hidden field is written.
+                if (_body.IsHeapMember(property)) AssignMember(property, operation.Instance, value, state, assignment);
+                else if (operation.Instance != null) Write(operation.Instance, value, state);
+                return;
+            }
+            foreach (var target in _body.Targets(setter, isVirtual, operation.Instance?.Type))
+            {
+                switch (target.Kind)
+                {
+                    case TargetKind.Body:
+                        Apply(target.Body!, assignment, property, Arguments(receiver, inputs), operation.Instance, inputs, false, state);
+                        break;
+                    case TargetKind.Auto:
+                        AssignMember(target.Method.AssociatedSymbol!, operation.Instance, value, state, assignment);
+                        break;
+                    default:
+                        if (operation.Instance != null) Write(operation.Instance, value, state);
+                        break;
+                }
+            }
+        }
+        else if (property.IsIndexer && operation.Instance != null)
+        {
+            // An indexer write is a collection write (`dict[k] = v`).
+            Write(operation.Instance, value, state);
+        }
+    }
+
+    // ---- Calls ----
 
     /// One argument of a call, by the ordinal of its parameter in the member's definition (an extension method's `this`
     /// is 0, also when the call names the reduced form); Site is the syntax a sink finding is reported at.
     private readonly record struct Input(int Ordinal, IParameterSymbol? Parameter, IOperation Operation, SyntaxNode Site, TaintValue Value, RefKind RefKind);
 
-    private TaintValue Call(IOperation operation, IMethodSymbol? method, IOperation? instance, ImmutableArray<IArgumentOperation> arguments, TaintState state)
+    private static TaintValue JoinInputs(Input[] inputs)
     {
-        var definition = method == null ? null : (IMethodSymbol)MemberTable<object>.Definition(method);
+        var value = TaintValue.Clean;
+        foreach (var i in inputs) if (i.RefKind != RefKind.Out) value = value.Join(i.Value);
+        return value;
+    }
+
+    /// The argument values of a callee's parameter slots (−1: the receiver; several inputs of one ordinal: a params array).
+    private static Func<int, TaintValue> Arguments(TaintValue receiver, Input[] inputs) => slot =>
+    {
+        if (slot == -1) return receiver;
+        var value = TaintValue.Clean;
+        foreach (var i in inputs) if (i.Ordinal == slot && i.RefKind != RefKind.Out) value = value.Join(i.Value);
+        return value;
+    };
+
+    /// What passes through a member that has no body to analyse: its receiver and arguments, to its result.
+    private TaintValue Through(IOperation site, ISymbol member, TaintValue inputs) =>
+        inputs.Any ? inputs.Step(site.Syntax.GetLocation(), $"passed to {_ctx.Name(member)}") : inputs;
+
+    private TaintValue Call(IOperation operation, IMethodSymbol? method, IOperation? instance, ImmutableArray<IArgumentOperation> arguments, TaintState state, bool isVirtual)
+    {
+        var definition = method == null ? null : (IMethodSymbol)SymbolKeys.Definition(method);
         var reduced = method?.ReducedFrom != null;
         var receiver = TaintValue.Clean;
+        var instanceValue = TaintValue.Clean;
         IOperation? thisOperation = null;
         var inputs = new Input[arguments.Length + (reduced && instance != null ? 1 : 0)];
         var n = 0;
@@ -658,6 +823,8 @@ internal sealed class MethodAnalyzer
             var value = Value(instance, state);
             if (reduced && definition!.Parameters.Length > 0)
                 inputs[n++] = new Input(0, definition.Parameters[0], instance, instance.Syntax, value, RefKind.None);
+            else
+                instanceValue = value;
             receiver = value;
             thisOperation = instance;
         }
@@ -665,14 +832,14 @@ internal sealed class MethodAnalyzer
         {
             var refKind = a.Parameter?.RefKind ?? RefKind.None;
             var value = refKind == RefKind.Out ? TaintValue.Clean : Value(a.Value, state);
-            var ordinal = (a.Parameter?.Ordinal ?? -1) + (reduced ? 1 : 0);
+            var ordinal = (a.Parameter?.Ordinal ?? -2) + (reduced ? 1 : 0);
             var parameter = definition != null && ordinal >= 0 && ordinal < definition.Parameters.Length ? definition.Parameters[ordinal] : null;
             inputs[n++] = new Input(ordinal, parameter, a.Value, a.IsImplicit ? a.Value.Syntax : a.Syntax, value, refKind);
         }
         if (n < inputs.Length) Array.Resize(ref inputs, n);
+        HigherOrder(inputs, instanceValue, state);
 
-        var all = TaintValue.Clean;
-        foreach (var i in inputs) if (i.RefKind != RefKind.Out) all = all.Join(i.Value);
+        var all = JoinInputs(inputs);
         if (method == null || definition == null) return all;
         if (instance != null && !reduced) all = all.Join(receiver);
         if (instance == null && method.IsExtensionMethod && inputs.Length > 0)
@@ -684,8 +851,8 @@ internal sealed class MethodAnalyzer
         // Sinks.
         foreach (var hit in _ctx.Sinks.Sinks(method, Access.Call))
             foreach (var i in inputs)
-                if (i.Parameter != null && i.Value.TaintedFor(hit.RuleId) && SinkFinder.IsSinkArgument(hit.Sink, i.Parameter))
-                    _ctx.Report(hit.RuleId, i.Site, i.Value, method);
+                if (i.Parameter != null && i.Value.Any && SinkFinder.IsSinkArgument(hit.Sink, i.Parameter))
+                    SinkReached(hit.RuleId, i.Site, i.Value, method);
 
         var result = TaintValue.Clean;
         if (_ctx.Sources.SourceMember(method, Access.Call) != null)
@@ -694,41 +861,172 @@ internal sealed class MethodAnalyzer
         // Out arguments are overwritten by the call.
         foreach (var i in inputs) if (i.RefKind == RefKind.Out) Assign(i.Operation, TaintValue.Clean, state, i.Operation);
 
-        if (IsInSource(method) || method.MethodKind == MethodKind.DelegateInvoke)
+        if (method.MethodKind == MethodKind.DelegateInvoke)
         {
-            var through = InSourceResult(operation, method, all);
+            // The delegate's value (what its lambdas return) and the arguments reach the result.
+            var through = Through(operation, method, all);
             result = result.Join(through);
             foreach (var i in inputs)
                 if (i.RefKind is RefKind.Out or RefKind.Ref) Assign(i.Operation, through, state, i.Operation);
         }
         else
         {
-            var propagators = _ctx.Propagators.Match(method, Access.Call);
-            if (propagators.Length > 0)
+            var constructor = method.MethodKind == MethodKind.Constructor;
+            foreach (var target in _body.Targets(method, isVirtual, instance?.Type))
             {
-                foreach (var p in propagators) result = Propagate(p, operation, method, inputs, receiver, thisOperation, reduced && instance != null, result, state);
-            }
-            else
-            {
-                var resultType = method.MethodKind == MethodKind.Constructor ? method.ContainingType : method.ReturnType;
-                if (_ctx.UnmodelledPasses && resultType != null && _ctx.Sources.IsStringOrCollection(resultType))
+                switch (target.Kind)
                 {
-                    _ctx.CountUnmodelled(operation.Syntax);
-                    result = result.Join(all);
+                    case TargetKind.Body:
+                        result = result.Join(Apply(target.Body!, operation, method, Arguments(instanceValue, inputs), reduced ? null : instance, inputs, constructor, state));
+                        break;
+                    case TargetKind.External:
+                        result = External(target.Method, operation, inputs, receiver, thisOperation, reduced && instance != null, all, result, state);
+                        break;
+                    default:
+                    {
+                        var through = Through(operation, method, all);
+                        result = result.Join(through);
+                        foreach (var i in inputs)
+                            if (i.RefKind is RefKind.Out or RefKind.Ref) Assign(i.Operation, through, state, i.Operation);
+                        break;
+                    }
                 }
-            }
-
-            // Collection and interpolated-string-handler writes taint their receiver.
-            if (thisOperation != null && all.Request && IsCollectionWrite(method))
-            {
-                var written = TaintValue.Clean;
-                foreach (var i in inputs)
-                    if (i.RefKind != RefKind.Out && !ReferenceEquals(i.Operation, thisOperation)) written = written.Join(i.Value);
-                Write(thisOperation, written, state);
             }
         }
 
         return result.CleanedFor(_ctx.Sinks.Sanitizes(method, Access.Call));
+    }
+
+    /// Applies a callee's summary at a call or accessor site. Its global effects (sinks, heap writes, its own calls)
+    /// are not copied: each argument is passed to the callee's parameter (request data as a seed of that parameter,
+    /// SummaryComputer.Seed; a label as a call edge of the label's body). Its local effects are substituted: the result
+    /// (the callee's return value, a constructor's object), what it writes into its receiver, its ref and out
+    /// parameters.
+    private TaintValue Apply(Body callee, IOperation site, ISymbol member, Func<int, TaintValue> argument, IOperation? receiverOperation,
+        Input[] inputs, bool constructor, TaintState state)
+    {
+        _body.Depend(callee);
+        Location? location = null;
+        var name = _ctx.Name(callee.Symbol ?? member);
+        if (callee.Symbol is { } symbol)
+        {
+            for (var slot = symbol.IsStatic || constructor ? 0 : -1; slot < symbol.Parameters.Length; slot++)
+            {
+                if (slot >= 0 && symbol.Parameters[slot].RefKind == RefKind.Out) continue;
+                var v = argument(slot);
+                if (!v.Any) continue;
+                location ??= site.Syntax.GetLocation();
+                _body.Pass(callee, slot, v.Step(location, $"passed to {name}"));
+            }
+        }
+        var s = callee.Summary;
+        if (s.NoLocalEffects) return TaintValue.Clean;
+        location ??= site.Syntax.GetLocation();
+        var result = BodySummary.Substitute(s.Return, callee.Id, argument, location, name, _body.Keeps);
+        if (s.ToThis.Any)
+        {
+            var written = BodySummary.Substitute(s.ToThis, callee.Id, argument, location, name, _body.Keeps);
+            if (constructor) result = result.Join(written);
+            else if (receiverOperation != null) Write(receiverOperation, written, state);
+        }
+        foreach (var (ordinal, symbolic) in s.Refs)
+        {
+            var v = BodySummary.Substitute(symbolic, callee.Id, argument, location, name, _body.Keeps);
+            foreach (var i in inputs)
+                if (i.Ordinal == ordinal && i.RefKind is RefKind.Ref or RefKind.Out) Assign(i.Operation, v, state, i.Operation);
+        }
+        return result;
+    }
+
+    /// Lambdas and method groups given to a call get the join of the call's receiver and other arguments in their
+    /// parameters (open item (b) of Task 7, for external and source callees alike): a lambda through its seed, a method
+    /// group by applying its targets' summaries to it (that result is then the argument's value).
+    private void HigherOrder(Input[] inputs, TaintValue receiver, TaintState state)
+    {
+        var any = false;
+        foreach (var i in inputs) if (DelegateOf(i.Operation) != null) any = true;
+        if (!any) return;
+        var others = receiver;
+        foreach (var i in inputs)
+            if (i.RefKind != RefKind.Out && DelegateOf(i.Operation) == null) others = others.Join(i.Value);
+        for (var k = 0; k < inputs.Length; k++)
+        {
+            switch (DelegateOf(inputs[k].Operation))
+            {
+                case IFlowAnonymousFunctionOperation lambda:
+                    _body.Seed(lambda.Symbol, others);
+                    break;
+                case IMethodReferenceOperation reference when others.Any:
+                {
+                    var instance = Value(reference.Instance, state);
+                    var value = TaintValue.Clean;
+                    foreach (var target in _body.Targets(reference.Method, reference.IsVirtual, reference.Instance?.Type))
+                    {
+                        value = value.Join(target.Kind == TargetKind.Body
+                            ? Apply(target.Body!, inputs[k].Operation, reference.Method, slot => slot == -1 ? instance : others, reference.Instance, Array.Empty<Input>(), false, state)
+                            : _ctx.Sources.IsScalar(reference.Method.ReturnType) ? TaintValue.Clean : others);
+                    }
+                    inputs[k] = inputs[k] with { Value = inputs[k].Value.Join(value) };
+                    break;
+                }
+            }
+        }
+    }
+
+    /// The lambda or method group an argument is (through conversions, delegate creations and a single capture).
+    private IOperation? DelegateOf(IOperation operation)
+    {
+        for (var depth = 0; depth < 8; depth++)
+        {
+            switch (operation)
+            {
+                case IConversionOperation c:
+                    operation = c.Operand;
+                    continue;
+                case IDelegateCreationOperation d:
+                    operation = d.Target;
+                    continue;
+                case IFlowCaptureReferenceOperation r when _captured.TryGetValue(r.Id, out var list) && list.Count == 1:
+                    operation = list[0];
+                    continue;
+                case IFlowAnonymousFunctionOperation or IMethodReferenceOperation:
+                    return operation;
+                default:
+                    return null;
+            }
+        }
+        return null;
+    }
+
+    /// An external call (review note M2: propagators only here): its propagators, else the `unmodelled-external`
+    /// default; a collection or interpolated-string-handler write taints the receiver.
+    private TaintValue External(IMethodSymbol method, IOperation operation, Input[] inputs, TaintValue receiver, IOperation? thisOperation,
+        bool reducedThis, TaintValue all, TaintValue result, TaintState state)
+    {
+        var propagators = _ctx.Propagators.Match(method, Access.Call);
+        if (propagators.Length > 0)
+        {
+            foreach (var p in propagators) result = Propagate(p, operation, method, inputs, receiver, thisOperation, reducedThis, result, state);
+        }
+        else
+        {
+            var resultType = method.MethodKind == MethodKind.Constructor ? method.ContainingType : method.ReturnType;
+            if (_ctx.UnmodelledPasses && resultType != null && _ctx.Sources.IsStringOrCollection(resultType))
+            {
+                _ctx.CountUnmodelled(operation.Syntax);
+                result = result.Join(all);
+            }
+        }
+
+        // Collection and interpolated-string-handler writes taint their receiver.
+        if (thisOperation != null && all.Any && IsCollectionWrite(method))
+        {
+            var written = TaintValue.Clean;
+            foreach (var i in inputs)
+                if (i.RefKind != RefKind.Out && !ReferenceEquals(i.Operation, thisOperation)) written = written.Join(i.Value);
+            Write(thisOperation, written, state);
+        }
+        return result;
     }
 
     /// One propagator of an external call: the join of its `from` positions reaches its `to` positions.
@@ -750,7 +1048,7 @@ internal sealed class MethodAnalyzer
                     from = from.Join(i.Value);
             }
         }
-        if (!from.Request) return result;
+        if (!from.Any) return result;
         from = from.Step(operation.Syntax.GetLocation(), $"passed through {_ctx.Name(method)}");
         foreach (var t in p.To)
         {

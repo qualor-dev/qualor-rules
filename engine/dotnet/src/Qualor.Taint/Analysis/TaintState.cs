@@ -4,63 +4,292 @@ using Microsoft.CodeAnalysis;
 
 namespace Qualor.Taint;
 
+/// A path as an immutable rope of steps (Task 8): adding a step and appending another trail (a callee's steps after a
+/// call) are O(1) and share structure, so the paths of summaries applied along deep call chains cost a node each; a
+/// trail is flattened only when a finding is reported (at most MaxReported steps: the first and last ones).
+internal sealed class Trail
+{
+    /// A trail stops growing at this many steps (a soft cap against pathological recursion).
+    public const int MaxSteps = 4096;
+
+    /// The most steps a reported path shows; the middle of a longer one is replaced by one "steps omitted" step.
+    public const int MaxReported = 64;
+
+    public static readonly Trail Empty = new(null, null, null, 0, null);
+
+    private readonly Trail? _left;
+    private readonly Trail? _right;
+    private readonly PathStep? _step;
+
+    private Trail(Trail? left, Trail? right, PathStep? step, int count, PathStep? last)
+    {
+        _left = left;
+        _right = right;
+        _step = step;
+        Count = count;
+        Last = last;
+    }
+
+    public int Count { get; }
+
+    public PathStep? Last { get; }
+
+    public static Trail Of(PathStep step) => new(null, null, step, 1, step);
+
+    public Trail Add(PathStep step) => Count == 0 ? Of(step) : Count >= MaxSteps ? this : new Trail(this, Of(step), null, Count + 1, step);
+
+    public Trail Concat(Trail other) =>
+        other.Count == 0 ? this : Count == 0 ? other : Count + other.Count > MaxSteps ? this : new Trail(this, other, null, Count + other.Count, other.Last);
+
+    /// The steps in order (a longer trail: its first and last MaxReported / 2 steps around one omission step).
+    public ImmutableList<PathStep> ToList()
+    {
+        var all = new List<PathStep>(Count);
+        var stack = new Stack<Trail>();
+        stack.Push(this);
+        while (stack.Count > 0)
+        {
+            var t = stack.Pop();
+            if (t._step != null) all.Add(t._step);
+            if (t._right != null) stack.Push(t._right);
+            if (t._left != null) stack.Push(t._left);
+        }
+        if (all.Count <= MaxReported) return all.ToImmutableList();
+        var half = MaxReported / 2;
+        var omitted = all.Count - 2 * half;
+        return all.Take(half)
+            .Append(new PathStep(all[half].Location, $"... {omitted} steps omitted ..."))
+            .Concat(all.Skip(all.Count - half + 1))
+            .ToImmutableList();
+    }
+}
+
+/// A parameter label (Task 8, spec §5 "summaries"): the value derives from parameter Slot of the body Owner (−1 is
+/// `this`), cleaned on its way for CleanFor; Path is the steps inside that body since its entry. A body's summary is its
+/// return value, sinks and heap writes expressed in its own labels; a call site substitutes its arguments for them.
+internal sealed class Label
+{
+    public Label(int owner, int slot, ImmutableHashSet<string> cleanFor, Trail path)
+    {
+        Owner = owner;
+        Slot = slot;
+        CleanFor = cleanFor;
+        Path = path;
+    }
+
+    public int Owner { get; }
+
+    public int Slot { get; }
+
+    public ImmutableHashSet<string> CleanFor { get; }
+
+    public Trail Path { get; }
+
+    public bool TaintedFor(string rule) => !CleanFor.Contains(rule);
+
+    public int CompareKey(Label other) => Owner != other.Owner ? Owner.CompareTo(other.Owner) : Slot.CompareTo(other.Slot);
+}
+
 /// The abstract value of an expression or a variable (spec §5): whether it carries request data (Request) and, if so,
 /// the rules it has been cleaned for by a sanitizer (CleanFor: the value is dirty for every other rule). Path is one
-/// witness from a source to here; Sources the source locations whose data it carries (at most MaxSources).
+/// witness from a source to here; Sources the source locations whose data it carries (at most MaxSources). Labels
+/// (Task 8): the parameters of the analysed body (and of the bodies it is nested in) the value derives from, sorted by
+/// owner and slot, one per parameter.
 ///
-/// The lattice: a clean value (Request false) is the bottom; a request value is above it, and the smaller its CleanFor,
-/// the higher. Join is the union of the request flags and the intersection of CleanFor (over the request values only:
-/// a clean operand does not make a cleaned one dirty); Sources are united. Path does not take part in the order (it is
-/// a witness, the shorter one is kept), so the fixed point ends when Request, CleanFor and Sources stop changing.
-internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFor, ImmutableList<PathStep> Path)
+/// The lattice: a clean value (Request false, no labels) is the bottom; a request value is above it, and the smaller
+/// its CleanFor, the higher; labels form a set lattice of their own (per label, the smaller its CleanFor, the higher).
+/// Join is the union of the request flags and the intersection of CleanFor (over the request values only: a clean
+/// operand does not make a cleaned one dirty); Sources are united; labels are united, CleanFor intersected per label.
+/// Paths do not take part in the order (they are witnesses, the shorter one is kept), so the fixed point ends when
+/// Request, CleanFor, Sources and labels stop changing.
+internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFor, Trail Path)
 {
     public const int MaxSources = 16;
 
-    public static readonly TaintValue Clean = new(false, ImmutableHashSet<string>.Empty, ImmutableList<PathStep>.Empty);
+    public static readonly TaintValue Clean = new(false, ImmutableHashSet<string>.Empty, Trail.Empty);
 
     public ImmutableHashSet<Location> Sources { get; init; } = ImmutableHashSet<Location>.Empty;
 
+    public ImmutableArray<Label> Labels { get; init; } = ImmutableArray<Label>.Empty;
+
+    /// Request data or a parameter label: anything a later step must carry.
+    public bool Any => Request || Labels.Length > 0;
+
     /// Request data that enters at `location` (a source).
     public static TaintValue Source(Location location, string message) =>
-        new(true, ImmutableHashSet<string>.Empty, ImmutableList.Create(new PathStep(location, message)))
+        new(true, ImmutableHashSet<string>.Empty, Trail.Of(new PathStep(location, message)))
         {
             Sources = ImmutableHashSet.Create(location),
         };
+
+    /// The label of parameter `slot` (−1: `this`) of body `owner`.
+    public static TaintValue Param(int owner, int slot) =>
+        Clean with { Labels = ImmutableArray.Create(new Label(owner, slot, ImmutableHashSet<string>.Empty, Trail.Empty)) };
+
+    /// The request data of this value, without its labels.
+    public TaintValue RequestPart => Labels.Length == 0 ? this : Request ? this with { Labels = ImmutableArray<Label>.Empty } : Clean;
+
+    /// The labels of this value, without its request data.
+    public TaintValue LabelPart => !Request ? this : Labels.Length == 0 ? Clean : Clean with { Labels = Labels };
 
     public bool TaintedFor(string rule) => Request && !CleanFor.Contains(rule);
 
     public TaintValue Join(TaintValue other)
     {
-        if (!other.Request || ReferenceEquals(this, other)) return this;
-        if (!Request) return other;
-        var cleanFor = CleanFor.Count == 0 || other.CleanFor.Count == 0 ? ImmutableHashSet<string>.Empty : CleanFor.Intersect(other.CleanFor);
-        var sources = Sources;
-        foreach (var s in other.Sources)
+        if (ReferenceEquals(this, other) || !other.Any) return this;
+        if (!Any) return other;
+        bool request;
+        ImmutableHashSet<string> cleanFor;
+        ImmutableHashSet<Location> sources;
+        Trail path;
+        var requestChanged = false;
+        if (Request && other.Request)
         {
-            if (sources.Count >= MaxSources) break;
-            sources = sources.Add(s);
+            request = true;
+            cleanFor = CleanFor.Count == 0 || other.CleanFor.Count == 0 ? ImmutableHashSet<string>.Empty : CleanFor.Intersect(other.CleanFor);
+            sources = Sources;
+            foreach (var s in other.Sources)
+            {
+                if (sources.Count >= MaxSources) break;
+                sources = sources.Add(s);
+            }
+            path = other.Path.Count < Path.Count ? other.Path : Path;
+            requestChanged = cleanFor.Count != CleanFor.Count || !ReferenceEquals(sources, Sources) || !ReferenceEquals(path, Path);
+            if (cleanFor.Count == CleanFor.Count) cleanFor = CleanFor;
         }
-        var path = other.Path.Count < Path.Count ? other.Path : Path;
-        if (cleanFor.Count == CleanFor.Count && ReferenceEquals(sources, Sources) && ReferenceEquals(path, Path)) return this;
-        return new TaintValue(true, cleanFor, path) { Sources = sources };
+        else if (other.Request)
+        {
+            request = true;
+            cleanFor = other.CleanFor;
+            sources = other.Sources;
+            path = other.Path;
+            requestChanged = true;
+        }
+        else
+        {
+            request = Request;
+            cleanFor = CleanFor;
+            sources = Sources;
+            path = Path;
+        }
+        var labels = MergeLabels(Labels, other.Labels, out var labelsChanged);
+        if (!requestChanged && !labelsChanged) return this;
+        return new TaintValue(request, cleanFor, path) { Sources = sources, Labels = labels };
     }
 
-    /// Equal in the lattice (Path aside).
+    /// The union of two sorted label arrays (one label per owner and slot: CleanFor intersected, the shorter path);
+    /// `a` itself when nothing changes.
+    private static ImmutableArray<Label> MergeLabels(ImmutableArray<Label> a, ImmutableArray<Label> b, out bool changed)
+    {
+        changed = false;
+        if (b.Length == 0) return a;
+        if (a.Length == 0)
+        {
+            changed = true;
+            return b;
+        }
+        var result = new List<Label>(a.Length + b.Length);
+        int i = 0, j = 0;
+        while (i < a.Length || j < b.Length)
+        {
+            var c = i >= a.Length ? 1 : j >= b.Length ? -1 : a[i].CompareKey(b[j]);
+            if (c < 0)
+            {
+                result.Add(a[i++]);
+            }
+            else if (c > 0)
+            {
+                result.Add(b[j++]);
+                changed = true;
+            }
+            else
+            {
+                var x = a[i++];
+                var y = b[j++];
+                var cf = x.CleanFor.Count == 0 || y.CleanFor.Count == 0 ? ImmutableHashSet<string>.Empty : x.CleanFor.Intersect(y.CleanFor);
+                var p = y.Path.Count < x.Path.Count ? y.Path : x.Path;
+                if (cf.Count != x.CleanFor.Count || !ReferenceEquals(p, x.Path))
+                {
+                    result.Add(new Label(x.Owner, x.Slot, cf.Count == x.CleanFor.Count ? x.CleanFor : cf, p));
+                    changed = true;
+                }
+                else
+                {
+                    result.Add(x);
+                }
+            }
+        }
+        return changed ? result.ToImmutableArray() : a;
+    }
+
+    /// Equal in the lattice (paths aside).
     public bool SameTaint(TaintValue other) =>
         ReferenceEquals(this, other)
-        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Sources.SetEquals(other.Sources))));
+        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Sources.SetEquals(other.Sources)))
+            && SameLabels(other));
 
-    /// The value cleaned for these rules (a sanitizer's result).
-    public TaintValue CleanedFor(IReadOnlyCollection<string> rules) =>
-        !Request || rules.Count == 0 || rules.All(CleanFor.Contains) ? this : this with { CleanFor = CleanFor.Union(rules) };
+    /// Equal in the lattice, paths and source locations aside: what decides whether a summary or the heap changed.
+    public bool SameFlow(TaintValue other) =>
+        ReferenceEquals(this, other)
+        || (Request == other.Request && (!Request || CleanFor.SetEquals(other.CleanFor)) && SameLabels(other));
 
-    /// The value with one more path step (a request value only; a step at the last step's location is not repeated).
+    private bool SameLabels(TaintValue other)
+    {
+        if (Labels.Length != other.Labels.Length) return false;
+        for (var k = 0; k < Labels.Length; k++)
+        {
+            var x = Labels[k];
+            var y = other.Labels[k];
+            if (x.Owner != y.Owner || x.Slot != y.Slot || !x.CleanFor.SetEquals(y.CleanFor)) return false;
+        }
+        return true;
+    }
+
+    /// The value cleaned for these rules (a sanitizer's result): its request data and each label.
+    public TaintValue CleanedFor(IReadOnlyCollection<string> rules)
+    {
+        if (!Any || rules.Count == 0) return this;
+        var value = this;
+        if (Request && !rules.All(CleanFor.Contains)) value = value with { CleanFor = CleanFor.Union(rules) };
+        if (Labels.Length > 0 && Labels.Any(l => !rules.All(l.CleanFor.Contains)))
+        {
+            value = value with
+            {
+                Labels = Labels.Select(l => rules.All(l.CleanFor.Contains) ? l : new Label(l.Owner, l.Slot, l.CleanFor.Union(rules), l.Path)).ToImmutableArray(),
+            };
+        }
+        return value;
+    }
+
+    /// The value with one more path step (on the request path and on each label's; a step at the last step's location
+    /// is not repeated).
     public TaintValue Step(Location location, string message)
     {
-        if (!Request || (Path.Count > 0 && Path[^1].Location.Equals(location))) return this;
-        return this with { Path = Path.Add(new PathStep(location, message)) };
+        if (!Any) return this;
+        PathStep? step = null;
+        var value = this;
+        if (Request && Fits(Path, location)) value = value with { Path = Path.Add(step = new PathStep(location, message)) };
+        if (Labels.Length > 0 && Labels.Any(l => Fits(l.Path, location)))
+        {
+            var s = step ?? new PathStep(location, message);
+            value = value with { Labels = Labels.Select(l => Fits(l.Path, location) ? new Label(l.Owner, l.Slot, l.CleanFor, l.Path.Add(s)) : l).ToImmutableArray() };
+        }
+        return value;
+    }
+
+    private static bool Fits(Trail path, Location location) => path.Last == null || !path.Last.Location.Equals(location);
+
+    /// The value with these steps appended to its request path and to each label's (a callee's steps, after a call).
+    public TaintValue Extend(Trail steps)
+    {
+        if (!Any || steps.Count == 0) return this;
+        var value = this;
+        if (Request) value = value with { Path = Path.Concat(steps) };
+        if (Labels.Length > 0) value = value with { Labels = Labels.Select(l => new Label(l.Owner, l.Slot, l.CleanFor, l.Path.Concat(steps))).ToImmutableArray() };
+        return value;
     }
 }
+
 
 /// The abstract state at a program point: a map from what holds a value (a local, a parameter, a field by symbol, a
 /// flow capture of the control-flow graph by its CaptureId) to its TaintValue; an absent key is clean.
@@ -85,7 +314,7 @@ internal sealed class TaintState
     public void Set(object key, TaintValue value)
     {
         var hash = TaintMap.Hash(key);
-        if (!value.Request)
+        if (!value.Any)
         {
             _root = TaintMap.Remove(_root, key, hash, 0);
             return;
@@ -98,7 +327,7 @@ internal sealed class TaintState
     /// A weak update (a write into a collection or a builder the key holds): the old value joined with the new.
     public void Add(object key, TaintValue value)
     {
-        if (!value.Request) return;
+        if (!value.Any) return;
         var hash = TaintMap.Hash(key);
         var old = TaintMap.Get(_root, key, hash, 0);
         if (old == null)
@@ -122,7 +351,7 @@ internal sealed class TaintState
 }
 
 /// The persistent hash array mapped trie of TaintState. A slot is an Entry, a Collision (the entries of one full hash)
-/// or a Node (a branch on 5 bits of the hash per level, compressed by a bitmap). Only request values are stored.
+/// or a Node (a branch on 5 bits of the hash per level, compressed by a bitmap). Only tainted values (request data or labels) are stored.
 internal static class TaintMap
 {
     private const int Bits = 5;
