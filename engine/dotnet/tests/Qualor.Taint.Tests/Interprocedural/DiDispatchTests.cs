@@ -24,6 +24,7 @@ public sealed class DiDispatchTests : TempDirs
         code.AppendLine("using Microsoft.Extensions.DependencyInjection.Extensions;");
         if (extra.Contains("namespace Scrutor", StringComparison.Ordinal)) code.AppendLine("using Scrutor;");
         if (extra.Contains("namespace Autofac", StringComparison.Ordinal)) code.AppendLine("using Autofac;");
+        if (extra.Contains("namespace Library", StringComparison.Ordinal)) code.AppendLine("using Library;");
         code.AppendLine("public interface IExporter { void Export(string filter); }");
         for (var i = 0; i < 10; i++)
         {
@@ -171,6 +172,10 @@ public sealed class DiDispatchTests : TempDirs
                         foreach (var t in assembly.GetTypes())
                             if (t.Name.StartsWith("Exporter")) services.AddScoped(typeof(IExporter), t);
             """, "" },
+        new object[] { "library scan of typeof(X).Assembly", "services.AddMessaging(o => o.RegisterHandlersFromAssembly(typeof(ExportController).Assembly));", LibraryShim },
+        new object[] { "library scan of a literal Assembly.Load", "services.AddMessaging(o => o.RegisterHandlersFromAssembly(System.Reflection.Assembly.Load(\"Snippet\")));", LibraryShim },
+        new object[] { "library *Containing<T> scan", "services.AddCheckersFromAssemblyContaining<ExportController>();", LibraryShim },
+        new object[] { "library marker types", "services.AddProfiles(typeof(ExportController));", LibraryShim },
         new object[] { "split over two bodies", "foreach (var t in Finder.Exporters()) services.AddScoped(typeof(IExporter), t);", """
             public static class Finder
             {
@@ -178,6 +183,32 @@ public sealed class DiDispatchTests : TempDirs
             }
             """ },
     };
+
+    /// Library extension methods that scan assemblies (shapes of MediatR, FluentValidation, AutoMapper), ruling R-E27.
+    private const string LibraryShim = """
+        namespace Library
+        {
+            public class MessagingOptions
+            {
+                public MessagingOptions RegisterHandlersFromAssembly(System.Reflection.Assembly assembly) => this;
+                public MessagingOptions RegisterHandlersFromAssemblies(params System.Reflection.Assembly[] assemblies) => this;
+            }
+            public static class LibraryExtensions
+            {
+                public static IServiceCollection AddMessaging(this IServiceCollection services, Action<MessagingOptions> configure) => services;
+                public static IServiceCollection AddCheckersFromAssemblyContaining<T>(this IServiceCollection services) => services;
+                public static IServiceCollection AddProfiles(this IServiceCollection services, params Type[] profileAssemblyMarkerTypes) => services;
+            }
+        }
+        """;
+
+    /// R-E27: a library scan of an unknown assembly list (all loaded assemblies) opens no project; the exporters stay
+    /// narrowed.
+    [Fact]
+    public void A_library_scan_of_unknown_assemblies_keeps_the_narrowing() => Expect(Exporters(i => i == 3, """
+                services.AddScoped<IExporter, Exporter3>();
+                services.AddMessaging(o => o.RegisterHandlersFromAssemblies(AppDomain.CurrentDomain.GetAssemblies()));
+        """, LibraryShim));
 
     private const string MarkerAttribute = "[AttributeUsage(AttributeTargets.Class)] public sealed class AutoRegisterAttribute : Attribute { }";
 
@@ -827,6 +858,7 @@ public sealed class DiDispatchTests : TempDirs
     private const string Web = """
         using Contracts;
         using Scrutor;
+        using Library;
         namespace Web;
         public static class Registration
         {
@@ -860,6 +892,7 @@ public sealed class DiDispatchTests : TempDirs
             """ },
         new object[] { "services.Scan(s => s.FromAssemblyOf<Plugins.PluginHandler>().AddClasses().AsImplementedInterfaces());" },
         new object[] { "foreach (var t in Finder.Handlers()) services.AddScoped(typeof(IHandler), t);" },
+        new object[] { "services.AddMessaging(o => o.RegisterHandlersFromAssembly(typeof(Plugins.PluginHandler).Assembly));" },
         new object[] { """
             var plugins = typeof(Plugins.PluginHandler).Assembly;
                     foreach (var type in plugins.GetTypes()) services.AddScoped(typeof(IHandler), type);
@@ -891,7 +924,7 @@ public sealed class DiDispatchTests : TempDirs
         var inputs = new[]
         {
             Project("Web", Web.Replace("SCAN", scan, StringComparison.Ordinal), "Contracts", "Core", "Plugins", "Shims"),
-            Project("Shims", ScrutorShim),
+            Project("Shims", ScrutorShim + "\n" + LibraryShim),
             Project("Core", Core, "Contracts"),
             Project("Plugins", Plugins, "Contracts"),
             Project("Contracts", Contracts),

@@ -28,10 +28,11 @@ namespace Qualor.Taint;
 ///   test; the type the objects are cast to). The enumerating body and the registering one may differ (a type-finder
 ///   helper and its caller) when the enumerated assembly is named (`typeof(T).Assembly`, the executing assembly); a body
 ///   that enumerates unknown assemblies (`AppDomain.GetAssemblies()`, a variable) and registers by a run-time type itself
-///   opens every project. Every project no project with a registration is or references is open too (its registration
-///   code is not in source: a library whose host is elsewhere, a solution without DI). Library assembly scans (MediatR,
-///   FluentValidation, AutoMapper, MassTransit) are not recognised (Task 26 fix round 1: on the measured projects their
-///   assemblies are unknown and would open every project).
+///   opens every project. A library's assembly scan (MediatR `RegisterServicesFromAssembly*`, FluentValidation
+///   `AddValidatorsFromAssembly*`, AutoMapper `AddAutoMapper(assemblies or types)`, MassTransit `AddConsumers`,
+///   FluentMigrator `ScanIn`) opens a project only when its assembly is named (ruling R-E27); an unknown assembly list
+///   is ignored. Every project no project with a registration is or references is open too (its registration code is
+///   not in source: a library whose host is elsewhere, a solution without DI).
 /// The fallback scope is the implementation's project (scans enumerate assemblies; a missing registration is a property
 /// of a project and the projects referencing it) or the open type (a reflection filter names it), never the whole
 /// solution unless the scanned assemblies are unknown: every measured large project uses reflection somewhere, so a
@@ -415,6 +416,7 @@ internal sealed partial class Dispatch
         if (name is "IsAssignableFrom" or "IsAssignableTo" or "IsSubclassOf" or "IsInstanceOfType"
             && method.ContainingType is { Name: "Type" } typeType && SymbolMatch.MetadataName(typeType) == "System.Type")
             unit.Filtered = true;
+        if (LibraryScan(invocation, unit.Own)) _hosting.Add(unit.Own);
         if (method.TypeArguments.Length == 0) return;
         if (SymbolKeys.InSource(method))
         {
@@ -455,6 +457,89 @@ internal sealed partial class Dispatch
                 foreach (var argument in library.TypeArguments) CreateDeep(argument, depth + 1);
                 break;
         }
+    }
+
+    /// A library's assembly scan (ruling R-E27): a method of an `IServiceCollection` extension, or called inside a lambda
+    /// given to one, that takes assemblies (MediatR `RegisterServicesFromAssembly`, MassTransit `AddConsumers`,
+    /// FluentMigrator `ScanIn`), marker types by a parameter named for assemblies or markers (AutoMapper
+    /// `AddAutoMapper(typeof(X))`), or a type argument with "Assembl" in its name (FluentValidation
+    /// `AddValidatorsFromAssemblyContaining<T>()`). It opens the projects of the named assemblies only (`typeof(X).Assembly`,
+    /// a `*Containing<T>` or marker type, the executing, calling or entry assembly, `Assembly.Load` of a literal name); an
+    /// unknown assembly list is ignored, as split scans over unknown assemblies are.
+    private bool LibraryScan(IInvocationOperation invocation, string own)
+    {
+        var method = invocation.TargetMethod;
+        if (RegistrationNames.Contains(method.Name) || ScanNames.Contains(method.Name)) return false;
+        var assemblyParameters = method.Parameters.Where(p => IsAssemblies(p.Type)).ToList();
+        var markerParameters = method.Parameters.Where(p => IsTypes(p.Type)
+            && (p.Name.Contains("Assembl", StringComparison.OrdinalIgnoreCase) || p.Name.Contains("Marker", StringComparison.OrdinalIgnoreCase))).ToList();
+        var markerTypeArguments = method.Name.Contains("Assembl", StringComparison.Ordinal) && method.TypeArguments.Length > 0;
+        if (assemblyParameters.Count == 0 && markerParameters.Count == 0 && !markerTypeArguments) return false;
+        if (!IsServicesExtension(method) && !InsideServicesLambda(invocation)) return false;
+        var designated = new HashSet<string>(StringComparer.Ordinal);
+        var unit = new UnitFacts(own);
+        if (markerTypeArguments)
+            foreach (var t in method.TypeArguments) Assembly(t, designated);
+        foreach (var argument in invocation.Arguments)
+        {
+            if (argument.Parameter is not { } parameter || argument.ArgumentKind == ArgumentKind.DefaultValue) continue;
+            var ordinal = parameter.Ordinal;
+            var isAssembly = assemblyParameters.Exists(p => p.Ordinal == ordinal);
+            var isMarker = markerParameters.Exists(p => p.Ordinal == ordinal);
+            if (!isAssembly && !isMarker) continue;
+            var values = Unwrap(argument.Value) is IArrayCreationOperation { Initializer: { } init } ? init.ElementValues.ToList() : new List<IOperation> { argument.Value };
+            foreach (var value in values)
+            {
+                if (isMarker)
+                {
+                    if (Unwrap(value) is ITypeOfOperation typeOf) Assembly(typeOf.TypeOperand, designated);
+                }
+                else if (AssemblyOf(value, unit) is { } name)
+                {
+                    designated.Add(name);
+                }
+            }
+        }
+        _openProjects.UnionWith(designated);
+        return true;
+    }
+
+    private static bool IsAssemblies(ITypeSymbol type) => type switch
+    {
+        IArrayTypeSymbol array => IsAssembly(array.ElementType),
+        INamedTypeSymbol { IsGenericType: true, TypeArguments: [var element] } named when named.Name == "IEnumerable" => IsAssembly(element),
+        _ => IsAssembly(type),
+    };
+
+    private static bool IsAssembly(ITypeSymbol type) => type.Name == "Assembly" && SymbolMatch.MetadataName(type) == "System.Reflection.Assembly";
+
+    private static bool IsTypes(ITypeSymbol type) => type switch
+    {
+        IArrayTypeSymbol array => IsType(array.ElementType),
+        INamedTypeSymbol { IsGenericType: true, TypeArguments: [var element] } named when named.Name == "IEnumerable" => IsType(element),
+        _ => IsType(type),
+    };
+
+    private static bool IsType(ITypeSymbol type) => type.Name == "Type" && SymbolMatch.MetadataName(type) == "System.Type";
+
+    private static bool IsServicesExtension(IMethodSymbol method)
+    {
+        var m = method.ReducedFrom ?? method;
+        return m.IsExtensionMethod && m.Parameters.Length > 0 && IsServices(m.Parameters[0].Type);
+    }
+
+    /// Whether a call sits in a lambda given to an `IServiceCollection` extension (`AddMediatR(c => c.Register…(asm))`).
+    private static bool InsideServicesLambda(IOperation operation)
+    {
+        var depth = 0;
+        for (var op = operation.Parent; op != null && depth < 40; op = op.Parent, depth++)
+        {
+            if (op is not IAnonymousFunctionOperation lambda) continue;
+            var up = lambda.Parent;
+            while (up is IDelegateCreationOperation or IConversionOperation) up = up.Parent;
+            if (up is IArgumentOperation { Parent: IInvocationOperation call } && IsServicesExtension(call.TargetMethod)) return true;
+        }
+        return false;
     }
 
     private static bool HasExplicitTypeArguments(SyntaxNode syntax) => syntax is InvocationExpressionSyntax
@@ -558,6 +643,9 @@ internal sealed partial class Dispatch
             if (inner is IInvocationOperation { TargetMethod.Name: "GetType" } or IInstanceReferenceOperation) return unit.Own;
             return null;
         }
+        if (r is IInvocationOperation { TargetMethod.Name: "Load", Arguments: [{ Value.ConstantValue: { HasValue: true, Value: string loaded } }] } load
+            && load.TargetMethod.ContainingType is { Name: "Assembly" } assemblyType && SymbolMatch.MetadataName(assemblyType) == "System.Reflection.Assembly")
+            return loaded.Split(',')[0].Trim();
         return r is IInvocationOperation { TargetMethod.Name: var name } && OwnAssemblyNames.Contains(name) ? unit.Own : null;
     }
 

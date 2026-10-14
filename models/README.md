@@ -472,11 +472,14 @@ false positives (FP) or misses (FN) there.
   - an object made by reflection and cast in another body (a helper returning `object`), or registered uncast; a type
     loaded by name and never cast;
   - a scan split over bodies when the enumerated assemblies are unknown (a module loader's assembly list);
-  - library assembly scans (MediatR `RegisterServicesFromAssembly`, FluentValidation `AddValidatorsFromAssembly*`,
-    AutoMapper `AddAutoMapper(assemblies)`, MassTransit `AddConsumers`, FluentMigrator `ScanIn`) are not recognised: on the
-    measured projects their assemblies are unknown (nopCommerce's validators and migrations, Jellyfin's plugin
-    assemblies) and every project would open (Task 26 fix round 1). Their own interfaces are external, so only a source
-    base or interface that their scanned classes share and that is also built elsewhere is affected.
+  - a library assembly scan (MediatR `RegisterServicesFromAssembly*`, FluentValidation `AddValidatorsFromAssembly*`/
+    `AddValidatorsFromAssemblyContaining<T>`, AutoMapper `AddAutoMapper(assemblies or types)`, MassTransit `AddConsumers`,
+    FluentMigrator `ScanIn`, in an `IServiceCollection` extension or a lambda given to one) opens a project only when its
+    assembly is named: `typeof(X).Assembly`, a `*Containing<T>` form or marker type, `Get{Executing,Calling,Entry}Assembly`,
+    `Assembly.Load` of a literal name (ruling R-E27). An unknown assembly list (nopCommerce's validators and migrations,
+    Jellyfin's plugin assemblies) is ignored, as split scans over unknown assemblies are. Their own interfaces are
+    external, so only a source base or interface that their scanned classes share and that is also built elsewhere is
+    affected.
 - Guards hold for locals, parameters and members read on them (since Task 21, "Guards on members"); a call given the
   guarded object (or one of a related type, or something that holds one) between the check and the sink, an await of
   earlier work, or a nested body touching the object ends the guard (FP); a member read through a project property
