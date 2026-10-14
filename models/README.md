@@ -69,8 +69,24 @@ guards:                          # optional: the checked argument is clean on th
 misuse: {}                       # kind misuse only: the misuse rule's settings (a mapping)
 ```
 
-`sanitizers` take `method:` or `property-get:`; `guards` take `method:` with `arg` and
-`clean-when`, all required.
+`sanitizers` take `method:` or `property-get:` (the member's result is clean), or one of these two kinds:
+
+```yaml
+sanitizers:
+  - string-prefix: '^https?://[^/?#\s]+[/?#]'   # a value placed into a string after text that matches is clean
+    type: Microsoft.AspNetCore.Http.PathString  # optional: only a value of this type (before an implicit conversion)
+  - lookup: '^(Get|Find|Load)\w*Async$'         # what a body-less method so named returns is clean
+```
+
+- `string-prefix: R` (with `type: T`): a value built into a string in place (a string `+`, an interpolated string,
+  `string.Format` with a constant format: its `arg0` to `arg2`) is clean when the text before it in that string,
+  from the string's start, matches R; an earlier value in that text reads as U+FFFC (write `\uFFFC` in R). A string held
+  in a variable keeps the value it was built with.
+- `lookup: R`: the result of a call to a method whose name matches R is clean when the engine has no body to analyse
+  for it (an external method, an abstract or interface method without an implementation in the solution): a record
+  found by an id is stored data. A method with a body is analysed instead.
+
+`guards` take `method:` with `arg` and `clean-when`, all required.
 
 ### Conditional sinks (`when:`)
 

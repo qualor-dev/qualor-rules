@@ -97,7 +97,8 @@ internal sealed class AnalysisContext
 /// - Lambdas and method groups given to a call get the call's receiver and other arguments in their parameters (a
 ///   method group: its summary applied to them); a lambda's value is what it returns.
 /// - Sources: parameters (seeded at the entry), source members (sources.yml (6)) and bound properties (sources.yml (3))
-///   at their reads. Sanitizers clean their result for their rule.
+///   at their reads. Sanitizers clean their result for their rule; `string-prefix:` sanitizers clean a value by the text
+///   before it in a string built in place (StringValue), `lookup:` sanitizers the result of a body-less lookup.
 /// - Sinks: the arguments at a sink's ordinals, and the value assigned to a property-set sink (for `+=` the joined
 ///   value): reported when request data reaches them; a label that reaches them is a sink of the label's body. A
 ///   conditional sink (`when:`) applies only where SinkConditions finds its conditions hold, possibly element by element.
@@ -363,12 +364,12 @@ internal sealed class MethodAnalyzer
                 return value;
             }
 
+            case IBinaryOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String } concatenation:
+                return StringValue(concatenation, state, new System.Text.StringBuilder());
             case IBinaryOperation binary:
             {
                 var left = Value(binary.LeftOperand, state);
                 var right = Value(binary.RightOperand, state);
-                if (binary.OperatorKind == BinaryOperatorKind.Add && binary.Type?.SpecialType == SpecialType.System_String)
-                    return left.Join(ImplicitToString(binary.LeftOperand, left, state)).Join(right).Join(ImplicitToString(binary.RightOperand, right, state));
                 return left.Join(right);
             }
             case IUnaryOperation unary:
@@ -393,20 +394,7 @@ internal sealed class MethodAnalyzer
                 return TaintValue.Clean;
 
             case IInterpolatedStringOperation interpolated:
-            {
-                var value = TaintValue.Clean;
-                foreach (var part in interpolated.Parts)
-                {
-                    value = value.Join(part switch
-                    {
-                        IInterpolationOperation i => InterpolatedValue(i, state).Join(Value(i.Alignment, state)),
-                        // A handler's AppendFormatted(x): the formatted values reach the string.
-                        IInterpolatedStringAppendOperation { AppendCall: IInvocationOperation call } => JoinArguments(call.Arguments, state),
-                        _ => Value(part, state),
-                    });
-                }
-                return value;
-            }
+                return StringValue(interpolated, state, new System.Text.StringBuilder());
             case IInterpolatedStringHandlerCreationOperation handler:
                 Value(handler.HandlerCreation, state);
                 return Value(handler.Content, state);
@@ -445,10 +433,71 @@ internal sealed class MethodAnalyzer
         }
     }
 
-    private TaintValue InterpolatedValue(IInterpolationOperation i, TaintState state)
+    /// The character an earlier value stands for in the text before a value (`string-prefix:` sanitizers).
+    internal const char Hole = '￼';
+
+    /// The value of a string built in place (string `+`, an interpolated string, nested in each other), its parts in
+    /// order: `prefix` collects the text before each part (constants as they are, values as Hole), and each value is
+    /// cleaned for the rules whose `string-prefix:` sanitizers match the text before it. An object's text is its
+    /// ToString() (ImplicitToString).
+    private TaintValue StringValue(IOperation operation, TaintState state, System.Text.StringBuilder prefix)
     {
-        var value = Value(i.Expression, state);
-        return value.Join(ImplicitToString(i.Expression, value, state));
+        switch (operation)
+        {
+            case IBinaryOperation { OperatorKind: BinaryOperatorKind.Add, Type.SpecialType: SpecialType.System_String } b:
+                return StringValue(b.LeftOperand, state, prefix).Join(StringValue(b.RightOperand, state, prefix));
+            case IInterpolatedStringOperation interpolated:
+            {
+                var value = TaintValue.Clean;
+                foreach (var part in interpolated.Parts)
+                {
+                    switch (part)
+                    {
+                        case IInterpolatedStringTextOperation text:
+                            prefix.Append(text.Text.ConstantValue.Value as string);
+                            break;
+                        case IInterpolationOperation i:
+                            value = value.Join(Placed(i.Expression, Value(i.Expression, state), state, prefix)).Join(Value(i.Alignment, state));
+                            break;
+                        // A handler's AppendLiteral(text) and AppendFormatted(x): the formatted values reach the string.
+                        case IInterpolatedStringAppendOperation { AppendCall: IInvocationOperation { TargetMethod.Name: "AppendLiteral" } literal }:
+                            foreach (var a in literal.Arguments) prefix.Append(a.Value.ConstantValue.Value as string);
+                            value = value.Join(JoinArguments(literal.Arguments, state));
+                            break;
+                        case IInterpolatedStringAppendOperation { AppendCall: IInvocationOperation call }:
+                            value = value.Join(call.Arguments.Length == 0
+                                ? TaintValue.Clean
+                                : Placed(call.Arguments[0].Value, JoinArguments(call.Arguments, state), state, prefix));
+                            break;
+                        default:
+                            value = value.Join(Value(part, state));
+                            break;
+                    }
+                }
+                return value;
+            }
+            default:
+                if (operation.ConstantValue is { HasValue: true } constant)
+                {
+                    prefix.Append(constant.Value as string ?? Convert.ToString(constant.Value, System.Globalization.CultureInfo.InvariantCulture));
+                    return TaintValue.Clean;
+                }
+                return Placed(operation, Value(operation, state), state, prefix);
+        }
+    }
+
+    /// A value placed into a string after `prefix`: with its ToString() text, cleaned for the rules whose
+    /// `string-prefix:` sanitizers match; the prefix then gets a Hole for it.
+    private TaintValue Placed(IOperation expression, TaintValue value, TaintState state, System.Text.StringBuilder prefix)
+    {
+        value = value.Join(ImplicitToString(expression, value, state));
+        if (value.Any && _ctx.Sinks.HasStringSanitizers)
+        {
+            while (expression is IConversionOperation { IsImplicit: true, Operand: { } inner }) expression = inner;
+            value = value.CleanedFor(_ctx.Sinks.CleanInString(prefix.ToString(), expression.Type));
+        }
+        prefix.Append(Hole);
+        return value;
     }
 
     /// The text of an object used where a string is built (`$"{t}"`, `"x" + t`) is its ToString() result: for a value whose
@@ -951,6 +1000,7 @@ internal sealed class MethodAnalyzer
             inputs[n++] = new Input(ordinal, parameter, a.Value, a.IsImplicit ? a.Value.Syntax : a.Syntax, value, refKind);
         }
         if (n < inputs.Length) Array.Resize(ref inputs, n);
+        if (_ctx.Sinks.HasStringSanitizers && method is { Name: "Format", ContainingType.SpecialType: SpecialType.System_String }) FormatPlaced(inputs);
         HigherOrder(inputs, instanceValue, state);
 
         var all = JoinInputs(inputs);
@@ -986,11 +1036,13 @@ internal sealed class MethodAnalyzer
         else
         {
             var constructor = method.MethodKind == MethodKind.Constructor;
+            var anyBody = false;
             foreach (var target in _body.Targets(method, isVirtual, instance?.Type))
             {
                 switch (target.Kind)
                 {
                     case TargetKind.Body:
+                        anyBody = true;
                         result = result.Join(Apply(target.Body!, operation, method, Arguments(instanceValue, inputs), reduced ? null : instance, inputs, constructor, state));
                         break;
                     case TargetKind.External:
@@ -1006,9 +1058,61 @@ internal sealed class MethodAnalyzer
                     }
                 }
             }
+            // `lookup:` sanitizers: what a method the engine cannot see into returns under a lookup's name (a record
+            // found by an id) is stored data for those rules; a method with a body is followed instead.
+            if (!anyBody && result.Any && method.MethodKind == MethodKind.Ordinary) result = result.CleanedFor(_ctx.Sinks.Lookups(method.Name));
         }
 
         return result.CleanedFor(_ctx.Sinks.Sanitizes(method, Access.Call));
+    }
+
+    /// string.Format with a constant format: each of arg0, arg1 and arg2 is cleaned as a value placed after the format's
+    /// text before its first placeholder (earlier placeholders read as Hole). A params array is left as it is.
+    private void FormatPlaced(Input[] inputs)
+    {
+        string? format = null;
+        foreach (var i in inputs)
+            if (i.Parameter?.Name == "format" && i.Operation.ConstantValue is { HasValue: true, Value: string f }) format = f;
+        if (format == null) return;
+        for (var k = 0; k < inputs.Length; k++)
+        {
+            var i = inputs[k];
+            if (!i.Value.Any || i.Parameter?.Name is not ("arg0" or "arg1" or "arg2")) continue;
+            if (FormatPrefix(format, i.Parameter.Name[3] - '0') is not { } prefix) continue;
+            var expression = i.Operation;
+            while (expression is IConversionOperation { IsImplicit: true, Operand: { } inner }) expression = inner;
+            inputs[k] = i with { Value = i.Value.CleanedFor(_ctx.Sinks.CleanInString(prefix, expression.Type)) };
+        }
+    }
+
+    /// The text of a composite format before its first placeholder `{index}` (escaped braces unescaped, other
+    /// placeholders as Hole), or null when it has none.
+    internal static string? FormatPrefix(string format, int index)
+    {
+        var text = new System.Text.StringBuilder();
+        for (var p = 0; p < format.Length; p++)
+        {
+            var c = format[p];
+            if ((c == '{' || c == '}') && p + 1 < format.Length && format[p + 1] == c)
+            {
+                text.Append(c);
+                p++;
+                continue;
+            }
+            if (c != '{')
+            {
+                text.Append(c);
+                continue;
+            }
+            var end = format.IndexOf('}', p);
+            if (end < 0) return null;
+            var spec = format[(p + 1)..end];
+            var digits = new string(spec.TakeWhile(char.IsDigit).ToArray());
+            if (digits.Length > 0 && int.Parse(digits, System.Globalization.CultureInfo.InvariantCulture) == index) return text.ToString();
+            text.Append(Hole);
+            p = end;
+        }
+        return null;
     }
 
     /// Applies a callee's summary at a call or accessor site. Its global effects (sinks, heap writes, its own calls)

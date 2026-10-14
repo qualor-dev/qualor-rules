@@ -71,7 +71,19 @@ public sealed record GuardModel(MemberPattern Member, int Arg, bool CleanWhen);
 /// misuse rule as plain values (string, list, dictionary); empty for a taint rule.
 public sealed record RuleModel(
     string RuleId, RuleKind Kind, IReadOnlyList<SinkModel> Sinks, IReadOnlyList<MemberPattern> Sanitizers,
-    IReadOnlyList<GuardModel> Guards, IReadOnlyDictionary<string, object?> Misuse);
+    IReadOnlyList<GuardModel> Guards, IReadOnlyDictionary<string, object?> Misuse)
+{
+    /// Sanitizers by position in a string (`string-prefix:`): a value placed into a string after text that matches.
+    public IReadOnlyList<StringSanitizer> StringSanitizers { get; init; } = Array.Empty<StringSanitizer>();
+
+    /// Sanitizers by name (`lookup:`): the result of a call, whose body the engine cannot see, to a method so named.
+    public IReadOnlyList<System.Text.RegularExpressions.Regex> LookupSanitizers { get; init; } = Array.Empty<System.Text.RegularExpressions.Regex>();
+}
+
+/// A `string-prefix:` sanitizer: a value built into a string (concatenation, interpolation, string.Format with a
+/// constant format) is clean when the text before it in that string (from its start; an earlier value reads as
+/// U+FFFC) matches Prefix, and, with Type, when the value's own type (before an implicit conversion) is Type.
+public sealed record StringSanitizer(System.Text.RegularExpressions.Regex Prefix, string? Type);
 
 /// MVC controllers: the parameters of their actions are sources.
 public sealed record ControllerSources(

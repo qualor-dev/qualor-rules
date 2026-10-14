@@ -143,9 +143,31 @@ public static class ModelLoader
             if (kind == RuleKind.Taint && sinks.Count == 0) throw doc.Error(sinksNode, "a taint rule needs at least one sink");
         }
 
-        var sanitizers = top.Optional("sanitizers") is { } sn
-            ? doc.Sequence(sn).Select(n => doc.Member(n, new[] { "method", "property-get" }).Pattern).ToList()
-            : new List<MemberPattern>();
+        var sanitizers = new List<MemberPattern>();
+        var stringSanitizers = new List<StringSanitizer>();
+        var lookups = new List<Regex>();
+        if (top.Optional("sanitizers") is { } sn)
+        {
+            foreach (var n in doc.Sequence(sn))
+            {
+                var f = doc.Fields(n, "method", "property-get", "string-prefix", "type", "lookup");
+                if (f.Optional("string-prefix") is { } prefix)
+                {
+                    if ((f.Optional("method") ?? f.Optional("property-get") ?? f.Optional("lookup")) is { } other) throw doc.Error(other, "a string-prefix sanitizer names no member and no lookup");
+                    stringSanitizers.Add(new StringSanitizer(doc.Regex(prefix), f.Optional("type") is { } t ? doc.Type(t) : null));
+                }
+                else if (f.Optional("lookup") is { } lookup)
+                {
+                    if ((f.Optional("method") ?? f.Optional("property-get") ?? f.Optional("type")) is { } other) throw doc.Error(other, "a lookup sanitizer is a method name expression alone");
+                    lookups.Add(doc.Regex(lookup));
+                }
+                else
+                {
+                    if (f.Optional("type") is { } t) throw doc.Error(t, "type belongs to a string-prefix sanitizer");
+                    sanitizers.Add(doc.Member(n, new[] { "method", "property-get" }).Pattern);
+                }
+            }
+        }
 
         var guards = new List<GuardModel>();
         if (top.Optional("guards") is { } gn)
@@ -165,7 +187,7 @@ public static class ModelLoader
             if (mn is not YamlMappingNode map) throw doc.Error(mn, "misuse must be a mapping");
             foreach (var (k, v) in map.Children) misuse[doc.String(k)] = Doc.Plain(v);
         }
-        return new RuleModel(id, kind, sinks, sanitizers, guards, misuse);
+        return new RuleModel(id, kind, sinks, sanitizers, guards, misuse) { StringSanitizers = stringSanitizers, LookupSanitizers = lookups };
     }
 
     /// The conditions of a conditional sink (`when:`, a non-empty list): each names one kind (arg, property,
@@ -311,6 +333,8 @@ public static class ModelLoader
             if (!(prefix && stem.Length == 0) && !Identifier.IsMatch(stem)) throw Error(node, $"{text}: not a member name");
             return new MemberPattern(CheckType(node, text[..dot], arrays: false), stem, prefix, kind);
         }
+
+        public string Type(YamlNode node) => CheckType(node, String(node), arrays: false);
 
         public IReadOnlyList<string> Types(YamlNode node, bool arrays = false) =>
             Sequence(node).Select(n => CheckType(n, String(n), arrays)).ToList();

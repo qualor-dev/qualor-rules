@@ -56,6 +56,9 @@ internal sealed class SinkFinder
 {
     private readonly MemberTable<SinkHit> _sinks = new();
     private readonly MemberTable<string> _sanitizers = new();
+    private readonly List<(string Rule, StringSanitizer Sanitizer)> _stringSanitizers = new();
+    private readonly List<(string Rule, System.Text.RegularExpressions.Regex Name)> _lookups = new();
+    private readonly Dictionary<string, string[]> _lookupCache = new(StringComparer.Ordinal);
 
     public SinkFinder(IEnumerable<RuleModel> rules)
     {
@@ -63,7 +66,36 @@ internal sealed class SinkFinder
         {
             foreach (var sink in rule.Sinks) _sinks.Add(sink.Member, new SinkHit(rule.RuleId, sink));
             foreach (var sanitizer in rule.Sanitizers) _sanitizers.Add(sanitizer, rule.RuleId);
+            foreach (var s in rule.StringSanitizers) _stringSanitizers.Add((rule.RuleId, s));
+            foreach (var l in rule.LookupSanitizers) _lookups.Add((rule.RuleId, l));
         }
+    }
+
+    /// Whether any rule has a `string-prefix:` sanitizer (the analysis then tracks the text before each value it
+    /// builds into a string).
+    public bool HasStringSanitizers => _stringSanitizers.Count > 0;
+
+    /// The rules for which a value of type `type` placed into a string after the text `prefix` is clean.
+    public IReadOnlyCollection<string> CleanInString(string prefix, ITypeSymbol? type)
+    {
+        List<string>? rules = null;
+        string? typeName = null;
+        foreach (var (rule, s) in _stringSanitizers)
+        {
+            if (s.Type != null && (type == null || s.Type != (typeName ??= SymbolMatch.MetadataName(type)))) continue;
+            if (s.Prefix.IsMatch(prefix)) (rules ??= new List<string>()).Add(rule);
+        }
+        return (IReadOnlyCollection<string>?)rules ?? Array.Empty<string>();
+    }
+
+    /// The rules whose `lookup:` sanitizers name a method of this name.
+    public string[] Lookups(string methodName)
+    {
+        if (_lookups.Count == 0) return Array.Empty<string>();
+        if (_lookupCache.TryGetValue(methodName, out var hit)) return hit;
+        hit = _lookups.Where(l => l.Name.IsMatch(methodName)).Select(l => l.Rule).Distinct().ToArray();
+        _lookupCache[methodName] = hit;
+        return hit;
     }
 
     /// The sinks a method or constructor is (its arguments at the sinks' ordinals) or a property write is (the
