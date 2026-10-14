@@ -1,0 +1,3 @@
+projects:
+  - { name: Core, folder: Core }
+  - { name: Web, folder: Web, references: [Core] }

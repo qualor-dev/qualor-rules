@@ -1,0 +1,4 @@
+projects:
+  - { name: Contracts, folder: Contracts }
+  - { name: Services, folder: Services, references: [Contracts] }
+  - { name: Web, folder: Web, references: [Contracts, Services] }

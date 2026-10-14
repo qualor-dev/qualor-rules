@@ -1,0 +1,6 @@
+# Projects of the fixture; folders are relative to this file, every *.cs below a folder is a source of the project,
+# references name other projects of the same file (project references; no MSBuild).
+projects:
+  - { name: Domain, folder: Domain }
+  - { name: Infrastructure, folder: Infrastructure, references: [Domain] }
+  - { name: Web, folder: Web, references: [Domain, Infrastructure] }
