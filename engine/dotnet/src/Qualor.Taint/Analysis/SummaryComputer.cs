@@ -576,6 +576,21 @@ internal sealed class SummaryComputer
         _errors.Add($"{line.Path}:{line.StartLinePosition.Line + 1}: {e.GetType().Name}: {e.Message}");
     }
 
+    private HashSet<Unit>? _calledUnits;
+
+    /// The units some other unit (or itself, recursively) calls or takes a method group of, from the call graph.
+    internal HashSet<Unit> CalledUnits
+    {
+        get
+        {
+            if (_calledUnits != null) return _calledUnits;
+            var called = new HashSet<Unit>();
+            foreach (var u in _graph.Units)
+                foreach (var callee in u.Callees) called.Add(callee);
+            return _calledUnits = called;
+        }
+    }
+
     internal SummaryBuilder Builder(int owner)
     {
         if (!_builders.TryGetValue(owner, out var builder)) _builders[owner] = builder = new SummaryBuilder();
@@ -667,6 +682,10 @@ internal sealed class SummaryComputer
 
         /// The method this body is, when it is no lambda or local function (model validation reads its parameters).
         public IMethodSymbol? Method => _body.Nested ? null : _body.Symbol;
+
+        /// Whether project code calls (or takes a delegate to) this body's unit: the call graph's static edges, dispatch
+        /// included. An action that code calls runs with values binding never validated (Task 31, review C1).
+        public bool CalledByProject => _computer.CalledUnits.Contains(_unit);
 
         public bool CapturedChanged { get; private set; }
 

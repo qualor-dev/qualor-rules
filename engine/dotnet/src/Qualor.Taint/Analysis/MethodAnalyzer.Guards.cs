@@ -526,7 +526,10 @@ internal sealed partial class MethodAnalyzer
     private TaintValue Guarded(IOperation member, TaintValue value, TaintState state)
     {
         if (!value.Any || !state.HasFacts || PathOf(member) is not { } path || state.Fact(path) is not { Cleans: true } fact) return value;
-        return fact.All ? TaintValue.Clean : value.CleanedFor(fact.Rules);
+        if (fact.All) return TaintValue.Clean;
+        var cleaned = value.CleanedFor(fact.Rules);
+        // Model validation cleans the request data only, not what a caller passed (Task 31, review C1).
+        return fact.Validated.Count > 0 ? cleaned.RequestCleanedFor(fact.Validated) : cleaned;
     }
 
     /// Whether a guard on this path may be recorded:

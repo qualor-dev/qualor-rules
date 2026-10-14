@@ -670,6 +670,121 @@ public sealed class ModelValidationTests
         }
         """);
 
+    // ---- Only the framework's call is validated (review C1) ----
+
+    /// Validation speaks for the values model binding gave the action, not for what project code passes when it calls
+    /// the action (or a public helper of the controller) itself: the caller's value is cleaned nowhere.
+    [Fact]
+    public void An_api_action_called_by_another_keeps_the_callers_finding() => Expect("""
+        [ApiController]
+        [Route("api/orders")]
+        public class OrdersController : ControllerBase
+        {
+            private readonly SqlConnection _db = new("Server=.;Database=shop");
+            [HttpGet("raw")]
+            public IActionResult Raw([FromQuery] string raw) => Find(raw);
+            [HttpGet("find")]
+            public IActionResult Find([FromQuery, RegularExpression("^[a-z]+$")] string id)
+            {
+                new SqlCommand("SELECT * FROM o WHERE id = '" + id + "'", _db); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void An_action_called_by_another_after_its_check_keeps_the_callers_finding() => Expect("""
+        public class OrdersController : Controller
+        {
+            private readonly SqlConnection _db = new("Server=.;Database=shop");
+            public IActionResult Raw(string raw) => Find(raw);
+            public IActionResult Find([RegularExpression("^[a-z]+$")] string id)
+            {
+                if (!ModelState.IsValid) return BadRequest();
+                new SqlCommand("SELECT * FROM o WHERE id = '" + id + "'", _db); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void A_model_built_by_the_caller_keeps_the_callers_finding() => Expect("""
+        [ApiController]
+        [Route("api/baskets")]
+        public class BasketsController : ControllerBase
+        {
+            private readonly SqlConnection _db = new("Server=.;Database=shop");
+            [HttpGet("quick")]
+            public IActionResult Quick([FromQuery] string code) => Save(new Basket { Code = code });
+            [HttpPost]
+            public IActionResult Save(Basket basket)
+            {
+                new SqlCommand("UPDATE b SET c = '" + basket.Code + "'", _db); /*sink*/
+                return Ok();
+            }
+        }
+        public class ShelvesController : Controller
+        {
+            private readonly SqlConnection _db = new("Server=.;Database=shop");
+            public IActionResult Quick(string code) => Store(new Basket { Code = code });
+            public IActionResult Store(Basket basket)
+            {
+                if (!ModelState.IsValid) return View(basket);
+                new SqlCommand("UPDATE s SET c = '" + basket.Code + "'", _db); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    /// The bound values themselves stay clean in such an action: its own request data (no caller) is what validation
+    /// constrains.
+    [Fact]
+    public void The_bound_values_stay_clean_when_nobody_calls_the_action() => Expect("""
+        [ApiController]
+        [Route("api/orders")]
+        public class OrdersController : ControllerBase
+        {
+            private readonly SqlConnection _db = new("Server=.;Database=shop");
+            [HttpGet("find")]
+            public IActionResult Find([FromQuery, RegularExpression("^[a-z]+$")] string id, Basket basket)
+            {
+                new SqlCommand("SELECT * FROM o WHERE id = '" + id + "' AND c = '" + basket.Code + "'", _db);
+                return Ok();
+            }
+        }
+        """);
+
+    /// Task 28's witnesses: a value joined from a validated parameter (clean for sql-injection) and an unvalidated one is
+    /// reported for sql-injection through the unvalidated one, with high confidence; for xss (where the pattern cleans
+    /// nothing it holds: none of `[a-z]` is an xss metacharacter, so the validated one is clean there too) through the
+    /// unvalidated one as well.
+    [Fact]
+    public void The_witness_of_a_finding_is_a_value_validation_did_not_clean()
+    {
+        const string code = """
+            [ApiController]
+            [Route("api/notes")]
+            public class NotesController : ControllerBase
+            {
+                private readonly SqlConnection _db = new("Server=.;Database=shop");
+                [HttpGet]
+                public IActionResult Show([FromQuery, RegularExpression("^[a-z]+$")] string id, [FromQuery] string note)
+                {
+                    var both = id + note;
+                    new SqlCommand("SELECT * FROM n WHERE k = '" + both + "'", _db);
+                    return new ContentResult { Content = "<p>" + both + "</p>", ContentType = "text/html" };
+                }
+            }
+            """;
+        var result = Snippet.Analyze(Usings + Prelude + code);
+        foreach (var rule in new[] { "csharp.sql-injection", "csharp.xss" })
+        {
+            var finding = Assert.Single(result.Findings, f => f.RuleId == rule);
+            Assert.Contains("parameter 'note'", finding.Path[0].Message, StringComparison.Ordinal);
+            Assert.Equal(Confidence.High, finding.Confidence);
+        }
+    }
+
     // ---- Nested members ----
 
     /// "ValidationVisitor traverses the object graph of the model": a nested object's validated member is clean; its

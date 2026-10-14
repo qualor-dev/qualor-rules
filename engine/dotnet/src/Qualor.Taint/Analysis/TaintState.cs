@@ -638,6 +638,18 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         return value;
     }
 
+    /// The value with its request data cleaned for these rules, and its labels (what callers pass) as they are: model
+    /// validation (Task 31, review C1) constrains the values binding gave the action, not a value project code passes when
+    /// it calls the action itself.
+    public TaintValue RequestCleanedFor(IReadOnlyCollection<string> rules)
+    {
+        if (!Request || rules.Count == 0 || rules.All(CleanFor.Contains)) return this;
+        var value = this with { CleanFor = CleanFor.Union(rules) };
+        if (!Witnesses.IsDefaultOrEmpty)
+            value = value with { Witnesses = Witnesses.Select(w => rules.All(w.CleanFor.Contains) ? w : w with { CleanFor = w.CleanFor.Union(rules) }).ToImmutableArray() };
+        return value;
+    }
+
     /// The value with one more path step of `kind` (on the request path and on each label's; a step at the last step's
     /// location is not repeated, unless it is a medium step a high path would otherwise lose: R-9).
     public TaintValue Step(Location location, string message, StepKind kind = StepKind.Plain)

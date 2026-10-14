@@ -73,4 +73,44 @@ public sealed class TaintStateTests
         }
         Assert.Equal(0, mismatches);
     }
+
+    /// Task 31, review C1: model validation cleans a value's request data only; what a caller passed (a label) keeps
+    /// its taint, for every rule.
+    [Fact]
+    public void Request_only_cleaning_leaves_the_labels()
+    {
+        var value = Value("bound").Join(TaintValue.Param(1, 0));
+        var cleaned = value.RequestCleanedFor(new[] { "csharp.sql-injection" });
+        Assert.False(cleaned.TaintedFor("csharp.sql-injection"));
+        Assert.True(cleaned.TaintedFor("csharp.xss"));
+        Assert.Equal(value.Labels.Single().CleanFor, cleaned.Labels.Single().CleanFor);
+        Assert.Empty(cleaned.Labels.Single().CleanFor);
+        // A label alone is untouched; CleanedFor (a sanitizer, a guard) cleans the label too.
+        var label = TaintValue.Param(1, 0);
+        Assert.Same(label, label.RequestCleanedFor(new[] { "csharp.sql-injection" }));
+        Assert.Contains("csharp.sql-injection", value.CleanedFor(new[] { "csharp.sql-injection" }).Labels.Single().CleanFor);
+    }
+
+    /// A validated rule survives a join only where both sides clean it (by validation or by a guard, which cleans more);
+    /// a constant (All) on one side keeps the other side's.
+    [Fact]
+    public void Validated_rules_meet_and_unite()
+    {
+        var path = new AccessPath(new object(), ImmutableArray<ISymbol>.Empty, ImmutableArray<ITypeSymbol>.Empty);
+        static ImmutableHashSet<string> Set(params string[] rules) => rules.ToImmutableHashSet();
+        var none = ImmutableHashSet<IOperation>.Empty;
+        var validated = new MemberFact(path, false, Set(), none) { Validated = Set("sql", "xss") };
+        var guarded = new MemberFact(path, false, Set("sql"), none);
+        var constant = new MemberFact(path, true, Set(), none);
+        var met = validated.Meet(guarded);
+        Assert.Equal(Set("sql"), met.Validated);
+        Assert.Empty(met.Rules);
+        Assert.Equal(Set("sql", "xss"), validated.Meet(constant).Validated);
+        Assert.Equal(Set("sql", "xss"), constant.Meet(validated).Validated);
+        Assert.Empty(validated.Meet(new MemberFact(path, false, Set("ldap"), none)).Validated);
+        var united = MemberFacts.Add(ImmutableArray.Create(guarded), validated).Single();
+        Assert.Equal(Set("sql"), united.Rules);
+        Assert.Equal(Set("sql", "xss"), united.Validated);
+        Assert.True(united.Cleans && validated.Guards);
+    }
 }

@@ -33,6 +33,10 @@ internal sealed partial class MethodAnalyzer
         var validation = _ctx.Validation;
         if (!validation.Enabled || _body.Method is not { } method) return;
         if (!_ctx.Sources.IsAction(method) && !_ctx.Sources.IsPageHandler(method)) return;
+        // Project code that calls the action (another action, a helper) gives it values binding never validated; its
+        // ModelState is the caller's request's. Validation holds only for the framework's call (review C1): Task 27 gives a
+        // bound parameter its own object, so a caller's object members cannot be told apart from the binding's.
+        if (_body.CalledByProject) return;
         // The automatic 400 is a controller behaviour: a Razor Pages handler needs the IsValid check, also in a page model
         // that carries [ApiController] (which the source model would take for a controller; review I1).
         var automatic = _ctx.Sources.IsAction(method) && !_ctx.Sources.IsPageModel(method.ContainingType) && validation.IsAutomatic(method);
@@ -49,7 +53,8 @@ internal sealed partial class MethodAnalyzer
             if (rules.Length > 0)
             {
                 _validatedParameters.Add((p, rules));
-                if (automatic && entry.Get(p) is { Any: true } value) entry.Set(p, value.CleanedFor(rules));
+                // The request data binding gave the parameter, not a caller's value (review C1).
+                if (automatic && entry.Get(p) is { Any: true } value) entry.Set(p, value.RequestCleanedFor(rules));
             }
             foreach (var (members, memberRules) in validation.Paths(p.Type)) Seed(p, p.Type, members, memberRules);
         }
@@ -73,7 +78,7 @@ internal sealed partial class MethodAnalyzer
             if (_validatedPaths!.Count >= MemberFacts.MaxFacts / 2) return;
             if (Path(root, rootType, members) is not { } path || !CanHold(path)) return;
             _validatedPaths![path] = rules;
-            if (automatic) entry.AddFact(new MemberFact(path, false, rules.ToImmutableHashSet(), ImmutableHashSet<IOperation>.Empty));
+            if (automatic) entry.AddFact(new MemberFact(path, false, ImmutableHashSet<string>.Empty, ImmutableHashSet<IOperation>.Empty) { Validated = rules.ToImmutableHashSet() });
             else if (validity) entry.AddFact(new MemberFact(path, false, ImmutableHashSet<string>.Empty, pending));
         }
     }
@@ -112,7 +117,7 @@ internal sealed partial class MethodAnalyzer
         {
             if (!fact.Pending.Contains(marker) || !_validatedPaths.TryGetValue(fact.Path, out var rules)) continue;
             refined ??= state.Clone();
-            refined.AddFact(new MemberFact(fact.Path, false, rules.ToImmutableHashSet(), ImmutableHashSet<IOperation>.Empty));
+            refined.AddFact(new MemberFact(fact.Path, false, ImmutableHashSet<string>.Empty, ImmutableHashSet<IOperation>.Empty) { Validated = rules.ToImmutableHashSet() });
         }
         foreach (var (p, rules) in _validatedParameters)
         {
@@ -120,12 +125,14 @@ internal sealed partial class MethodAnalyzer
             var current = (refined ?? state).Get(p);
             if (!current.Any) continue;
             refined ??= state.Clone();
-            refined.Set(p, current.CleanedFor(rules));
+            refined.Set(p, current.RequestCleanedFor(rules));
         }
     }
 
     /// TryValidateModel(model) returned true: besides the model state, the model's validated paths hold (on whatever
-    /// object it is: a bound parameter, a property, a local built in the action).
+    /// object it is: a bound parameter, a property, a local built in the action). These facts clean the whole value, a
+    /// caller's part too: the call validates the object in every run, whoever called the action (review C1 concerns
+    /// what binding validated, not this).
     private void TryValidated(IInvocationOperation call, TaintState state, ref TaintState? refined)
     {
         Validated(state, ref refined);
@@ -177,7 +184,7 @@ internal sealed partial class MethodAnalyzer
         HashSet<AccessPath>? ended = null;
         foreach (var f in state.Facts)
             if (f.Pending.Contains(marker)) (ended ??= new HashSet<AccessPath>()).Add(f.Path);
-        if (ended != null) state.Forget(ended.Contains);
+        if (ended != null) state.ForgetParts(ended.Contains, _ => false);
     }
 
     /// Whether an operation evaluated here may change the action's ModelState (see ModelStateTouched).

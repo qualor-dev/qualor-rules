@@ -73,14 +73,19 @@ internal sealed class AccessPath : IEquatable<AccessPath>
 /// Holds (Task 27, strong updates): the path was last assigned this value on every path here, and nothing since may have
 /// changed it (an assignment of its root, a write of a member on it through any object, a call that may write it: see
 /// MethodAnalyzer.ForgetForCall), so a read of the path is exactly that value: not the object's whole taint, not the heap.
+///
+/// Validated (Task 31, review C1): model validation holds for the path: a read of it is clean for these rules in its
+/// request data only (TaintValue.RequestCleanedFor), never in what a caller passed (its labels).
 internal sealed record MemberFact(AccessPath Path, bool All, ImmutableHashSet<string> Rules, ImmutableHashSet<IOperation> Pending)
 {
     public TaintValue? Holds { get; init; }
 
-    public bool Cleans => All || Rules.Count > 0;
+    public ImmutableHashSet<string> Validated { get; init; } = ImmutableHashSet<string>.Empty;
 
-    /// A guard's part: All, Rules or Pending.
-    public bool Guards => All || Rules.Count > 0 || Pending.Count > 0;
+    public bool Cleans => All || Rules.Count > 0 || Validated.Count > 0;
+
+    /// A guard's part: All, Rules, Validated or Pending.
+    public bool Guards => All || Rules.Count > 0 || Validated.Count > 0 || Pending.Count > 0;
 
     public bool Empty => !Guards && Holds == null;
 
@@ -91,8 +96,14 @@ internal sealed record MemberFact(AccessPath Path, bool All, ImmutableHashSet<st
         var rules = All ? other.Rules : other.All ? Rules : Rules.Intersect(other.Rules);
         var pending = Pending.Count == 0 || other.Pending.Count == 0 ? ImmutableHashSet<IOperation>.Empty : Pending.Intersect(other.Pending);
         var holds = Holds == null || other.Holds == null ? null : Holds.Join(other.Holds);
-        if (all == All && rules.Count == Rules.Count && pending.Count == Pending.Count && ReferenceEquals(holds, Holds)) return this;
-        return new MemberFact(Path, all, rules, pending) { Holds = holds };
+        // A rule cleaned for the request data on both sides (by validation, or by a guard, which cleans it wholly).
+        var validated = (All ? null : Rules.Union(Validated)) is { } mine
+            ? (other.All ? mine : mine.Intersect(other.Rules.Union(other.Validated)))
+            : other.Rules.Union(other.Validated);
+        validated = validated.Except(rules);
+        if (all) validated = ImmutableHashSet<string>.Empty;
+        if (all == All && rules.Count == Rules.Count && pending.Count == Pending.Count && validated.SetEquals(Validated) && ReferenceEquals(holds, Holds)) return this;
+        return new MemberFact(Path, all, rules, pending) { Holds = holds, Validated = validated };
     }
 
     /// The fact without its guard part.
@@ -126,8 +137,10 @@ internal static class MemberFacts
             var rules = f.Rules.Union(fact.Rules);
             var pending = f.Pending.Union(fact.Pending);
             var holds = fact.Holds ?? f.Holds;
-            if (all == f.All && rules.Count == f.Rules.Count && pending.Count == f.Pending.Count && ReferenceEquals(holds, f.Holds)) return facts;
-            return facts.SetItem(i, new MemberFact(f.Path, all, rules, pending) { Holds = holds });
+            var validated = f.Validated.Union(fact.Validated);
+            if (all == f.All && rules.Count == f.Rules.Count && pending.Count == f.Pending.Count && validated.Count == f.Validated.Count
+                && ReferenceEquals(holds, f.Holds)) return facts;
+            return facts.SetItem(i, new MemberFact(f.Path, all, rules, pending) { Holds = holds, Validated = validated });
         }
         return facts.Length >= MaxFacts ? facts : facts.Add(fact);
     }

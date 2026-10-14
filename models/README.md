@@ -328,6 +328,14 @@ Where validation holds:
   `InvalidModelStateResponseFactory` (the factory decides the response), or binds `Configure<ApiBehaviorOptions>(...)`
   from anything but a lambda (configuration may set the option): then only the IsValid check counts.
 
+Only the framework's call is validated (review C1): an action or handler that project code calls, or takes a method
+group of (the call graph's edges, dispatch included: `return Details(id)`, `Save(new Basket { Code = raw })`, a public
+controller helper), gets no validation at all, since such a caller passes values binding never saw and its ModelState
+is the caller's request's (Task 27 gives a bound parameter its own object, so a caller's object members could not be
+told apart from the binding's). Besides, validation cleans a value's request data only (TaintValue.RequestCleanedFor;
+a member fact's `Validated` rules), never its labels, what a caller would pass. TryValidateModel's own model facts are
+whole guards: that call validates the object in every run.
+
 After validation the facts follow the rules of Guards on members: a write of the member (or of its root), a ref or out
 use, or a call that may change the object ends them.
 
