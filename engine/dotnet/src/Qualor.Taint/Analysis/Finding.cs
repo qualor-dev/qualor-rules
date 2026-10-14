@@ -62,4 +62,10 @@ public sealed record AnalysisStats(int Projects, int Methods, int Sccs, int Unmo
     /// Views named by a path no compiled view has (compiled at run time, as plugin views often are): no edge, not a
     /// fallback.
     public int UncompiledViews { get; init; }
+
+    /// Views no build compiled that the engine compiled (Task 30, R-11; distinct files over the solution), and those of
+    /// them, or of the recorded views it could not compile at all, that have errors (counted, never fatal).
+    public int CompiledByEngineViews { get; init; }
+
+    public int EngineViewErrors { get; init; }
 }

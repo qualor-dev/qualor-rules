@@ -449,5 +449,12 @@ false positives (FP) or misses (FN) there.
   point of its own); a view model given as a model expression (`<partial for>`, editor and display templates); callbacks a framework or library makes into the project
   (static-file providers, tus stores); externals whose result is neither string-like nor a collection and that no
   propagator names (`IFileProvider.GetFileInfo` → `IFileInfo.PhysicalPath`, Fluid values); a Minimal API body object
-  bound without `[FromBody]`; views that the build does not compile (ASP.NET Core 2.x runtime compilation).
+  bound without `[FromBody]`.
+- Views no build compiles (ASP.NET Core 2.x compiles views at run time, plugins copy theirs as Content; since Task 30,
+  decision R-11): the hook records the project's `.cshtml` files (`razor-view=`) and the engine compiles those that have
+  no generated class with the Razor 6.0 language API and MVC's extensions, `_ViewImports.cshtml` and the project's tag
+  helpers included. The code is MVC 3.0+'s whatever the project's ASP.NET Core: against 1.x/2.0 references its Razor
+  attributes do not bind (counted as the view's errors, `engineViewErrors`; the code is analysed). Views outside the
+  project's directory (linked items) are not compiled (counted). A view the build compiled into a separate assembly
+  (`*.Views.dll`, ASP.NET Core 2.1/2.2) is compiled here too.
 - The taint models have no `test-code:` (as the OpenGrep taint rules): findings in test projects are reported.

@@ -5,6 +5,11 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="5.6.0" />
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
+    <!-- Task 30 (R-11): the Razor compiler for the views no build compiles; the last stable release on nuget.org of the
+         Razor language API with its MVC extensions (MIT, dotnet/aspnetcore 6.0). -->
+    <PackageReference Include="Microsoft.AspNetCore.Razor.Language" Version="6.0.36" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Razor.Extensions" Version="6.0.36" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Razor" Version="6.0.36" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="Qualor.Taint.Tests" />

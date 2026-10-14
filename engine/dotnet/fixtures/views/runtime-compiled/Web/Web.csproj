@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- Task 30 (R-11): like an ASP.NET Core 2.0 app, the build compiles no view (they are compiled at run time), so the
+       compilation has no generated view code. The views are recorded (razor-view=) and compiled by the engine. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RazorCompileOnBuild>false</RazorCompileOnBuild>
+    <RootNamespace>RuntimeViews</RootNamespace>
+  </PropertyGroup>
+</Project>

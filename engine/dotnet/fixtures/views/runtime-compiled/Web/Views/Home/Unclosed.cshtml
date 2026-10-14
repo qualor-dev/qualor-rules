@@ -1,0 +1,5 @@
+@model ProfileModel
+@* A code block that is never closed: the Razor parser reports it. *@
+@{
+    var bio = Model.Bio;
+<p>@bio</p>

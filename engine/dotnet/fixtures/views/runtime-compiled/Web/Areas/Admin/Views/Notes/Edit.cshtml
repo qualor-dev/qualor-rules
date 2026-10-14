@@ -1,0 +1,5 @@
+@model NoteModel
+<div>
+    @* ruleid: csharp.xss *@
+    @Html.Raw(Model.Text)
+</div>

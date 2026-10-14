@@ -22,4 +22,9 @@ public sealed record CompilationInput(
     /// MSBuild's InterceptorsNamespaces (`interceptors-namespaces=`, ruling R-E6), set by the SDK for generators that
     /// write interceptors (configuration binder, request delegate generator).
     public IReadOnlyList<string> InterceptorsNamespaces { get; init; } = Array.Empty<string>();
+
+    /// The project's Razor views (`razor-view=`, Task 30, R-11): every `.cshtml` among its Content, None, RazorGenerate,
+    /// RazorCompile and AdditionalFiles items, as recorded. The views no generated class renders are compiled by the
+    /// engine (RazorViews).
+    public IReadOnlyList<string> RazorViews { get; init; } = Array.Empty<string>();
 }

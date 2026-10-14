@@ -1,0 +1,12 @@
+@model ConfigureModel
+<h2>@Label(Model.Title)</h2>
+<div class="note">
+    @* ruleid: csharp.xss *@
+    @Html.Raw(Model.Note)
+</div>
+<form asp-action="Configure" method="post">
+    @* ok: csharp.xss *@
+    <input asp-for="Note" />
+    @* ok: csharp.xss *@
+    <span>@Label(Model.Note)</span>
+</form>

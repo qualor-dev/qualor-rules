@@ -167,9 +167,30 @@ public static class SolutionLoader
                 nullableContextOptions: input.Nullable, allowUnsafe: input.AllowUnsafe, concurrentBuild: true)
             .WithAssemblyIdentityComparer(DesktopAssemblyIdentityComparer.Default);
         var result = CSharpCompilation.Create(input.AssemblyName, trees, references, options);
+        // Task 30 (R-11): the recorded views without a generated class, compiled by the engine. Their errors (Razor's and
+        // the compiler's in their code) are theirs, not the build's: counted apart, never fatal.
+        var views = RazorViews.Compile(input, result, parseOptions, ct);
+        if (views.Views.Count > 0) result = result.AddSyntaxTrees(views.Views.Select(v => v.Tree));
         node.Compilation = result;
-        errors.AddRange(result.GetDiagnostics(ct).Where(d => d.Severity == DiagnosticSeverity.Error));
-        return new ProjectCompilation(input, result, errors) { FallbackAssemblies = fallbacks };
+        var viewOf = views.Views.ToDictionary(v => v.Tree, v => v.Path);
+        var viewErrors = views.Failed.ToList();
+        var failedViews = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var v in views.Views)
+            if (v.RazorErrors.Count > 0 && failedViews.Add(v.Path)) viewErrors.Add($"{v.Path}: {v.RazorErrors[0]}");
+        foreach (var d in result.GetDiagnostics(ct).Where(d => d.Severity == DiagnosticSeverity.Error))
+        {
+            if (d.Location.SourceTree is { } tree && viewOf.TryGetValue(tree, out var view))
+            {
+                if (failedViews.Add(view)) viewErrors.Add($"{view}: {d.Id} {d.GetMessage(System.Globalization.CultureInfo.InvariantCulture)}");
+            }
+            else errors.Add(d);
+        }
+        return new ProjectCompilation(input, result, errors)
+        {
+            FallbackAssemblies = fallbacks,
+            EngineViews = views.Views.Select(v => v.Path).ToList(),
+            EngineViewErrors = viewErrors,
+        };
 
         // The referenced project's recorded assembly as a metadata reference, in place of its compilation.
         bool AddFallback(string? assembly, out string why)

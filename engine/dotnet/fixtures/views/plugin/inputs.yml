@@ -1,0 +1,4 @@
+rule: csharp.xss
+projects:
+  - { name: Framework, folder: Framework }
+  - { name: Plugin, folder: Plugin, references: [Framework] }

@@ -1,0 +1,3 @@
+rule: csharp.xss
+projects:
+  - { name: Web, folder: Web }

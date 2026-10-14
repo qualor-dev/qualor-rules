@@ -86,8 +86,17 @@ public sealed class TaintEngine
             ViewEdges = entries?.ViewEdges ?? 0,
             UnresolvedViews = entries?.UnresolvedViews ?? 0,
             UncompiledViews = entries?.UncompiledViews ?? 0,
+            CompiledByEngineViews = solution.Projects.SelectMany(p => p.EngineViews).Select(SolutionLoader.PathKey).Distinct().Count(),
+            EngineViewErrors = solution.Projects.SelectMany(p => p.EngineViewErrors).Select(e => SolutionLoader.PathKey(e[..ViewOfError(e)])).Distinct().Count(),
         };
         return new AnalysisResult(findings, reason == null, reason, stats);
+    }
+
+    /// The view path of an EngineViewErrors line (`<path>: <reason>`; a Windows path's drive colon is no separator).
+    private static int ViewOfError(string line)
+    {
+        var at = line.IndexOf(".cshtml:", StringComparison.OrdinalIgnoreCase);
+        return at < 0 ? line.Length : at + ".cshtml".Length;
     }
 
     /// Ruling R-E10 for the misuse checks: trees whose check threw are skipped; above 1 % of the trees checked the run is

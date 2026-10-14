@@ -180,6 +180,10 @@ public static class Program
             foreach (var assembly in p.FallbackAssemblies) w.WriteStringValue(assembly);
             w.WriteEndArray();
             w.WriteNumber("errors", p.Errors.Count);
+            w.WriteNumber("engineViews", p.EngineViews.Count);
+            w.WriteStartArray("engineViewErrors");
+            foreach (var e in p.EngineViewErrors) w.WriteStringValue(e);
+            w.WriteEndArray();
             w.WriteStartArray("firstErrors");
             foreach (var d in p.Errors.Take(FirstErrors)) w.WriteStringValue(Format(d));
             w.WriteEndArray();

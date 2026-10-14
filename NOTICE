@@ -11,6 +11,10 @@ Shipped with the engine (the pack's dotnet/ directory):
   https://github.com/dotnet/runtime
 - YamlDotNet 18.1.0 (the engine's models, from Task 5 of the engine plan), Copyright (c) Antoine
   Aubry and contributors, MIT licence, https://github.com/aaubry/YamlDotNet
+- Microsoft.AspNetCore.Razor.Language 6.0.36, Microsoft.AspNetCore.Mvc.Razor.Extensions 6.0.36 and
+  Microsoft.CodeAnalysis.Razor 6.0.36 (the Razor compiler for the views no build compiles, from Task 30
+  of the engine plan), Copyright (c) Microsoft Corporation / .NET Foundation and Contributors, MIT
+  licence, https://github.com/dotnet/aspnetcore
 
 Used to build and test the engine only, not shipped:
 - Microsoft.CodeAnalysis.Analyzers 5.3.0 (Roslyn's dependency; its analyzers are not run), MIT

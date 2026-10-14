@@ -70,6 +70,7 @@ public static class InputReader
         var references = new List<string>();
         var projectReferences = new List<string>();
         var projectReferenceAssemblies = new List<string>();
+        var razorViews = new List<string>();
         for (var n = 1; n < lines.Length; n++)
         {
             var line = lines[n].TrimEnd('\r');
@@ -84,6 +85,7 @@ public static class InputReader
                 case "reference": if (value.Length > 0) references.Add(value); break;
                 case "project-reference": projectReferences.Add(value); break;   // kept empty for the pairing below
                 case "project-reference-assembly": projectReferenceAssemblies.Add(value); break;
+                case "razor-view": if (value.Length > 0) razorViews.Add(value); break;
                 default: scalars[key] = value; break;
             }
         }
@@ -130,6 +132,7 @@ public static class InputReader
             ProjectReferenceAssemblies = projectReferenceAssemblies,
             Features = SplitList(Get("features")),
             InterceptorsNamespaces = SplitList(Get("interceptors-namespaces")),
+            RazorViews = razorViews,
         };
     }
 

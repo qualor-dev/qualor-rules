@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Task 30 (R-11): a plugin as an application loads it at run time. The views are plain Content copied to the
+       application's Plugins/Payments.Demo folder and compiled at run time; the build compiles none of them. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Shop.Plugin.Payments.Demo</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Remove="Views\**" />
+    <Content Include="Views\**\*.cshtml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Framework\Framework.csproj" />
+  </ItemGroup>
+</Project>
