@@ -176,6 +176,18 @@ public sealed class DiDispatchTests : TempDirs
         new object[] { "library scan of a literal Assembly.Load", "services.AddMessaging(o => o.RegisterHandlersFromAssembly(System.Reflection.Assembly.Load(\"Snippet\")));", LibraryShim },
         new object[] { "library *Containing<T> scan", "services.AddCheckersFromAssemblyContaining<ExportController>();", LibraryShim },
         new object[] { "library marker types", "services.AddProfiles(typeof(ExportController));", LibraryShim },
+        new object[] { "library scan of an assembly in a local", """
+                    var assembly = typeof(ExportController).Assembly;
+                    services.AddMessaging(o => o.RegisterHandlersFromAssemblies(assembly));
+            """, LibraryShim },
+        new object[] { "loop excluding attributes", """
+                    foreach (var t in typeof(ExportController).Assembly.GetTypes())
+                        if (t.IsClass && !t.IsAbstract && !typeof(Attribute).IsAssignableFrom(t) && t.Name.StartsWith("Exporter")) services.AddScoped(typeof(IExporter), t);
+            """, "" },
+        new object[] { "loop excluding exceptions", """
+                    foreach (var t in typeof(ExportController).Assembly.GetTypes())
+                        if (t.IsClass && typeof(Exception).IsAssignableFrom(t) == false && t.Name.StartsWith("Exporter")) services.AddScoped(typeof(IExporter), t);
+            """, "" },
         new object[] { "split over two bodies", "foreach (var t in Finder.Exporters()) services.AddScoped(typeof(IExporter), t);", """
             public static class Finder
             {
@@ -214,7 +226,8 @@ public sealed class DiDispatchTests : TempDirs
 
     /// Scanning or reflection (the brief's Scrutor `Scan`, Autofac `RegisterAssemblyTypes`, a `GetTypes()` loop feeding
     /// `Add*` whatever else its body names by `typeof` (a marker attribute, a namespace, a log line) or split over two
-    /// bodies over a named assembly, a catalog helper filtering by `typeof(T)`, an object made by `Activator` and
+    /// bodies over a named assembly, a loop that only excludes types (`!typeof(Attribute).IsAssignableFrom(t)`), a library
+    /// scan of an assembly held in a local, a catalog helper filtering by `typeof(T)`, an object made by `Activator` and
     /// cast to the interface) may register any implementation: every one is a target, the one registered by name
     /// included.
     [Theory]

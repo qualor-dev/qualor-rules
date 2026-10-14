@@ -413,10 +413,9 @@ internal sealed partial class Dispatch
                 && Unwrap(a.Value) is not ITypeOfOperation))
             unit.Reflective = true;
         // An assignability test bounds what the body enumerates by a type its caller names (that `typeof` opens it there).
-        if (name is "IsAssignableFrom" or "IsAssignableTo" or "IsSubclassOf" or "IsInstanceOfType"
-            && method.ContainingType is { Name: "Type" } typeType && SymbolMatch.MetadataName(typeType) == "System.Type")
+        if (IsAssignability(invocation) && !IsNegated(invocation))
             unit.Filtered = true;
-        if (LibraryScan(invocation, unit.Own)) _hosting.Add(unit.Own);
+        if (LibraryScan(invocation, unit)) _hosting.Add(unit.Own);
         if (method.TypeArguments.Length == 0) return;
         if (SymbolKeys.InSource(method))
         {
@@ -466,7 +465,7 @@ internal sealed partial class Dispatch
     /// `AddValidatorsFromAssemblyContaining<T>()`). It opens the projects of the named assemblies only (`typeof(X).Assembly`,
     /// a `*Containing<T>` or marker type, the executing, calling or entry assembly, `Assembly.Load` of a literal name); an
     /// unknown assembly list is ignored, as split scans over unknown assemblies are.
-    private bool LibraryScan(IInvocationOperation invocation, string own)
+    private bool LibraryScan(IInvocationOperation invocation, UnitFacts unit)
     {
         var method = invocation.TargetMethod;
         if (RegistrationNames.Contains(method.Name) || ScanNames.Contains(method.Name)) return false;
@@ -477,7 +476,6 @@ internal sealed partial class Dispatch
         if (assemblyParameters.Count == 0 && markerParameters.Count == 0 && !markerTypeArguments) return false;
         if (!IsServicesExtension(method) && !InsideServicesLambda(invocation)) return false;
         var designated = new HashSet<string>(StringComparer.Ordinal);
-        var unit = new UnitFacts(own);
         if (markerTypeArguments)
             foreach (var t in method.TypeArguments) Assembly(t, designated);
         foreach (var argument in invocation.Arguments)
@@ -540,6 +538,21 @@ internal sealed partial class Dispatch
             if (up is IArgumentOperation { Parent: IInvocationOperation call } && IsServicesExtension(call.TargetMethod)) return true;
         }
         return false;
+    }
+
+    /// An assignability test of `System.Type` (`IsAssignableFrom`, `IsAssignableTo`, `IsSubclassOf`, `IsInstanceOfType`).
+    private static bool IsAssignability(IInvocationOperation invocation) =>
+        invocation.TargetMethod is { Name: "IsAssignableFrom" or "IsAssignableTo" or "IsSubclassOf" or "IsInstanceOfType", ContainingType: { Name: "Type" } type }
+        && SymbolMatch.MetadataName(type) == "System.Type";
+
+    /// Whether a test's result is negated (`!test`, `test == false`, `test != true`): it excludes types and bounds nothing.
+    private static bool IsNegated(IOperation test)
+    {
+        var parent = Up(test);
+        if (parent is IUnaryOperation { OperatorKind: UnaryOperatorKind.Not }) return true;
+        return parent is IBinaryOperation { OperatorKind: BinaryOperatorKind.Equals or BinaryOperatorKind.NotEquals } binary
+            && (binary.LeftOperand == test ? binary.RightOperand : binary.LeftOperand).ConstantValue is { HasValue: true, Value: bool constant }
+            && constant == (binary.OperatorKind == BinaryOperatorKind.NotEquals);
     }
 
     private static bool HasExplicitTypeArguments(SyntaxNode syntax) => syntax is InvocationExpressionSyntax
@@ -674,7 +687,9 @@ internal sealed partial class Dispatch
         }
         // Only a type that can bound a scan filters it; a marker attribute, a namespace or name check, or a log line's
         // `typeof` only opens its type and leaves the scan unfiltered.
-        if (CanBound(typeOf.TypeOperand)) Filter(typeOf.TypeOperand, unit);
+        // A `typeof` in a negated assignability test (`!typeof(Attribute).IsAssignableFrom(t)`) excludes types: no filter.
+        var test = parent as IInvocationOperation ?? (parent as IArgumentOperation)?.Parent as IInvocationOperation;
+        if (CanBound(typeOf.TypeOperand) && !(test != null && IsAssignability(test) && IsNegated(test))) Filter(typeOf.TypeOperand, unit);
         else Open(typeOf.TypeOperand);
     }
 

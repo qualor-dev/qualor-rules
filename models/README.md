@@ -458,7 +458,8 @@ false positives (FP) or misses (FN) there.
   every type of a project scanned without a filter: Scrutor `Scan`, Autofac `RegisterAssemblyTypes`, and a
   `GetTypes()`/`GetExportedTypes()` enumeration when a body registers or builds by a `Type` value without a filter. Only a
   `typeof` that can bound a scan filters it (an interface, an abstract or overridable base, a library base, a type
-  parameter; not an attribute marker, a namespace or name check, a log line), as do an assignability test and the type
+  parameter; not an attribute marker, a namespace or name check, a log line, nor an exclusion such as
+  `!typeof(Attribute).IsAssignableFrom(t)`), as do an assignability test that is not negated and the type
   the objects are cast to. The enumerating body and the registering one may differ when the enumerated assembly is named
   (`typeof(T).Assembly`, the executing assembly); a body that enumerates unknown assemblies (`AppDomain.GetAssemblies()`,
   a variable) and registers by a run-time type itself opens every project. A project that no project with a registration
