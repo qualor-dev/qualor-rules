@@ -335,8 +335,13 @@ internal sealed class BodySummary
                 if (label.ViaKey && dropViaKey) continue;
                 var a = argument(label.Slot).WithoutIdentity();
                 if (!a.Any) continue;
-                var v = a.Step(site, $"passed to {name}", kind).Extend(label.Path).CleanedFor(label.CleanFor);
-                result = result.Join(label.ViaKey ? v.ViaKey() : v);
+                // Through each of the label's paths with its own cleanliness (RR1): the result keeps a witness per rule.
+                var stepped = a.Step(site, $"passed to {name}", kind);
+                foreach (var path in label.AllPaths)
+                {
+                    var v = stepped.Extend(path.Path).CleanedFor(path.CleanFor);
+                    result = result.Join(label.ViaKey ? v.ViaKey() : v);
+                }
             }
             else if (keep(label.Owner))
             {
@@ -352,7 +357,8 @@ internal sealed class BodySummary
     {
         var result = TaintValue.Clean;
         foreach (var label in symbolic.Labels)
-            if (label.Owner == owner && label.Slot == slot) result = result.Join(value.Extend(label.Path).CleanedFor(label.CleanFor));
+            if (label.Owner == owner && label.Slot == slot)
+                foreach (var path in label.AllPaths) result = result.Join(value.Extend(path.Path).CleanedFor(path.CleanFor));
         return result;
     }
 }

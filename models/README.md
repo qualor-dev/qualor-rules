@@ -500,8 +500,11 @@ one when it finds one (R-E32 as revised). A join keeps the witnesses of both sid
 cleanliness (the rules it is cleaned for), best first (high, then shorter), at most four plus those that keep a
 witness, and a high one, for every rule some witness had one for; a finding reports the best witness that reaches its
 sink and is not cleaned for its rule (an encoded value is no witness of an xss finding, but is one of a SQL finding; a
-rule's own source of another rule is none). A label (a parameter's path inside a summary) has one path: the one of the
-side that is request data for more rules, else the high one, else the shorter; so is a summary's call edge. The rules a
+rule's own source of another rule is none). A label (a parameter's path inside a summary) keeps its paths of different
+cleanliness the same way, bounded alike: a sink inside a callee records, per rule, the best path not cleaned for that
+rule, and a call site substitutes the argument through each path with its own cleanliness. A summary's call edge (a
+parameter passed on to a callee) keeps one path: the one of the edge that is request data for more rules, else the high
+one; a finding reported through it may show a path cleaned for its own rule, or miss a high one (a limit). The rules a
 value has a high witness for are part of the analysis's order: a value, a summary's sink or call edge, a heap location
 or a finding whose path becomes high counts as changed. A value's confidence can fall again only with a strict shrink
 of its cleanliness (a dirtier part joins) or a medium step taken anew, so the order, lexicographic on (cleanliness,

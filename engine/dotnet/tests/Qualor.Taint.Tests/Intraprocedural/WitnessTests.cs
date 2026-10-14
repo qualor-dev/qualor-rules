@@ -107,7 +107,7 @@ public sealed class WitnessTests
     public void A_path_cleaned_for_a_rule_is_never_the_witness_of_that_rule()
     {
         // The encoded side is high and short but clean for xss: it is no witness of an xss finding (R-E32 revised: the
-        // join keeps both, the finding chooses). A label keeps the path of the side that is request data for more rules.
+        // join keeps both, the finding chooses); a label as well (fix round 2).
         var encoded = TaintValue.Source(At(1), "encoded").CleanedFor(new[] { "csharp.xss" });
         var raw = TaintValue.Source(At(2), "raw").Step(At(3), "r1").Step(At(4), "read from heap", StepKind.HeapRead);
         var reach = new ReachTable().Of(new ulong[] { 1 });
@@ -119,7 +119,10 @@ public sealed class WitnessTests
 
         var x = TaintValue.Param(1, 0).CleanedFor(new[] { "csharp.xss" });
         var y = TaintValue.Param(1, 0).Step(At(5), "y1").Step(At(6), "y2");
-        Assert.Equal(2, x.Join(y).Labels[0].Path.Count);
+        // A label keeps both paths (fix round 2, RR1): an xss sink records the one not cleaned for xss.
+        Assert.Equal(2, x.Join(y).Labels[0].PathFor("csharp.xss").Count);
+        Assert.Equal(2, y.Join(x).Labels[0].PathFor("csharp.xss").Count);
+        Assert.Equal(0, x.Join(y).Labels[0].PathFor("csharp.sql-injection").Count);
     }
 
     // ---- Task 28 fix round 1 (I1, R-E32 revised): the witness of a finding is chosen for its rule ----

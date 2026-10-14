@@ -1303,7 +1303,9 @@ internal sealed partial class MethodAnalyzer
             foreach (var i in inputs)
             {
                 if (i.Ordinal != label.Slot || i.RefKind == RefKind.Out || !i.Value.Any) continue;
-                var value = i.Value.Step(site.Syntax.GetLocation(), $"passed to {name}", kind).Extend(label.Path).CleanedFor(label.CleanFor);
+                var stepped = i.Value.Step(site.Syntax.GetLocation(), $"passed to {name}", kind);
+                var value = TaintValue.Clean;
+                foreach (var path in label.AllPaths) value = value.Join(stepped.Extend(path.Path).CleanedFor(path.CleanFor));
                 if (!value.Any) continue;
                 foreach (var model in _ctx.ModelKeys.Writes(StaticType(i.Operation))) KeyedWrite(model, value, site);
             }

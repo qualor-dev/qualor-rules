@@ -193,6 +193,86 @@ public sealed class ConfidenceTests
         }
         """);
 
+    // ---- Fix round 2 (RR1): a label's paths are chosen per rule too, for a sink inside a callee ----
+
+    private const string Fmt = """
+        using System.Text.Encodings.Web;
+        public interface IFmt { string F(string s); }
+        public class F1 : IFmt { public string F(string s) => s + "1"; }
+        public class F2 : IFmt { public string F(string s) => s + "2"; }
+
+        """;
+
+    /// The finding's confidence and whether its reported path goes through the fallback call `_f.F` (the other side is
+    /// the encoded one: a sanitizer adds no step).
+    private static (Confidence Confidence, bool ThroughFallback) Only(string code, string rule)
+    {
+        var f = Assert.Single(Snippet.Analyze(code).Findings, x => x.RuleId == rule);
+        return (f.Confidence, f.Path.Any(s => s.Kind == StepKind.DispatchFallback));
+    }
+
+    [Fact]
+    public void R3_an_encoded_high_path_is_the_sql_witness_in_the_action() => Assert.Equal((Confidence.High, false), Only(Fmt + """
+        public class R3Controller : Controller
+        {
+            private readonly SqlConnection _c = new();
+            private readonly IFmt _f;
+            public R3Controller(IFmt f) => _f = f;
+            public IActionResult Run(string p)
+            {
+                var s = p.Length > 3 ? HtmlEncoder.Default.Encode(p) : _f.F(p);
+                _c.Execute("SELECT '" + s + "'");
+                return Ok();
+            }
+        }
+        """, "csharp.sql-injection"));
+
+    [Fact]
+    public void L3_an_encoded_high_path_is_the_sql_witness_in_a_callee() => Assert.Equal((Confidence.High, false), Only(Fmt + """
+        public class L3Controller : Controller
+        {
+            private readonly SqlConnection _c = new();
+            private readonly IFmt _f;
+            public L3Controller(IFmt f) => _f = f;
+            public IActionResult Run(string q) => Show(q);
+            private IActionResult Show(string p)
+            {
+                var s = p.Length > 3 ? HtmlEncoder.Default.Encode(p) : _f.F(p);
+                _c.Execute("SELECT '" + s + "'");
+                return Ok();
+            }
+        }
+        """, "csharp.sql-injection"));
+
+    [Fact]
+    public void R4_an_xss_finding_never_reports_the_encoded_path_in_the_action() => Assert.Equal((Confidence.Medium, true), Only(Fmt + """
+        public class R4Controller : Controller
+        {
+            private readonly IFmt _f;
+            public R4Controller(IFmt f) => _f = f;
+            public IActionResult Run(string p)
+            {
+                var s = p.Length > 3 ? HtmlEncoder.Default.Encode(p) : _f.F(System.IO.Path.GetFileName(p));
+                return Content(s, "text/html");
+            }
+        }
+        """, "csharp.xss"));
+
+    [Fact]
+    public void L4_an_xss_finding_never_reports_the_encoded_path_in_a_callee() => Assert.Equal((Confidence.Medium, true), Only(Fmt + """
+        public class L4Controller : Controller
+        {
+            private readonly IFmt _f;
+            public L4Controller(IFmt f) => _f = f;
+            public IActionResult Run(string q) => Show(q);
+            private IActionResult Show(string p)
+            {
+                var s = p.Length > 3 ? HtmlEncoder.Default.Encode(p) : _f.F(System.IO.Path.GetFileName(p));
+                return Content(s, "text/html");
+            }
+        }
+        """, "csharp.xss"));
+
     [Fact]
     public void An_element_found_by_a_request_key_is_medium_and_the_tables_own_data_high() => Expect("""
         public class LookupController : ControllerBase

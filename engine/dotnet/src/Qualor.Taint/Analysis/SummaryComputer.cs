@@ -745,7 +745,8 @@ internal sealed class SummaryComputer
 
         public void RecordSink(Label label, string rule, SyntaxNode site, ISymbol member)
         {
-            if (Keeps(label.Owner)) _computer.Builder(label.Owner).AddSink(label.Slot, rule, site, member, label.Path);
+            // The label's path for this rule (RR1): the best one not cleaned for it.
+            if (Keeps(label.Owner)) _computer.Builder(label.Owner).AddSink(label.Slot, rule, site, member, label.PathFor(rule));
         }
 
         /// Something is written into the receiver object (`this._f = v`, `this.P = v`, a collection write into a field).

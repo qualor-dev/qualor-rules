@@ -84,15 +84,53 @@ internal sealed class Trail
 /// A parameter label (Task 8, spec §5 "summaries"): the value derives from parameter Slot of the body Owner (−1 is
 /// `this`), cleaned on its way for CleanFor; Path is the steps inside that body since its entry. A body's summary is its
 /// return value, sinks and heap writes expressed in its own labels; a call site substitutes its arguments for them.
+///
+/// Alternatives (fix round 2 of Task 28, RR1): as request data keeps witnesses, a label keeps its paths of different
+/// cleanliness (Witness with no scope), best first, Path the first, bounded as TaintValue.Merge bounds witnesses; empty:
+/// Path is the only one, valid for CleanFor. A sink effect records the path for its rule (PathFor), and a call site
+/// substitutes the argument through each path with its own cleanliness. The lattice compares a label's Path.Medium as
+/// before (CleanFor already takes part in it).
 internal sealed class Label
 {
-    public Label(int owner, int slot, ImmutableHashSet<string> cleanFor, Trail path, bool viaKey = false)
+    public Label(int owner, int slot, ImmutableHashSet<string> cleanFor, Trail path, bool viaKey = false, ImmutableArray<Witness> alternatives = default)
     {
         Owner = owner;
         Slot = slot;
         CleanFor = cleanFor;
         Path = path;
         ViaKey = viaKey;
+        Alternatives = alternatives.IsDefault ? ImmutableArray<Witness>.Empty : alternatives;
+    }
+
+    /// The label's paths of different cleanliness, best first (see the type's documentation).
+    public ImmutableArray<Witness> Alternatives { get; }
+
+    /// Every path with its cleanliness: the alternatives, or Path with CleanFor.
+    public ImmutableArray<Witness> AllPaths => Alternatives.IsEmpty ? ImmutableArray.Create(new Witness(null, Path, CleanFor)) : Alternatives;
+
+    /// The path a sink of `rule` records: the best one (high, then shortest) not cleaned for `rule`, else Path.
+    public Trail PathFor(string rule)
+    {
+        if (Alternatives.IsEmpty) return Path;
+        Trail? best = null;
+        foreach (var w in Alternatives)
+            if (!w.CleanFor.Contains(rule) && (best == null || Trail.Better(w.Path, best))) best = w.Path;
+        return best ?? Path;
+    }
+
+    /// This label with each path mapped by `map` (its cleanliness unchanged); `cleanFor` the label's new CleanFor.
+    public Label Map(Func<Trail, Trail> map, ImmutableHashSet<string>? cleanFor = null, bool? viaKey = null)
+    {
+        var alternatives = Alternatives.IsEmpty ? Alternatives : Alternatives.Select(w => w with { Path = map(w.Path) }).ToImmutableArray();
+        return new Label(Owner, Slot, cleanFor ?? CleanFor, alternatives.IsEmpty ? map(Path) : alternatives[0].Path, viaKey ?? ViaKey, alternatives);
+    }
+
+    /// This label cleaned for `rules` (each path too).
+    public Label Cleaned(IReadOnlyCollection<string> rules)
+    {
+        var alternatives = Alternatives.IsEmpty ? Alternatives
+            : Alternatives.Select(w => rules.All(w.CleanFor.Contains) ? w : w with { CleanFor = w.CleanFor.Union(rules) }).ToImmutableArray();
+        return new Label(Owner, Slot, CleanFor.Union(rules), Path, ViaKey, alternatives);
     }
 
     /// The parameter reaches the value only as the key of a lookup whose element is typed by a type parameter (fix round
@@ -376,7 +414,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     {
         var value = Request && !KeyOnly ? this with { KeyOnly = true } : this;
         return value.Labels.Length == 0 || value.Labels.All(l => l.ViaKey) ? value
-            : value with { Labels = value.Labels.Select(l => l.ViaKey ? l : new Label(l.Owner, l.Slot, l.CleanFor, l.Path, true)).ToImmutableArray() };
+            : value with { Labels = value.Labels.Select(l => l.ViaKey ? l : l.Map(p => p, viaKey: true)).ToImmutableArray() };
     }
 
     /// The request data of this value, without its labels.
@@ -504,11 +542,23 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                 var x = a[i++];
                 var y = b[j++];
                 var cf = x.CleanFor.Count == 0 || y.CleanFor.Count == 0 ? ImmutableHashSet<string>.Empty : x.CleanFor.Intersect(y.CleanFor);
-                var p = Dirtier(y.CleanFor, x.CleanFor) ? y.Path : Dirtier(x.CleanFor, y.CleanFor) ? x.Path : Trail.Better(y.Path, x.Path) ? y.Path : x.Path;
                 var viaKey = x.ViaKey && y.ViaKey;
-                if (cf.Count != x.CleanFor.Count || !ReferenceEquals(p, x.Path) || viaKey != x.ViaKey)
+                // Paths of one cleanliness: the better one; else both sides' paths, each with its cleanliness (RR1).
+                Trail p;
+                var alternatives = ImmutableArray<Witness>.Empty;
+                if (x.Alternatives.IsEmpty && y.Alternatives.IsEmpty && x.CleanFor.SetEquals(y.CleanFor))
                 {
-                    result.Add(new Label(x.Owner, x.Slot, cf.Count == x.CleanFor.Count ? x.CleanFor : cf, p, viaKey));
+                    p = Trail.Better(y.Path, x.Path) ? y.Path : x.Path;
+                }
+                else
+                {
+                    var merged = Merge(x.AllPaths, y.AllPaths);
+                    p = merged[0].Path;
+                    if (merged.Length > 1) alternatives = merged;
+                }
+                if (cf.Count != x.CleanFor.Count || !ReferenceEquals(p, x.Path) || viaKey != x.ViaKey || !SameWitnesses(alternatives, x.Alternatives))
+                {
+                    result.Add(new Label(x.Owner, x.Slot, cf.Count == x.CleanFor.Count ? x.CleanFor : cf, p, viaKey, alternatives));
                     changed = true;
                 }
                 else
@@ -564,7 +614,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         {
             value = value with
             {
-                Labels = Labels.Select(l => rules.All(l.CleanFor.Contains) ? l : new Label(l.Owner, l.Slot, l.CleanFor.Union(rules), l.Path, l.ViaKey)).ToImmutableArray(),
+                Labels = Labels.Select(l => rules.All(l.CleanFor.Contains) ? l : l.Cleaned(rules)).ToImmutableArray(),
             };
         }
         return value;
@@ -592,10 +642,13 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                 value = value with { Path = witnesses[0].Path, Witnesses = witnesses };
             }
         }
-        if (Labels.Length > 0 && Labels.Any(l => Fits(l.Path, location, medium)))
+        if (Labels.Length > 0 && Labels.Any(l => l.AllPaths.Any(w => Fits(w.Path, location, medium))))
         {
             var s = step ?? new PathStep(location, message, kind);
-            value = value with { Labels = Labels.Select(l => Fits(l.Path, location, medium) ? new Label(l.Owner, l.Slot, l.CleanFor, l.Path.Add(s), l.ViaKey) : l).ToImmutableArray() };
+            value = value with
+            {
+                Labels = Labels.Select(l => l.AllPaths.Any(w => Fits(w.Path, location, medium)) ? l.Map(p => Fits(p, location, medium) ? p.Add(s) : p) : l).ToImmutableArray(),
+            };
         }
         return value;
     }
@@ -620,7 +673,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                 value = value with { Path = witnesses[0].Path, Witnesses = witnesses };
             }
         }
-        if (Labels.Length > 0) value = value with { Labels = Labels.Select(l => new Label(l.Owner, l.Slot, l.CleanFor, l.Path.Concat(steps), l.ViaKey)).ToImmutableArray() };
+        if (Labels.Length > 0) value = value with { Labels = Labels.Select(l => l.Map(p => p.Concat(steps))).ToImmutableArray() };
         return value;
     }
 }
