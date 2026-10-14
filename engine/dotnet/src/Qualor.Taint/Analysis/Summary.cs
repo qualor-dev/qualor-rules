@@ -161,6 +161,7 @@ internal sealed class BodySummary
     {
         if (!symbolic.Any) return TaintValue.Clean;
         var own = symbolic.RequestPart.Within(caller);
+        if (dropViaKey && own.KeyOnly) own = TaintValue.Clean;
         var result = own.Request ? own.Step(site, $"returned by {name}") : TaintValue.Clean;
         foreach (var label in symbolic.Labels)
         {

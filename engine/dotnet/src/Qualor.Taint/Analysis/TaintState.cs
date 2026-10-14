@@ -141,6 +141,11 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     /// Whether every part of the request data was read from the heap (see the type's documentation).
     public bool FromHeap { get; init; }
 
+    /// The request data reached this value only as the key of a lookup whose element is typed by a type parameter (the
+    /// request counterpart of Label.ViaKey, R-E23): a value-factory shaped call drops it from its result. A join keeps
+    /// it only when both request parts have it.
+    public bool KeyOnly { get; init; }
+
     public const int MaxWitnesses = 4;
 
     /// The alternative witnesses (scope, path), shortest first, Path the first; empty: Path is the only one, valid for
@@ -234,8 +239,12 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         Clean with { Labels = ImmutableArray.Create(new Label(owner, slot, ImmutableHashSet<string>.Empty, Trail.Empty)) };
 
     /// This value with every label marked as reaching it only through a type-parameter-typed key lookup (Label.ViaKey).
-    public TaintValue ViaKey() => Labels.Length == 0 || Labels.All(l => l.ViaKey) ? this
-        : this with { Labels = Labels.Select(l => l.ViaKey ? l : new Label(l.Owner, l.Slot, l.CleanFor, l.Path, true)).ToImmutableArray() };
+    public TaintValue ViaKey()
+    {
+        var value = Request && !KeyOnly ? this with { KeyOnly = true } : this;
+        return value.Labels.Length == 0 || value.Labels.All(l => l.ViaKey) ? value
+            : value with { Labels = value.Labels.Select(l => l.ViaKey ? l : new Label(l.Owner, l.Slot, l.CleanFor, l.Path, true)).ToImmutableArray() };
+    }
 
     /// The request data of this value, without its labels.
     public TaintValue RequestPart => Labels.Length == 0 ? this : Request ? this with { Labels = ImmutableArray<Label>.Empty } : Clean;
@@ -256,12 +265,14 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         var requestChanged = false;
         var scope = Scope;
         var fromHeap = FromHeap;
+        var keyOnly = KeyOnly;
         var witnesses = Witnesses;
         if (Request && other.Request)
         {
             request = true;
             scope = Scope == null || other.Scope == null ? null : Scope.Union(other.Scope);
             fromHeap = FromHeap && other.FromHeap;
+            keyOnly = KeyOnly && other.KeyOnly;
             cleanFor = CleanFor.Count == 0 || other.CleanFor.Count == 0 ? ImmutableHashSet<string>.Empty : CleanFor.Intersect(other.CleanFor);
             sources = Sources;
             foreach (var s in other.Sources)
@@ -286,7 +297,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                 witnesses = merged.Length > 1 ? merged : ImmutableArray<Witness>.Empty;
             }
             requestChanged = cleanFor.Count != CleanFor.Count || !ReferenceEquals(sources, Sources) || !ReferenceEquals(path, Path)
-                || !ReferenceEquals(scope, Scope) || fromHeap != FromHeap || !SameWitnesses(witnesses, Witnesses);
+                || !ReferenceEquals(scope, Scope) || fromHeap != FromHeap || keyOnly != KeyOnly || !SameWitnesses(witnesses, Witnesses);
             if (cleanFor.Count == CleanFor.Count) cleanFor = CleanFor;
         }
         else if (other.Request)
@@ -297,6 +308,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             path = other.Path;
             scope = other.Scope;
             fromHeap = other.FromHeap;
+            keyOnly = other.KeyOnly;
             witnesses = other.Witnesses;
             requestChanged = true;
         }
@@ -309,7 +321,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         }
         var labels = MergeLabels(Labels, other.Labels, out var labelsChanged);
         if (!requestChanged && !labelsChanged) return this;
-        return new TaintValue(request, cleanFor, path) { Sources = sources, Labels = labels, Scope = scope, FromHeap = fromHeap, Witnesses = witnesses };
+        return new TaintValue(request, cleanFor, path) { Sources = sources, Labels = labels, Scope = scope, FromHeap = fromHeap, KeyOnly = keyOnly, Witnesses = witnesses };
     }
 
     /// The union of two sorted label arrays (one label per owner and slot: CleanFor intersected, the shorter path);
@@ -361,13 +373,13 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     /// Equal in the lattice (paths aside).
     public bool SameTaint(TaintValue other) =>
         ReferenceEquals(this, other)
-        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Sources.SetEquals(other.Sources) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap))
+        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Sources.SetEquals(other.Sources) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly))
             && SameLabels(other));
 
     /// Equal in the lattice, paths and source locations aside: what decides whether a summary or the heap changed.
     public bool SameFlow(TaintValue other) =>
         ReferenceEquals(this, other)
-        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap)) && SameLabels(other));
+        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly)) && SameLabels(other));
 
     private bool SameLabels(TaintValue other)
     {

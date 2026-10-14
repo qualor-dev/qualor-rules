@@ -205,6 +205,29 @@ public sealed class KeyedLookupTests
         """);
 
     [Fact]
+    public void A_key_the_cache_reads_itself_is_dropped_by_a_factory_call_only() => Expect("""
+        public static class CurrentKey { public static string Value = ""; }
+        public sealed class RegionCache<T>
+        {
+            private readonly Dictionary<string, T> _items = new();
+            public T Get(string region, Func<T> acquire) => _items.TryGetValue(region + CurrentKey.Value, out var hit) ? hit : acquire();
+            public T? Peek(string region) => _items.TryGetValue(region + CurrentKey.Value, out var hit) ? hit : default;
+        }
+        public class RegionsController : ControllerBase
+        {
+            private static readonly RegionCache<string> Titles = new();
+            private readonly SqlConnection _c = new();
+            public IActionResult Show(string slug)
+            {
+                CurrentKey.Value = slug;
+                _c.Execute("SELECT * FROM " + Titles.Get("r", () => "pages"));
+                _c.Execute("SELECT * FROM " + Titles.Peek("r")); /*sink*/
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
     public void Library_caches_with_a_factory_give_the_factory_result() => Expect("""
         using System.Collections.Concurrent;
         using Microsoft.Extensions.Caching.Memory;
