@@ -43,14 +43,17 @@ internal sealed class SummaryComputer
     private readonly Heap _heap;
     private readonly Budget _budget;
     private readonly Action<IMethodSymbol?>? _beforeBody;
+    private readonly Action? _beforeSeed;
     private readonly HashSet<int> _analysed = new();
     private readonly HashSet<int> _failed = new();
     private readonly List<string> _errors = new();
     private readonly LinkedList<Unit> _cached = new();
     private readonly Dictionary<int, SummaryBuilder> _builders = new();
 
-    public SummaryComputer(AnalysisContext ctx, CallGraph graph, Dispatch dispatch, Budget budget, Action<IMethodSymbol?>? beforeBody)
+    public SummaryComputer(AnalysisContext ctx, CallGraph graph, Dispatch dispatch, Budget budget, Action<IMethodSymbol?>? beforeBody,
+        Action? beforeSeed = null)
     {
+        _beforeSeed = beforeSeed;
         _ctx = ctx;
         _graph = graph;
         _dispatch = dispatch;
@@ -224,10 +227,13 @@ internal sealed class SummaryComputer
 
     /// Runs the seeds' global effects: a sink of the parameter reports the request data (with the path from its source
     /// through the calls into the body to the sink), a heap write of it writes the heap, a call edge seeds the callee.
+    /// The budget is checked per seed (ruling R-E12): over it, the rest stays queued and the run stops incomplete.
     private void Drain()
     {
         while (_queue.Count > 0)
         {
+            _beforeSeed?.Invoke();
+            if (!_budget.Check()) return;
             var key = _queue.Dequeue();
             _queued.Remove(key);
             var body = _graph.Body(key.Body);

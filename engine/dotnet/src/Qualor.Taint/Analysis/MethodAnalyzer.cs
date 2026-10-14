@@ -77,8 +77,9 @@ internal sealed class AnalysisContext
 ///   captured variable (strong for a local, a parameter, a static field or a field of `this`).
 /// - `this` is the label of the receiver; a field or auto-property read is its instance's value (element-insensitive
 ///   objects: `this` for an own one), its state in this body (strong updates for own and static ones), and the heap's
-///   request data for it (Heap: field-based, across methods and projects). A write goes to the state, into the
-///   instance, and to the heap.
+///   request data for it (Heap: field-based, across methods and projects). A write of a source field or
+///   auto-property taints its symbol only (its state here, the heap), never the object holding it; other members
+///   (tuple elements, external structs) are written into their instance.
 /// - Values of a scalar type (sources.yml `scalars`, enums, void) are always clean.
 /// - Calls and property accessors of members declared in source: their targets (Dispatch: class hierarchy) apply their
 ///   summaries: the arguments are substituted for the callee's labels in its local effects (result, receiver, ref and
@@ -505,11 +506,20 @@ internal sealed class MethodAnalyzer
         return value;
     }
 
-    /// An assignment of a field or auto-property (its instance already evaluated): a strong update of an own one in this
-    /// body (and a write into the receiver), a write into another instance, and a heap write.
+    /// An assignment of a field or auto-property (its instance already evaluated). A heap member (a field or
+    /// auto-property declared in source; spec §5 "fields and properties by symbol") is tainted by its symbol only: the
+    /// heap write and, for an own one, a strong update of its state in this body; the object that holds it is not
+    /// written (fix round 1 of Task 8, I1: its other members stay clean). Any other member (a tuple element, an external
+    /// struct's field) is written into its instance as before (element-insensitive, Task 7 I3).
     private void AssignMember(ISymbol member, IOperation? instance, TaintValue value, TaintState state, IOperation assignment)
     {
         var named = Named(value, assignment, member.Name);
+        if (_body.IsHeapMember(member))
+        {
+            if (IsOwn(instance)) state.Set(member.OriginalDefinition, named);
+            _body.HeapWrite(member, named);
+            return;
+        }
         if (IsOwn(instance))
         {
             state.Set(member.OriginalDefinition, named);
@@ -629,8 +639,16 @@ internal sealed class MethodAnalyzer
         }
     }
 
+    /// A weak write (a collection write) into a field or auto-property: a heap member is tainted by its symbol only
+    /// (`_db.Orders.Add(o)` taints Orders, not `_db`); any other member is written into its instance.
     private void WriteMember(ISymbol member, IOperation? instance, TaintValue value, TaintState state)
     {
+        if (_body.IsHeapMember(member))
+        {
+            if (IsOwn(instance)) state.Add(member.OriginalDefinition, value);
+            _body.HeapWrite(member, value);
+            return;
+        }
         if (IsOwn(instance))
         {
             state.Add(member.OriginalDefinition, value);
@@ -641,6 +659,30 @@ internal sealed class MethodAnalyzer
             Write(instance!, value, state);
         }
         _body.HeapWrite(member, value);
+    }
+
+    /// What a callee writes into its receiver (its ToThis) reaches the variable that holds the receiver in this body: a
+    /// local, a parameter, a capture, `this`; for a field or auto-property only its state in this body, never the heap
+    /// (I1: a service in a field does not become request data for every method that reads the field).
+    private void WriteReceiver(IOperation receiver, TaintValue value, TaintState state)
+    {
+        switch (receiver)
+        {
+            case IConversionOperation conversion:
+                WriteReceiver(conversion.Operand, value, state);
+                break;
+            case IFieldReferenceOperation f when IsOwn(f.Instance):
+                state.Add(f.Field.OriginalDefinition, value);
+                break;
+            case IPropertyReferenceOperation p when IsOwn(p.Instance) && _body.IsHeapMember(p.Property):
+                state.Add(p.Property.OriginalDefinition, value);
+                break;
+            case IFieldReferenceOperation or IPropertyReferenceOperation:
+                break;
+            default:
+                Write(receiver, value, state);
+                break;
+        }
     }
 
     private bool IsFluent(IMethodSymbol method)
@@ -927,7 +969,7 @@ internal sealed class MethodAnalyzer
         {
             var written = BodySummary.Substitute(s.ToThis, callee.Id, argument, location, name, _body.Keeps);
             if (constructor) result = result.Join(written);
-            else if (receiverOperation != null) Write(receiverOperation, written, state);
+            else if (receiverOperation != null) WriteReceiver(receiverOperation, written, state);
         }
         foreach (var (ordinal, symbolic) in s.Refs)
         {

@@ -28,6 +28,9 @@ public sealed class TaintEngine
     /// Test hook: called before each body is analysed (an exception thrown here is a failure of that body).
     internal Action<IMethodSymbol?>? BeforeBody { get; set; }
 
+    /// Test hook: called before each seed (request data at a body's parameter) runs its global effects.
+    internal Action? BeforeSeed { get; set; }
+
     /// The summaries of the last run (the brief's view), by body symbol: for tests and diagnostics.
     internal IReadOnlyDictionary<IMethodSymbol, Summary> Summaries() =>
         _last?.Summaries() ?? new Dictionary<IMethodSymbol, Summary>(SymbolEqualityComparer.Default);
@@ -55,7 +58,7 @@ public sealed class TaintEngine
                 var dispatch = new Dispatch(solution.Projects.Select(p => (Compilation)p.Compilation), ct);
                 graph = CallGraph.Build(solution, dispatch, budget.Check, ct);
                 _index = budget.Elapsed - started;
-                computer = new SummaryComputer(ctx, graph, dispatch, budget, BeforeBody);
+                computer = new SummaryComputer(ctx, graph, dispatch, budget, BeforeBody, BeforeSeed);
                 if (budget.Check()) computer.Run(ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
