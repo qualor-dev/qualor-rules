@@ -41,8 +41,9 @@ internal static class SymbolKeys
     public static bool InSource(ISymbol symbol) => Definition(symbol).DeclaringSyntaxReferences.Length > 0;
 }
 
-//// One call a body makes: the method named, whether it dispatches virtually, the receiver's static type.
-internal readonly record struct CallSite(IMethodSymbol Method, bool IsVirtual, ITypeSymbol? Receiver);
+//// One call a body makes: the method named, whether it dispatches virtually, the receiver's static type; Counted is
+/// false for the second accessor of one property reference (the stats count the reference once).
+internal readonly record struct CallSite(IMethodSymbol Method, bool IsVirtual, ITypeSymbol? Receiver, bool Counted = true);
 
 /// How a virtual call was resolved (decision R-7): to implementations the solution creates or registers, to those of
 /// projects or types opened by scanning, reflection or a missing registration only, or by the class hierarchy.
@@ -146,15 +147,16 @@ internal sealed partial class Dispatch
     /// Counts one call site of the call graph in the stats (once per site, CallGraph.Build).
     public void Count(CallSite site)
     {
-        if (Resolve(site.Method, site.IsVirtual, site.Receiver) is not { } resolution) return;
+        if (!site.Counted || Resolve(site.Method, site.IsVirtual, site.Receiver) is not { } resolution) return;
         switch (resolution.Kind)
         {
-            case DispatchKind.Registrations: ByRegistrations++; break;
+            case DispatchKind.Registrations:
+                ByRegistrations++;
+                if (resolution.Narrowed) Narrowed++;
+                break;
             case DispatchKind.Scanning: ByScanning++; break;
             case DispatchKind.Hierarchy: ByHierarchy++; break;
-            default: return;
         }
-        if (resolution.Narrowed) Narrowed++;
     }
 
     public int ByRegistrations { get; private set; }

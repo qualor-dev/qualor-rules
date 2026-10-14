@@ -443,21 +443,40 @@ false positives (FP) or misses (FN) there.
   member is request data in that member of every object of the type in the requests that reach the write (a cache key
   built from request values makes every cache key of those requests request data; what is found by it, below), and an interface every action reaches joins most code
   into one request (FP).
-- Dispatch (since Task 26, decision R-7): a virtual or interface call runs the implementations whose type the solution
-  creates: `new` (target-typed too), a DI registration (`Add{Scoped,Transient,Singleton}`, keyed, `TryAdd*`,
+- Dispatch (since Task 26, decision R-7, ruling R-E25): a virtual or interface call runs the implementations whose type
+  the solution creates: `new` (target-typed too), a DI registration (`Add{Scoped,Transient,Singleton}`, keyed, `TryAdd*`,
   `TryAddEnumerable`, `ServiceDescriptor`, `AddHostedService`, `AddDbContext`, `AddHttpClient`, Scrutor `Decorate`,
   Autofac `RegisterType`/`RegisterGeneric`; type arguments, `typeof` pairs and open generics, through a project's own
   generic registration helper too), a framework-built type (controllers, views, pages, page models, view components, tag
   helpers, filters and attributes, middleware, hubs, hosted services, Blazor components, EF migrations), an entry
-  point's parameter type, an explicit concrete type argument of a library method (`Activator.CreateInstance<T>()`,
-  `Deserialize<T>()`). Every subtype of a type named by `typeof` (outside registrations, service lookups and assembly
-  designators), cast to from an object built by reflection, or a `DbSet<T>` entity counts too, and so does every type
-  of a project scanned without a filter (Scrutor `Scan`, Autofac `RegisterAssemblyTypes`, a `GetTypes()` loop that
-  registers or builds by a `Type` value) or that no project with a registration is or references (registration code
-  not in source). The class hierarchy stays when no implementation is known, and for every project when the scanned
-  assemblies are not known. FN: an implementation built only by code these forms miss (a class type parameter's
-  `new T()`, a factory in a library, model binding of a nested or polymorphic member type, a type loaded by name and
-  never cast).
+  point's parameter type, a type argument of a library method given explicitly (`Activator.CreateInstance<T>()`,
+  `Deserialize<T>()`, `Get<T>()`) or inferred for a creation or deserialization call (`Deserialize(s, JsonTypeInfo<T>)`),
+  with the element and argument types inside it (`List<T>`, `T[]`, a dictionary's values; a bound `List<T>` parameter
+  too). Every subtype of a type named by `typeof` (outside registrations, service lookups and assembly designators,
+  attribute arguments and generic attribute type arguments included, also on a lambda's parameters in a body), cast to
+  from an object built by reflection, a `DbSet<T>` entity or an entity its navigation properties reach counts too. So does
+  every type of a project scanned without a filter: Scrutor `Scan`, Autofac `RegisterAssemblyTypes`, and a
+  `GetTypes()`/`GetExportedTypes()` enumeration when a body registers or builds by a `Type` value without a filter. Only a
+  `typeof` that can bound a scan filters it (an interface, an abstract or overridable base, a library base, a type
+  parameter; not an attribute marker, a namespace or name check, a log line), as do an assignability test and the type
+  the objects are cast to. The enumerating body and the registering one may differ when the enumerated assembly is named
+  (`typeof(T).Assembly`, the executing assembly); a body that enumerates unknown assemblies (`AppDomain.GetAssemblies()`,
+  a variable) and registers by a run-time type itself opens every project. A project that no project with a registration
+  is or references is open as well (registration code not in source; a library whose only registrations are in a sample
+  or test project counts as hosted, so implementations meant for consumers' own registrations are dropped). The class
+  hierarchy stays when no implementation is known. FN: an implementation built only by code these forms miss:
+  - a class type parameter's `new T()` or registration (`class Registrar<TImpl>` registering `TImpl`), a factory in a
+    library;
+  - model binding of a nested or polymorphic member type, a configuration-bound nested options member
+    (`Configure<Options>` builds `Options.Inner`);
+  - an object made by reflection and cast in another body (a helper returning `object`), or registered uncast; a type
+    loaded by name and never cast;
+  - a scan split over bodies when the enumerated assemblies are unknown (a module loader's assembly list);
+  - library assembly scans (MediatR `RegisterServicesFromAssembly`, FluentValidation `AddValidatorsFromAssembly*`,
+    AutoMapper `AddAutoMapper(assemblies)`, MassTransit `AddConsumers`, FluentMigrator `ScanIn`) are not recognised: on the
+    measured projects their assemblies are unknown (nopCommerce's validators and migrations, Jellyfin's plugin
+    assemblies) and every project would open (Task 26 fix round 1). Their own interfaces are external, so only a source
+    base or interface that their scanned classes share and that is also built elsewhere is affected.
 - Guards hold for locals, parameters and members read on them (since Task 21, "Guards on members"); a call given the
   guarded object (or one of a related type, or something that holds one) between the check and the sink, an await of
   earlier work, or a nested body touching the object ends the guard (FP); a member read through a project property

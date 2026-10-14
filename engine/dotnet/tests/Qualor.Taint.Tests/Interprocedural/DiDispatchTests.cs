@@ -124,28 +124,68 @@ public sealed class DiDispatchTests : TempDirs
                         if (type.IsClass && !type.IsAbstract && type.Name.StartsWith("Exporter")) services.AddScoped(typeof(IExporter), type);
             """, "" },
         new object[] { "Autofac", "new Autofac.ContainerBuilder().RegisterAssemblyTypes(typeof(ExportController).Assembly).AsImplementedInterfaces();", AutofacShim },
-        new object[] { "GetExports<T>", "foreach (var e in new PartHost().GetExports<IExporter>()) services.AddSingleton(e);", """
-            public class PartHost
+        new object[] { "Catalog.All<T>", """
+                    var known = new List<Type>();
+                    foreach (var name in new[] { "Exporter8", "Exporter9" }) known.Add(Type.GetType(name)!);
+                    foreach (var e in new Catalog(known).All<IExporter>()) services.AddSingleton(e);
+            """, """
+            public class Catalog
             {
-                private readonly Type[] _types = typeof(PartHost).Assembly.GetExportedTypes();
-                public IEnumerable<T> GetExports<T>() => GetExportTypes<T>().Select(Build).Where(o => o != null).Cast<T>();
-                private IEnumerable<Type> GetExportTypes<T>()
+                private readonly IReadOnlyList<Type> _known;
+                public Catalog(IReadOnlyList<Type> known) => _known = known;
+                public IEnumerable<T> All<T>()
+                {
+                    foreach (var type in TypesOf<T>())
+                        if (Make(type) is T made) yield return made;
+                }
+                private IEnumerable<Type> TypesOf<T>()
                 {
                     var wanted = typeof(T);
-                    return _types.Where(t => !t.IsAbstract && wanted.IsAssignableFrom(t));
+                    foreach (var type in _known)
+                        if (!type.IsAbstract && wanted.IsAssignableFrom(type)) yield return type;
                 }
-                private static object? Build(Type type) => Activator.CreateInstance(type);
+                private static object? Make(Type type) => Activator.CreateInstance(type);
             }
             """ },
         new object[] { "Activator cast", """
                     foreach (var name in new[] { "Exporter8", "Exporter9" })
                         services.AddSingleton((IExporter)Activator.CreateInstance(Type.GetType(name)!)!);
             """, "" },
+        new object[] { "type marker attribute", """
+                    foreach (var t in typeof(ExportController).Assembly.GetTypes())
+                        if (t.IsDefined(typeof(AutoRegisterAttribute), false)) foreach (var i in t.GetInterfaces()) services.AddScoped(i, t);
+            """, MarkerAttribute },
+        new object[] { "namespace by typeof", """
+                    foreach (var t in typeof(ExportController).Assembly.GetTypes())
+                        if (t.IsClass && t.Namespace == typeof(Exporter0).Namespace) foreach (var i in t.GetInterfaces()) services.AddScoped(i, t);
+            """, "" },
+        new object[] { "unrelated typeof", """
+                    foreach (var t in typeof(ExportController).Assembly.GetTypes())
+                    {
+                        if (t.Name.StartsWith("Exporter")) services.AddScoped(typeof(IExporter), t);
+                        Console.WriteLine(typeof(Registration).Name);
+                    }
+            """, "" },
+        new object[] { "every loaded assembly", """
+                    foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+                        foreach (var t in assembly.GetTypes())
+                            if (t.Name.StartsWith("Exporter")) services.AddScoped(typeof(IExporter), t);
+            """, "" },
+        new object[] { "split over two bodies", "foreach (var t in Finder.Exporters()) services.AddScoped(typeof(IExporter), t);", """
+            public static class Finder
+            {
+                public static IEnumerable<Type> Exporters() => typeof(Finder).Assembly.GetTypes().Where(t => t.Name.StartsWith("Exporter"));
+            }
+            """ },
     };
 
+    private const string MarkerAttribute = "[AttributeUsage(AttributeTargets.Class)] public sealed class AutoRegisterAttribute : Attribute { }";
+
     /// Scanning or reflection (the brief's Scrutor `Scan`, Autofac `RegisterAssemblyTypes`, a `GetTypes()` loop feeding
-    /// `Add*`, a `GetExports<T>()` helper filtering by `typeof(T)`, an object made by `Activator` and cast to the
-    /// interface) may register any implementation: every one is a target, the one registered by name included.
+    /// `Add*` whatever else its body names by `typeof` (a marker attribute, a namespace, a log line) or split over two
+    /// bodies over a named assembly, a catalog helper filtering by `typeof(T)`, an object made by `Activator` and
+    /// cast to the interface) may register any implementation: every one is a target, the one registered by name
+    /// included.
     [Theory]
     [MemberData(nameof(Scans))]
     public void Scanning_or_reflection_resolves_to_every_implementation(string form, string scan, string extra)
@@ -414,6 +454,204 @@ public sealed class DiDispatchTests : TempDirs
         }
         """);
 
+    public static IEnumerable<object[]> LibraryBuilt() => new[]
+    {
+        new object[] { "services.AddScoped<IExporter>(sp => System.Text.Json.JsonSerializer.Deserialize<List<Exporter8>>(\"[]\")![0]);" },
+        new object[] { "services.AddScoped<IExporter>(sp => System.Text.Json.JsonSerializer.Deserialize<Exporter8[]>(\"[]\")![0]);" },
+        new object[] { "services.AddScoped<IExporter>(sp => System.Text.Json.JsonSerializer.Deserialize(\"{}\", (System.Text.Json.Serialization.Metadata.JsonTypeInfo<Exporter8>)null!)!);" },
+        new object[] { "services.AddSingleton<IExporter>(sp => sp.GetRequiredService<IConfiguration>().GetSection(\"x\").Get<Dictionary<string, Exporter8>>()![\"a\"]);" },
+    };
+
+    /// A library builds the element and argument types of what it is asked for (`Deserialize<List<T>>`, `T[]`, a
+    /// dictionary's values), and the type a source-generated `JsonTypeInfo<T>` names (an inferred type argument).
+    [Theory]
+    [MemberData(nameof(LibraryBuilt))]
+    public void A_type_a_library_builds_inside_a_collection_is_created(string registration) =>
+        Expect(Exporters(i => i is 3 or 8, "services.AddScoped<IExporter, Exporter3>();\n" + registration));
+
+    /// Model binding builds the elements of a bound list.
+    [Fact]
+    public void The_elements_of_a_bound_list_are_created() => Expect("""
+        public interface IStep { void Apply(string arg); }
+        public class RenameStep : IStep
+        {
+            private readonly SqlConnection _c = new();
+            public void Apply(string arg) => _c.Execute("UPDATE t SET n = '" + arg + "'"); /*sink*/
+        }
+        public class MoveStep : IStep
+        {
+            private readonly SqlConnection _c = new();
+            public void Apply(string arg) => _c.Execute("UPDATE t SET p = '" + arg + "'"); /*sink*/
+        }
+        public class DropStep : IStep
+        {
+            private readonly SqlConnection _c = new();
+            public void Apply(string arg) => _c.Execute("DROP TABLE " + arg);
+        }
+        public static class Registration
+        {
+            public static void Add(IServiceCollection services) => services.AddScoped<IStep, RenameStep>();
+        }
+        public class StepsController : ControllerBase
+        {
+            private readonly IStep _default;
+            public StepsController(IStep step) => _default = step;
+            public IActionResult Run([FromBody] MoveStep[] steps, string arg)
+            {
+                _default.Apply(arg);
+                foreach (IStep s in steps) s.Apply(arg);
+                return Ok();
+            }
+        }
+        """);
+
+    /// EF materialises the entities a DbSet entity reaches through its navigation properties (a reference and a
+    /// collection), not only the DbSet entities.
+    [Fact]
+    public void An_entity_reached_through_a_navigation_property_is_created() => Expect("""
+        public interface IAuditable { void Audit(string note); }
+        public class Invoice : IAuditable
+        {
+            public int Id { get; set; }
+            public Payer Payer { get; set; } = null!;
+            public List<InvoiceLine> Lines { get; set; } = new();
+            public void Audit(string note) { }
+        }
+        public class Payer : IAuditable
+        {
+            private readonly SqlConnection _c = new();
+            public int Id { get; set; }
+            public void Audit(string note) => _c.Execute("INSERT INTO payer_audit VALUES ('" + note + "')"); /*sink*/
+        }
+        public class InvoiceLine : IAuditable
+        {
+            private readonly SqlConnection _c = new();
+            public int Id { get; set; }
+            public void Audit(string note) => _c.Execute("INSERT INTO line_audit VALUES ('" + note + "')"); /*sink*/
+        }
+        public class Draft : IAuditable
+        {
+            private readonly SqlConnection _c = new();
+            public void Audit(string note) => _c.Execute("INSERT INTO draft_audit VALUES ('" + note + "')");
+        }
+        public class Ledger : Microsoft.EntityFrameworkCore.DbContext
+        {
+            public Microsoft.EntityFrameworkCore.DbSet<Invoice> Invoices => Set<Invoice>();
+        }
+        public static class Registration
+        {
+            public static void Add(IServiceCollection services) => services.AddScoped<Ledger>();
+        }
+        public class AuditController : ControllerBase
+        {
+            private readonly Ledger _ledger;
+            public AuditController(Ledger ledger) => _ledger = ledger;
+            public IActionResult Audit(int id, string note)
+            {
+                var invoice = _ledger.Invoices.First(i => i.Id == id);
+                IAuditable payer = invoice.Payer;
+                payer.Audit(note);
+                foreach (IAuditable line in invoice.Lines) line.Audit(note);
+                return Ok();
+            }
+        }
+        """);
+
+    public static IEnumerable<object[]> AttributeForms() => new[]
+    {
+        new object[] { "public IActionResult Other([ModelBinder<SlugBinder>] string slug) => Ok();", "" },
+        new object[] { "", """
+            public static class Endpoints
+            {
+                public static void Map(Microsoft.AspNetCore.Builder.WebApplication app) =>
+                    app.MapPost("/slug", ([ModelBinder(typeof(SlugBinder))] string slug) => Results.Ok());
+            }
+            """ },
+    };
+
+    /// The framework builds a type named by a generic attribute's type argument, and by an attribute on a lambda's
+    /// parameter inside a method body.
+    [Theory]
+    [MemberData(nameof(AttributeForms))]
+    public void A_type_an_attribute_names_in_other_forms_is_created(string action, string extra) => Expect($$"""
+        public interface IJob { void Run(string arg); }
+        public class SlugBinder : Microsoft.AspNetCore.Mvc.ModelBinding.IModelBinder, IJob
+        {
+            private readonly SqlConnection _c = new();
+            public Task BindModelAsync(Microsoft.AspNetCore.Mvc.ModelBinding.ModelBindingContext context) => Task.CompletedTask;
+            public void Run(string arg) => _c.Execute("INSERT INTO slug VALUES ('" + arg + "')"); /*sink*/
+        }
+        public class NightlyJob : IJob
+        {
+            private readonly SqlConnection _c = new();
+            public void Run(string arg) => _c.Execute("INSERT INTO nightly VALUES ('" + arg + "')"); /*sink*/
+        }
+        public class UnusedJob : IJob
+        {
+            private readonly SqlConnection _c = new();
+            public void Run(string arg) => _c.Execute("INSERT INTO unused VALUES ('" + arg + "')");
+        }
+        public static class Registration
+        {
+            public static void Add(IServiceCollection services) => services.AddScoped<IJob, NightlyJob>();
+        }
+        public class JobsController : ControllerBase
+        {
+            private readonly IEnumerable<IJob> _jobs;
+            public JobsController(IEnumerable<IJob> jobs) => _jobs = jobs;
+            public IActionResult Go(string q)
+            {
+                foreach (var j in _jobs) j.Run(q);
+                return Ok();
+            }
+            {{action}}
+        }
+        {{extra}}
+        """);
+
+    /// Stats: a property read is one call site (its getter and setter are not counted twice); DispatchNarrowed counts only
+    /// the sites resolved by registrations, not those resolved by open types alone.
+    [Fact]
+    public void The_dispatch_stats_count_a_property_site_once_and_narrow_only_by_registrations()
+    {
+        var registered = Snippet.Analyze("""
+            public interface IZone { string Name { get; set; } }
+            public class LocalZone : IZone { public string Name { get; set; } = "local"; }
+            public class UtcZone : IZone { public string Name { get; set; } = "utc"; }
+            public static class Registration
+            {
+                public static void Add(IServiceCollection services) => services.AddSingleton<IZone, LocalZone>();
+            }
+            public class ZoneController : ControllerBase
+            {
+                private readonly IZone _zone;
+                public ZoneController(IZone zone) => _zone = zone;
+                public IActionResult Show() => new OkObjectResult(_zone.Name);
+            }
+            """).Stats;
+        Assert.Equal((1, 1, 0, 0), (registered.DispatchByRegistrations, registered.DispatchNarrowed, registered.DispatchByScanning, registered.DispatchByHierarchy));
+        var opened = Snippet.Analyze("""
+            public interface IZone { string Label(); }
+            public class LocalZone : IZone { public string Label() => "local"; }
+            public class UtcZone : IZone { public string Label() => "utc"; }
+            public interface IClock { DateTime Now { get; } }
+            public class SystemClock : IClock { public DateTime Now => DateTime.UtcNow; }
+            public static class Registration
+            {
+                public static void Add(IServiceCollection services)
+                {
+                    services.AddSingleton<IClock, SystemClock>();
+                    Console.WriteLine(typeof(LocalZone).FullName);
+                }
+            }
+            public class ZoneController : ControllerBase
+            {
+                public IActionResult Show([FromServices] IZone zone) => new OkObjectResult(zone.Label());
+            }
+            """).Stats;
+        Assert.Equal((0, 0, 1, 0), (opened.DispatchByRegistrations, opened.DispatchNarrowed, opened.DispatchByScanning, opened.DispatchByHierarchy));
+    }
+
     // ---- Quiet controls and fallbacks ----
 
     /// An interface none of whose implementations is created or registered (a registration elsewhere in the project)
@@ -458,6 +696,29 @@ public sealed class DiDispatchTests : TempDirs
                         {{filter}}
                 return list;
             }
+        }
+        """));
+
+    /// A type finder that bounds the scan by a run-time type its caller names (`wanted.IsAssignableFrom(t)`, the caller's
+    /// `typeof(ITool)` opens the tools) opens no project, even with an unfiltered `Activator` elsewhere in the solution:
+    /// the exporters stay narrowed.
+    [Fact]
+    public void A_scan_bounded_by_a_type_its_caller_names_keeps_the_narrowing() => Expect(Exporters(i => i == 3, """
+                services.AddScoped<IExporter, Exporter3>();
+                foreach (var t in Finder.Of(typeof(ITool))) services.AddScoped(typeof(ITool), t);
+        """, """
+        public interface ITool { }
+        public static class Finder
+        {
+            public static IEnumerable<Type> Of(Type wanted)
+            {
+                foreach (var t in typeof(Finder).Assembly.GetTypes())
+                    if (t.IsClass && !t.IsAbstract && wanted.IsAssignableFrom(t)) yield return t;
+            }
+        }
+        public static class Plugins
+        {
+            public static object Make(Type type) => Activator.CreateInstance(type)!;
         }
         """));
 
@@ -575,6 +836,10 @@ public sealed class DiDispatchTests : TempDirs
                 SCAN
             }
         }
+        public static class Finder
+        {
+            public static IEnumerable<Type> Handlers() => typeof(Plugins.PluginHandler).Assembly.GetTypes().Where(t => t.IsClass);
+        }
         public class HandleController : ControllerBase
         {
             private readonly IEnumerable<IHandler> _handlers;
@@ -594,6 +859,7 @@ public sealed class DiDispatchTests : TempDirs
                         if (type.IsClass && !type.IsAbstract) services.AddScoped(typeof(IHandler), type);
             """ },
         new object[] { "services.Scan(s => s.FromAssemblyOf<Plugins.PluginHandler>().AddClasses().AsImplementedInterfaces());" },
+        new object[] { "foreach (var t in Finder.Handlers()) services.AddScoped(typeof(IHandler), t);" },
         new object[] { """
             var plugins = typeof(Plugins.PluginHandler).Assembly;
                     foreach (var type in plugins.GetTypes()) services.AddScoped(typeof(IHandler), type);
@@ -624,8 +890,8 @@ public sealed class DiDispatchTests : TempDirs
         }
         var inputs = new[]
         {
-            Project("Web", Web.Replace("SCAN", scan, StringComparison.Ordinal), "Contracts", "Core", "Plugins", "Scrutor"),
-            Project("Scrutor", ScrutorShim),
+            Project("Web", Web.Replace("SCAN", scan, StringComparison.Ordinal), "Contracts", "Core", "Plugins", "Shims"),
+            Project("Shims", ScrutorShim),
             Project("Core", Core, "Contracts"),
             Project("Plugins", Plugins, "Contracts"),
             Project("Contracts", Contracts),

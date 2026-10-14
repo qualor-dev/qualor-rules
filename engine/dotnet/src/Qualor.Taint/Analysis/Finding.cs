@@ -69,7 +69,8 @@ public sealed record AnalysisStats(int Projects, int Methods, int Sccs, int Unmo
 
     public int EngineViewErrors { get; init; }
 
-    /// Virtual and interface call sites with implementations in source (counted once, when the call graph is built;
+    /// Virtual and interface call sites with implementations in source (counted once, when the call graph is built, a
+    /// property reference once for its getter and setter;
     /// Dispatch, decision R-7): resolved to the implementations the solution creates or registers
     /// (DispatchByRegistrations; DispatchNarrowed of them have fewer targets than the class hierarchy), to the
     /// implementations of projects or types opened by scanning, reflection or a missing registration

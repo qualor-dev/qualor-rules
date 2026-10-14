@@ -21,11 +21,17 @@ namespace Qualor.Taint;
 ///   made by reflection (`(IPlugin)Activator.CreateInstance(t)`, `JsonSerializer.Deserialize(s, type) as Item`), a
 ///   `DbSet<T>`'s entity, a Scrutor filter `AssignableTo<T>()`; and the type argument of a generic method whose type
 ///   parameter reaches one of these (`GetExports<T>()` over `typeof(T)`, `new T()`);
-/// - in an open project: every type of a project whose assembly a scan registers without a filter (Scrutor `Scan`,
-///   Autofac `RegisterAssemblyTypes`, a body that enumerates `Assembly.GetTypes()`/`GetExportedTypes()` and registers or
-///   creates types by a `Type` value it does not name by `typeof`), every project when the scanned assemblies are not
-///   known (`AppDomain.GetAssemblies()`, a variable), and every project no project with a registration is or references
-///   (its registration code is not in source: a library whose host is elsewhere, a solution without DI).
+/// - in an open project: every type of a project whose assembly a scan registers without a filter: Scrutor `Scan`,
+///   Autofac `RegisterAssemblyTypes`, and the enumeration of `Assembly.GetTypes()`/`GetExportedTypes()` when a body
+///   registers or builds types by a `Type` value with no filter (a `typeof` of a type that can bound a scan: an
+///   interface, an abstract or overridable base, a library base, a type parameter, not an attribute; an assignability
+///   test; the type the objects are cast to). The enumerating body and the registering one may differ (a type-finder
+///   helper and its caller) when the enumerated assembly is named (`typeof(T).Assembly`, the executing assembly); a body
+///   that enumerates unknown assemblies (`AppDomain.GetAssemblies()`, a variable) and registers by a run-time type itself
+///   opens every project. Every project no project with a registration is or references is open too (its registration
+///   code is not in source: a library whose host is elsewhere, a solution without DI). Library assembly scans (MediatR,
+///   FluentValidation, AutoMapper, MassTransit) are not recognised (Task 26 fix round 1: on the measured projects their
+///   assemblies are unknown and would open every project).
 /// The fallback scope is the implementation's project (scans enumerate assemblies; a missing registration is a property
 /// of a project and the projects referencing it) or the open type (a reflection filter names it), never the whole
 /// solution unless the scanned assemblies are unknown: every measured large project uses reflection somewhere, so a
@@ -123,6 +129,8 @@ internal sealed partial class Dispatch
     private readonly HashSet<string> _openProjects = new(StringComparer.Ordinal);
     private readonly HashSet<string> _hosting = new(StringComparer.Ordinal);
     private bool _everyProjectOpen;
+    private readonly HashSet<string> _enumerated = new(StringComparer.Ordinal);
+    private bool _reflectiveUnfiltered;
     private readonly Dictionary<(object Method, int Ordinal), Role> _roles = new();
     private readonly List<(IMethodSymbol Callee, ImmutableArray<ITypeSymbol> Arguments)> _genericCalls = new();
     private readonly Dictionary<object, Known> _known = new();
@@ -145,11 +153,35 @@ internal sealed partial class Dispatch
         for (var b = type.BaseType; b != null; b = b.BaseType)
         {
             if (SymbolMatch.MetadataName(b) != "Microsoft.EntityFrameworkCore.DbContext") continue;
+            var visited = new HashSet<object>();
             foreach (var member in type.GetMembers())
                 if (member is IPropertySymbol { Type: INamedTypeSymbol { TypeArguments.Length: 1 } set } && SymbolMatch.MetadataName(set) == "Microsoft.EntityFrameworkCore.DbSet`1")
-                    Open(set.TypeArguments[0]);
+                    OpenEntity(set.TypeArguments[0], visited, 0);
             break;
         }
+    }
+
+    /// An entity EF materialises, and the entities its navigation properties reach (references, and the elements of
+    /// collections), transitively.
+    private void OpenEntity(ITypeSymbol type, HashSet<object> visited, int depth)
+    {
+        if (depth > 8) return;
+        if (type is IArrayTypeSymbol array)
+        {
+            OpenEntity(array.ElementType, visited, depth + 1);
+            return;
+        }
+        if (type is not INamedTypeSymbol named) return;
+        if (!SymbolKeys.InSource(named))
+        {
+            foreach (var argument in named.TypeArguments) OpenEntity(argument, visited, depth + 1);
+            return;
+        }
+        if (named.TypeKind is not (TypeKind.Class or TypeKind.Interface) || !visited.Add(Key(named.OriginalDefinition))) return;
+        Open(named);
+        for (var t = named; t != null && SymbolKeys.InSource(t); t = t.BaseType)
+            foreach (var member in t.GetMembers())
+                if (member is IPropertySymbol { IsStatic: false } property) OpenEntity(property.Type, visited, depth + 1);
     }
 
     /// The types attribute arguments name by `typeof` (`[ServiceFilter(typeof(F))]`, `[JsonConverter(typeof(C))]`): the
@@ -163,15 +195,70 @@ internal sealed partial class Dispatch
             var root = tree.GetRoot(ct);
             foreach (var node in root.DescendantNodes(n => n is not (BlockSyntax or ArrowExpressionClauseSyntax or EqualsValueClauseSyntax)))
             {
-                if (node is not AttributeArgumentSyntax argument) continue;
-                foreach (var typeOf in argument.DescendantNodesAndSelf().OfType<TypeOfExpressionSyntax>())
+                if (node is AttributeArgumentSyntax argument)
                 {
-                    model ??= compilation.GetSemanticModel(tree);
-                    if (model.GetTypeInfo(typeOf.Type, ct).Type is { } named) Open(named);
+                    foreach (var typeOf in argument.DescendantNodesAndSelf().OfType<TypeOfExpressionSyntax>())
+                    {
+                        model ??= compilation.GetSemanticModel(tree);
+                        if (model.GetTypeInfo(typeOf.Type, ct).Type is { } named) Open(named);
+                    }
+                }
+                else if (node is AttributeSyntax { Name: var name } && GenericName(name) is { } generic)
+                {
+                    // A generic attribute names the type by its type argument (`[ModelBinder<B>]`).
+                    foreach (var typeArgument in generic.TypeArgumentList.Arguments)
+                    {
+                        model ??= compilation.GetSemanticModel(tree);
+                        if (model.GetTypeInfo(typeArgument, ct).Type is { } named) Open(named);
+                    }
                 }
             }
         }
     }
+
+    private static GenericNameSyntax? GenericName(NameSyntax name) => name switch
+    {
+        GenericNameSyntax g => g,
+        QualifiedNameSyntax { Right: GenericNameSyntax g } => g,
+        AliasQualifiedNameSyntax { Name: GenericNameSyntax g } => g,
+        _ => null,
+    };
+
+    /// The types the attributes of a lambda's or local function's parameters (or of the function) name, inside a body
+    /// (`MapPost("/x", ([ModelBinder(typeof(B))] string s) => …)`): `typeof` arguments and generic attribute type
+    /// arguments.
+    private void FunctionAttributes(IMethodSymbol function)
+    {
+        OpenAttributeTypes(function.GetAttributes());
+        foreach (var p in function.Parameters) OpenAttributeTypes(p.GetAttributes());
+    }
+
+    private void OpenAttributeTypes(ImmutableArray<AttributeData> attributes)
+    {
+        foreach (var a in attributes)
+        {
+            if (a.AttributeClass is { IsGenericType: true } generic)
+                foreach (var t in generic.TypeArguments) Open(t);
+            foreach (var c in a.ConstructorArguments) OpenTypeConstant(c);
+            foreach (var n in a.NamedArguments) OpenTypeConstant(n.Value);
+        }
+    }
+
+    private void OpenTypeConstant(TypedConstant constant)
+    {
+        if (constant.Kind == TypedConstantKind.Type && constant.Value is ITypeSymbol t) Open(t);
+        else if (constant.Kind == TypedConstantKind.Array && !constant.IsNull)
+            foreach (var v in constant.Values) OpenTypeConstant(v);
+    }
+
+    /// Whether a lambda or local function declares attributes on itself or on a parameter.
+    private static bool HasAttributes(SyntaxNode syntax) => syntax switch
+    {
+        ParenthesizedLambdaExpressionSyntax l => l.AttributeLists.Count > 0 || l.ParameterList.Parameters.Any(p => p.AttributeLists.Count > 0),
+        SimpleLambdaExpressionSyntax l => l.AttributeLists.Count > 0 || l.Parameter.AttributeLists.Count > 0,
+        LocalFunctionStatementSyntax f => f.AttributeLists.Count > 0 || f.ParameterList.Parameters.Any(p => p.AttributeLists.Count > 0),
+        _ => false,
+    };
 
     /// A type the framework builds itself: a controller (by base, attribute or name), a Razor view or page, a page model,
     /// a view component, a tag helper, a filter or attribute, middleware (IMiddleware or a conventional Invoke), a hub, a
@@ -222,6 +309,12 @@ internal sealed partial class Dispatch
                 case ITypeParameterObjectCreationOperation { Type: ITypeParameterSymbol parameter }:
                     AddRole(parameter, Role.Reflecting);
                     break;
+                case IAnonymousFunctionOperation { Symbol: var function } when HasAttributes(op.Syntax):
+                    FunctionAttributes(function);
+                    break;
+                case ILocalFunctionOperation { Symbol: var local } when HasAttributes(op.Syntax):
+                    FunctionAttributes(local);
+                    break;
                 case IInvocationOperation invocation:
                     Invocation(invocation, unit);
                     break;
@@ -251,20 +344,21 @@ internal sealed partial class Dispatch
                     break;
             }
         }
-        // A body that enumerates an assembly's types and registers or builds types by a run-time value, with no type that
-        // filters them (a `typeof`, the type it casts the objects to), registers the whole assembly.
-        if (unit.Enumerates && unit.Reflective && !unit.Filtered)
-        {
-            if (unit.UnknownAssembly || unit.Designated.Count == 0) _everyProjectOpen = true;
-            else _openProjects.UnionWith(unit.Designated);
-        }
+        if (unit.Filtered) return;
+        // A body that enumerates unknown assemblies and registers or builds by a run-time type registers them all.
+        if (unit.Enumerates && unit.Reflective && (unit.UnknownAssembly || unit.Designated.Count == 0)) _everyProjectOpen = true;
+        // Unfiltered enumerations of named assemblies and unfiltered registrations or creations by a run-time `Type` are
+        // kept solution-wide: a scan split over a type-finder helper and its caller opens those assemblies at Seal.
+        // (Unknown assemblies are not combined across bodies: Jellyfin's and OrchardCore's module loaders enumerate them,
+        // and every project would open.)
+        if (unit.Enumerates && !unit.UnknownAssembly) _enumerated.UnionWith(unit.Designated);
+        if (unit.Reflective) _reflectiveUnfiltered = true;
     }
 
     /// The parameter types of an entry point: model binding builds them.
     public void CollectEntry(IMethodSymbol entry)
     {
-        foreach (var p in entry.Parameters)
-            if (p.Type is INamedTypeSymbol { TypeKind: TypeKind.Class } t) Create(t, false);
+        foreach (var p in entry.Parameters) CreateDeep(p.Type, 0);
     }
 
     private sealed class UnitFacts
@@ -317,17 +411,49 @@ internal sealed partial class Dispatch
         if (CreationNames.Contains(name) && invocation.Arguments.Any(a => a.Parameter?.Type is { } pt && SymbolMatch.MetadataName(pt) == "System.Type"
                 && Unwrap(a.Value) is not ITypeOfOperation))
             unit.Reflective = true;
+        // An assignability test bounds what the body enumerates by a type its caller names (that `typeof` opens it there).
+        if (name is "IsAssignableFrom" or "IsAssignableTo" or "IsSubclassOf" or "IsInstanceOfType"
+            && method.ContainingType is { Name: "Type" } typeType && SymbolMatch.MetadataName(typeType) == "System.Type")
+            unit.Filtered = true;
         if (method.TypeArguments.Length == 0) return;
         if (SymbolKeys.InSource(method))
         {
             _genericCalls.Add((method, method.TypeArguments));
             return;
         }
-        if (!HasExplicitTypeArguments(invocation.Syntax)) return;
+        // A library builds what it is given as a type argument, and the element and argument types inside it
+        // (`Deserialize<List<T>>`); a creation or deserialization call's inferred type argument counts too.
+        var creation = CreationNames.Contains(name);
+        if (!creation && !HasExplicitTypeArguments(invocation.Syntax)) return;
         foreach (var argument in method.TypeArguments)
         {
-            if (argument is INamedTypeSymbol { TypeKind: TypeKind.Class, IsAbstract: false } concrete) Create(concrete, false);
-            else if (argument is ITypeParameterSymbol parameter && CreationNames.Contains(name)) AddRole(parameter, Role.Reflecting);
+            if (argument is ITypeParameterSymbol parameter)
+            {
+                if (creation) AddRole(parameter, Role.Reflecting);
+            }
+            else
+            {
+                CreateDeep(argument, 0);
+            }
+        }
+    }
+
+    /// A concrete source type, an array's element type, and the type arguments of a library's generic type (a list, a
+    /// dictionary), recursively.
+    private void CreateDeep(ITypeSymbol type, int depth)
+    {
+        if (depth > 3) return;
+        switch (type)
+        {
+            case IArrayTypeSymbol array:
+                CreateDeep(array.ElementType, depth + 1);
+                break;
+            case INamedTypeSymbol named when SymbolKeys.InSource(named):
+                Create(named, false);
+                break;
+            case INamedTypeSymbol { IsGenericType: true } library:
+                foreach (var argument in library.TypeArguments) CreateDeep(argument, depth + 1);
+                break;
         }
     }
 
@@ -458,7 +584,23 @@ internal sealed partial class Dispatch
                     return;
             }
         }
-        Filter(typeOf.TypeOperand, unit);
+        // Only a type that can bound a scan filters it; a marker attribute, a namespace or name check, or a log line's
+        // `typeof` only opens its type and leaves the scan unfiltered.
+        if (CanBound(typeOf.TypeOperand)) Filter(typeOf.TypeOperand, unit);
+        else Open(typeOf.TypeOperand);
+    }
+
+    /// A type a scan can be bounded by: a type parameter, an interface, an abstract class, a library class, or a source
+    /// class with members to override; never an attribute.
+    private static bool CanBound(ITypeSymbol type)
+    {
+        if (type is ITypeParameterSymbol) return true;
+        if (type is not INamedTypeSymbol named) return false;
+        for (var b = named; b != null; b = b.BaseType)
+            if (b.Name == "Attribute" && SymbolMatch.MetadataName(b) == "System.Attribute") return false;
+        if (named.TypeKind == TypeKind.Interface || named.IsAbstract) return true;
+        if (named.TypeKind != TypeKind.Class || named.IsSealed || named.IsStatic || named.SpecialType != SpecialType.None) return false;
+        return !SymbolKeys.InSource(named) || named.GetMembers().Any(m => m.IsVirtual || m.IsAbstract);
     }
 
     /// A type that filters what a body builds or registers by reflection: it and its subtypes are open.
@@ -561,6 +703,9 @@ internal sealed partial class Dispatch
                         if ((role & Role.Registering) != 0) Register(arguments[i]);
                     }
         }
+        // Some body registers or builds by an unfiltered run-time type, and some body enumerates assemblies unfiltered:
+        // those assemblies are scanned (the two may be one body or a helper and its caller).
+        if (_reflectiveUnfiltered) _openProjects.UnionWith(_enumerated);
         // A project is hosted when it or a project referencing it registers services; the others have their
         // registration code elsewhere.
         var names = _compilations.Select(c => c.AssemblyName ?? "").Distinct(StringComparer.Ordinal).ToList();

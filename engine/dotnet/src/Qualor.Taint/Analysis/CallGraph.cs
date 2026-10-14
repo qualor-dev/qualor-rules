@@ -257,8 +257,9 @@ internal sealed class CallGraph
                 case IPropertyReferenceOperation property:
                 {
                     var isVirtual = Dispatch.IsVirtualAccess(property.Property, property.Instance);
-                    foreach (var accessor in new[] { property.Property.GetMethod, property.Property.SetMethod })
-                        if (accessor != null) yield return new CallSite(accessor, isVirtual, property.Instance?.Type);
+                    var getter = property.Property.GetMethod;
+                    if (getter != null) yield return new CallSite(getter, isVirtual, property.Instance?.Type);
+                    if (property.Property.SetMethod is { } setter) yield return new CallSite(setter, isVirtual, property.Instance?.Type, getter == null);
                     break;
                 }
                 case IMethodReferenceOperation reference:
