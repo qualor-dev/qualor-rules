@@ -167,6 +167,11 @@ public sealed class ModelLoaderTests : TempDirs
                   - property: FileName
                     of: 1
                     matches: 'sh'
+              - method: A.Write
+                args: [0]
+                when:
+                  - outside: A.Open
+                    until: A.Close
             """));
 
         var rule = ModelLoader.Load(dir).Rules.Single(r => r.RuleId == "csharp.command-injection");
@@ -179,6 +184,10 @@ public sealed class ModelLoaderTests : TempDirs
         var add = rule.Sinks[1].When;
         Assert.Equal(new MemberPattern("System.Diagnostics.ProcessStartInfo", "ArgumentList", false, MemberKind.PropertyGet), add[0].Member);
         Assert.Equal(("FileName", 1), (add[1].Property, add[1].Arg));
+        var write = rule.Sinks[2].When.Single();
+        Assert.Equal(SinkConditionKind.Outside, write.Kind);
+        Assert.Equal(new MemberPattern("A", "Open", false, MemberKind.Method), write.Member);
+        Assert.Equal(new MemberPattern("A", "Close", false, MemberKind.Method), write.Until);
     }
 
     [Theory]
@@ -191,6 +200,9 @@ public sealed class ModelLoaderTests : TempDirs
     [InlineData("  - method: A..ctor\n    args: [0]\n    when:\n      - receiver: A.B\n", 7, "receiver")]
     [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - receiver: A.B*\n", 7, "'*'")]
     [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - property: 1x\n        matches: x\n", 7, "not a name")]
+    [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - outside: A.C\n", 7, "until")]
+    [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - outside: A.C*\n        until: A.D\n", 7, "'*'")]
+    [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - arg: 0\n        matches: x\n        until: A.D\n", 9, "until")]
     public void An_invalid_condition_throws_with_its_line(string sink, int line, string fragment)
     {
         var dir = WriteModels(("sql-injection.yml", "rule: csharp.sql-injection\nkind: taint\nsinks:\n" + sink));

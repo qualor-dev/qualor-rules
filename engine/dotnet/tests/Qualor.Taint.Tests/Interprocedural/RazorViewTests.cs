@@ -73,12 +73,91 @@ public sealed class RazorViewTests
         }
         """;
 
-    private static AnalysisResult Analyze()
+    /// A tag helper's attributes (Task 18, nopCommerce and eShop): the generator writes an attribute value into a buffer
+    /// between BeginWriteTagHelperAttribute() and EndWriteTagHelperAttribute(); a bound string property gets the value
+    /// through WriteLiteral (the tag helper encodes it when it renders), an unbound attribute through Write (encoded) and
+    /// then Html.Raw of the buffer. Neither is raw output; a WriteLiteral after the buffer is closed is.
+    private const string TagHelperView = "/src/App/obj/generated/Views_Profile_Edit_cshtml.g.cs";
+    private const string TagHelperCshtml = "/src/App/Views/Profile/Edit.cshtml";
+
+    private const string TagHelperCode = """
+        using Microsoft.AspNetCore.Mvc;
+        using Microsoft.AspNetCore.Mvc.Rendering;
+
+        public class EditModel { public string Bio { get; set; } }
+
+        public class EditController : Controller
+        {
+            public IActionResult Edit([FromQuery] string q)
+            {
+                var model = new EditModel();
+                model.Bio = q;
+                return View(model);
+            }
+        }
+
+        internal sealed class Views_Profile_Edit : global::Microsoft.AspNetCore.Mvc.Razor.RazorPage<EditModel>
+        {
+            private string __tagHelperStringValueBuffer;
+            private string __unboundValue;
+            public async override global::System.Threading.Tasks.Task ExecuteAsync()
+            {
+                BeginWriteTagHelperAttribute();
+        #nullable restore
+        #line (2,40)-(2,49) 13 "/src/App/Views/Profile/Edit.cshtml"
+        WriteLiteral(Model.Bio
+
+        #line default
+        #line hidden
+        #nullable disable
+                );
+                __tagHelperStringValueBuffer = EndWriteTagHelperAttribute();
+                if (Model != null)
+                {
+                    BeginWriteTagHelperAttribute();
+        #nullable restore
+        #line (4,20)-(4,29) 6 "/src/App/Views/Profile/Edit.cshtml"
+        Write(Model.Bio
+
+        #line default
+        #line hidden
+        #nullable disable
+                    );
+                    __tagHelperStringValueBuffer = EndWriteTagHelperAttribute();
+                    __unboundValue = Html.Raw(__tagHelperStringValueBuffer).ToString();
+                }
+        #nullable restore
+        #line (6,3)-(6,26) "/src/App/Views/Profile/Edit.cshtml"
+        WriteLiteral(Model.Bio);
+
+        #line default
+        #line hidden
+        #nullable disable
+            }
+            [global::Microsoft.AspNetCore.Mvc.Razor.Internal.RazorInjectAttribute]
+            public global::Microsoft.AspNetCore.Mvc.Rendering.IHtmlHelper<EditModel> Html { get; private set; } = default!;
+        }
+        """;
+
+    [Fact]
+    public void A_tag_helper_attribute_buffer_is_no_raw_output()
+    {
+        var reported = Analyze(TagHelperCode, TagHelperView).Findings.Where(f => f.RuleId == "csharp.xss")
+            .Select(f => f.SinkSpan.Path + ":" + (f.SinkSpan.StartLinePosition.Line + 1)).ToList();
+
+        // The bound attribute's WriteLiteral (2) and the unbound attribute's Html.Raw of its buffer are quiet; the
+        // WriteLiteral in a code block after the buffer is closed (6) is reported.
+        Assert.Equal(new[] { TagHelperCshtml + ":6" }, reported);
+    }
+
+    private static AnalysisResult Analyze() => Analyze(Code, View);
+
+    private static AnalysisResult Analyze(string code, string view)
     {
         var parse = new CSharpParseOptions(LanguageVersion.CSharp12);
         var trees = new[]
         {
-            CSharpSyntaxTree.ParseText(Code, parse, View),
+            CSharpSyntaxTree.ParseText(code, parse, view),
             CSharpSyntaxTree.ParseText(FixtureRunner.ImplicitUsings, parse, "/src/App/obj/GlobalUsings.g.cs"),
         };
         var compilation = CSharpCompilation.Create("App", trees, FixtureReferences.All, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
@@ -86,7 +165,7 @@ public sealed class RazorViewTests
         Assert.Empty(errors);
         var input = new CompilationInput(
             "/src/App/App.csproj", "net10.0", "App", OutputKind.DynamicallyLinkedLibrary, LanguageVersion.CSharp12, NullableContextOptions.Disable,
-            Array.Empty<string>(), false, null, new[] { View }, Array.Empty<string>(), Array.Empty<string>(), "/inputs/App.txt");
+            Array.Empty<string>(), false, null, new[] { view }, Array.Empty<string>(), Array.Empty<string>(), "/inputs/App.txt");
         var result = new TaintEngine(Snippet.Models, Snippet.Options).Analyze(new LoadedSolution(new[] { new ProjectCompilation(input, compilation, errors) }), CancellationToken.None);
         Assert.True(result.Stats.FailedMethods == 0, string.Join("; ", result.Stats.FirstErrors));
         return result;

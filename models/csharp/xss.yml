@@ -78,9 +78,16 @@ sinks:
   - method: Microsoft.AspNetCore.Mvc.Rendering.IHtmlHelper.Raw
     args: [0]
   # WriteLiteral writes its value without encoding (WriteLiteral(string), WriteLiteral(object)); the generated code
-  # gives it only the view's literal markup, so it is reported only when a code block passes it request data.
+  # gives it the view's literal markup, and an expression only in a tag helper's attribute value: there it writes into
+  # the attribute's buffer (between BeginWriteTagHelperAttribute and EndWriteTagHelperAttribute), whose text becomes a
+  # bound string property of the tag helper (`asp-route-x="@Model.X"`), which the tag helper encodes when it renders.
+  # So it is reported only when a code block passes it request data outside such a buffer. Known limit: the buffer's
+  # text is not followed into the property, so a project's own tag helper that writes such a property raw is missed.
   - method: Microsoft.AspNetCore.Mvc.Razor.RazorPageBase.WriteLiteral
     args: [0]
+    when:
+      - outside: Microsoft.AspNetCore.Mvc.Razor.RazorPageBase.BeginWriteTagHelperAttribute
+        until: Microsoft.AspNetCore.Mvc.Razor.RazorPageBase.EndWriteTagHelperAttribute
   - method: Microsoft.AspNetCore.Html.IHtmlContentBuilder.AppendHtml
     args: [0]
     param-types: [System.String]

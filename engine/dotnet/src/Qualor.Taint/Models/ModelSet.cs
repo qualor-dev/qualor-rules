@@ -51,13 +51,19 @@ public enum SinkConditionKind
 
     /// `receiver: T.P`: the call's receiver is property P of T; the object of `property:` conditions is then its owner.
     Receiver,
+
+    /// `outside: T.M, until: T.N`: the sink's statement is not in a region that a call of M opened and no call of N has
+    /// closed yet (the statements before it in its block and the enclosing blocks of the same body).
+    Outside,
 }
 
 /// One condition of a conditional sink. Arg: Argument's ordinal, or Property's `of` (−1: the sink's own object);
 /// Pattern: the `matches`, `literal-text` or `after` regular expression; Member: Receiver's property, or Argument's
-/// `is` member (then Pattern is null).
+/// `is` member (then Pattern is null), or Outside's opening method; Until: Outside's closing method.
 public sealed record SinkCondition(SinkConditionKind Kind)
 {
+    public MemberPattern? Until { get; init; }
+
     public int Arg { get; init; } = -1;
 
     public string? Property { get; init; }

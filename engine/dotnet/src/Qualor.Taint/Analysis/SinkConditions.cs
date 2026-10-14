@@ -109,9 +109,40 @@ internal sealed class SinkConditions
                     }
                     break;
                 }
+                case SinkConditionKind.Outside:
+                    if (Inside(original.Syntax, c.Member!, c.Until!, model)) return SinkDecision.No;
+                    break;
             }
         }
         return elements != null ? new SinkDecision(true, elements) : SinkDecision.Whole;
+    }
+
+    /// Whether `site` is in a region opened by a call of `open` and not yet closed by a call of `close` (`outside:`): the
+    /// statements before the site's statement in its block, then before each enclosing statement in its block, up to the
+    /// body (a lambda or local function is a body of its own). The nearest call of either decides; the calls are
+    /// statements of their own (`Open();`, `x = Close();`).
+    private static bool Inside(SyntaxNode site, MemberPattern open, MemberPattern close, SemanticModel model)
+    {
+        for (var node = site; node != null; node = node.Parent)
+        {
+            if (node is Microsoft.CodeAnalysis.CSharp.Syntax.AnonymousFunctionExpressionSyntax
+                or Microsoft.CodeAnalysis.CSharp.Syntax.LocalFunctionStatementSyntax
+                or Microsoft.CodeAnalysis.CSharp.Syntax.BaseMethodDeclarationSyntax
+                or Microsoft.CodeAnalysis.CSharp.Syntax.AccessorDeclarationSyntax) return false;
+            if (node is not Microsoft.CodeAnalysis.CSharp.Syntax.StatementSyntax statement
+                || statement.Parent is not Microsoft.CodeAnalysis.CSharp.Syntax.BlockSyntax block) continue;
+            for (var k = block.Statements.IndexOf(statement) - 1; k >= 0; k--)
+            {
+                if (block.Statements[k] is not Microsoft.CodeAnalysis.CSharp.Syntax.ExpressionStatementSyntax expression) continue;
+                var call = expression.Expression is Microsoft.CodeAnalysis.CSharp.Syntax.AssignmentExpressionSyntax assignment ? assignment.Right : expression.Expression;
+                while (call is Microsoft.CodeAnalysis.CSharp.Syntax.AwaitExpressionSyntax awaited) call = awaited.Expression;
+                if (call is not Microsoft.CodeAnalysis.CSharp.Syntax.InvocationExpressionSyntax invocation
+                    || model.GetSymbolInfo(invocation).Symbol is not IMethodSymbol method) continue;
+                if (SymbolMatch.Matches(close, method)) return false;
+                if (SymbolMatch.Matches(open, method)) return true;
+            }
+        }
+        return false;
     }
 
     /// Whether a value is a read of the field or property `member` (`is:`).

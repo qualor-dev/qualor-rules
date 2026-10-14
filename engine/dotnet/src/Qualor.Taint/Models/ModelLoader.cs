@@ -357,15 +357,15 @@ public static class ModelLoader
     }
 
     /// The conditions of a conditional sink (`when:`, a non-empty list): each names one kind (arg, property,
-    /// literal-text, after, receiver) with its settings. `arg` and `after` need a method sink; `receiver` a method
-    /// that is no constructor.
+    /// literal-text, after, receiver, outside) with its settings. `arg` and `after` need a method sink; `receiver` a
+    /// method that is no constructor; `outside` names two methods (`outside` and `until`).
     private static IReadOnlyList<SinkCondition> ReadConditions(Doc doc, YamlNode node, MemberPattern sink)
     {
         var list = new List<SinkCondition>();
-        var kinds = new[] { "arg", "property", "literal-text", "after", "receiver" };
+        var kinds = new[] { "arg", "property", "literal-text", "after", "receiver", "outside" };
         foreach (var item in doc.Sequence(node))
         {
-            var f = doc.Fields(item, "arg", "property", "of", "matches", "is", "literal-text", "after", "next", "receiver");
+            var f = doc.Fields(item, "arg", "property", "of", "matches", "is", "literal-text", "after", "next", "receiver", "outside", "until");
             var present = kinds.Where(k => f.Optional(k) != null).ToList();
             if (present.Count != 1) throw doc.Error(item, $"a condition names exactly one of {string.Join(", ", kinds)}");
             var kind = present[0];
@@ -374,9 +374,10 @@ public static class ModelLoader
                 "arg" => new[] { "arg", "matches", "is" },
                 "property" => new[] { "property", "of", "matches" },
                 "after" => new[] { "after", "next" },
+                "outside" => new[] { "outside", "until" },
                 _ => new[] { kind },
             };
-            foreach (var key in new[] { "of", "matches", "is", "next" })
+            foreach (var key in new[] { "of", "matches", "is", "next", "until" })
                 if (f.Optional(key) is { } extra && Array.IndexOf(allowed, key) < 0) throw doc.Error(extra, $"{key} does not belong to a {kind} condition");
             if (kind == "after" && sink.Kind == MemberKind.PropertySet) throw doc.Error(item, "an after condition needs a method sink");
             if (kind == "receiver" && sink.Kind == MemberKind.Constructor) throw doc.Error(item, "a receiver condition needs a method sink that is no constructor, or a property-set sink");
@@ -397,6 +398,11 @@ public static class ModelLoader
                     Pattern = doc.Regex(f.Required("after")),
                     Next = f.Optional("next") is { } next && doc.Bool(next),
                 },
+                "outside" => new SinkCondition(SinkConditionKind.Outside)
+                {
+                    Member = MethodPattern(doc, f.Required("outside"), "outside"),
+                    Until = MethodPattern(doc, f.Required("until"), "until"),
+                },
                 _ => new SinkCondition(SinkConditionKind.Receiver) { Member = ReceiverPattern(doc, f.Required("receiver")) },
             });
         }
@@ -409,6 +415,14 @@ public static class ModelLoader
     {
         var pattern = doc.Pattern(node, MemberKind.PropertyGet);
         if (pattern.Prefix) throw doc.Error(node, $"{pattern}: is names one field or property (no '*')");
+        return pattern;
+    }
+
+    /// A method of an `outside` condition: one method, written Type.Method.
+    private static MemberPattern MethodPattern(Doc doc, YamlNode node, string key)
+    {
+        var pattern = doc.Pattern(node, MemberKind.Method);
+        if (pattern.Prefix) throw doc.Error(node, $"{pattern}: {key} names one method (no '*')");
         return pattern;
     }
 
