@@ -163,6 +163,9 @@ public sealed class ConditionalSinkTests : ProbeModels
                 _psi.Arguments = q; /*sink*/
                 var other = new ProcessStartInfo();
                 other.Arguments = q;
+                var reused = new ProcessStartInfo { FileName = "bash", Arguments = "-c uptime" };
+                reused = new ProcessStartInfo { FileName = "git" };
+                reused.Arguments = q;
             }
         }
         """);

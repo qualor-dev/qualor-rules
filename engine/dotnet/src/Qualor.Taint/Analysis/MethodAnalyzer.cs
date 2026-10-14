@@ -375,7 +375,11 @@ internal sealed class MethodAnalyzer
             case IUnaryOperation unary:
                 return Value(unary.Operand, state);
             case IConversionOperation conversion:
-                return Value(conversion.Operand, state);
+            {
+                // A user-defined conversion is a call of its operator method: its sanitizers clean the result.
+                var value = Value(conversion.Operand, state);
+                return conversion.OperatorMethod is { } op && value.Any ? value.CleanedFor(_ctx.Sinks.Sanitizes(op, Access.Call)) : value;
+            }
             case IAwaitOperation await:
                 return Value(await.Operation, state);
             case IConditionalOperation conditional:
@@ -491,13 +495,27 @@ internal sealed class MethodAnalyzer
     private TaintValue Placed(IOperation expression, TaintValue value, TaintState state, System.Text.StringBuilder prefix)
     {
         value = value.Join(ImplicitToString(expression, value, state));
-        if (value.Any && _ctx.Sinks.HasStringSanitizers)
+        if (value.Any)
         {
-            while (expression is IConversionOperation { IsImplicit: true, Operand: { } inner }) expression = inner;
-            value = value.CleanedFor(_ctx.Sinks.CleanInString(prefix.ToString(), expression.Type));
+            while (expression is IConversionOperation { IsImplicit: true, OperatorMethod: null, Operand: { } inner }) expression = inner;
+            value = value.CleanedFor(ToStringSanitizers(expression.Type));
+            if (_ctx.Sinks.HasStringSanitizers) value = value.CleanedFor(_ctx.Sinks.CleanInString(prefix.ToString(), expression.Type));
         }
         prefix.Append(Hole);
         return value;
+    }
+
+    /// The rules a value's text is clean for when an object of this type is turned into text in a string (its
+    /// ToString() is called): the sanitizers of that ToString (`T.ToString` in a model; PathString's is URI-escaped).
+    private IReadOnlyCollection<string> ToStringSanitizers(ITypeSymbol? type)
+    {
+        if (type is not INamedTypeSymbol || type.SpecialType != SpecialType.None) return Array.Empty<string>();
+        for (var t = type; t != null; t = t.BaseType)
+        {
+            var toString = t.GetMembers("ToString").OfType<IMethodSymbol>().FirstOrDefault(m => m.Parameters.Length == 0 && !m.IsStatic);
+            if (toString != null) return toString.ContainingType.SpecialType == SpecialType.None ? _ctx.Sinks.Sanitizes(toString, Access.Call) : Array.Empty<string>();
+        }
+        return Array.Empty<string>();
     }
 
     /// The text of an object used where a string is built (`$"{t}"`, `"x" + t`) is its ToString() result: for a value whose

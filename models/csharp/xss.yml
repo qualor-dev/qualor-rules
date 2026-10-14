@@ -59,7 +59,7 @@ sinks:
       - property: ContentType
         matches: '(?i)^\s*(text/html|application/xhtml\+xml)'
   # Raw HTML content: HtmlString, and AppendHtml, AppendHtmlLine and SetHtmlContent given a string (an
-  # IHtmlContentBuilder: TagBuilder.InnerHtml, HtmlContentBuilder, a tag helper's output content).
+  # IHtmlContentBuilder: TagBuilder.InnerHtml, HtmlContentBuilder; a tag helper's output content below).
   - method: Microsoft.AspNetCore.Html.HtmlString..ctor
     args: [0]
   - method: Microsoft.AspNetCore.Html.IHtmlContentBuilder.AppendHtml
@@ -70,6 +70,11 @@ sinks:
     param-types: [System.String]
   - method: Microsoft.AspNetCore.Html.HtmlContentBuilderExtensions.SetHtmlContent
     args: [1]
+    param-types: [System.String]
+  # TagHelperContent declares its own AppendHtml and SetHtmlContent (it implements IHtmlContentBuilder.AppendHtml
+  # explicitly, forwarding to its own member, so the interface pattern above does not name the call).
+  - method: Microsoft.AspNetCore.Razor.TagHelpers.TagHelperContent.AppendHtml
+    args: [0]
     param-types: [System.String]
   - method: Microsoft.AspNetCore.Razor.TagHelpers.TagHelperContent.SetHtmlContent
     args: [0]
@@ -102,13 +107,17 @@ sanitizers:
   - method: System.Net.WebUtility.UrlEncode
   - method: System.Uri.EscapeDataString
   # The request's Path and PathBase are PathString values, whose text is escaped for a URI: '<', '>', '"' and spaces
-  # are percent-encoded, so a PathString cannot open a tag or leave text or a double-quoted attribute value. It is not
-  # escaped for HTML (' ( ) = ; & pass), so it stays request data in a single-quoted or unquoted attribute value and
-  # inside a <script> or <style> element. Its .Value is the unescaped path (a string) and stays request data.
-  # Difference: OpenGrep cleans Request.Path and PathBase wherever they are written (a Known limit: a single-quoted
-  # attribute or a script string is missed) and misses a PathString held in a variable before its .Value is read; the
-  # engine cleans a PathString only by the HTML before it in the string being built: outside any tag (and not in a
-  # script or style element) or in a double-quoted attribute value.
-  - string-prefix: '(?is)^(?!.*<(script|style)\b(?:(?!</(script|style)).)*$)(?:(?!.*<[^>]*$)|.*<[^>]*=\s*"[^"]*$)'
-    type: Microsoft.AspNetCore.Http.PathString
+  # are percent-encoded, so it cannot open a tag or leave text or a double-quoted attribute value. That text is what
+  # its ToString() and ToUriComponent() return and what its implicit conversion to string gives (also when a
+  # PathString is placed in a string being built: its ToString). Its .Value is the unescaped path (a string) and stays
+  # request data, also read from a PathString held in a variable.
+  # As in the OpenGrep rule (a Known limit): PathString does not escape for HTML (' ( ) = ; & pass), so one in a
+  # single-quoted or unquoted attribute value or a script string is missed.
+  # Differences: OpenGrep cleans the reads Request.Path and PathBase, so it misses a PathString held in a variable
+  # whose .Value is read later; the engine cleans where a PathString becomes text, from any source. PathString's
+  # other implicit conversion (from a string) is an op_Implicit too, so a request string converted into a PathString
+  # and read back through .Value counts as clean.
+  - method: Microsoft.AspNetCore.Http.PathString.ToString
+  - method: Microsoft.AspNetCore.Http.PathString.ToUriComponent
+  - method: Microsoft.AspNetCore.Http.PathString.op_Implicit
 guards: []

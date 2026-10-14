@@ -237,7 +237,7 @@ internal sealed class SinkConditions
 /// The flow-insensitive facts of one body (its original operation tree) the conditions read: which constants each
 /// object's properties are set to, which constants each local is assigned, and the Adds to each collection in source
 /// order. Objects are keyed by access path (a local, parameter, `this` or static type, then field and property names;
-/// an object creation by its position); a variable assigned an object creation is the same object as the creation.
+/// an object creation by its position); a variable assigned exactly one object creation is the same object as it.
 internal sealed class BodyFacts
 {
     private readonly Dictionary<ISymbol, int> _ids = new(SymbolEqualityComparer.Default);
@@ -245,6 +245,7 @@ internal sealed class BodyFacts
     private readonly List<(string Key, string Property, IOperation Value)> _properties = new();
     private readonly List<(string Key, IOperation Value)> _adds = new();
     private readonly Dictionary<ILocalSymbol, List<IOperation>> _locals = new(SymbolEqualityComparer.Default);
+    private readonly Dictionary<string, List<string>> _aliases = new(StringComparer.Ordinal);
 
     public BodyFacts(IOperation root)
     {
@@ -263,7 +264,7 @@ internal sealed class BodyFacts
                 }
                 case IVariableDeclaratorOperation { Initializer: { } init } declarator:
                     Local(declarator.Symbol, init.Value);
-                    if (SinkConditions.Unwrap(init.Value) is IObjectCreationOperation created && Key(created) is { } c) Union("L" + Id(declarator.Symbol), c);
+                    if (SinkConditions.Unwrap(init.Value) is IObjectCreationOperation created && Key(created) is { } c) AddAlias("L" + Id(declarator.Symbol), c);
                     break;
                 case IObjectCreationOperation creation when Key(creation) is { } key:
                     foreach (var a in creation.Arguments)
@@ -275,6 +276,10 @@ internal sealed class BodyFacts
                     break;
             }
         }
+        // A variable is the object it was created as only when it is assigned one object creation in the body (a
+        // variable reused for a second object keeps the two apart: neither creation's properties are its).
+        foreach (var (variable, creations) in _aliases)
+            if (creations.Count == 1) Union(variable, creations[0]);
     }
 
     private void Local(ILocalSymbol local, IOperation value)
@@ -285,7 +290,13 @@ internal sealed class BodyFacts
 
     private void Alias(IOperation target, IOperation value)
     {
-        if (SinkConditions.Unwrap(value) is IObjectCreationOperation creation && Key(target) is { } t && Key(creation) is { } c) Union(t, c);
+        if (SinkConditions.Unwrap(value) is IObjectCreationOperation creation && Key(target) is { } t && Key(creation) is { } c) AddAlias(t, c);
+    }
+
+    private void AddAlias(string variable, string creation)
+    {
+        if (!_aliases.TryGetValue(variable, out var list)) _aliases[variable] = list = new List<string>();
+        list.Add(creation);
     }
 
     /// The constants a value may be: a constant, both branches of `?:` and `??`, a local's assigned values (unknown
