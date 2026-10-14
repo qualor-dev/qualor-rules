@@ -81,6 +81,62 @@ public sealed class ModelLoaderTests : TempDirs
         Assert.Equal("Parse", ((IReadOnlyDictionary<string, object?>)xxe.Misuse["unsafe"]!)["DtdProcessing"]);
     }
 
+    [Fact]
+    public void A_conditional_sink_is_read()
+    {
+        var dir = WriteModels(("command-injection.yml", """
+            rule: csharp.command-injection
+            kind: taint
+            sinks:
+              - method: System.Diagnostics.Process.Start
+                args: [1]
+                when:
+                  - arg: 0
+                    matches: '^(sh|bash)$'
+                  - literal-text: '-c'
+                  - after: '^-c$'
+                    next: true
+              - method: System.Collections.ObjectModel.Collection`1.Add
+                args: [0]
+                when:
+                  - receiver: System.Diagnostics.ProcessStartInfo.ArgumentList
+                  - property: FileName
+                    of: 1
+                    matches: 'sh'
+            """));
+
+        var rule = ModelLoader.Load(dir).Rules.Single(r => r.RuleId == "csharp.command-injection");
+
+        var start = rule.Sinks[0].When;
+        Assert.Equal(new[] { SinkConditionKind.Argument, SinkConditionKind.LiteralText, SinkConditionKind.After }, start.Select(c => c.Kind));
+        Assert.Equal(0, start[0].Arg);
+        Assert.Matches(start[0].Pattern!, "bash");
+        Assert.True(start[2].Next);
+        var add = rule.Sinks[1].When;
+        Assert.Equal(new MemberPattern("System.Diagnostics.ProcessStartInfo", "ArgumentList", false, MemberKind.PropertyGet), add[0].Member);
+        Assert.Equal(("FileName", 1), (add[1].Property, add[1].Arg));
+    }
+
+    [Theory]
+    [InlineData("  - method: A.B\n    args: [0]\n    when: []\n", 6, "when")]                                       // empty
+    [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - arg: 0\n", 7, "matches")]                       // missing matches
+    [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - arg: 0\n        matches: '('\n", 8, "regular expression")]
+    [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - arg: 0\n        literal-text: x\n", 7, "exactly one")]
+    [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - literal-text: x\n        next: true\n", 8, "next")]
+    [InlineData("  - property-set: A.B\n    when:\n      - arg: 0\n        matches: x\n", 6, "method sink")]
+    [InlineData("  - method: A..ctor\n    args: [0]\n    when:\n      - receiver: A.B\n", 7, "receiver")]
+    [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - receiver: A.B*\n", 7, "'*'")]
+    [InlineData("  - method: A.B\n    args: [0]\n    when:\n      - property: 1x\n        matches: x\n", 7, "not a name")]
+    public void An_invalid_condition_throws_with_its_line(string sink, int line, string fragment)
+    {
+        var dir = WriteModels(("sql-injection.yml", "rule: csharp.sql-injection\nkind: taint\nsinks:\n" + sink));
+
+        var e = Assert.Throws<ModelException>(() => ModelLoader.Load(dir));
+
+        Assert.Equal(line, e.Line);
+        Assert.Contains(fragment, e.Message);
+    }
+
     [Theory]
     [InlineData("  - method: Dapper.SqlMapper.Query*\n    args: [1]\n    flavour: x\n", 6, "flavour")]       // unknown key
     [InlineData("  - method: Dapper.SqlMapper.Query*\n    args: [x]\n", 5, "args")]                         // not an ordinal

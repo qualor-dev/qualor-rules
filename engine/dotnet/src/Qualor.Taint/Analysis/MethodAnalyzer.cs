@@ -28,6 +28,9 @@ internal sealed class AnalysisContext
 
     public SinkFinder Sinks { get; }
 
+    /// The conditions of conditional sinks (`when:`), with the body facts they read.
+    public SinkConditions Conditions { get; } = new();
+
     public MemberTable<PropagatorModel> Propagators { get; } = new();
 
     /// The `unmodelled-external` policy: an external member no propagator names passes its receiver's and arguments'
@@ -96,7 +99,8 @@ internal sealed class AnalysisContext
 /// - Sources: parameters (seeded at the entry), source members (sources.yml (6)) and bound properties (sources.yml (3))
 ///   at their reads. Sanitizers clean their result for their rule.
 /// - Sinks: the arguments at a sink's ordinals, and the value assigned to a property-set sink (for `+=` the joined
-///   value): reported when request data reaches them; a label that reaches them is a sink of the label's body.
+///   value): reported when request data reaches them; a label that reaches them is a sink of the label's body. A
+///   conditional sink (`when:`) applies only where SinkConditions finds its conditions hold, possibly element by element.
 internal sealed class MethodAnalyzer
 {
     private readonly AnalysisContext _ctx;
@@ -739,6 +743,39 @@ internal sealed class MethodAnalyzer
             if (label.TaintedFor(rule)) _body.RecordSink(label, rule, site, member);
     }
 
+    /// The semantic model of the body's original operation tree (a lambda's or local function's graph: its enclosing
+    /// graph's).
+    private SemanticModel? Model()
+    {
+        for (var g = _cfg; g != null; g = g.Parent)
+            if (g.OriginalOperation.SemanticModel is { } model) return model;
+        return null;
+    }
+
+    /// A sink argument reached by a tainted value: a plain sink reports it; a conditional one (`when:`) only where its
+    /// conditions hold, either as a whole or element by element (the elements after a switch of a vector written in
+    /// place, evaluated in this state from the original operation tree).
+    private void ConditionalSink(SinkHit hit, IOperation operation, Input input, IMethodSymbol method, TaintState state)
+    {
+        if (hit.Sink.When.Count == 0)
+        {
+            SinkReached(hit.RuleId, input.Site, input.Value, method);
+            return;
+        }
+        var decision = _ctx.Conditions.Check(hit.Sink, operation, input.Ordinal, Model());
+        if (!decision.Holds) return;
+        if (decision.Elements == null)
+        {
+            SinkReached(hit.RuleId, input.Site, input.Value, method);
+            return;
+        }
+        foreach (var element in decision.Elements)
+        {
+            var value = Value(element, state);
+            if (value.Any) SinkReached(hit.RuleId, element.Syntax, value, method);
+        }
+    }
+
     // ---- Properties ----
 
     private TaintValue ReadProperty(IPropertyReferenceOperation operation, TaintState state)
@@ -823,7 +860,9 @@ internal sealed class MethodAnalyzer
         var property = operation.Property;
         var receiver = Value(operation.Instance, state);
         var inputs = IndexInputs(operation, state, (value, assignment));
-        foreach (var hit in _ctx.Sinks.Sinks(property, Access.Set)) SinkReached(hit.RuleId, assignment.Syntax, value, property);
+        foreach (var hit in _ctx.Sinks.Sinks(property, Access.Set))
+            if (value.Any && (hit.Sink.When.Count == 0 || _ctx.Conditions.Check(hit.Sink, assignment, -1, Model()).Holds))
+                SinkReached(hit.RuleId, assignment.Syntax, value, property);
 
         if (SymbolKeys.InSource(property))
         {
@@ -927,7 +966,7 @@ internal sealed class MethodAnalyzer
         foreach (var hit in _ctx.Sinks.Sinks(method, Access.Call))
             foreach (var i in inputs)
                 if (i.Parameter != null && i.Value.Any && SinkFinder.IsSinkArgument(hit.Sink, i.Parameter))
-                    SinkReached(hit.RuleId, i.Site, i.Value, method);
+                    ConditionalSink(hit, operation, i, method, state);
 
         var result = TaintValue.Clean;
         if (_ctx.Sources.SourceMember(method, Access.Call) != null)

@@ -59,6 +59,7 @@ sinks:                           # a taint rule needs at least one
     param-types: [System.String, Microsoft.EntityFrameworkCore.RawSqlString]
                                  # optional: only overloads whose parameter has one of these types
   - property-set: System.Data.Common.DbCommand.CommandText   # the assigned value; no args
+                                 # optional on any sink: `when:` (conditional sinks, below)
 sanitizers:                      # optional: the member's result is clean
   - method: System.Int32.Parse
 guards:                          # optional: the checked argument is clean on the branch where the
@@ -70,6 +71,43 @@ misuse: {}                       # kind misuse only: the misuse rule's settings 
 
 `sanitizers` take `method:` or `property-get:`; `guards` take `method:` with `arg` and
 `clean-when`, all required.
+
+### Conditional sinks (`when:`)
+
+A sink with `when:` applies only where every condition of its list holds (each item names one kind):
+
+```yaml
+  - method: System.Diagnostics.Process.Start
+    args: [1]
+    param-types: [System.String]
+    when:
+      - arg: 0                       # argument 0 may be a constant matching the expression:
+        matches: '(?i)^(.*[\\/])?(sh|bash|cmd)(\.exe)?$'   # a literal, a const, a local assigned constants, ?: or ??
+      - literal-text: '(^|\s)-c(\s|$)' # the argument's literal text matches, or it has none
+  - property-set: System.Diagnostics.ProcessStartInfo.Arguments
+    when:
+      - property: FileName           # the object written to has FileName set to a matching constant
+        matches: '(?i)^(.*[\\/])?(sh|bash|cmd)(\.exe)?$'
+  - method: System.Collections.ObjectModel.Collection`1.Add
+    args: [0]
+    when:
+      - receiver: System.Diagnostics.ProcessStartInfo.ArgumentList   # called on this property: the object is its owner
+      - property: FileName
+        matches: '(?i)^(.*[\\/])?(sh|bash)$'
+      - after: '^-c$'                # an element after one matching the expression
+        next: true                   # right after it (without: anywhere after it)
+```
+
+| condition | holds when |
+|---|---|
+| `arg: N`, `matches: R` | argument N (parameter ordinal) may be a constant that matches R: a literal or a const, a local assigned constants in the body, both branches of `?:` and `??`. A value that is no constant (a parameter, a call) matches nothing. |
+| `property: P`, `matches: R` (`of: N`) | the object the sink acts on has its property P set to a constant that matches R anywhere in the body, before or after the sink: an assignment `x.P = c`, an object initializer `{ P = c }`, or a constructor parameter named P (ignoring case: `new ProcessStartInfo("sh")` sets FileName). The object of a property-set sink is the object written to; of a method sink its receiver (an extension method's `this`), the created object for a constructor; `of: N` takes argument N instead. Objects are told apart by access path (`psi`, `p.StartInfo`, `this.Response`, `context.Response`); a variable assigned an object creation is that object. |
+| `literal-text: R` | the sink argument is no collection written in place, and its literal text matches R or it has none (a variable or a call's result, whose text the engine does not follow). The literal text is the strings the argument is built from in place: constants, both sides of a string `+`, the text and holes of an interpolated string, both branches of `?:` and `??`, the arguments of `string.Format`, `Concat` and `Join`; each string is matched by itself. |
+| `after: R` (`next: true`) | for a sink argument written in place as a collection (an array or a collection initializer, `new[] { "-c", x }`, `new List<string> { ... }`, a collection expression): the sink is each element after one that may be a constant matching R (with `next`: the element right after it), reported where that element is; the sink does not apply when no element qualifies. For an `Add` call: the earlier Adds to the same collection (an access path, also the Adds of a collection initializer `ArgumentList = { "-c", x }`), in source order, must hold such an element. Otherwise the condition does not hold. |
+| `receiver: T.P` | the call's receiver is property P of T (also through a nested collection initializer); the object of `property:` conditions is then the object that holds P. |
+
+The conditions read the body's code flow-insensitively (a constant set after the sink counts too). The expressions
+are .NET regular expressions; write `(?i)` for case-insensitive matching.
 
 ## `sources.yml`
 

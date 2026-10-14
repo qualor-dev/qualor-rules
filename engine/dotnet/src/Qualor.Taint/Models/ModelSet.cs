@@ -20,6 +20,48 @@ public sealed record MemberPattern(string TypeName, string MemberName, bool Pref
 public sealed record SinkModel(MemberPattern Member, IReadOnlyList<int> Args)
 {
     public IReadOnlyList<string> ParamTypes { get; init; } = Array.Empty<string>();
+
+    /// A conditional sink (`when:`): the sink applies only where every condition holds at the call or assignment.
+    public IReadOnlyList<SinkCondition> When { get; init; } = Array.Empty<SinkCondition>();
+}
+
+/// The kinds of a conditional sink's conditions (models/README.md, `when:`).
+public enum SinkConditionKind
+{
+    /// `arg: N, matches: R`: argument N is a constant (a literal, a const, a local or a ternary of them) one of whose
+    /// values matches R.
+    Argument,
+
+    /// `property: P [of: N], matches: R`: the object the sink acts on (or argument N) has its property P set in the
+    /// body (an assignment, an initializer, a constructor parameter named P) to a constant one of whose values matches R.
+    Property,
+
+    /// `literal-text: R`: the sink argument is no collection written in place, and its literal text (the strings it
+    /// is built from in place) matches R or it has none.
+    LiteralText,
+
+    /// `after: R [next: true]`: the sink is an element after one that is a constant matching R (right after it with
+    /// `next`): an element of the sink argument written in place as a collection, or the argument of an Add after the
+    /// earlier Adds to the same collection.
+    After,
+
+    /// `receiver: T.P`: the call's receiver is property P of T; the object of `property:` conditions is then its owner.
+    Receiver,
+}
+
+/// One condition of a conditional sink. Arg: Argument's ordinal, or Property's `of` (−1: the sink's own object);
+/// Pattern: the `matches`, `literal-text` or `after` regular expression; Member: Receiver's property.
+public sealed record SinkCondition(SinkConditionKind Kind)
+{
+    public int Arg { get; init; } = -1;
+
+    public string? Property { get; init; }
+
+    public System.Text.RegularExpressions.Regex? Pattern { get; init; }
+
+    public bool Next { get; init; }
+
+    public MemberPattern? Member { get; init; }
 }
 
 /// A guard: a call whose boolean result says the argument at Arg is clean on the branch where it equals CleanWhen.

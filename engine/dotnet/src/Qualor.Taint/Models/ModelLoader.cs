@@ -121,7 +121,7 @@ public static class ModelLoader
         {
             foreach (var node in doc.Sequence(sinksNode))
             {
-                var (pattern, f) = doc.Member(node, new[] { "method", "property-set" }, "args", "param-types");
+                var (pattern, f) = doc.Member(node, new[] { "method", "property-set" }, "args", "param-types", "when");
                 var argsNode = f.Optional("args");
                 IReadOnlyList<int> args;
                 if (pattern.Kind == MemberKind.PropertySet)
@@ -137,7 +137,8 @@ public static class ModelLoader
                     args = ordinals;
                 }
                 var paramTypes = f.Optional("param-types") is { } pt ? doc.Types(pt, arrays: true) : Array.Empty<string>();
-                sinks.Add(new SinkModel(pattern, args) { ParamTypes = paramTypes });
+                var when = f.Optional("when") is { } wn ? ReadConditions(doc, wn, pattern) : Array.Empty<SinkCondition>();
+                sinks.Add(new SinkModel(pattern, args) { ParamTypes = paramTypes, When = when });
             }
             if (kind == RuleKind.Taint && sinks.Count == 0) throw doc.Error(sinksNode, "a taint rule needs at least one sink");
         }
@@ -165,6 +166,59 @@ public static class ModelLoader
             foreach (var (k, v) in map.Children) misuse[doc.String(k)] = Doc.Plain(v);
         }
         return new RuleModel(id, kind, sinks, sanitizers, guards, misuse);
+    }
+
+    /// The conditions of a conditional sink (`when:`, a non-empty list): each names one kind (arg, property,
+    /// literal-text, after, receiver) with its settings. `arg` and `after` need a method sink; `receiver` a method
+    /// that is no constructor.
+    private static IReadOnlyList<SinkCondition> ReadConditions(Doc doc, YamlNode node, MemberPattern sink)
+    {
+        var list = new List<SinkCondition>();
+        var kinds = new[] { "arg", "property", "literal-text", "after", "receiver" };
+        foreach (var item in doc.Sequence(node))
+        {
+            var f = doc.Fields(item, "arg", "property", "of", "matches", "literal-text", "after", "next", "receiver");
+            var present = kinds.Where(k => f.Optional(k) != null).ToList();
+            if (present.Count != 1) throw doc.Error(item, $"a condition names exactly one of {string.Join(", ", kinds)}");
+            var kind = present[0];
+            string[] allowed = kind switch
+            {
+                "arg" => new[] { "arg", "matches" },
+                "property" => new[] { "property", "of", "matches" },
+                "after" => new[] { "after", "next" },
+                _ => new[] { kind },
+            };
+            foreach (var key in new[] { "of", "matches", "next" })
+                if (f.Optional(key) is { } extra && Array.IndexOf(allowed, key) < 0) throw doc.Error(extra, $"{key} does not belong to a {kind} condition");
+            if (kind is "arg" or "after" && sink.Kind == MemberKind.PropertySet) throw doc.Error(item, $"a {kind} condition needs a method sink");
+            if (kind == "receiver" && sink.Kind != MemberKind.Method) throw doc.Error(item, "a receiver condition needs a method sink that is no constructor");
+            list.Add(kind switch
+            {
+                "arg" => new SinkCondition(SinkConditionKind.Argument) { Arg = doc.Ordinal(f.Required("arg"), "arg"), Pattern = doc.Regex(f.Required("matches")) },
+                "property" => new SinkCondition(SinkConditionKind.Property)
+                {
+                    Property = doc.Name(f.Required("property")),
+                    Arg = f.Optional("of") is { } of ? doc.Ordinal(of, "of") : -1,
+                    Pattern = doc.Regex(f.Required("matches")),
+                },
+                "literal-text" => new SinkCondition(SinkConditionKind.LiteralText) { Pattern = doc.Regex(f.Required("literal-text")) },
+                "after" => new SinkCondition(SinkConditionKind.After)
+                {
+                    Pattern = doc.Regex(f.Required("after")),
+                    Next = f.Optional("next") is { } next && doc.Bool(next),
+                },
+                _ => new SinkCondition(SinkConditionKind.Receiver) { Member = ReceiverPattern(doc, f.Required("receiver")) },
+            });
+        }
+        if (list.Count == 0) throw doc.Error(node, "when must not be empty");
+        return list;
+    }
+
+    private static MemberPattern ReceiverPattern(Doc doc, YamlNode node)
+    {
+        var pattern = doc.Pattern(node, MemberKind.PropertyGet);
+        if (pattern.Prefix) throw doc.Error(node, $"{pattern}: a receiver is one property (no '*')");
+        return pattern;
     }
 
     /// One YAML file: its root mapping and the checks, each throwing ModelException at the node's line.
@@ -284,6 +338,23 @@ public static class ModelLoader
 
         public string String(YamlNode node) =>
             node is YamlScalarNode { Value: { Length: > 0 } v } ? v : throw Error(node, "expected a non-empty value");
+
+        public string Name(YamlNode node) => Identifier.IsMatch(String(node)) ? String(node) : throw Error(node, $"{String(node)}: not a name");
+
+        /// A .NET regular expression (culture-invariant, matched with a timeout); a pattern that does not parse is an
+        /// error at its line.
+        public Regex Regex(YamlNode node)
+        {
+            var text = String(node);
+            try
+            {
+                return new Regex(text, RegexOptions.CultureInvariant, TimeSpan.FromSeconds(1));
+            }
+            catch (ArgumentException e)
+            {
+                throw new ModelException(File, Line(node.Start), $"{text}: not a regular expression: {e.Message}", e);
+            }
+        }
 
         public bool Bool(YamlNode node) => String(node) switch
         {

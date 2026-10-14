@@ -105,6 +105,7 @@ public class ModelNameResolutionTests
         foreach (var rule in m.Rules)
         {
             foreach (var s in rule.Sinks) yield return (s.Member, rule.RuleId + " sinks");
+            foreach (var c in rule.Sinks.SelectMany(s => s.When).Where(c => c.Member != null)) yield return (c.Member!, rule.RuleId + " when receiver");
             foreach (var s in rule.Sanitizers) yield return (s, rule.RuleId + " sanitizers");
             foreach (var g in rule.Guards) yield return (g.Member, rule.RuleId + " guards");
         }
