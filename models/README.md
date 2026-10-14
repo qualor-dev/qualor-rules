@@ -243,6 +243,81 @@ without being given it or an object whose type reaches it (the object kept in a 
 then changed there) is not seen (FN); the member writes the callee summaries already record (the heap writes of each
 body, closed over its calls) could end the facts of the members a call may write.
 
+### Model validation
+
+Task 31, decision R-12: a value model binding validated is clean for the rules its validation attributes leave no
+character for, where validation is known to hold. From Microsoft's documentation only (learn.microsoft.com:
+System.ComponentModel.DataAnnotations, ASP.NET Core "Model validation" and "Create web APIs"); `sources.yml` (7) names
+the types, each taint rule's `validation: metacharacters:` its characters.
+
+```yaml
+validation:                      # optional, a taint rule
+  metacharacters: '[/\:\x00]'   # one .NET character class: the characters a value needs to inject into the sinks
+```
+
+What an attribute on a bound member of type string cleans (several attributes on one member all hold; their rules are
+united). Members of enum and number types are clean already (`scalars`).
+
+| attribute | cleans | why (documentation) |
+|---|---|---|
+| `[Range]` with a numeric operand (`int`, `double`, or `typeof` a number type) | every rule | "Specifies the numeric range constraints"; a string value is converted to the operand type first: a number's text. A range over another type (a date) cleans nothing. |
+| `[EnumDataType(typeof(E))]` | every rule | the value names one of the enum's values. |
+| `[RegularExpression]` | the rules whose metacharacters its alphabet does not hold | "The regular expression searches for an exact match, not using `^` before and `$` at the end of the pattern produces the same results as using it": the whole value is matched, anchored or not, so its characters are the ones the pattern's consuming parts admit (below). |
+| `[EmailAddress]`, `[Url]`, `[Phone]` | nothing | the documentation says only that the value "has an email format" (a URL, a telephone number format) and names no alphabet. |
+| `[StringLength]`, `[MaxLength]`, `[MinLength]`, `[Required]` | nothing | length and presence only. |
+
+A pattern's alphabet (RegexAlphabet): the union of what its consuming parts match (literal characters, escapes naming
+one, character classes and class escapes, `.` as any character), read with .NET's Regex on each UTF-16 code unit and
+case-insensitively (a superset under any case option). Anchors, quantifiers, alternation and the contents of
+lookarounds consume nothing (a lookaround's parts count when the pattern holds a backreference). A pattern in the
+free-spacing mode (`(?x)`), a conditional or a pattern that does not parse cleans nothing. Only the attribute classes
+themselves count (a derived attribute may validate otherwise).
+
+The metacharacters, per rule (each model file says why): sql-injection: quotes and backquote with the Unicode
+apostrophe look-alikes a best-fit code page conversion may map to a quote, backslash, comment and statement markers,
+whitespace, parentheses, operators, commas, brackets, braces, `@ ? : $`; command-injection: the shell's operators,
+quotes, expansions and globs, whitespace and line breaks, `- = ,` (argument injection), NUL; path-traversal: `/ \ :`
+and NUL (a value without them is one segment, as Path.GetFileName leaves it, `..` included); ssrf: everything but an
+ASCII digit (letters can name an internal host); open-redirect: `/ \ : . @ % ? #`, whitespace and control characters
+and the Unicode dots and slashes browsers map to them; xss: angle brackets, quotes and the backquote,
+`& = ( ) [ ] { } : ; \`, whitespace, control characters, U+2028/U+2029; ldap-injection: the specials of RFC 4515 and RFC 4514 and `/`; xpath-injection: quotes,
+brackets, parentheses, `/ | = < > @ * : , . ! $` and whitespace; regex-injection: the pattern metacharacters, `#` and
+whitespace. A rule without `validation:` (the misuse rules' taint forms) is cleaned by `[Range]` and enums only.
+
+Which values are validated: in a controller action or a Razor Pages handler, its source parameters (their own
+attributes: "Model-bound top-level nodes are validated"), the member paths below them ("ValidationVisitor traverses the
+object graph": public properties of the project's classes and structs, recursively, up to four members and 32 paths;
+not into collections, whose elements the documentation does not say are validated member by member), and the bound
+properties of the controller or page model and the paths below them; at most 32 paths per action (half the member facts
+a state holds, so the body's own guards keep room). `[ValidateNever]` on a parameter, property or type leaves it out.
+
+Where validation holds:
+
+- On the branch where `ModelState.IsValid` (ModelState read on `this`) or `TryValidateModel(...)` ("true if the
+  ModelState is valid") is true: through `!`, `&&`, `||` and `== true`/`!= false`; not through a local holding the result
+  (`var ok = ModelState.IsValid;`). The validated paths get member facts (Guards on members) at the entry, pending until
+  the check: a write of the member, an assignment of its root, or a call that may change the object between the entry
+  and the check ends the fact, so the check does not clean it. A validated parameter is cleaned only if the body assigns
+  it nowhere. TryValidateModel's model (a parameter, a local built in the action, a property of `this`) gets the facts of
+  its own paths at the check.
+- Throughout an action of an `[ApiController]` (on the class, a base class, or `[assembly: ApiController]`): "model
+  validation errors automatically trigger an HTTP 400 response", so the action runs only with a valid model. Its
+  validated parameters are clean at the entry and its validated paths start with cleaning facts. Not when an
+  assignment of `SuppressModelStateInvalidFilter` (other than `= false`) is anywhere in the source ("To disable the
+  automatic 400 behavior"): then only the IsValid check counts.
+
+After validation the facts follow the rules of Guards on members: a write of the member (or of its root), a ref or out
+use, or a call that may change the object ends them.
+
+Not covered (the values stay request data, the safe side): IValidatableObject, custom ValidationAttributes,
+FluentValidation and other validation libraries; [ModelMetadataType] buddy classes; Minimal API handlers (no automatic
+validation in ASP.NET Core 8); the 400 turned off another way than SuppressModelStateInvalidFilter (the invalid-model
+filter removed by hand); a validated member read in a callee given the model (the facts are the action's own: the
+model object passed on is whole-object request data); elements of collection members; the check held in a local.
+Known cost: a value of one token (letters, digits, `_`) placed into a statement without quotes may still name another
+column or keyword; the alphabet does not see sequences (`^-?\d+$` holds `-`, so it does not clean sql-injection,
+whose `--` needs two).
+
 ### Allow-lists
 
 `allow-list: literal-tables` (the shared C# allow-lists of the OpenGrep rules) makes these clean for the rule:
@@ -384,7 +459,7 @@ or throws, accepts nothing.
 
 ## `sources.yml`
 
-Every key is required.
+Every key is required, except `validation`.
 
 | key | what is a source |
 |---|---|
@@ -396,6 +471,7 @@ Every key is required.
 | `not-source-attributes` | A parameter with one of these attributes is never a source (a DI service). |
 | `parameter-types` | The types that are never sources in `controllers`, `razor-pages`, `bound-properties` and `binding-attributes`: `scalars` (and `Nullable` of them), arrays and `scalar-collections` of them unless the element is one of `not-scalar-elements`, enums when `enums-are-scalar`, `not-source-types`, and interfaces (DI services) when `interfaces-are-services`, except `source-interfaces`. |
 | `members` | Reads that are sources: `property-get:` and `method:` entries (the call's value). |
+| `validation` | Optional (Task 31): model validation as a sanitizer, section "Model validation": `model-state` and `is-valid` (the action's `ModelState.IsValid`), `try-validate`, `api-controller-attributes`, `suppress-option`, `not-validated-attributes`, and the attributes `range`, `regular-expression` and `enum-data-type`. |
 
 ## `propagators.yml`
 

@@ -332,6 +332,40 @@ public sealed class ModelLoaderTests : TempDirs
         Assert.Equal("://", models.KnownTexts["System.Uri.SchemeDelimiter"]);
     }
 
+    /// Task 31: sources.yml's `validation:` and a rule's `validation: metacharacters:` (one character class).
+    [Fact]
+    public void The_validation_models_are_read()
+    {
+        var models = ModelLoader.Load(ShippedModels());
+        var v = models.Sources.Validation!;
+        Assert.Equal(new MemberPattern("Microsoft.AspNetCore.Mvc.ModelBinding.ModelStateDictionary", "IsValid", false, MemberKind.PropertyGet), v.IsValid);
+        Assert.Contains(v.TryValidate, p => p.TypeName == "Microsoft.AspNetCore.Mvc.ControllerBase" && p.MemberName == "TryValidateModel");
+        Assert.Equal("SuppressModelStateInvalidFilter", v.SuppressOption);
+        Assert.Equal("System.ComponentModel.DataAnnotations.RegularExpressionAttribute", v.RegularExpression);
+        var taint = models.Rules.Where(r => r.Kind == RuleKind.Taint).ToList();
+        Assert.Equal(9, taint.Count);
+        Assert.All(taint, r => Assert.NotNull(r.ValidationMetacharacters));
+        var sql = models.Rules.Single(r => r.RuleId == "csharp.sql-injection").ValidationMetacharacters!;
+        Assert.True(sql.IsMatch("'") && sql.IsMatch(" ") && sql.IsMatch("ʼ") && !sql.IsMatch("a") && !sql.IsMatch("_"));
+        var path = models.Rules.Single(r => r.RuleId == "csharp.path-traversal").ValidationMetacharacters!;
+        Assert.True(path.IsMatch("/") && path.IsMatch("\\") && !path.IsMatch("."));
+    }
+
+    [Theory]
+    [InlineData("validation:\n  metacharacters: 'abc'\n", 7, "character class")]          // no class
+    [InlineData("validation:\n  metacharacters: '[a]b]'\n", 7, "character class")]        // more than one character
+    [InlineData("validation:\n  metacharacters: '[z-a]'\n", 7, "regular expression")]     // does not parse (a reversed range)
+    [InlineData("validation:\n  characters: '[a]'\n", 7, "unknown key")]
+    public void An_invalid_validation_model_throws_with_its_line(string validation, int line, string fragment)
+    {
+        var dir = WriteModels(("sql-injection.yml", "rule: csharp.sql-injection\nkind: taint\nsinks:\n  - method: A.B\n    args: [0]\n" + validation));
+
+        var e = Assert.Throws<ModelException>(() => ModelLoader.Load(dir));
+
+        Assert.Equal(line, e.Line);
+        Assert.Contains(fragment, e.Message);
+    }
+
     [Fact]
     public void A_missing_shared_file_is_an_error()
     {

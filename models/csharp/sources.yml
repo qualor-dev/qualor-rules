@@ -168,3 +168,38 @@ members:
   - property-get: Microsoft.AspNetCore.Http.HttpRequest.BodyReader
   - method: Microsoft.AspNetCore.Http.HttpRequest.ReadFormAsync
   - method: Microsoft.AspNetCore.Http.HttpRequestJsonExtensions.ReadFromJsonAsync
+
+# (7) Model validation (Task 31, decision R-12; models/README.md "Model validation"): where validation is known to
+# hold, a bound value is clean for the rules whose metacharacters (a rule model's `validation:`) its validation
+# attributes leave no room for.
+# Sources (learn.microsoft.com): aspnet/core/mvc/models/validation ("Both model binding and model validation occur
+# before the execution of a controller action"; "it's the app's responsibility to inspect ModelState.IsValid";
+# top-level nodes; "ValidationVisitor traverses the object graph"), aspnet/core/web-api ("The [ApiController]
+# attribute makes model validation errors automatically trigger an HTTP 400 response"; on a controller, a base class
+# or the assembly; SuppressModelStateInvalidFilter disables it), dotnet/api/microsoft.aspnetcore.mvc.controllerbase.
+# tryvalidatemodel ("true if the ModelState is valid"), dotnet/api/system.componentmodel.dataannotations.
+# regularexpressionattribute, .rangeattribute, .enumdatatypeattribute, .emailaddressattribute, .urlattribute,
+# .phoneattribute, microsoft.aspnetcore.mvc.modelbinding.validation.validateneverattribute.
+# - `model-state`: the action's ModelStateDictionary (read on `this`); `is-valid`: its property; `try-validate`: the
+#   methods that validate a model and return whether the ModelState is valid (their argument 0 is the model).
+# - `api-controller-attributes`: on the controller, a base class or the assembly, validation holds in every action
+#   (the automatic 400), unless an assignment of `suppress-option` (other than `= false`) is anywhere in the source.
+# - `not-validated-attributes`: a parameter, property or type with one is left out of validation.
+# - `range`, `regular-expression`, `enum-data-type`: the attributes that clean (README); [EmailAddress], [Url], [Phone],
+#   [StringLength], [MaxLength], [MinLength] and [Required] clean nothing (their documentation names no alphabet, or
+#   limits the length or presence only). IValidatableObject, custom ValidationAttributes and FluentValidation are not
+#   read (they only add constraints: their values stay request data).
+validation:
+  model-state:
+    - Microsoft.AspNetCore.Mvc.ControllerBase.ModelState
+    - Microsoft.AspNetCore.Mvc.RazorPages.PageModel.ModelState
+  is-valid: Microsoft.AspNetCore.Mvc.ModelBinding.ModelStateDictionary.IsValid
+  try-validate:
+    - Microsoft.AspNetCore.Mvc.ControllerBase.TryValidateModel
+    - Microsoft.AspNetCore.Mvc.RazorPages.PageModel.TryValidateModel
+  api-controller-attributes: [Microsoft.AspNetCore.Mvc.ApiControllerAttribute]
+  suppress-option: SuppressModelStateInvalidFilter
+  not-validated-attributes: [Microsoft.AspNetCore.Mvc.ModelBinding.Validation.ValidateNeverAttribute]
+  range: System.ComponentModel.DataAnnotations.RangeAttribute
+  regular-expression: System.ComponentModel.DataAnnotations.RegularExpressionAttribute
+  enum-data-type: System.ComponentModel.DataAnnotations.EnumDataTypeAttribute

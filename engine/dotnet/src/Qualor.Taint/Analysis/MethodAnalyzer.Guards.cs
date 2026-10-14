@@ -62,6 +62,12 @@ internal sealed partial class MethodAnalyzer
                 break;
             case IBinaryOperation { OperatorKind: BinaryOperatorKind.Equals or BinaryOperatorKind.NotEquals } equality:
             {
+                // `ModelState.IsValid == false` (Task 31): the check's own outcome.
+                if (ValidityOutcome(equality, outcome, out var check) is { } validity)
+                {
+                    Facts(check!, validity, state, ref refined, depth + 1);
+                    break;
+                }
                 // Only the built-in equality (or string's operator): a user-defined `==` may compare anything (ruling R-E13).
                 var builtIn = equality.OperatorMethod == null || equality.OperatorMethod.ContainingType?.SpecialType == SpecialType.System_String;
                 Equality(equality.LeftOperand, equality.RightOperand, (equality.OperatorKind == BinaryOperatorKind.Equals) == outcome, builtIn, state, ref refined);
@@ -72,6 +78,9 @@ internal sealed partial class MethodAnalyzer
                 break;
             case IInvocationOperation call:
                 Call(call, outcome, state, ref refined);
+                break;
+            case IPropertyReferenceOperation property when outcome && _ctx.Validation.IsValidity(property):
+                Validated(state, ref refined);
                 break;
             case IFlowCaptureReferenceOperation capture when _captured.TryGetValue(capture.Id, out var list) && list.Count == 1:
                 Facts(list[0], outcome, state, ref refined, depth + 1);
@@ -121,6 +130,7 @@ internal sealed partial class MethodAnalyzer
     private void Call(IInvocationOperation call, bool outcome, TaintState state, ref TaintState? refined)
     {
         var method = call.TargetMethod;
+        if (outcome && _ctx.Validation.IsTryValidate(call)) TryValidated(call, state, ref refined);
         if (outcome && method.Name == "Equals" && method.ContainingType is { SpecialType: not (SpecialType.None or SpecialType.System_Object) })
         {
             if (call.Instance != null && call.Arguments.Length >= 1) Equality(call.Instance, call.Arguments[0].Value, true, true, state, ref refined);

@@ -60,7 +60,11 @@ public sealed class TaintEngine
         {
             try
             {
-                foreach (var project in solution.Projects) ctx.Sources.RegisterHandlers(project.Compilation, ct);
+                foreach (var project in solution.Projects)
+                {
+                    ctx.Sources.RegisterHandlers(project.Compilation, ct);
+                    ctx.Validation.Scan(project.Compilation, ct);
+                }
                 var started = budget.Elapsed;
                 dispatch = new Dispatch(solution.Projects.Select(p => (Compilation)p.Compilation), ct);
                 entries = new EntryPoints(ctx.Sources);

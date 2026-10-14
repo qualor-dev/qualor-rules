@@ -170,3 +170,9 @@ sanitizers:
   - method: System.Enum.Parse
   - allow-list: literal-tables
 guards: []
+
+# Model validation (Task 31, decision R-12; models/README.md "Model validation"): the shell's operators, quotes,
+# expansions and globs (; & | ` $ ( ) < > ' " \ * ? [ ] { } ~ ! # % ^), whitespace and line breaks (another argument
+# or command), and '-', '=' and ',' (an option or an option's value: argument injection), and NUL.
+validation:
+  metacharacters: '[;&|`$()<>''"\\*?\[\]{}~!#%^=,\-\s\x00]'

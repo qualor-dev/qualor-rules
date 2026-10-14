@@ -178,3 +178,9 @@ sanitizers:
     receiver-type: Microsoft.AspNetCore.Http.IHeaderDictionary
     key-is: Microsoft.Net.Http.Headers.HeaderNames.Host
 guards: []
+
+# Model validation (Task 31, decision R-12; models/README.md "Model validation"): what ends or opens markup, an
+# attribute, a script string or statement, or a URL scheme: < > " ' ` & = ( ) [ ] { } : ; \, whitespace, control
+# characters and the JavaScript line terminators U+2028/U+2029.
+validation:
+  metacharacters: '[<>"''`&=()\[\]{}:;\\\s\p{Cc}\u2028\u2029]'

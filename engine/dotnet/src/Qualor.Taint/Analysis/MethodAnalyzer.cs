@@ -22,7 +22,11 @@ internal sealed class AnalysisContext
         UnmodelledPasses = models.UnmodelledExternal == "string-or-collection-return";
         RuleIds = models.Rules.Select(r => r.RuleId).ToArray();
         KnownTexts = models.KnownTexts;
+        Validation = new ModelValidation(models.Sources.Validation, models.Rules, RuleIds);
     }
+
+    /// Model validation as a sanitizer (Task 31, decision R-12): the validation facts of bound members.
+    public ModelValidation Validation { get; }
 
     /// Every rule id of the models.
     public string[] RuleIds { get; }
@@ -246,6 +250,7 @@ internal sealed partial class MethodAnalyzer
     /// (what a lambda or local function declared here may capture); null otherwise.
     public TaintState? Run(TaintState entry, bool collectAll)
     {
+        SeedValidation(entry);
         var blocks = _cfg.Blocks;
         var inStates = new TaintState?[blocks.Length];
         var outStates = collectAll ? new TaintState?[blocks.Length] : null;

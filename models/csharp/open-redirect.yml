@@ -173,3 +173,10 @@ guards:
   - method: Duende.IdentityServer.Services.IIdentityServerInteractionService.GetAuthenticationContextAsync
     arg: 0
     clean-when: not-null
+
+# Model validation (Task 31, decision R-12; models/README.md "Model validation"): what makes a target leave the site or
+# name another host: / \ : . @ % ? #, whitespace and control characters (browsers drop or fold them), and the Unicode
+# dots and slashes a browser maps to them. A value without them is a relative path segment or a host name of one
+# label, which no outside site owns.
+validation:
+  metacharacters: '[/\\:.@%?#\s\p{Cc}\u2024\u3002\uFE52\uFF0E\uFF0F\uFF3C\uFF61]'

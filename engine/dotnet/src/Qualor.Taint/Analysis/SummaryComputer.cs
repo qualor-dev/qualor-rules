@@ -665,6 +665,9 @@ internal sealed class SummaryComputer
         /// The value of `this`: the label of the unit root's receiver (a lambda's `this` is its enclosing member's).
         public TaintValue This { get; }
 
+        /// The method this body is, when it is no lambda or local function (model validation reads its parameters).
+        public IMethodSymbol? Method => _body.Nested ? null : _body.Symbol;
+
         public bool CapturedChanged { get; private set; }
 
         private AnalysisContext Ctx => _computer._ctx;

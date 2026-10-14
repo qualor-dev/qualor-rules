@@ -56,7 +56,7 @@ public static class ModelLoader
     private static SourceModel ReadSources(Doc doc)
     {
         var top = doc.Fields(doc.Root, "controllers", "razor-pages", "bound-properties", "minimal-api", "binding-attributes",
-            "not-source-attributes", "parameter-types", "members");
+            "not-source-attributes", "parameter-types", "members", "validation");
 
         var c = doc.Fields(top.Required("controllers"), "bases", "base-name-suffixes", "name-suffixes", "class-attributes",
             "not-class-attributes", "not-method-attributes", "public-methods-only");
@@ -84,7 +84,43 @@ public static class ModelLoader
         var members = doc.Sequence(top.Required("members")).Select(n => doc.Member(n, new[] { "method", "property-get" }).Pattern).ToList();
 
         return new SourceModel(controllers, razor, bound, minimal, doc.Types(top.Required("binding-attributes")),
-            doc.Types(top.Required("not-source-attributes")), types, members);
+            doc.Types(top.Required("not-source-attributes")), types, members)
+        {
+            Validation = top.Optional("validation") is { } vn ? ReadValidation(doc, vn) : null,
+        };
+    }
+
+    /// sources.yml (7) `validation:` (Task 31).
+    private static ValidationSources ReadValidation(Doc doc, YamlNode node)
+    {
+        var v = doc.Fields(node, "model-state", "is-valid", "try-validate", "api-controller-attributes", "suppress-option",
+            "not-validated-attributes", "range", "regular-expression", "enum-data-type");
+        var modelState = doc.Sequence(v.Required("model-state")).Select(n => doc.Pattern(n, MemberKind.PropertyGet)).ToList();
+        var tryValidate = doc.Sequence(v.Required("try-validate")).Select(n => doc.Pattern(n, MemberKind.Method)).ToList();
+        foreach (var p in modelState.Concat(tryValidate))
+            if (p.Prefix) throw doc.Error(node, $"{p}: validation names whole members, no prefix");
+        var isValidNode = v.Required("is-valid");
+        var isValid = doc.Pattern(isValidNode, MemberKind.PropertyGet);
+        if (isValid.Prefix) throw doc.Error(isValidNode, $"{isValid}: is-valid names a whole property");
+        return new ValidationSources(modelState, isValid, tryValidate, doc.Types(v.Required("api-controller-attributes")),
+            doc.Name(v.Required("suppress-option")), doc.Types(v.Required("not-validated-attributes")), doc.Type(v.Required("range")),
+            doc.Type(v.Required("regular-expression")), doc.Type(v.Required("enum-data-type")));
+    }
+
+    /// A rule's `validation:` (Task 31): `metacharacters:`, one .NET regular expression character class (`[...]`).
+    private static Regex ReadMetacharacters(Doc doc, YamlNode node)
+    {
+        var f = doc.Fields(node, "metacharacters");
+        var classNode = f.Required("metacharacters");
+        var text = doc.String(classNode);
+        if (!text.StartsWith('[') || !text.EndsWith(']')) throw doc.Error(classNode, "metacharacters is one character class, [...]");
+        doc.Regex(classNode);
+        // One class: the whole text matches a single character (a `]` inside would end it early: `[a]b]`).
+        var regex = new Regex("^(?:" + text + ")$", RegexOptions.CultureInvariant);
+        var single = false;
+        for (var c = 0; c <= char.MaxValue && !single; c++) single = regex.IsMatch(((char)c).ToString());
+        if (!single) throw doc.Error(classNode, "metacharacters is one character class, [...]");
+        return regex;
     }
 
     private static (IReadOnlyList<PropagatorModel>, string, IReadOnlyDictionary<string, string>, List<(YamlNode Node, string Id)>) ReadPropagators(Doc doc)
@@ -150,7 +186,7 @@ public static class ModelLoader
 
     private static RuleModel ReadRule(Doc doc, string expectedId)
     {
-        var top = doc.Fields(doc.Root, "rule", "kind", "sources", "sinks", "sanitizers", "guards", "misuse");
+        var top = doc.Fields(doc.Root, "rule", "kind", "sources", "sinks", "sanitizers", "guards", "misuse", "validation");
         var idNode = top.Required("rule");
         var id = doc.String(idNode);
         if (id != expectedId) throw doc.Error(idNode, $"rule must be {expectedId} (the file's name)");
@@ -328,6 +364,7 @@ public static class ModelLoader
             NamedSanitizers = namedSanitizers,
             AllowLists = allowLists,
             KeySanitizers = keySanitizers,
+            ValidationMetacharacters = top.Optional("validation") is { } vn ? ReadMetacharacters(doc, vn) : null,
             Sources = ruleSources,
         };
     }

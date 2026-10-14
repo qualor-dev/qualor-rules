@@ -191,6 +191,11 @@ public sealed record RuleModel(
 
     /// The rule's own sources (`sources:`, Task 29): request data for this rule only (clean for every other rule).
     public IReadOnlyList<RuleSource> Sources { get; init; } = Array.Empty<RuleSource>();
+
+    /// `validation: metacharacters:` (Task 31, decision R-12): a .NET regular expression character class of the
+    /// characters a value needs to inject into this rule's sinks; a validated value whose [RegularExpression] admits none
+    /// of them is clean for the rule. Null: no pattern cleans the rule.
+    public System.Text.RegularExpressions.Regex? ValidationMetacharacters { get; init; }
 }
 
 /// A keyed-read sanitizer: the read of Member (an indexer), or the `out` values of a call of Member (a method such as
@@ -242,7 +247,21 @@ public sealed record ParameterTypes(
 public sealed record SourceModel(
     ControllerSources Controllers, RazorPageSources RazorPages, BoundPropertySources BoundProperties, MinimalApiSources MinimalApi,
     IReadOnlyList<string> BindingAttributes, IReadOnlyList<string> NotSourceAttributes, ParameterTypes ParameterTypes,
-    IReadOnlyList<MemberPattern> Members);
+    IReadOnlyList<MemberPattern> Members)
+{
+    /// sources.yml (7) `validation:` (Task 31, decision R-12): where model validation holds and which attributes clean;
+    /// null: validation cleans nothing.
+    public ValidationSources? Validation { get; init; }
+}
+
+/// Model validation (sources.yml (7), models/README.md "Model validation"): ModelState (the action's
+/// ModelStateDictionary properties) and its IsValid property, the TryValidateModel methods, the [ApiController]
+/// attributes, the option that suppresses the automatic 400 (a property name), the attributes that leave a member out
+/// of validation, and the three attributes that clean.
+public sealed record ValidationSources(
+    IReadOnlyList<MemberPattern> ModelState, MemberPattern IsValid, IReadOnlyList<MemberPattern> TryValidate,
+    IReadOnlyList<string> ApiControllerAttributes, string SuppressOption, IReadOnlyList<string> NotValidatedAttributes,
+    string Range, string RegularExpression, string EnumDataType);
 
 /// How taint passes through a member the engine does not analyse: From (`this`, `args`, or a parameter ordinal) to
 /// To (`return`, `this`, `out`: the out and ref arguments, or a parameter ordinal). Keys: the parameter ordinals of a

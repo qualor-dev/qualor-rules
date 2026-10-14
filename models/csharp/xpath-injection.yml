@@ -55,3 +55,9 @@ sanitizers:
   - method: System.Enum.Parse
   - allow-list: literal-tables
 guards: []
+
+# Model validation (Task 31, decision R-12; models/README.md "Model validation"): string delimiters, predicates and
+# groups, steps and axes, unions, operators, attributes, wildcards, prefixes, variables, '.' (the self and parent
+# steps) and whitespace ("or" and "and" need it).
+validation:
+  metacharacters: '[''"\[\]()/|=<>@*:,.!$\s]'

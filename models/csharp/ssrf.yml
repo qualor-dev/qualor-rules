@@ -103,3 +103,9 @@ sanitizers:
   # with a body, on `this` too.
   - lookup: '^(Get|Find|Load)\w*Async$'
 guards: []
+
+# Model validation (Task 31, decision R-12; models/README.md "Model validation"): every character but an ASCII digit.
+# Letters alone can name another host where the value is placed in the host ("localhost", an internal service's
+# name); only a value of digits cleans the rule, as a number does (sources.yml's scalars).
+validation:
+  metacharacters: '[^0-9]'

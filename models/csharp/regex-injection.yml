@@ -56,3 +56,8 @@ sanitizers:
   - allow-list: literal-tables
   - method: System.Text.RegularExpressions.Regex.Escape
 guards: []
+
+# Model validation (Task 31, decision R-12; models/README.md "Model validation"): the pattern's metacharacters
+# (\ * + ? | { } [ ] ( ) ^ $ .) and '#' and whitespace (comments and spacing in the free-spacing mode).
+validation:
+  metacharacters: '[\\*+?|{}\[\]()^$.#\s]'
