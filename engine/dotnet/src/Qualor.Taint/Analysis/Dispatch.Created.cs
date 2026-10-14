@@ -1,0 +1,624 @@
+using System.Collections.Immutable;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
+
+namespace Qualor.Taint;
+
+/// What the solution creates (decision R-7), the facts Dispatch narrows a virtual call with. A concrete type is
+/// - created: built with `new` (target-typed too) or `Activator.CreateInstance<T>()` and other external generic methods
+///   given it as an explicit type argument; registered in the DI container (`Add{Scoped,Transient,Singleton}`, keyed and
+///   `TryAdd*` forms, `AddHostedService`, `AddDbContext`, `AddHttpClient`, Scrutor's `Decorate`, Autofac's
+///   `RegisterType`/`RegisterGeneric`: the implementation type argument, or the `implementationType` of a `typeof` pair,
+///   open generics included; `ServiceDescriptor` constructors and factories; a factory lambda's `new`); a type parameter
+///   a project's own registration helper passes on is followed to its callers' type arguments; built by the framework
+///   (controllers, Razor views and pages, page models, view components, tag helpers, filters and every attribute,
+///   middleware, hubs, hosted services, Blazor components, EF migrations and type configurations); the parameter type of
+///   an entry point (model binding); any struct;
+/// - open, with every subtype: named by `typeof` outside a registration, a service lookup or an assembly designator
+///   (reflection filters such as `typeof(IPlugin).IsAssignableFrom(t)`, attribute arguments such as
+///   `[ServiceFilter(typeof(F))]`, `Activator.CreateInstance(typeof(T))`), the target of a cast, `as` or `is` of an object
+///   made by reflection (`(IPlugin)Activator.CreateInstance(t)`, `JsonSerializer.Deserialize(s, type) as Item`), a
+///   `DbSet<T>`'s entity, a Scrutor filter `AssignableTo<T>()`; and the type argument of a generic method whose type
+///   parameter reaches one of these (`GetExports<T>()` over `typeof(T)`, `new T()`);
+/// - in an open project: every type of a project whose assembly a scan registers without a filter (Scrutor `Scan`,
+///   Autofac `RegisterAssemblyTypes`, a body that enumerates `Assembly.GetTypes()`/`GetExportedTypes()` and registers or
+///   creates types by a `Type` value it does not name by `typeof`), every project when the scanned assemblies are not
+///   known (`AppDomain.GetAssemblies()`, a variable), and every project no project with a registration is or references
+///   (its registration code is not in source: a library whose host is elsewhere, a solution without DI).
+/// The fallback scope is the implementation's project (scans enumerate assemblies; a missing registration is a property
+/// of a project and the projects referencing it) or the open type (a reflection filter names it), never the whole
+/// solution unless the scanned assemblies are unknown: every measured large project uses reflection somewhere, so a
+/// solution-wide fallback would undo the narrowing everywhere.
+internal sealed partial class Dispatch
+{
+    private enum Known { None, Open, Created }
+
+    [Flags]
+    private enum Role { None = 0, Reflecting = 1, Registering = 2 }
+
+    private const string ServiceCollection = "Microsoft.Extensions.DependencyInjection.IServiceCollection";
+    private const string ServiceDescriptor = "Microsoft.Extensions.DependencyInjection.ServiceDescriptor";
+
+    private static readonly HashSet<string> RegistrationNames = new(StringComparer.Ordinal)
+    {
+        "AddScoped", "AddTransient", "AddSingleton", "AddKeyedScoped", "AddKeyedTransient", "AddKeyedSingleton",
+        "TryAddScoped", "TryAddTransient", "TryAddSingleton", "TryAddKeyedScoped", "TryAddKeyedTransient", "TryAddKeyedSingleton",
+        "AddHostedService", "Decorate", "TryDecorate", "AddDbContext", "AddDbContextPool", "AddDbContextFactory",
+        "AddPooledDbContextFactory", "AddHttpClient", "RegisterType", "RegisterGeneric",
+        "Scoped", "Transient", "Singleton", "Describe", "KeyedScoped", "KeyedTransient", "KeyedSingleton", "DescribeKeyed",
+        "Add", "TryAdd", "TryAddEnumerable", "Replace",
+    };
+
+    /// Parameters that give the service another way than by its type (no implementation type follows from the type
+    /// argument then).
+    private static readonly HashSet<string> FactoryParameters = new(StringComparer.Ordinal)
+    {
+        "implementationFactory", "implementationInstance", "factory", "instance", "decorator", "instanceFactory",
+    };
+
+    private static readonly HashSet<string> ImplementationTypeParameters = new(StringComparer.Ordinal)
+    {
+        "implementationType", "decoratorType", "implementer",
+    };
+
+    /// Service lookups and logger categories: a `typeof` given to them names a service, not a type something builds.
+    private static readonly HashSet<string> LookupNames = new(StringComparer.Ordinal)
+    {
+        "GetService", "GetRequiredService", "GetServices", "GetKeyedService", "GetRequiredKeyedService", "GetKeyedServices",
+        "Resolve", "ResolveOptional", "ResolveNamed", "ResolveKeyed", "IsService", "IsRegistered", "CreateLogger",
+    };
+
+    /// Reflection and deserialization calls that build an object of a type given at run time.
+    private static readonly HashSet<string> CreationNames = new(StringComparer.Ordinal)
+    {
+        "CreateInstance", "GetServiceOrCreateInstance", "CreateInstanceFrom", "Deserialize", "DeserializeObject",
+        "DeserializeAsync", "GetUninitializedObject",
+    };
+
+    private static readonly HashSet<string> ScanNames = new(StringComparer.Ordinal)
+    {
+        "Scan", "RegisterAssemblyTypes", "RegisterAssemblyOpenGenericTypes",
+    };
+
+    private static readonly HashSet<string> OwnAssemblyNames = new(StringComparer.Ordinal)
+    {
+        "GetExecutingAssembly", "GetCallingAssembly", "GetEntryAssembly", "FromExecutingAssembly", "FromCallingAssembly",
+        "FromEntryAssembly",
+    };
+
+    private static readonly HashSet<string> UnknownAssemblyNames = new(StringComparer.Ordinal)
+    {
+        "GetAssemblies", "FromApplicationDependencies", "FromDependencyContext", "FromAssemblies", "FromAssemblyDependencies",
+        "LoadFrom", "LoadFile", "Load",
+    };
+
+    private static readonly HashSet<string> FrameworkBases = new(StringComparer.Ordinal)
+    {
+        "Microsoft.AspNetCore.Mvc.ControllerBase", "Microsoft.AspNetCore.Mvc.RazorPages.PageModel",
+        "Microsoft.AspNetCore.Mvc.Razor.RazorPageBase", "Microsoft.AspNetCore.Mvc.ViewComponent",
+        "Microsoft.AspNetCore.SignalR.Hub", "Microsoft.AspNetCore.SignalR.Hub`1", "System.Attribute",
+        "Microsoft.EntityFrameworkCore.Migrations.Migration", "Microsoft.EntityFrameworkCore.Infrastructure.ModelSnapshot",
+        "Microsoft.AspNetCore.Components.ComponentBase",
+    };
+
+    private static readonly HashSet<string> FrameworkInterfaces = new(StringComparer.Ordinal)
+    {
+        "Microsoft.AspNetCore.Razor.TagHelpers.ITagHelper", "Microsoft.AspNetCore.Razor.TagHelpers.ITagHelperComponent",
+        "Microsoft.AspNetCore.Mvc.Filters.IFilterMetadata", "Microsoft.AspNetCore.Http.IMiddleware",
+        "Microsoft.Extensions.Hosting.IHostedService", "Microsoft.AspNetCore.Components.IComponent",
+        "Microsoft.EntityFrameworkCore.IEntityTypeConfiguration`1",
+    };
+
+    private static readonly HashSet<string> ControllerAttributes = new(StringComparer.Ordinal)
+    {
+        "Microsoft.AspNetCore.Mvc.ApiControllerAttribute", "Microsoft.AspNetCore.Mvc.ControllerAttribute",
+        "Microsoft.AspNetCore.Mvc.ViewComponentAttribute",
+    };
+
+    private readonly List<Compilation> _compilations = new();
+    private readonly HashSet<object> _created = new();
+    private readonly HashSet<object> _registered = new();
+    private readonly HashSet<object> _open = new();
+    private readonly HashSet<string> _openProjects = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _hosting = new(StringComparer.Ordinal);
+    private bool _everyProjectOpen;
+    private readonly Dictionary<(object Method, int Ordinal), Role> _roles = new();
+    private readonly List<(IMethodSymbol Callee, ImmutableArray<ITypeSymbol> Arguments)> _genericCalls = new();
+    private readonly Dictionary<object, Known> _known = new();
+    private readonly Dictionary<object, bool> _live = new();
+    private bool _sealed;
+
+    /// Projects all of whose types count as created, and types all of whose subtypes do (stats).
+    public int OpenProjects { get; private set; }
+
+    public int OpenTypes => _open.Count;
+
+    // ---- Types (the constructor, every source type once) ----
+
+    private void ScanType(INamedTypeSymbol type)
+    {
+        var key = Key(type.OriginalDefinition);
+        if (type.TypeKind == TypeKind.Struct) _created.Add(key);
+        else if (type.TypeKind == TypeKind.Class && !type.IsAbstract && !type.IsStatic && FrameworkBuilt(type)) _created.Add(key);
+        // An EF context's entity sets: EF builds their entities.
+        for (var b = type.BaseType; b != null; b = b.BaseType)
+        {
+            if (SymbolMatch.MetadataName(b) != "Microsoft.EntityFrameworkCore.DbContext") continue;
+            foreach (var member in type.GetMembers())
+                if (member is IPropertySymbol { Type: INamedTypeSymbol { TypeArguments.Length: 1 } set } && SymbolMatch.MetadataName(set) == "Microsoft.EntityFrameworkCore.DbSet`1")
+                    Open(set.TypeArguments[0]);
+            break;
+        }
+    }
+
+    /// The types attribute arguments name by `typeof` (`[ServiceFilter(typeof(F))]`, `[JsonConverter(typeof(C))]`): the
+    /// framework builds them. Found in the syntax first (declarations, not bodies), so only those attributes are bound.
+    private void ScanAttributes(Compilation compilation, CancellationToken ct)
+    {
+        foreach (var tree in compilation.SyntaxTrees)
+        {
+            ct.ThrowIfCancellationRequested();
+            SemanticModel? model = null;
+            var root = tree.GetRoot(ct);
+            foreach (var node in root.DescendantNodes(n => n is not (BlockSyntax or ArrowExpressionClauseSyntax or EqualsValueClauseSyntax)))
+            {
+                if (node is not AttributeArgumentSyntax argument) continue;
+                foreach (var typeOf in argument.DescendantNodesAndSelf().OfType<TypeOfExpressionSyntax>())
+                {
+                    model ??= compilation.GetSemanticModel(tree);
+                    if (model.GetTypeInfo(typeOf.Type, ct).Type is { } named) Open(named);
+                }
+            }
+        }
+    }
+
+    /// A type the framework builds itself: a controller (by base, attribute or name), a Razor view or page, a page model,
+    /// a view component, a tag helper, a filter or attribute, middleware (IMiddleware or a conventional Invoke), a hub, a
+    /// hosted service, a Blazor component, an EF migration or type configuration.
+    private static bool FrameworkBuilt(INamedTypeSymbol type)
+    {
+        for (var b = type; b != null; b = b.BaseType)
+        {
+            if (FrameworkBases.Contains(SymbolMatch.MetadataName(b))) return true;
+            foreach (var a in b.GetAttributes())
+                if (a.AttributeClass is { } c && ControllerAttributes.Contains(SymbolMatch.MetadataName(c))) return true;
+        }
+        foreach (var i in type.AllInterfaces)
+            if (FrameworkInterfaces.Contains(SymbolMatch.MetadataName(i))) return true;
+        if (type.DeclaredAccessibility == Accessibility.Public
+            && (type.Name.EndsWith("Controller", StringComparison.Ordinal) || type.Name.EndsWith("ViewComponent", StringComparison.Ordinal)))
+            return true;
+        foreach (var name in new[] { "Invoke", "InvokeAsync" })
+            foreach (var m in type.GetMembers(name))
+                if (m is IMethodSymbol { IsStatic: false, Parameters.Length: > 0 } invoke
+                    && SymbolMatch.MetadataName(invoke.Parameters[0].Type) == "Microsoft.AspNetCore.Http.HttpContext")
+                    return true;
+        return false;
+    }
+
+    // ---- Bodies (CallGraph.Build, every body once) ----
+
+    /// The facts one body tells: what it builds, registers, scans or names by `typeof`.
+    public void Collect(IOperation root, Compilation compilation)
+    {
+        var own = compilation.AssemblyName ?? "";
+        var unit = new UnitFacts(own);
+        foreach (var op in root.DescendantsAndSelf())
+        {
+            switch (op)
+            {
+                case IObjectCreationOperation creation when creation.Type is INamedTypeSymbol created:
+                    if (created.Name == "ServiceDescriptor" && SymbolMatch.MetadataName(created) == ServiceDescriptor)
+                    {
+                        _hosting.Add(own);
+                        if (creation.Constructor != null) RegisteredByType(creation.Constructor, creation.Arguments, unit);
+                    }
+                    else
+                    {
+                        Create(created, false);
+                    }
+                    break;
+                case ITypeParameterObjectCreationOperation { Type: ITypeParameterSymbol parameter }:
+                    AddRole(parameter, Role.Reflecting);
+                    break;
+                case IInvocationOperation invocation:
+                    Invocation(invocation, unit);
+                    break;
+                case IPropertyReferenceOperation { Property.Name: "DefinedTypes" or "ExportedTypes" } property
+                    when property.Property.ContainingType is { } t && SymbolMatch.MetadataName(t) == "System.Reflection.Assembly":
+                    unit.Enumerates = true;
+                    Designate(property.Instance, unit);
+                    break;
+                case ITypeOfOperation typeOf:
+                    TypeOf(typeOf, unit);
+                    break;
+                case IVariableDeclaratorOperation { Initializer.Value: { } value } declarator:
+                    if (IsReflectedObject(value, null))
+                        (unit.ReflectedLocals ??= new HashSet<ILocalSymbol>(SymbolEqualityComparer.Default)).Add(declarator.Symbol);
+                    else if (SymbolMatch.MetadataName(declarator.Symbol.Type) == "System.Reflection.Assembly")
+                        (unit.AssemblyLocals ??= new Dictionary<ILocalSymbol, string?>(SymbolEqualityComparer.Default))[declarator.Symbol] = AssemblyOf(value, unit);
+                    break;
+                case IConversionOperation { IsImplicit: false, Type: { } converted } conversion when IsReflectedObject(conversion.Operand, unit.ReflectedLocals):
+                    Filter(converted, unit);
+                    break;
+                case IIsTypeOperation isType when IsReflectedObject(isType.ValueOperand, unit.ReflectedLocals):
+                    Filter(isType.TypeOperand, unit);
+                    break;
+                case IIsPatternOperation pattern when IsReflectedObject(pattern.Value, unit.ReflectedLocals):
+                    if (pattern.Pattern is IDeclarationPatternOperation { MatchedType: { } declared }) Filter(declared, unit);
+                    else if (pattern.Pattern is ITypePatternOperation { MatchedType: { } matched }) Filter(matched, unit);
+                    break;
+            }
+        }
+        // A body that enumerates an assembly's types and registers or builds types by a run-time value, with no type that
+        // filters them (a `typeof`, the type it casts the objects to), registers the whole assembly.
+        if (unit.Enumerates && unit.Reflective && !unit.Filtered)
+        {
+            if (unit.UnknownAssembly || unit.Designated.Count == 0) _everyProjectOpen = true;
+            else _openProjects.UnionWith(unit.Designated);
+        }
+    }
+
+    /// The parameter types of an entry point: model binding builds them.
+    public void CollectEntry(IMethodSymbol entry)
+    {
+        foreach (var p in entry.Parameters)
+            if (p.Type is INamedTypeSymbol { TypeKind: TypeKind.Class } t) Create(t, false);
+    }
+
+    private sealed class UnitFacts
+    {
+        public UnitFacts(string own) => Own = own;
+
+        public string Own { get; }
+
+        public bool Enumerates { get; set; }
+
+        public bool Reflective { get; set; }
+
+        /// A type named by `typeof` (a library's included) or the type an object built by reflection is cast to.
+        public bool Filtered { get; set; }
+
+        public bool UnknownAssembly { get; set; }
+
+        public HashSet<string> Designated { get; } = new(StringComparer.Ordinal);
+
+        public HashSet<ILocalSymbol>? ReflectedLocals { get; set; }
+
+        /// Locals holding an assembly: its project's name, null when not known.
+        public Dictionary<ILocalSymbol, string?>? AssemblyLocals { get; set; }
+    }
+
+    private void Invocation(IInvocationOperation invocation, UnitFacts unit)
+    {
+        var method = invocation.TargetMethod;
+        var name = method.Name;
+        if (RegistrationNames.Contains(name) && IsRegistration(method, invocation.Instance))
+        {
+            _hosting.Add(unit.Own);
+            var hasFactory = method.Parameters.Any(p => FactoryParameters.Contains(p.Name));
+            if (method.TypeArguments.Length > 0 && !(hasFactory && method.TypeArguments.Length == 1)) Register(method.TypeArguments[^1]);
+            RegisteredByType(method, invocation.Arguments, unit);
+            return;
+        }
+        if (ScanNames.Contains(name) && (IsRegistration(method, invocation.Instance) || IsAutofac(method, invocation.Instance)))
+        {
+            _hosting.Add(unit.Own);
+            Scan(invocation, unit.Own);
+            return;
+        }
+        if (name is "GetTypes" or "GetExportedTypes" && method.ContainingType is { } containing
+            && SymbolMatch.MetadataName(containing) is "System.Reflection.Assembly" or "System.Reflection.Module")
+        {
+            unit.Enumerates = true;
+            Designate(invocation.Instance, unit);
+        }
+        if (CreationNames.Contains(name) && invocation.Arguments.Any(a => a.Parameter?.Type is { } pt && SymbolMatch.MetadataName(pt) == "System.Type"
+                && Unwrap(a.Value) is not ITypeOfOperation))
+            unit.Reflective = true;
+        if (method.TypeArguments.Length == 0) return;
+        if (SymbolKeys.InSource(method))
+        {
+            _genericCalls.Add((method, method.TypeArguments));
+            return;
+        }
+        if (!HasExplicitTypeArguments(invocation.Syntax)) return;
+        foreach (var argument in method.TypeArguments)
+        {
+            if (argument is INamedTypeSymbol { TypeKind: TypeKind.Class, IsAbstract: false } concrete) Create(concrete, false);
+            else if (argument is ITypeParameterSymbol parameter && CreationNames.Contains(name)) AddRole(parameter, Role.Reflecting);
+        }
+    }
+
+    private static bool HasExplicitTypeArguments(SyntaxNode syntax) => syntax is InvocationExpressionSyntax
+    {
+        Expression: GenericNameSyntax or MemberAccessExpressionSyntax { Name: GenericNameSyntax } or MemberBindingExpressionSyntax { Name: GenericNameSyntax },
+    };
+
+    /// A registration call: an IServiceCollection extension or member, a ServiceDescriptor factory, an Autofac
+    /// ContainerBuilder registration.
+    private static bool IsRegistration(IMethodSymbol method, IOperation? instance)
+    {
+        if (method.ContainingType is { } c && SymbolMatch.MetadataName(c) == ServiceDescriptor) return true;
+        if (instance?.Type is { } receiver && IsServices(receiver)) return true;
+        var m = method.ReducedFrom ?? method;
+        return m.IsExtensionMethod && m.Parameters.Length > 0 && (IsServices(m.Parameters[0].Type) || IsAutofacBuilder(m.Parameters[0].Type));
+    }
+
+    private static bool IsAutofac(IMethodSymbol method, IOperation? instance) =>
+        instance?.Type is { } receiver && IsAutofacBuilder(receiver);
+
+    private static bool IsServices(ITypeSymbol type) =>
+        type.Name == "IServiceCollection" && SymbolMatch.MetadataName(type) == ServiceCollection
+        || type.AllInterfaces.Any(i => i.Name == "IServiceCollection" && SymbolMatch.MetadataName(i) == ServiceCollection);
+
+    private static bool IsAutofacBuilder(ITypeSymbol type) => type.Name == "ContainerBuilder";
+
+    /// The implementation a registration names by a `Type` argument (`implementationType`, or the only `serviceType` when
+    /// no factory or instance is given); a value that is no `typeof` is a registration by reflection.
+    private void RegisteredByType(IMethodSymbol method, ImmutableArray<IArgumentOperation> arguments, UnitFacts unit)
+    {
+        var typeParameters = method.Parameters.Where(p => SymbolMatch.MetadataName(p.Type) == "System.Type").ToList();
+        if (typeParameters.Count == 0) return;
+        var implementation = typeParameters.FirstOrDefault(p => ImplementationTypeParameters.Contains(p.Name));
+        if (implementation == null && typeParameters.Count == 1 && !method.Parameters.Any(p => FactoryParameters.Contains(p.Name)))
+            implementation = typeParameters[0];
+        if (implementation == null) return;
+        var argument = arguments.FirstOrDefault(a => a.Parameter?.Ordinal == implementation.Ordinal);
+        if (argument == null || argument.ArgumentKind == ArgumentKind.DefaultValue) return;
+        if (Unwrap(argument.Value) is ITypeOfOperation typeOf) Register(typeOf.TypeOperand);
+        else unit.Reflective = true;
+    }
+
+    /// A scan (Scrutor `Scan`, Autofac `RegisterAssemblyTypes`): its filters (`AssignableTo<T>()`, `AssignableTo(typeof(T))`)
+    /// open those types; without one, the scanned projects (`FromAssemblyOf<T>()`, `typeof(T).Assembly`, the calling
+    /// assembly), or every project when they are not known.
+    private void Scan(IInvocationOperation invocation, string own)
+    {
+        var designated = new HashSet<string>(StringComparer.Ordinal);
+        var unknown = false;
+        var filters = new List<ITypeSymbol>();
+        foreach (var op in invocation.DescendantsAndSelf())
+        {
+            if (op is IInvocationOperation call)
+            {
+                var name = call.TargetMethod.Name;
+                if (name is "FromAssemblyOf" or "FromAssembliesOf")
+                    foreach (var t in call.TargetMethod.TypeArguments) Assembly(t, designated);
+                else if (name is "AssignableTo" or "AssignableToAny")
+                    filters.AddRange(call.TargetMethod.TypeArguments);
+                else if (OwnAssemblyNames.Contains(name)) designated.Add(own);
+                else if (UnknownAssemblyNames.Contains(name)) unknown = true;
+            }
+            else if (op is ITypeOfOperation typeOf)
+            {
+                var parent = Up(typeOf);
+                if (parent is IArgumentOperation { Parent: IInvocationOperation { TargetMethod.Name: "AssignableTo" or "AssignableToAny" } })
+                    filters.Add(typeOf.TypeOperand);
+                else
+                    Assembly(typeOf.TypeOperand, designated);
+            }
+        }
+        if (filters.Count > 0)
+            foreach (var f in filters) Open(f);
+        else if (unknown || designated.Count == 0) _everyProjectOpen = true;
+        else _openProjects.UnionWith(designated);
+    }
+
+    private static void Assembly(ITypeSymbol type, HashSet<string> designated)
+    {
+        if (type.ContainingAssembly?.Name is { } name) designated.Add(name);
+    }
+
+    /// The assembly whose types a body enumerates: `typeof(T).Assembly` (or `.GetTypeInfo().Assembly`), the executing
+    /// assembly or `GetType().Assembly` (the body's own project), a local initialised with one of these; else unknown.
+    private static void Designate(IOperation? receiver, UnitFacts unit)
+    {
+        if (AssemblyOf(receiver, unit) is { } name) unit.Designated.Add(name);
+        else unit.UnknownAssembly = true;
+    }
+
+    private static string? AssemblyOf(IOperation? value, UnitFacts unit)
+    {
+        var r = Unwrap(value);
+        if (r is ILocalReferenceOperation local)
+            return unit.AssemblyLocals != null && unit.AssemblyLocals.TryGetValue(local.Local, out var held) ? held : null;
+        if (r is IPropertyReferenceOperation { Property.Name: "Assembly" } assembly)
+        {
+            var inner = Unwrap(assembly.Instance);
+            if (inner is IInvocationOperation { TargetMethod.Name: "GetTypeInfo" } info) inner = Unwrap(info.Arguments.Length > 0 ? info.Arguments[0].Value : info.Instance);
+            if (inner is ITypeOfOperation typeOf) return typeOf.TypeOperand.ContainingAssembly?.Name;
+            if (inner is IInvocationOperation { TargetMethod.Name: "GetType" } or IInstanceReferenceOperation) return unit.Own;
+            return null;
+        }
+        return r is IInvocationOperation { TargetMethod.Name: var name } && OwnAssemblyNames.Contains(name) ? unit.Own : null;
+    }
+
+    /// A `typeof` outside a registration, a service lookup or an assembly designator opens its type.
+    private void TypeOf(ITypeOfOperation typeOf, UnitFacts unit)
+    {
+        var parent = Up(typeOf);
+        if (parent is IPropertyReferenceOperation { Property.Name: "Assembly" or "Module" }) return;
+        if (parent is IInvocationOperation { TargetMethod.Name: "GetTypeInfo" } info && Up(info) is IPropertyReferenceOperation { Property.Name: "Assembly" })
+            return;
+        if (parent is IArgumentOperation argument)
+        {
+            switch (argument.Parent)
+            {
+                case IInvocationOperation call:
+                {
+                    var name = call.TargetMethod.Name;
+                    if (RegistrationNames.Contains(name) && IsRegistration(call.TargetMethod, call.Instance)) return;
+                    if (LookupNames.Contains(name) || name is "FromAssemblyOf" or "FromAssembliesOf") return;
+                    if (ScanNames.Contains(name)) return;
+                    break;
+                }
+                case IObjectCreationOperation { Type: { Name: "ServiceDescriptor" } created } when SymbolMatch.MetadataName(created) == ServiceDescriptor:
+                    return;
+            }
+        }
+        Filter(typeOf.TypeOperand, unit);
+    }
+
+    /// A type that filters what a body builds or registers by reflection: it and its subtypes are open.
+    private void Filter(ITypeSymbol type, UnitFacts unit)
+    {
+        unit.Filtered = true;
+        Open(type);
+    }
+
+    /// An object made by reflection or deserialization from a run-time type (`Activator.CreateInstance(t)`,
+    /// `ActivatorUtilities.CreateInstance(sp, t)`, `JsonSerializer.Deserialize(s, t)`, `ConstructorInfo.Invoke`), or a local
+    /// initialised with one.
+    private static bool IsReflectedObject(IOperation? value, HashSet<ILocalSymbol>? locals)
+    {
+        value = Unwrap(value);
+        if (value is ILocalReferenceOperation local) return locals != null && locals.Contains(local.Local);
+        if (value is not IInvocationOperation { TargetMethod: { TypeArguments.Length: 0 } method }) return false;
+        if (method.Name == "Invoke" && method.ContainingType is { } c && SymbolMatch.MetadataName(c) == "System.Reflection.ConstructorInfo") return true;
+        return CreationNames.Contains(method.Name);
+    }
+
+    private static IOperation? Unwrap(IOperation? value)
+    {
+        while (value is IConversionOperation { IsImplicit: true } c) value = c.Operand;
+        return value;
+    }
+
+    /// The operation that uses `op`'s value, above any implicit conversion.
+    private static IOperation? Up(IOperation op)
+    {
+        var parent = op.Parent;
+        while (parent is IConversionOperation { IsImplicit: true }) parent = parent.Parent;
+        return parent;
+    }
+
+    private void Create(INamedTypeSymbol type, bool registered)
+    {
+        if (type.IsAbstract || type.TypeKind is not (TypeKind.Class or TypeKind.Struct) || !SymbolKeys.InSource(type)) return;
+        var key = Key(type.OriginalDefinition);
+        _created.Add(key);
+        if (registered) _registered.Add(key);
+    }
+
+    private void Register(ITypeSymbol type)
+    {
+        if (type is ITypeParameterSymbol parameter) AddRole(parameter, Role.Registering);
+        else if (type is INamedTypeSymbol named) Create(named, true);
+    }
+
+    private void Open(ITypeSymbol type)
+    {
+        if (type is ITypeParameterSymbol parameter) AddRole(parameter, Role.Reflecting);
+        else if (type is INamedTypeSymbol named && SymbolKeys.InSource(named)) _open.Add(Key(named.OriginalDefinition));
+    }
+
+    /// A method type parameter's role (a class's type parameters are not followed).
+    private bool AddRole(ITypeParameterSymbol parameter, Role role)
+    {
+        if (parameter.DeclaringMethod is not { } method) return false;
+        var key = (Key(SymbolKeys.Definition(method)), parameter.Ordinal);
+        _roles.TryGetValue(key, out var old);
+        if ((old | role) == old) return false;
+        _roles[key] = old | role;
+        return true;
+    }
+
+    // ---- Seal (after every body is collected) ----
+
+    /// Follows type parameter roles to the type arguments of the calls (a fixed point over the source generic calls,
+    /// through the implementations of a virtual one), then opens the projects without a registration in source.
+    public void Seal()
+    {
+        if (_sealed) return;
+        var implementations = new Dictionary<object, IReadOnlyList<IMethodSymbol>>();
+        IReadOnlyList<IMethodSymbol> Implementations(IMethodSymbol callee)
+        {
+            var def = (IMethodSymbol)SymbolKeys.Definition(callee);
+            var key = Key(def);
+            if (implementations.TryGetValue(key, out var list)) return list;
+            var all = new List<IMethodSymbol> { def };
+            if (Resolve(def, true, def.ContainingType) is { } resolution) all.AddRange(resolution.Targets);
+            implementations[key] = all;
+            return all;
+        }
+        var changed = true;
+        for (var round = 0; changed && round < 50; round++)
+        {
+            changed = false;
+            foreach (var (callee, arguments) in _genericCalls)
+                foreach (var target in Implementations(callee))
+                    for (var i = 0; i < arguments.Length; i++)
+                    {
+                        if (!_roles.TryGetValue((Key(target), i), out var role)) continue;
+                        if (arguments[i] is ITypeParameterSymbol parameter)
+                        {
+                            changed |= AddRole(parameter, role);
+                            continue;
+                        }
+                        if ((role & Role.Reflecting) != 0) Open(arguments[i]);
+                        if ((role & Role.Registering) != 0) Register(arguments[i]);
+                    }
+        }
+        // A project is hosted when it or a project referencing it registers services; the others have their
+        // registration code elsewhere.
+        var names = _compilations.Select(c => c.AssemblyName ?? "").Distinct(StringComparer.Ordinal).ToList();
+        var hosting = _compilations.Where(c => _hosting.Contains(c.AssemblyName ?? "")).ToList();
+        foreach (var name in names)
+            if (!hosting.Exists(h => h.AssemblyName == name || h.ReferencedAssemblyNames.Any(a => a.Name == name)))
+                _openProjects.Add(name);
+        OpenProjects = _everyProjectOpen ? names.Count : names.Count(_openProjects.Contains);
+        _sealed = true;
+    }
+
+    /// Whether the solution creates instances of `type` itself (null for an abstract type or interface).
+    private Known KnownOf(INamedTypeSymbol type)
+    {
+        var def = type.OriginalDefinition;
+        var key = Key(def);
+        if (_known.TryGetValue(key, out var known)) return known;
+        known = Known.None;
+        if (def.TypeKind == TypeKind.Struct || _created.Contains(key))
+        {
+            known = Known.Created;
+        }
+        else if (def.TypeKind == TypeKind.Class && !def.IsAbstract)
+        {
+            if (_everyProjectOpen || _openProjects.Contains(def.ContainingAssembly?.Name ?? "")) known = Known.Open;
+            else
+            {
+                for (var b = def; b != null && known == Known.None; b = b.BaseType)
+                    if (_open.Contains(Key(b.OriginalDefinition))) known = Known.Open;
+                if (known == Known.None && def.AllInterfaces.Any(i => _open.Contains(Key(i.OriginalDefinition)))) known = Known.Open;
+            }
+        }
+        _known[key] = known;
+        return known;
+    }
+
+    /// Whether objects of `type` (or of a type derived from it) exist: the type or a subtype is created or open. True
+    /// before Seal.
+    public bool IsLive(INamedTypeSymbol type)
+    {
+        if (!_sealed || type.IsStatic) return true;
+        var key = Key(type.OriginalDefinition);
+        if (_live.TryGetValue(key, out var live)) return live;
+        var seen = new HashSet<object> { key };
+        var queue = new Queue<INamedTypeSymbol>();
+        queue.Enqueue(type.OriginalDefinition);
+        while (queue.Count > 0 && !live)
+        {
+            var t = queue.Dequeue();
+            if (KnownOf(t) != Known.None) live = true;
+            else if (_subtypes.TryGetValue(Key(t.OriginalDefinition), out var subtypes))
+                foreach (var s in subtypes)
+                    if (seen.Add(Key(s))) queue.Enqueue(s);
+        }
+        _live[key] = live;
+        return live;
+    }
+
+    /// Whether a DI registration names `type` as an implementation.
+    public bool IsRegistered(INamedTypeSymbol type) => _registered.Contains(Key(type.OriginalDefinition));
+}

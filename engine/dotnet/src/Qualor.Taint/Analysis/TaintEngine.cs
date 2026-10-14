@@ -6,7 +6,8 @@ namespace Qualor.Taint;
 /// constructors, operators, accessors, expression-bodied properties, field and property initializers, top-level
 /// statements, and the lambdas and local functions inside them) is analysed by a MethodAnalyzer:
 /// - Task 7: intraprocedural, over the control-flow graph;
-/// - Task 8: interprocedural. The call graph over every compilation (CallGraph: units, Dispatch by class hierarchy)
+/// - Task 8: interprocedural. The call graph over every compilation (CallGraph: units, Dispatch narrowed to the types
+///   the solution creates or registers, decision R-7)
 ///   gives the bottom-up order of its strongly connected components; SummaryComputer computes each body's summary in
 ///   its parameters' labels and applies it at the call sites, together with a field-based heap scoped to the request
 ///   entry point (Heap, EntryPoints: Task 20, decision R-6), to their joint fixed point; a lambda or local function is
@@ -53,13 +54,14 @@ public sealed class TaintEngine
         SummaryComputer? computer = null;
         CallGraph? graph = null;
         EntryPoints? entries = null;
+        Dispatch? dispatch = null;
         if (budget.Check())
         {
             try
             {
                 foreach (var project in solution.Projects) ctx.Sources.RegisterHandlers(project.Compilation, ct);
                 var started = budget.Elapsed;
-                var dispatch = new Dispatch(solution.Projects.Select(p => (Compilation)p.Compilation), ct);
+                dispatch = new Dispatch(solution.Projects.Select(p => (Compilation)p.Compilation), ct);
                 entries = new EntryPoints(ctx.Sources);
                 graph = CallGraph.Build(solution, dispatch, budget.Check, ct, entries);
                 _index = budget.Elapsed - started;
@@ -88,6 +90,12 @@ public sealed class TaintEngine
             UncompiledViews = entries?.UncompiledViews ?? 0,
             CompiledByEngineViews = solution.Projects.SelectMany(p => p.EngineViews).Select(SolutionLoader.PathKey).Distinct().Count(),
             EngineViewErrors = solution.Projects.SelectMany(p => p.EngineViewErrors).Select(e => SolutionLoader.PathKey(e[..ViewOfError(e)])).Distinct().Count(),
+            DispatchByRegistrations = dispatch?.ByRegistrations ?? 0,
+            DispatchNarrowed = dispatch?.Narrowed ?? 0,
+            DispatchByScanning = dispatch?.ByScanning ?? 0,
+            DispatchByHierarchy = dispatch?.ByHierarchy ?? 0,
+            OpenProjects = dispatch?.OpenProjects ?? 0,
+            OpenTypes = dispatch?.OpenTypes ?? 0,
         };
         return new AnalysisResult(findings, reason == null, reason, stats);
     }

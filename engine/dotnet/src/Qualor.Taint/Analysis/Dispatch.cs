@@ -41,28 +41,44 @@ internal static class SymbolKeys
     public static bool InSource(ISymbol symbol) => Definition(symbol).DeclaringSyntaxReferences.Length > 0;
 }
 
-/// Virtual and interface dispatch by class hierarchy over every compilation of the solution (spec §5 "Dispatch"): a
-/// virtual call's targets are the implementations of the method in its receiver's static type and every source type
-/// derived from it or implementing it, in any project. No DI registration analysis. A call of an external virtual
-/// method on an external receiver type (`object.ToString()`, `IDisposable.Dispose()`) keeps its external target: its
-/// propagator model stands for every implementation (known limit: a source implementation reached only through an
-/// external interface is not followed).
-internal sealed class Dispatch
+//// One call a body makes: the method named, whether it dispatches virtually, the receiver's static type.
+internal readonly record struct CallSite(IMethodSymbol Method, bool IsVirtual, ITypeSymbol? Receiver);
+
+/// How a virtual call was resolved (decision R-7): to implementations the solution creates or registers, to those of
+/// projects or types opened by scanning, reflection or a missing registration only, or by the class hierarchy.
+internal enum DispatchKind { None, Registrations, Scanning, Hierarchy }
+
+/// Virtual and interface dispatch over every compilation of the solution (spec §5 "Dispatch", decision R-7): a virtual
+/// call's candidates are the implementations of the method in its receiver's static type and in every source type
+/// derived from it or implementing it, in any project (class hierarchy); of those, the call runs the ones whose type the
+/// solution creates (Dispatch.Created.cs: `new`, DI registrations, framework-built types, scanned or reflected types),
+/// and every candidate when none is known. A call of an external virtual method on an external receiver type
+/// (`object.ToString()`, `IDisposable.Dispose()`) keeps its external target: its propagator model stands for every
+/// implementation (known limit: a source implementation reached only through an external interface is not followed).
+/// What the solution creates is collected while the call graph is built (Collect, every body once) and fixed by Seal;
+/// a virtual call is resolved only after it (CallGraph keeps those calls pending until then).
+internal sealed partial class Dispatch
 {
     private readonly Dictionary<object, List<INamedTypeSymbol>> _subtypes = new();
-    private readonly Dictionary<(object Method, object Root), IReadOnlyList<IMethodSymbol>> _cache = new();
+    private readonly Dictionary<(object Method, object Root), Resolution> _cache = new();
     private readonly Dictionary<ISymbol, object> _keys = new(SymbolEqualityComparer.Default);
+
+    /// The targets of one (method, receiver type) pair and how they were found.
+    private sealed record Resolution(IReadOnlyList<IMethodSymbol> Targets, DispatchKind Kind, bool Narrowed);
 
     public Dispatch(IEnumerable<Compilation> compilations, CancellationToken ct)
     {
         foreach (var compilation in compilations)
         {
             ct.ThrowIfCancellationRequested();
+            _compilations.Add(compilation);
             foreach (var type in Types(compilation.Assembly.GlobalNamespace))
             {
                 if (type.BaseType is { } baseType) AddSubtype(baseType, type);
                 foreach (var i in type.Interfaces) AddSubtype(i, type);
+                ScanType(type);
             }
+            ScanAttributes(compilation, ct);
         }
     }
 
@@ -101,39 +117,99 @@ internal sealed class Dispatch
     /// compilations (the receiver type taken as the method's containing type); the method itself when it is not virtual.
     public IReadOnlyList<IMethodSymbol> Targets(IMethodSymbol method) => Targets(method, true, method.ContainingType);
 
-    /// The methods a call may run: the method itself (its definition) for a non-virtual call (`base.M()`, a static or
-    /// sealed member); for a virtual call, the implementation in the receiver's static type and in every source type
-    /// derived from it (class hierarchy analysis), abstract ones left out.
-    public IReadOnlyList<IMethodSymbol> Targets(IMethodSymbol method, bool isVirtual, ITypeSymbol? receiverType)
+    public IReadOnlyList<IMethodSymbol> Targets(CallSite site) => Targets(site.Method, site.IsVirtual, site.Receiver);
+
+    /// Whether a call needs the dispatch analysis (a virtual call with a source method or receiver type); the others run
+    /// the method itself.
+    public static bool IsDispatched(CallSite site) => Root(site.Method, site.IsVirtual, site.Receiver) != null;
+
+    /// The receiver type a virtual call is resolved from, or null when the call runs the method itself.
+    private static INamedTypeSymbol? Root(IMethodSymbol method, bool isVirtual, ITypeSymbol? receiverType)
     {
         var def = (IMethodSymbol)SymbolKeys.Definition(method);
         var containing = def.ContainingType;
         if (!isVirtual || def.IsStatic || containing == null
             || !(def.IsVirtual || def.IsAbstract || def.IsOverride || containing.TypeKind == TypeKind.Interface))
-            return new[] { def };
+            return null;
         var root = receiverType is INamedTypeSymbol named && named.TypeKind != TypeKind.TypeParameter ? named.OriginalDefinition : containing.OriginalDefinition;
-        if (!SymbolKeys.InSource(def) && !SymbolKeys.InSource(root)) return new[] { def };
+        if (!SymbolKeys.InSource(def) && !SymbolKeys.InSource(root)) return null;
+        return root;
+    }
 
+    /// The methods a call may run: the method itself (its definition) for a non-virtual call (`base.M()`, a static or
+    /// sealed member); for a virtual call, the implementation in the receiver's static type and in every source type
+    /// derived from it (class hierarchy analysis), abstract ones left out, narrowed to the types the solution creates
+    /// when it creates any of them (R-7).
+    public IReadOnlyList<IMethodSymbol> Targets(IMethodSymbol method, bool isVirtual, ITypeSymbol? receiverType) =>
+        Resolve(method, isVirtual, receiverType)?.Targets ?? new[] { (IMethodSymbol)SymbolKeys.Definition(method) };
+
+    /// Counts one call site of the call graph in the stats (once per site, CallGraph.Build).
+    public void Count(CallSite site)
+    {
+        if (Resolve(site.Method, site.IsVirtual, site.Receiver) is not { } resolution) return;
+        switch (resolution.Kind)
+        {
+            case DispatchKind.Registrations: ByRegistrations++; break;
+            case DispatchKind.Scanning: ByScanning++; break;
+            case DispatchKind.Hierarchy: ByHierarchy++; break;
+            default: return;
+        }
+        if (resolution.Narrowed) Narrowed++;
+    }
+
+    public int ByRegistrations { get; private set; }
+
+    public int ByScanning { get; private set; }
+
+    public int ByHierarchy { get; private set; }
+
+    public int Narrowed { get; private set; }
+
+    private Resolution? Resolve(IMethodSymbol method, bool isVirtual, ITypeSymbol? receiverType)
+    {
+        var root = Root(method, isVirtual, receiverType);
+        if (root == null) return null;
+        var def = (IMethodSymbol)SymbolKeys.Definition(method);
         var cacheKey = (Key(def), Key(root));
         if (_cache.TryGetValue(cacheKey, out var cached)) return cached;
-        var result = new List<IMethodSymbol>();
+        var hierarchy = new List<IMethodSymbol>();
+        var known = new List<IMethodSymbol>();
         var seenTypes = new HashSet<object>();
         var seenTargets = new HashSet<object>();
+        var seenKnown = new HashSet<object>();
+        var anyCreated = false;
         var queue = new Queue<INamedTypeSymbol>();
         queue.Enqueue(root);
         seenTypes.Add(Key(root));
         while (queue.Count > 0)
         {
             var type = queue.Dequeue();
-            if (type.TypeKind is TypeKind.Class or TypeKind.Struct && Implementation(type, def) is { } impl && seenTargets.Add(Key(impl)))
-                result.Add((IMethodSymbol)SymbolKeys.Definition(impl));
+            if (type.TypeKind is TypeKind.Class or TypeKind.Struct && Implementation(type, def) is { } impl)
+            {
+                var target = (IMethodSymbol)SymbolKeys.Definition(impl);
+                var implKey = Key(target);
+                if (seenTargets.Add(implKey)) hierarchy.Add(target);
+                // Narrowing needs the sealed facts; before Seal the class hierarchy stands (and is not cached).
+                var created = _sealed ? KnownOf(type) : Known.None;
+                if (created != Known.None)
+                {
+                    anyCreated |= created == Known.Created;
+                    if (seenKnown.Add(implKey)) known.Add(target);
+                }
+            }
             if (_subtypes.TryGetValue(Key(type.OriginalDefinition), out var subtypes))
                 foreach (var s in subtypes)
                     if (seenTypes.Add(Key(s))) queue.Enqueue(s);
         }
-        // An interface member with a default body, or a virtual method no source type was found for.
-        if (result.Count == 0 && !def.IsAbstract) result.Add(def);
-        _cache[cacheKey] = result;
+        Resolution result;
+        if (known.Count > 0)
+            result = new Resolution(known, anyCreated ? DispatchKind.Registrations : DispatchKind.Scanning, known.Count < hierarchy.Count);
+        else if (hierarchy.Count > 0)
+            result = new Resolution(hierarchy, DispatchKind.Hierarchy, false);
+        else
+            // An interface member with a default body, or a virtual method no source type was found for.
+            result = new Resolution(def.IsAbstract ? Array.Empty<IMethodSymbol>() : new[] { def }, DispatchKind.None, false);
+        if (_sealed) _cache[cacheKey] = result;
         return result;
     }
 

@@ -174,6 +174,12 @@ public static class SarifWriter
         w.WriteNumber("uncompiledViews", stats.UncompiledViews);
         w.WriteNumber("compiledByEngineViews", stats.CompiledByEngineViews);
         w.WriteNumber("engineViewErrors", stats.EngineViewErrors);
+        w.WriteNumber("dispatchByRegistrations", stats.DispatchByRegistrations);
+        w.WriteNumber("dispatchNarrowed", stats.DispatchNarrowed);
+        w.WriteNumber("dispatchByScanning", stats.DispatchByScanning);
+        w.WriteNumber("dispatchByHierarchy", stats.DispatchByHierarchy);
+        w.WriteNumber("openProjects", stats.OpenProjects);
+        w.WriteNumber("openTypes", stats.OpenTypes);
         w.WriteEndObject();
         w.WriteEndObject();
 

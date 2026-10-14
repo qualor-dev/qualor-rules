@@ -439,10 +439,25 @@ false positives (FP) or misses (FN) there.
   unconditional sinks of its candidate members (named arguments are not matched). `TempData` crosses requests and is not
   followed. Data saved in one request and read in another
   (settings, entities, stored XSS) is not followed (FN, as the OpenGrep rules). Within one request the heap stays
-  field-based and the call graph context-insensitive with class-hierarchy dispatch: request data written to one object's
+  field-based and the call graph context-insensitive: request data written to one object's
   member is request data in that member of every object of the type in the requests that reach the write (a cache key
   built from request values makes every cache key of those requests request data; what is found by it, below), and an interface every action reaches joins most code
   into one request (FP).
+- Dispatch (since Task 26, decision R-7): a virtual or interface call runs the implementations whose type the solution
+  creates: `new` (target-typed too), a DI registration (`Add{Scoped,Transient,Singleton}`, keyed, `TryAdd*`,
+  `TryAddEnumerable`, `ServiceDescriptor`, `AddHostedService`, `AddDbContext`, `AddHttpClient`, Scrutor `Decorate`,
+  Autofac `RegisterType`/`RegisterGeneric`; type arguments, `typeof` pairs and open generics, through a project's own
+  generic registration helper too), a framework-built type (controllers, views, pages, page models, view components, tag
+  helpers, filters and attributes, middleware, hubs, hosted services, Blazor components, EF migrations), an entry
+  point's parameter type, an explicit concrete type argument of a library method (`Activator.CreateInstance<T>()`,
+  `Deserialize<T>()`). Every subtype of a type named by `typeof` (outside registrations, service lookups and assembly
+  designators), cast to from an object built by reflection, or a `DbSet<T>` entity counts too, and so does every type
+  of a project scanned without a filter (Scrutor `Scan`, Autofac `RegisterAssemblyTypes`, a `GetTypes()` loop that
+  registers or builds by a `Type` value) or that no project with a registration is or references (registration code
+  not in source). The class hierarchy stays when no implementation is known, and for every project when the scanned
+  assemblies are not known. FN: an implementation built only by code these forms miss (a class type parameter's
+  `new T()`, a factory in a library, model binding of a nested or polymorphic member type, a type loaded by name and
+  never cast).
 - Guards hold for locals, parameters and members read on them (since Task 21, "Guards on members"); a call given the
   guarded object (or one of a related type, or something that holds one) between the check and the sink, an await of
   earlier work, or a nested body touching the object ends the guard (FP); a member read through a project property

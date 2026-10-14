@@ -68,4 +68,24 @@ public sealed record AnalysisStats(int Projects, int Methods, int Sccs, int Unmo
     public int CompiledByEngineViews { get; init; }
 
     public int EngineViewErrors { get; init; }
+
+    /// Virtual and interface call sites with implementations in source (counted once, when the call graph is built;
+    /// Dispatch, decision R-7): resolved to the implementations the solution creates or registers
+    /// (DispatchByRegistrations; DispatchNarrowed of them have fewer targets than the class hierarchy), to the
+    /// implementations of projects or types opened by scanning, reflection or a missing registration
+    /// (DispatchByScanning), or by the class hierarchy because none of the implementations is known
+    /// (DispatchByHierarchy).
+    public int DispatchByRegistrations { get; init; }
+
+    public int DispatchNarrowed { get; init; }
+
+    public int DispatchByScanning { get; init; }
+
+    public int DispatchByHierarchy { get; init; }
+
+    /// Projects all of whose types count as created (scanned, or with no registration in source), and types all of
+    /// whose subtypes do (reflection).
+    public int OpenProjects { get; init; }
+
+    public int OpenTypes { get; init; }
 }

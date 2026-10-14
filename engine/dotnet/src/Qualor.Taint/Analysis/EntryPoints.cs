@@ -17,11 +17,14 @@ namespace Qualor.Taint;
 ///     point of its own;
 ///   - code "around" every action (fix round 1, I1): filter, endpoint-filter and middleware classes (a controller's
 ///     filter overrides included), conventional middleware `Invoke(HttpContext, …)`, constructors DI builds (no `new`
-///     reaches them, or their type, a base or an interface is a constructor parameter) and units that read the request themselves: one shared entry point, Around. What around code writes
+///     reaches them, or their type, a base or an interface is a constructor parameter, or a DI registration names their
+///     type) and units that read the request themselves: one shared entry point, Around. Instance code of a type the
+///     solution never creates (Dispatch.IsLive, decision R-7) is neither around code nor an entry point. What around code writes
 ///     or reads from the request runs in every request, so its writes and its request data are widened to every entry
 ///     point (WriteReach, SourceScope); its reads keep its own bit (data an admin action saved stays out of it).
 /// - Reach: from each entry point over the call graph (CallGraph: invocations, object creations, property accessors,
-///   method groups, implicit ToString(), with Dispatch), as one interned bit set per strongly connected component,
+///   method groups, implicit ToString(), with Dispatch and its DI-aware targets), as one interned bit set per strongly
+///   connected component,
 ///   propagated once from callers to callees in the components' top-down order.
 /// - Edges added to the call graph before its components are computed:
 ///   - an action to the view it renders: `View()`/`PartialView()` of a controller resolve as MVC's default view locator
@@ -82,8 +85,8 @@ internal sealed class EntryPoints
     }
 
     /// A Minimal API handler (lambda or local function) inside a unit: its spans (its own and those of the top-level
-    /// local functions it calls) and the keys of its callees.
-    private sealed record Handler(List<TextSpan> Spans, List<object> Callees);
+    /// local functions it calls) and its calls (resolved by Dispatch once it is sealed).
+    private sealed record Handler(List<TextSpan> Spans, List<CallSite> Sites);
 
     private readonly SourceFinder _sources;
     private readonly ReachTable _table = new();
@@ -92,6 +95,9 @@ internal sealed class EntryPoints
     private readonly HashSet<Unit> _readsRequest = new();
     private readonly Dictionary<Unit, (object Key, bool Around)> _frameworkClass = new();
     private readonly HashSet<Unit> _constructors = new();
+    private readonly HashSet<Unit> _staticInitializers = new();
+    private readonly Dictionary<Unit, INamedTypeSymbol> _declaringTypes = new();
+    private Dispatch? _dispatch;
     private readonly HashSet<object> _injected = new();
     private readonly Dictionary<object, List<Unit>> _constructorsOf = new();
     private readonly Dictionary<object, List<Unit>> _initializersOf = new();
@@ -135,7 +141,9 @@ internal sealed class EntryPoints
     /// and tag helpers it renders.
     public void Scan(Unit unit, IOperation operation, Dispatch dispatch)
     {
+        _dispatch ??= dispatch;
         var type = unit.Symbol?.ContainingType ?? DeclaringType(unit);
+        if (unit.Symbol == null && type != null) _declaringTypes[unit] = type;
         if (type != null)
         {
             var typeKey = SymbolKeys.Of(type.OriginalDefinition);
@@ -164,11 +172,14 @@ internal sealed class EntryPoints
             if (operation is IFieldInitializerOperation { InitializedFields: [{ IsStatic: false }, ..] }
                 or IPropertyInitializerOperation { InitializedProperties: [{ IsStatic: false }, ..] })
                 Add(_initializersOf, typeKey, unit);
+            else if (operation is IFieldInitializerOperation or IPropertyInitializerOperation)
+                _staticInitializers.Add(unit);
             if (unit.Symbol is { Name: "Process" or "ProcessAsync" or "Init" }) Add(_tagHelperUnits, typeKey, unit);
         }
         if (unit.Symbol is { } symbol && _sources.IsEntry(symbol))
         {
             _entryUnits.Add(unit);
+            dispatch.CollectEntry(symbol);
             // A Razor Pages handler renders its page (Page() or no result at all).
             if (type != null && _sources.IsPageHandler(symbol)) _requests.Add(new Request(unit, Kind.Page, null, type));
         }
@@ -211,7 +222,7 @@ internal sealed class EntryPoints
         if (handlerOps != null)
         {
             handlers = new List<Handler>();
-            foreach (var op in handlerOps) handlers.Add(HandlerOf(op, localFunctions, dispatch));
+            foreach (var op in handlerOps) handlers.Add(HandlerOf(op, localFunctions));
             _handlers[unit] = handlers;
         }
         // A read of the request outside the unit's Minimal API handlers (they are entry points of their own).
@@ -219,18 +230,18 @@ internal sealed class EntryPoints
             _readsRequest.Add(unit);
     }
 
-    /// A handler's spans and callees: its own, and those of the top-level local functions it calls (transitively).
-    private static Handler HandlerOf(IOperation op, Dictionary<IMethodSymbol, ILocalFunctionOperation>? localFunctions, Dispatch dispatch)
+    /// A handler's spans and calls: its own, and those of the top-level local functions it calls (transitively).
+    private static Handler HandlerOf(IOperation op, Dictionary<IMethodSymbol, ILocalFunctionOperation>? localFunctions)
     {
         var spans = new List<TextSpan> { op.Syntax.Span };
-        var callees = new List<object>();
+        var sites = new List<CallSite>();
         var seen = new HashSet<IOperation> { op };
         var work = new Stack<IOperation>();
         work.Push(op);
         while (work.Count > 0)
         {
             var current = work.Pop();
-            foreach (var callee in CallGraph.Callees(current, dispatch)) callees.Add(dispatch.Key(callee));
+            sites.AddRange(CallGraph.CallSites(current));
             if (localFunctions == null) continue;
             foreach (var d in current.Descendants())
             {
@@ -246,7 +257,7 @@ internal sealed class EntryPoints
                 work.Push(local);
             }
         }
-        return new Handler(spans, callees);
+        return new Handler(spans, sites);
     }
 
     private static void Add(Dictionary<object, List<Unit>> map, object key, Unit unit)
@@ -726,20 +737,25 @@ internal sealed class EntryPoints
         var entries = new List<Entry>();
         foreach (var unit in _entryUnits) entries.Add(new Entry(new List<Unit> { unit }, null, null));
         foreach (var (unit, handlers) in _handlers)
-            foreach (var handler in handlers) entries.Add(new Entry(null, handler.Callees, (unit, handler.Spans)));
+            foreach (var handler in handlers)
+                entries.Add(new Entry(null, handler.Sites.SelectMany(_dispatch!.Targets).Select(_dispatch.Key).ToList(), (unit, handler.Spans)));
         var explicitCount = entries.Count;
         var reach = Propagate(graph, entries);
         var groups = new Dictionary<object, List<Unit>>();
         var around = new List<Unit>();
         foreach (var unit in graph.Units)
         {
-            // A constructor DI builds (its type, a base or an interface of it is a constructor parameter somewhere) runs
-            // around the actions even when an action also builds the type with `new` (fix round 2, RR3).
+            // A constructor DI builds (its type, a base or an interface of it is a constructor parameter somewhere, or a
+            // registration names its type) runs around the actions even when an action also builds the type with `new`
+            // (fix round 2, RR3; R-7).
             if (reach[unit.Scc] != null)
             {
-                if (_constructors.Contains(unit) && IsInjected(unit.Symbol!.ContainingType)) around.Add(unit);
+                if (_constructors.Contains(unit) && IsLive(unit) && (IsInjected(unit.Symbol!.ContainingType) || _dispatch!.IsRegistered(unit.Symbol.ContainingType)))
+                    around.Add(unit);
                 continue;
             }
+            // Instance code of a type nobody creates never runs (R-7: the same facts as dispatch).
+            if (!IsLive(unit)) continue;
             if (_frameworkClass.TryGetValue(unit, out var framework))
             {
                 if (framework.Around) around.Add(unit);
@@ -771,6 +787,14 @@ internal sealed class EntryPoints
             if (!_handlerBits.TryGetValue(handler.Owner, out var list)) _handlerBits[handler.Owner] = list = new List<(List<TextSpan>, int)>();
             list.Add((handler.Spans, i));
         }
+    }
+
+    /// Whether a unit's code can run: static code, or instance code of a type the solution creates (or a subtype of it).
+    private bool IsLive(Unit unit)
+    {
+        if (_dispatch == null || _staticInitializers.Contains(unit) || unit.Symbol is { IsStatic: true }) return true;
+        var type = unit.Symbol?.ContainingType ?? _declaringTypes.GetValueOrDefault(unit);
+        return type == null || _dispatch.IsLive(type);
     }
 
     private bool IsInjected(INamedTypeSymbol type) =>
