@@ -175,7 +175,8 @@ internal sealed partial class MethodAnalyzer
     }
 
     /// ModelState used otherwise than by a read or AddModelError (ModelValidation.ChangesValidity), or a call that may
-    /// change it: a project method called on `this` or given it, TryUpdateModel(Async): the validity fact and the pending
+    /// change it: a project method called on `this` or given it, or given an object that holds ModelState (an
+    /// ActionContext, a ViewDataDictionary: re-review RR-M1), TryUpdateModel(Async): the validity fact and the pending
     /// validation facts end (review C2). TryValidateModel's own model facts are made at its check, after this.
     private void ModelStateTouched(TaintState state)
     {
@@ -191,7 +192,8 @@ internal sealed partial class MethodAnalyzer
     private bool MayChangeModelState(IOperation operation) => operation switch
     {
         IPropertyReferenceOperation p => _ctx.Validation.ChangesValidity(p),
-        IInvocationOperation call => (SymbolKeys.InSource(call.TargetMethod) && (IsThis(call.Instance) || call.Arguments.Any(a => IsThis(a.Value))))
+        IInvocationOperation call => (SymbolKeys.InSource(call.TargetMethod) && (IsThis(call.Instance) || call.Arguments.Any(a => IsThis(a.Value))
+                || _ctx.Validation.HoldsModelState(call.Instance?.Type) || call.Arguments.Any(a => _ctx.Validation.HoldsModelState(Unwrapped(a.Value).Type))))
             || (IsThis(call.Instance) && call.TargetMethod.Name.StartsWith("TryUpdateModel", StringComparison.Ordinal)),
         _ => false,
     };

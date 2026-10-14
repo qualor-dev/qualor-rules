@@ -262,11 +262,12 @@ public sealed record SourceModel(
 /// attributes, what turns the automatic 400 off (the suppress option and the response factory, property names; the
 /// options type, a simple name), the attributes that leave a member out of validation, and the three attributes that
 /// clean. KeepsValidity: the ModelStateDictionary members whose use leaves what IsValid says about binding's values
-/// (reads, AddModelError); any other use of the dictionary ends it.
+/// (reads, AddModelError); any other use of the dictionary ends it. ModelStateHolders: the types that hold the dictionary
+/// (and it itself); a project method given one may change it.
 public sealed record ValidationSources(
     IReadOnlyList<MemberPattern> ModelState, MemberPattern IsValid, IReadOnlyList<MemberPattern> TryValidate,
     IReadOnlyList<string> ApiControllerAttributes, string SuppressOption, string ResponseFactory, string OptionsType,
-    IReadOnlyList<string> KeepsValidity, IReadOnlyList<string> NotValidatedAttributes,
+    IReadOnlyList<string> KeepsValidity, IReadOnlyList<string> ModelStateHolders, IReadOnlyList<string> NotValidatedAttributes,
     string Range, string RegularExpression, string EnumDataType);
 
 /// How taint passes through a member the engine does not analyse: From (`this`, `args`, or a parameter ordinal) to

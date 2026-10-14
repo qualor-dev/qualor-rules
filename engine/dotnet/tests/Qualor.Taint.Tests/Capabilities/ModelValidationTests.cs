@@ -670,6 +670,44 @@ public sealed class ModelValidationTests
         }
         """);
 
+    /// ModelState is also reachable through the objects that hold it: an ActionContext (ControllerContext, ViewContext,
+    /// PageContext) and a ViewDataDictionary. Project code given one of them may change it before the check (re-review
+    /// RR-M1); a project call given something else keeps validity.
+    [Fact]
+    public void Model_state_holders_given_to_project_code_end_validity() => Expect("""
+        public static class Tidy
+        {
+            public static void Forget(ActionContext context) => context.ModelState.Remove("Code");
+            public static void Reset(Microsoft.AspNetCore.Mvc.ViewFeatures.ViewDataDictionary data) => data.ModelState.Clear();
+            public static string Label(string text) => text.Trim();
+        }
+        public class BasketController : Controller
+        {
+            private readonly SqlConnection _db = new("Server=.;Database=shop");
+            public IActionResult Context(Basket basket)
+            {
+                Tidy.Forget(ControllerContext);
+                if (!ModelState.IsValid) return View(basket);
+                new SqlCommand("UPDATE b SET c = '" + basket.Code + "'", _db); /*sink*/
+                return Ok();
+            }
+            public IActionResult Data(Basket basket)
+            {
+                Tidy.Reset(ViewData);
+                if (!ModelState.IsValid) return View(basket);
+                new SqlCommand("UPDATE b SET c = '" + basket.Code + "'", _db); /*sink*/
+                return Ok();
+            }
+            public IActionResult Other(Basket basket)
+            {
+                var title = Tidy.Label("Basket");
+                if (!ModelState.IsValid) return View(title, basket);
+                new SqlCommand("UPDATE b SET c = '" + basket.Code + "'", _db);
+                return Ok();
+            }
+        }
+        """);
+
     // ---- Only the framework's call is validated (review C1) ----
 
     /// Validation speaks for the values model binding gave the action, not for what project code passes when it calls

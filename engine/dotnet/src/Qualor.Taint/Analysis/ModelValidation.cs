@@ -38,7 +38,7 @@ internal sealed class ModelValidation
     private readonly Dictionary<ISymbol, string[]> _memberRules = new(SymbolEqualityComparer.Default);
     private readonly Dictionary<ITypeSymbol, List<(ImmutableArray<IPropertySymbol> Members, string[] Rules)>> _paths = new(SymbolEqualityComparer.Default);
     private readonly Dictionary<ISymbol, bool> _automatic = new(SymbolEqualityComparer.Default);
-    private readonly HashSet<string> _apiAttributes, _notValidated, _keepsValidity;
+    private readonly HashSet<string> _apiAttributes, _notValidated, _keepsValidity, _holders;
 
     public ModelValidation(ValidationSources? model, IEnumerable<RuleModel> rules, string[] allRules)
     {
@@ -51,6 +51,7 @@ internal sealed class ModelValidation
         _apiAttributes = new HashSet<string>(model?.ApiControllerAttributes ?? Array.Empty<string>(), StringComparer.Ordinal);
         _notValidated = new HashSet<string>(model?.NotValidatedAttributes ?? Array.Empty<string>(), StringComparer.Ordinal);
         _keepsValidity = new HashSet<string>(model?.KeepsValidity ?? Array.Empty<string>(), StringComparer.Ordinal);
+        _holders = new HashSet<string>(model?.ModelStateHolders ?? Array.Empty<string>(), StringComparer.Ordinal);
     }
 
     public bool Enabled => _model != null;
@@ -124,6 +125,16 @@ internal sealed class ModelValidation
             IInvocationOperation use when ReferenceEquals(use.Instance, read) => !_keepsValidity.Contains(use.TargetMethod.Name),
             _ => true,
         };
+    }
+
+    /// Whether a value of this type holds a ModelStateDictionary: one of `model-state-holders` or a type derived from one
+    /// (ControllerContext and ViewContext from ActionContext; re-review RR-M1).
+    public bool HoldsModelState(ITypeSymbol? type)
+    {
+        if (_holders.Count == 0) return false;
+        for (var t = type; t != null; t = t.BaseType)
+            if (_holders.Contains(SymbolMatch.MetadataName(t))) return true;
+        return false;
     }
 
     /// A TryValidateModel call of the action (on `this`, the framework's method, not an override in the project).

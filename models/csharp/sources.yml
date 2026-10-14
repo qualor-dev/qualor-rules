@@ -186,7 +186,9 @@ members:
 #   binding validated: reads, and AddModelError (it can only make the state invalid). Any other use of the action's
 #   dictionary (Remove, Clear, ClearValidationState, MarkFieldValid, MarkFieldSkipped, SetModelValue, an entry read
 #   through the indexer or TryGetValue, the dictionary given to a call, held in a variable) ends it: from there on an
-#   IsValid check cleans nothing (review C2).
+#   IsValid check cleans nothing (review C2). So does a project method given (as its receiver or an argument) one of
+#   `model-state-holders` or a type derived from one: ControllerContext, ViewContext, PageContext and ViewData hold
+#   the dictionary (re-review RR-M1).
 # - `api-controller-attributes`: on a controller (not a Razor Pages handler), a base class or the assembly, validation
 #   holds in every action (the automatic 400), unless the source anywhere assigns `suppress-option` (other than
 #   `= false`) or `response-factory`, or configures `options-type` from anything but a lambda (bound from
@@ -204,6 +206,10 @@ validation:
   try-validate:
     - Microsoft.AspNetCore.Mvc.ControllerBase.TryValidateModel
     - Microsoft.AspNetCore.Mvc.RazorPages.PageModel.TryValidateModel
+  model-state-holders:
+    - Microsoft.AspNetCore.Mvc.ActionContext
+    - Microsoft.AspNetCore.Mvc.ViewFeatures.ViewDataDictionary
+    - Microsoft.AspNetCore.Mvc.ModelBinding.ModelStateDictionary
   keeps-validity: [IsValid, ErrorCount, ValidationState, Count, Keys, HasReachedMaxErrors, MaxAllowedErrors,
     ContainsKey, GetFieldValidationState, GetValidationState, AddModelError, TryAddModelError]
   api-controller-attributes: [Microsoft.AspNetCore.Mvc.ApiControllerAttribute]

@@ -93,7 +93,7 @@ public static class ModelLoader
     /// sources.yml (7) `validation:` (Task 31).
     private static ValidationSources ReadValidation(Doc doc, YamlNode node)
     {
-        var v = doc.Fields(node, "model-state", "is-valid", "try-validate", "keeps-validity", "api-controller-attributes", "suppress-option",
+        var v = doc.Fields(node, "model-state", "is-valid", "try-validate", "keeps-validity", "model-state-holders", "api-controller-attributes", "suppress-option",
             "response-factory", "options-type", "not-validated-attributes", "range", "regular-expression", "enum-data-type");
         var modelState = doc.Sequence(v.Required("model-state")).Select(n => doc.Pattern(n, MemberKind.PropertyGet)).ToList();
         var tryValidate = doc.Sequence(v.Required("try-validate")).Select(n => doc.Pattern(n, MemberKind.Method)).ToList();
@@ -104,7 +104,7 @@ public static class ModelLoader
         if (isValid.Prefix) throw doc.Error(isValidNode, $"{isValid}: is-valid names a whole property");
         return new ValidationSources(modelState, isValid, tryValidate, doc.Types(v.Required("api-controller-attributes")),
             doc.Name(v.Required("suppress-option")), doc.Name(v.Required("response-factory")), doc.Name(v.Required("options-type")),
-            doc.Names(v.Required("keeps-validity")), doc.Types(v.Required("not-validated-attributes")), doc.Type(v.Required("range")),
+            doc.Names(v.Required("keeps-validity")), doc.Types(v.Required("model-state-holders")), doc.Types(v.Required("not-validated-attributes")), doc.Type(v.Required("range")),
             doc.Type(v.Required("regular-expression")), doc.Type(v.Required("enum-data-type")));
     }
 

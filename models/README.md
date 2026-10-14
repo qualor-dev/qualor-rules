@@ -317,8 +317,9 @@ Where validation holds:
   after the action's ModelStateDictionary (`ModelState`, `ViewData.ModelState`, ...) is used otherwise than by a member
   of `keeps-validity` (reads, AddModelError, which can only make it invalid): `Remove`, `Clear`,
   `ClearValidationState`, `MarkFieldValid`, `MarkFieldSkipped`, `SetModelValue`, an entry taken through the indexer or
-  `TryGetValue`, the dictionary given to a call or held in a variable. A project method called on `this` (or given it)
-  and `TryUpdateModel(Async)` end it too, and a lambda or local function of the action that does any of this keeps it
+  `TryGetValue`, the dictionary given to a call or held in a variable. A project method called on `this` (or given it, or
+  given an object that holds ModelState: an ActionContext such as ControllerContext, ViewContext or PageContext, a
+  ViewDataDictionary) and `TryUpdateModel(Async)` end it too, and a lambda or local function of the action that does any of this keeps it
   from the start. `await` of earlier work ends it as it ends every member fact.
 - Throughout an action of an `[ApiController]` controller (on the class, a base class, or `[assembly: ApiController]`):
   "model validation errors automatically trigger an HTTP 400 response", so the action runs only with a valid model. Its
@@ -347,7 +348,9 @@ model object passed on is whole-object request data); elements of collection mem
 Not covered (FN side): the automatic 400 turned off another way: the option set in a referenced binary or through
 another configuration API than `Configure<ApiBehaviorOptions>`, the invalid-model filter removed by hand, or a filter
 that rewrites the action's arguments after it; a project method that changes ModelState without being called on
-`this` or given it (a static helper reaching the controller through the heap).
+`this` or given it, nor given an object that holds ModelState (a static helper reaching the controller through the
+heap, a helper keeping the controller from its constructor, a service reading the request's ActionContext through
+IActionContextAccessor).
 
 Known cost: a value of one token (letters, digits, `_`) placed into a statement without quotes may still name another
 column, keyword or node (`//user[id=id]`; ruling R-E33); digits clean ssrf and open-redirect as an int parameter does,
