@@ -360,8 +360,11 @@ internal sealed class BodySummary
     {
         if (ReferenceEquals(this, other)) return true;
         if (Sinks.Count != other.Sinks.Count || Calls.Count != other.Calls.Count || Heap.Count != other.Heap.Count) return false;
-        // A path that became high is a change (R-9): the seeds report it again.
-        foreach (var (k, v) in Sinks) if (!other.Sinks.TryGetValue(k, out var o) || v.Path.Medium != o.Path.Medium) return false;
+        // A path that became high is a change (R-9): the seeds report it again; so are lookup-key marks that met (final
+        // review re-check RC1: a raw path joining a deserialized one late in a cycle ends the drop, and the seeds that ran
+        // before must run again).
+        foreach (var (k, v) in Sinks)
+            if (!other.Sinks.TryGetValue(k, out var o) || v.Path.Medium != o.Path.Medium || v.Marks != o.Marks) return false;
         foreach (var (k, v) in Calls)
             if (!other.Calls.TryGetValue(k, out var o) || !v.CleanFor.SetEquals(o.CleanFor) || v.Path.Medium != o.Path.Medium) return false;
         foreach (var (k, v) in Heap) if (!other.Heap.TryGetValue(k, out var o) || !v.Value.SameFlow(o.Value)) return false;

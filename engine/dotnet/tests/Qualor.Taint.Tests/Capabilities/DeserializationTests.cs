@@ -329,5 +329,42 @@ public sealed class DeserializationTests
         }
         """);
 
+    /// Final review re-check RC1: a sink reached both deserialized and raw, where the raw path joins the helper's summary
+    /// only in a later analysis of its cycle (the action is in the cycle and seeds the helper first). The sink's lookup-key
+    /// marks then meet, and the seeds must run again: the raw text found by a request key is request data.
+    private const string Ledger = """
+        public class LedgerController : ControllerBase
+        {
+            private readonly Dictionary<string, string> _store = new();
+            private readonly SqlConnection _db = new();
+            public IActionResult Book(string key)
+            {
+                Ledger.Post(_store[key], _db, 0);
+                return Ok();
+            }
+        }
+        public static class Ledger
+        {
+            public static void Post(string text, SqlConnection db, int hops)
+            {
+                var tail = Relay(text, db, hops);
+                var f = System.Text.Json.JsonSerializer.Deserialize<Filter>(text)!;
+                db.Execute("SELECT * FROM sales WHERE region = '" + f.Region + tail + "'"); /*sink*/
+            }
+            public static string Relay(string text, SqlConnection db, int hops)
+            {
+                CALLBACK
+                return text;
+            }
+        }
+        """;
+
+    [Fact]
+    public void Raw_cached_text_joining_a_cycles_summary_late_is_still_reported() =>
+        Expect(Types + Ledger.Replace("CALLBACK", "if (hops > 50) new LedgerController().Book(text);"));
+
+    [Fact]
+    public void Raw_cached_text_beside_a_deserialized_path_is_reported() => Expect(Types + Ledger.Replace("CALLBACK", ""));
+
     private static void Expect(string code) => Assert.Equal(Snippet.Marked(code), Snippet.Findings(code));
 }
