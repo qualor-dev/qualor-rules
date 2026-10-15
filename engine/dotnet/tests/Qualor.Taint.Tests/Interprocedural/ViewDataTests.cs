@@ -1230,4 +1230,38 @@ public sealed class ViewDataTests
         Assert.Equal(new[] { "/src/App/Views/Reports/Show.cshtml:2 Medium" }, Confidences(result));
         Assert.Contains(result.Findings.Single().Path, s => s.Kind == StepKind.ViewFallback);
     }
+
+    // ---- Narrowing keeps the surviving witnesses' cleanliness (Task 32 fix round 1, I1) ----
+
+    [Fact]
+    public void An_entry_shared_over_a_resolved_edge_only_with_an_encoding_writer_is_not_high()
+    {
+        const string web = """
+            public class TitlesController : Controller
+            {
+                public IActionResult Encoded([FromQuery] string title)
+                {
+                    ViewData["Title"] = HtmlEncoder.Default.Encode(title);
+                    return View();
+                }
+                public IActionResult Raw([FromQuery] string title)
+                {
+                    ViewData["Title"] = title;
+                    return View(title.Length > 8 ? "Long" : "Short");
+                }
+            }
+            """;
+        // `_Title` is rendered by Encoded's view (resolved: the encoded title) and reached by Raw only through its
+        // run-time view name (the raw title): medium, with a view-fallback step.
+        var result = Analyze(web,
+            View("Views_Titles_Encoded", "object", "/src/App/Views/Titles/Encoded.cshtml", """
+                Write(await Html.PartialAsync("_Title"));
+                """),
+            View("Views_Titles__Title", "object", "/src/App/Views/Titles/_Title.cshtml", """
+                Write(Html.Raw(ViewData["Title"]));
+                """));
+
+        Assert.Equal(new[] { "/src/App/Views/Titles/_Title.cshtml:1 Medium" }, Confidences(result));
+        Assert.Contains(result.Findings.Single().Path, s => s.Kind == StepKind.ViewFallback);
+    }
 }

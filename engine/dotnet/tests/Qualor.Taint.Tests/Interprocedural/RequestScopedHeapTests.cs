@@ -979,4 +979,46 @@ public sealed class RequestScopedHeapTests
             public IActionResult Probe() => Ok(new CurrentTenant(_http) != null);
         }
         """);
+
+    /// Task 32 fix round 1 (review I1): data of two entry points joined in one location, cleaned differently. Save
+    /// writes the note HTML-encoded, Keep raw; a helper both call copies the note to a second member (its value joins both
+    /// writes, each with its own scope and cleanliness). Only Save renders the copy, so the render reads it under Save's
+    /// scope only: Save's encoded note, no finding.
+    private const string NoteCopy = """
+        using System.Text.Encodings.Web;
+        public static class Notes
+        {
+            public static string Last = "";
+            public static string Shown = "";
+        }
+        public class NotesController : Controller
+        {
+            public IActionResult Save([FromQuery] string note)
+            {
+                Notes.Last = HtmlEncoder.Default.Encode(note);
+                Copy();
+                return Render();
+            }
+            public IActionResult Keep([FromQuery] string note)
+            {
+                Notes.Last = note;
+                Copy();
+                return KEEP;
+            }
+            private static void Copy() => Notes.Shown = Notes.Last;
+            private IActionResult Render() => Content("<p>" + Notes.Shown + "</p>", "text/html"); /*sink*/
+        }
+        """;
+
+    [Fact]
+    public void A_heap_read_narrowed_to_one_entry_point_keeps_that_entry_points_cleanliness() =>
+        Assert.Empty(Snippet.Findings(NoteCopy.Replace("KEEP", "Ok()"), "csharp.xss"));
+
+    /// The control: Keep renders the copy too, so the raw note is in the render's scope.
+    [Fact]
+    public void A_heap_read_under_both_entry_points_keeps_the_raw_one()
+    {
+        var code = NoteCopy.Replace("KEEP", "Render()");
+        Assert.Equal(Snippet.Marked(code), Snippet.Findings(code, "csharp.xss"));
+    }
 }

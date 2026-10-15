@@ -298,7 +298,8 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     }
 
     /// The request data narrowed to the entry points of `reach` (assumed to share some with Scope): its scope and its
-    /// witnesses (those whose scope shares none are dropped, unless none would be left).
+    /// witnesses (those whose scope shares none are dropped, unless none would be left). The value is cleaned for what
+    /// every kept witness is cleaned for (Task 32 fix round 1, I1): a dropped witness's dirtier data is no longer in it.
     public TaintValue Narrowed(Reach reach)
     {
         if (!Request) return this;
@@ -312,7 +313,10 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         }
         if (kept.Count == 0) return this with { Scope = scope, Witnesses = ImmutableArray<Witness>.Empty };
         var witnesses = Merge(kept, ImmutableArray<Witness>.Empty);
-        return this with { Scope = scope, Path = witnesses[0].Path, Witnesses = witnesses.Length > 1 ? witnesses : ImmutableArray<Witness>.Empty };
+        var clean = witnesses[0].CleanFor;
+        for (var i = 1; i < witnesses.Length; i++) clean = Intersect(clean, witnesses[i].CleanFor);
+        var cleanFor = clean.Count == 0 || clean.IsSubsetOf(CleanFor) ? CleanFor : CleanFor.Union(clean);
+        return this with { Scope = scope, CleanFor = cleanFor, Path = witnesses[0].Path, Witnesses = witnesses.Length > 1 ? witnesses : ImmutableArray<Witness>.Empty };
     }
 
     /// This value with the path a finding of `rule` in a body `reach` reaches reports (R-E32 revised): the best witness
