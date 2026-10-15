@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { configs, probeArgs, PRODUCT_EXCLUDES, reportLines, scanScript, sq, targetExcludes } from './scanner.mjs';
+import { builtinExcludesOf, configs, probeArgs, probeTargets, PRODUCT_EXCLUDES, reportLines, scanScript, sq, targetExcludes } from './scanner.mjs';
 
 function tree() {
   const dir = mkdtempSync(path.join(tmpdir(), 'qualor-rules-scanner-'));
@@ -72,5 +72,36 @@ test('each target is scanned with its excludes as --exclude arguments', () => {
   assert.ok(line, script.join(' / '));
   for (const g of PRODUCT_EXCLUDES) assert.ok(line.includes(`${sq('--exclude')} ${sq(g)}`), g);
   assert.ok(line.startsWith(`cd ${sq('/cache/ref/shop')} && opengrep scan ${sq('--config')} ${sq('/src/rules')} `), line);
+});
+
+test('probe targets: every reference project and qualor-cc get the built-in excludes', () => {
+  const projects = [
+    { project: 'shop', lang: 'csharp', use: 'noise' },
+    { project: 'goat', lang: 'csharp', use: 'recall' },
+    { project: 'blog', lang: 'go', use: 'noise' },
+  ];
+  const clone = (p) => `/c/ref/${p.project}`;
+  const cc = () => ({ dir: '/c/qualor-cc-abc', sha: 'abc1234567890', excludes: ['fixtures/**'] });
+  const all = probeTargets(projects, { recall: false, only: undefined, langs: new Set(['csharp']) }, clone, cc);
+  assert.deepEqual(all.map((t) => t.name), ['shop', 'qualor-cc']);
+  assert.deepEqual(all[0].excludes, [...PRODUCT_EXCLUDES]);
+  assert.deepEqual(all[1].excludes, [...PRODUCT_EXCLUDES, 'fixtures/**']);
+  assert.equal(all[1].label, 'qualor-cc (main abc123456789)');
+  const only = probeTargets(projects, { recall: false, only: new Set(['goat']), langs: new Set(['csharp']) }, clone, cc);
+  assert.deepEqual(only.map((t) => [t.name, t.excludes.length]), [['goat', PRODUCT_EXCLUDES.length]]);
+});
+
+test("qualor-cc's BUILTIN_EXCLUDES are read from its schema, so the probe can check its copy", () => {
+  const schema = [
+    "import { x } from './y';",
+    'export const BUILTIN_EXCLUDES: readonly string[] = [',
+    "  '**/node_modules/**',",
+    '  // a comment',
+    "  '**/*.min.js',",
+    '];',
+    "export const OTHER = ['nope'];",
+  ].join(String.fromCharCode(10));
+  assert.deepEqual(builtinExcludesOf(schema), ['**/node_modules/**', '**/*.min.js']);
+  assert.equal(builtinExcludesOf('export const OTHER = [];'), undefined);
 });
 

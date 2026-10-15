@@ -5,8 +5,9 @@
 //   node tools/scanner.mjs probe [--recall] [--only a,b] <rule.yml|directory>...     (npm run probe --)
 //     Runs the named rules on the REFERENCE.md projects of their languages (`use` noise; --recall adds
 //     the recall sets) and on qualor-cc's local main, each cloned at its pinned commit into the main
-//     tree's git-ignored .tmp/ (shared by all worktrees), leaving out what a Qualor scan leaves out
-//     (PRODUCT_EXCLUDES), and prints every finding. Exits 1 when a rule reports anything on qualor-cc.
+//     tree's git-ignored .tmp/ (shared by all worktrees), leaving out Qualor's built-in excludes
+//     (PRODUCT_EXCLUDES), and prints every finding. Exits 1 when a rule reports anything on qualor-cc,
+//     or when PRODUCT_EXCLUDES no longer equals qualor-cc's BUILTIN_EXCLUDES.
 //   node tools/scanner.mjs scan <rule.yml|directory>... -- <file|directory>...       (npm run scan --)
 //     Runs the named rules on files of this tree (a reviewer's probe files under .tmp/, say) and
 //     prints every finding.
@@ -40,9 +41,10 @@ const GIT_SAFE = ['-e', 'GIT_CONFIG_COUNT=1', '-e', 'GIT_CONFIG_KEY_0=safe.direc
 /**
  * The paths a Qualor scan never gives to an analyzer: a copy of qualor-cc's BUILTIN_EXCLUDES
  * (packages/shared/src/config/schema.ts; keep the two equal). The probe leaves them out too, so it measures
- * what users run: minified and vendored bundles, installed dependencies and build output (OpenGrep takes
- * these globs as they are written). A reference project such as nopCommerce carries hundreds of vendored
- * *.min.js files that no Qualor scan reaches.
+ * what users run: minified and vendored bundles, installed dependencies and build output. OpenGrep's
+ * --exclude takes these glob forms as written (checked for the directory, suffix and generated-file forms
+ * the list uses). A reference project such as nopCommerce carries hundreds of vendored minified bundles
+ * that no Qualor scan reaches. The probe fails when the two lists differ (builtinExcludesOf).
  */
 export const PRODUCT_EXCLUDES = Object.freeze([
   '**/node_modules/**',
@@ -83,6 +85,36 @@ export const PRODUCT_EXCLUDES = Object.freeze([
 /** A probe target's excludes: Qualor's built-in ones, then the target's own (qualor-cc's sources.exclude). */
 export function targetExcludes(own = []) {
   return [...PRODUCT_EXCLUDES, ...own];
+}
+
+/**
+ * The quoted entries of `export const BUILTIN_EXCLUDES ... = [ ... ];` in the text of qualor-cc's
+ * packages/shared/src/config/schema.ts, or undefined when the text has no such array. The probe compares them
+ * with PRODUCT_EXCLUDES so the copy cannot drift unnoticed.
+ */
+export function builtinExcludesOf(schemaText) {
+  const m = /export const BUILTIN_EXCLUDES\b[^=]*=\s*\[([\s\S]*?)\];/.exec(schemaText);
+  if (!m) return undefined;
+  return [...m[1].matchAll(/^\s*'([^']*)',?\s*$/gm)].map((x) => x[1]);
+}
+
+/**
+ * The probe's targets: the REFERENCE.md projects `sel` selects ({ recall, only, langs }), cloned with
+ * `clone(project)`, and qualor-cc's local main (`ccClone()`: { dir, sha, excludes }) unless `only` leaves it out;
+ * each with the built-in excludes, qualor-cc's own sources.exclude after them.
+ */
+export function probeTargets(projects, sel, clone, ccClone) {
+  const { recall, only, langs } = sel;
+  const targets = [];
+  for (const p of projects) {
+    if (!langs.has(p.lang) || (p.use === 'recall' && !recall && !only?.has(p.project)) || (only && !only.has(p.project))) continue;
+    targets.push({ name: p.project, dir: clone(p), excludes: targetExcludes() });
+  }
+  if (!only || only.has('qualor-cc')) {
+    const cc = ccClone();
+    targets.push({ name: 'qualor-cc', label: `qualor-cc (main ${cc.sha.slice(0, 12)})`, dir: cc.dir, excludes: targetExcludes(cc.excludes), builtin: cc.builtin });
+  }
+  return targets;
 }
 /** How many qualor-cc clones (one per main SHA) the probe keeps. */
 const KEEP_QUALOR_CC = 2;
@@ -236,13 +268,11 @@ function qualorCcClone(cache, main) {
   for (const { d } of old) rmSync(path.join(cache, d), { recursive: true, force: true });
   // Qualor scans itself without these paths (qualor.yml sources.exclude): fixtures are vulnerable on purpose.
   const config = parse(readFileSync(path.join(dest, 'qualor.yml'), 'utf8'));
-  return { dir: dest, sha, excludes: config?.sources?.exclude ?? [] };
+  const schema = path.join(dest, 'packages/shared/src/config/schema.ts');
+  const builtin = existsSync(schema) ? builtinExcludesOf(readFileSync(schema, 'utf8')) : undefined;
+  return { dir: dest, sha, excludes: config?.sources?.exclude ?? [], builtin };
 }
 
-/**
- * Scans `targets` ({ name, dir under cache, excludes }) with the --config `args` in one container;
- * each result lands in `<out>/<name>.json` (stderr in `.err`).
- */
 /** The container's shell script for scanTargets: one `opengrep scan` per target, with the target's excludes. */
 export function scanScript(args, targets, cache) {
   const lines = ['set -u'];
@@ -254,6 +284,10 @@ export function scanScript(args, targets, cache) {
   return lines;
 }
 
+/**
+ * Scans `targets` ({ name, dir under cache, excludes }) with the --config `args` in one container;
+ * each result lands in `<out>/<name>.json` (stderr in `.err`).
+ */
 export function scanTargets(args, targets, cache, out) {
   const lines = scanScript(args, targets, cache);
   const status = docker(['run', '--rm', '--name', `qr-probe-${process.pid}`, '-e', 'HOME=/tmp', ...GIT_SAFE, '-v', `${root}:/src:ro`, '-v', `${cache}:/cache:ro`, '-v', `${out}:/out`, '--entrypoint', 'sh', image, '-c', lines.join('\n')]);
@@ -282,18 +316,15 @@ function probe(argv) {
   checkImage();
   const main = mainTree();
   const cache = path.join(main, '.tmp');
-  const targets = [];
-  for (const p of projects) {
-    if (!langs.has(p.lang) || (p.use === 'recall' && !recall && !only?.has(p.project)) || (only && !only.has(p.project))) continue;
-    targets.push({ name: p.project, dir: referenceClone(cache, p), excludes: targetExcludes() });
-  }
-  if (!only || only.has('qualor-cc')) {
-    const cc = qualorCcClone(cache, main);
-    targets.push({ name: 'qualor-cc', label: `qualor-cc (main ${cc.sha.slice(0, 12)})`, dir: cc.dir, excludes: targetExcludes(cc.excludes) });
+  const targets = probeTargets(projects, { recall, only, langs }, (p) => referenceClone(cache, p), () => qualorCcClone(cache, main));
+  let failed = false;
+  const cc = targets.find((t) => t.name === 'qualor-cc');
+  if (cc && JSON.stringify(cc.builtin) !== JSON.stringify(PRODUCT_EXCLUDES)) {
+    console.log("PRODUCT_EXCLUDES (tools/scanner.mjs) differs from qualor-cc's BUILTIN_EXCLUDES (packages/shared/src/config/schema.ts): copy them again.");
+    failed = true;
   }
   const out = outDir();
   scanTargets(args, targets, cache, out);
-  let failed = false;
   for (const t of targets) {
     const res = readResult(path.join(out, `${t.name}.json`));
     for (const l of reportLines(res, t.label ?? t.name)) console.log(l);
