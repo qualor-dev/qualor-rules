@@ -30,16 +30,49 @@ public static class SarifWriter
                 var windows = _root.Length >= 2 && _root[1] == ':';
                 var cmp = windows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
                 if (p.Length > _root.Length && p.StartsWith(_root, cmp) && p[_root.Length] == '/')
-                    return (Escape(p[(_root.Length + 1)..]), true);
+                    return (Escape(p[(_root.Length + 1)..], drive: false), true);
                 Outside.Add(p);
             }
-            return (p.Length >= 2 && p[1] == ':' ? "file:///" + Escape(p) : p.StartsWith('/') ? "file://" + Escape(p) : Escape(p), false);
+            // A UNC path (`//host/share/...`) is `file://host/share/...`; a drive path `file:///C:/...`; a POSIX one
+            // `file:///...` (final review Minor 5).
+            return (p.StartsWith("//", StringComparison.Ordinal) ? "file:" + Escape(p)
+                : IsDrive(p) ? "file:///" + Escape(p) : p.StartsWith('/') ? "file://" + Escape(p) : Escape(p), false);
         }
 
-        private static string Normalize(string path) => path.Replace('\\', '/');
+        /// The path with '/' separators and, when it is absolute, its `.` and `..` segments resolved (never above its
+        /// root, a drive, or a UNC share), so a path with `..` neither escapes the root nor shows the segment (final review
+        /// Minor 5). A relative path is left as it is.
+        private static string Normalize(string path)
+        {
+            var p = path.Replace('\\', '/');
+            string prefix;
+            int keep;
+            if (p.StartsWith("//", StringComparison.Ordinal)) (prefix, p, keep) = ("//", p[2..], 2);
+            else if (IsDrive(p)) (prefix, p, keep) = (p[..2], p[2..], 1);
+            else if (p.StartsWith('/')) (prefix, keep) = ("", 1);
+            else return p;
+            var kept = new List<string>();
+            var segments = p.Split('/');
+            for (var i = 0; i < segments.Length; i++)
+            {
+                var s = segments[i];
+                if (s == "." && i > 0) continue;
+                if (s == "..")
+                {
+                    if (kept.Count > keep) kept.RemoveAt(kept.Count - 1);
+                    continue;
+                }
+                kept.Add(s);
+            }
+            return prefix + string.Join('/', kept);
+        }
 
-        private static string Escape(string path) =>
-            string.Join('/', path.Split('/').Select(s => s.Length == 2 && s[1] == ':' ? s : Uri.EscapeDataString(s)));
+        private static bool IsDrive(string p) => p.Length >= 2 && p[1] == ':' && char.IsAsciiLetter(p[0]) && (p.Length == 2 || p[2] == '/');
+
+        /// Each segment escaped; only the leading drive (`C:`) of an absolute path keeps its colon (a relative uri's first
+        /// segment with a colon would read as a scheme).
+        private static string Escape(string path, bool drive = true) =>
+            string.Join('/', path.Split('/').Select((s, i) => drive && i == 0 && IsDrive(s) ? s : Uri.EscapeDataString(s)));
     }
 
     public static void Write(Stream stream, ModelSet models, AnalysisResult result, string? version, string? root, IReadOnlyList<string> inputErrors)

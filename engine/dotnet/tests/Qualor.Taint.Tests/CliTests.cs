@@ -341,7 +341,12 @@ public sealed class CliTests : TempDirs
     [InlineData("/work/repo", "/work/repo/Views/a.cshtml", "Views/a.cshtml", true)]
     [InlineData("/work/repo", "/work/Repo/a.cs", "file:///work/Repo/a.cs", false)]             // posix root: case-sensitive
     [InlineData("/work/repo", "/work/repository/a.cs", "file:///work/repository/a.cs", false)] // a sibling with the root as prefix
-    public void Paths_are_relative_under_the_root_and_absolute_file_uris_with_a_note_otherwise(string root, string path, string uri, bool relative)
+    [InlineData("/work/repo", "/work/repo/obj/../Views/a.cshtml", "Views/a.cshtml", true)]     // final review Minor 5: `..` resolved
+    [InlineData("/work/repo", "/work/repo/../other/a.cs", "file:///work/other/a.cs", false)]   // and never escapes the root
+    [InlineData("/work/repo/./", "/work/repo/./a.cs", "a.cs", true)]
+    [InlineData(null, @"\\host\share\a b.cs", "file://host/share/a%20b.cs", false)]         // UNC: file://host/...
+    [InlineData("/work/repo", "/work/repo/b:/x.cs", "b%3A/x.cs", true)]                          // only a drive keeps its colon
+    public void Paths_are_relative_under_the_root_and_absolute_file_uris_with_a_note_otherwise(string? root, string path, string uri, bool relative)
     {
         var mapper = new Qualor.Taint.Cli.Output.SarifWriter.PathMapper(root);
 
@@ -349,7 +354,38 @@ public sealed class CliTests : TempDirs
 
         Assert.Equal(uri, actual);
         Assert.Equal(relative, isRelative);
-        Assert.Equal(relative ? 0 : 1, mapper.Outside.Count);
+        Assert.Equal(relative || root == null ? 0 : 1, mapper.Outside.Count);
+    }
+
+    [Fact]
+    public void A_root_given_with_dot_dot_segments_is_the_folder_it_names()
+    {
+        var (inputs, root) = AppInputs();
+        var sarif = Path.Combine(root, "r.sarif");
+
+        Assert.Equal(0, Qualor.Taint.Cli.Program.Run(
+            new[] { "analyze", "--inputs", inputs, "--models", Models, "--sarif", sarif, "--root", Path.Combine(root, "obj", "..") }, TextWriter.Null));
+
+        using var doc = ReadSarif(sarif);
+        var run = doc.RootElement.GetProperty("runs")[0];
+        Assert.DoesNotContain("..", run.GetProperty("originalUriBaseIds").GetProperty("%SRCROOT%").GetProperty("uri").GetString());
+        var location = run.GetProperty("results")[0].GetProperty("locations")[0].GetProperty("physicalLocation").GetProperty("artifactLocation");
+        Assert.Equal("Views/Profile/Show.cshtml", location.GetProperty("uri").GetString());
+    }
+
+    [Fact]
+    public void Rebuild_exits_2_before_the_rebuild_when_its_json_cannot_be_written()
+    {
+        var (inputs, root) = AppInputs();
+        var blocker = Path.Combine(root, "blocker");
+        File.WriteAllText(blocker, "a file where the output directory should be");
+        var log = new StringWriter();
+
+        var code = Qualor.Taint.Cli.Program.Run(new[] { "rebuild", "--inputs", inputs, "--json", Path.Combine(blocker, "rebuild.json") }, log);
+
+        Assert.Equal(2, code);
+        Assert.Contains("cannot write", log.ToString());
+        Assert.DoesNotContain("error(s)", log.ToString());
     }
 
     [Fact]

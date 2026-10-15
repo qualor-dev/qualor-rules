@@ -7,10 +7,16 @@ using Qualor.Taint.Cli.Output;
 
 namespace Qualor.Taint.Cli;
 
-/// `Qualor.Taint.Cli rebuild --inputs <dir> --json <file>`: rebuilds the recorded compilations and writes, per
-/// project and target framework, its source count, the project references served by their recorded assembly and the
-/// errors. Exit code 0 whatever the projects' errors;
-/// 2 when the arguments are invalid.
+/// The engine's command line.
+/// - `rebuild --inputs <dir> --json <file>`: rebuilds the recorded compilations and writes, per project and target
+///   framework, its source count, the project references served by their recorded assembly and the errors. Exit code 0
+///   whatever the projects' errors; 2 when the arguments are invalid or the JSON file cannot be written (checked before
+///   the rebuild).
+/// - `analyze --inputs <dir> --models <dir> --sarif <file> [--root <dir>] [--time-limit <s>] [--memory-limit <MB>]
+///   [--version <v>]`: analyses the recorded compilations and writes SARIF 2.1.0. Exit code 0 for a complete run; 3 for an
+///   incomplete one (a budget, an iteration cap, too many failed bodies, a project whose sources did not all load:
+///   ruling R-E42), its SARIF marked unsuccessful with the reason; 2 for invalid arguments, models or output path; 1 for
+///   a crash.
 public static class Program
 {
     private const int FirstErrors = 10;
@@ -73,6 +79,8 @@ public static class Program
         if (!Directory.Exists(models)) return Invalid(log, $"models directory {models} does not exist");
         options.TryGetValue("--root", out var root);
         if (root is not null && !Directory.Exists(root)) return Invalid(log, $"root directory {root} does not exist");
+        // An absolute root with no `.` or `..` (final review Minor 5): a relative one gave a relative %SRCROOT%.
+        if (root is not null) root = Path.GetFullPath(root);
 
         var timeLimit = TimeSpan.FromSeconds(DefaultTimeLimitSeconds);
         if (options.TryGetValue("--time-limit", out var t))
@@ -146,10 +154,25 @@ public static class Program
         if (inputs is null || json is null) return Invalid(log, "--inputs and --json are required");
         if (!Directory.Exists(inputs)) return Invalid(log, $"inputs directory {inputs} does not exist");
 
+        // Open the output first (final review Minor 6): an unwritable path is a usage error, found before the rebuild runs.
+        FileStream output;
+        try
+        {
+            var dir = Path.GetDirectoryName(Path.GetFullPath(json));
+            if (dir is not null) Directory.CreateDirectory(dir);
+            output = new FileStream(json, FileMode.Create, FileAccess.Write, FileShare.Read);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            log.WriteLine($"cannot write the JSON file {json}: {e.Message}");
+            return 2;
+        }
+
+        using var stream = output;
         var read = InputReader.Read(inputs, out var inputErrors);
         foreach (var error in inputErrors) log.WriteLine($"input: {error}");
         var solution = SolutionLoader.Load(read, CancellationToken.None);
-        WriteJson(json, solution, inputErrors);
+        WriteJson(stream, solution, inputErrors);
         foreach (var p in solution.Projects)
             log.WriteLine($"{p.Input.ProjectPath} ({p.Input.TargetFramework}): {p.Errors.Count} error(s)");
         return 0;
@@ -162,11 +185,8 @@ public static class Program
         return 2;
     }
 
-    private static void WriteJson(string path, LoadedSolution solution, IReadOnlyList<string> inputErrors)
+    private static void WriteJson(Stream stream, LoadedSolution solution, IReadOnlyList<string> inputErrors)
     {
-        var dir = Path.GetDirectoryName(Path.GetFullPath(path));
-        if (dir is not null) Directory.CreateDirectory(dir);
-        using var stream = File.Create(path);
         using var w = new Utf8JsonWriter(stream, new JsonWriterOptions { Indented = true, Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
         w.WriteStartObject();
         w.WriteStartArray("projects");
