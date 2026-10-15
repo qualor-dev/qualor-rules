@@ -174,6 +174,7 @@ public sealed class TaintEngine
                 .OrderBy(f => f.Confidence)
                 .ThenBy(f => f.Sink.SourceTree is { } t && order.TryGetValue(t, out var i) ? i : int.MaxValue)
                 .ThenBy(f => f.Sink.SourceSpan.Start)
+                .ThenBy(f => f.Sink.SourceSpan.Length)
                 .First());
     }
 }

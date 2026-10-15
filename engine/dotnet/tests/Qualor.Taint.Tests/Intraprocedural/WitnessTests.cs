@@ -224,20 +224,20 @@ public sealed class WitnessTests
     }
 
     [Fact]
-    public void A_call_edge_joined_with_a_dirtier_one_takes_its_path()
+    public void A_call_edge_joined_with_another_of_its_cleanliness_keeps_the_better_path()
     {
-        var cleaned = Trail.Of(new PathStep(At(1), "encoded"));
-        var raw = Trail.Of(new PathStep(At(2), "raw")).Add(new PathStep(At(3), "read from heap", StepKind.HeapRead));
+        // Calls are keyed by cleanliness (RR2): two edges of one key differ only in their path. The better one stays (a
+        // high path before a medium one, then the shorter, then canonically: final review Minor 1 and note 9).
+        var high = Trail.Of(new PathStep(At(1), "passed"));
+        var medium = Trail.Of(new PathStep(At(2), "raw")).Add(new PathStep(At(3), "read from heap", StepKind.HeapRead));
         var xss = ImmutableHashSet.Create("csharp.xss");
-        var old = new CallEffect(0, null!, 0, xss, cleaned);
 
-        var joined = CallEffect.Joined(old, ImmutableHashSet<string>.Empty, raw);
-
-        Assert.NotNull(joined);
-        Assert.Same(raw, joined!.Path);
-        Assert.Empty(joined.CleanFor);
-        // The dirtier edge first: a cleaner high edge does not replace its path.
-        Assert.Null(CallEffect.Joined(new CallEffect(0, null!, 0, ImmutableHashSet<string>.Empty, raw), xss, cleaned));
+        Assert.Same(high, CallEffect.Joined(new CallEffect(0, null!, 0, xss, medium), xss, high)!.Path);
+        Assert.Null(CallEffect.Joined(new CallEffect(0, null!, 0, xss, high), xss, medium));
+        var other = Trail.Of(new PathStep(At(4), "passed"));
+        var first = CallEffect.Joined(new CallEffect(0, null!, 0, xss, high), xss, other)?.Path ?? high;
+        var second = CallEffect.Joined(new CallEffect(0, null!, 0, xss, other), xss, high)?.Path ?? other;
+        Assert.Same(first, second);
     }
 
     [Fact]

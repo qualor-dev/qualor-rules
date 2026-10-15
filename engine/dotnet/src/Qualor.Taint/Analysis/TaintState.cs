@@ -33,7 +33,15 @@ internal sealed class Trail
         Count = count;
         Last = last;
         Medium = medium;
+        var h = StableHash.Mix(left?.Fingerprint ?? 0, right?.Fingerprint ?? 0);
+        h = StableHash.Mix(h, step?.Fingerprint ?? 0);
+        Fingerprint = StableHash.Mix(h, medium ? 1UL : 0UL);
     }
+
+    /// A hash of the trail's steps and shape, the same in every run: the last tie-break between two witnesses of equal
+    /// confidence and length (Better), so the path a finding reports does not depend on the order effects are visited in
+    /// (final review Minor 1).
+    public ulong Fingerprint { get; }
 
     public int Count { get; }
 
@@ -55,8 +63,13 @@ internal sealed class Trail
     /// This trail, marked medium when a step it cannot take any more was (the steps stay as they are).
     private Trail Capped(bool medium) => !medium || Medium ? this : new Trail(this, null, null, Count, Last, true);
 
-    /// Whether `a` is the better witness than `b` (R-9): a high path before a medium one, then the shorter.
-    public static bool Better(Trail a, Trail b) => a.Medium != b.Medium ? !a.Medium : a.Count < b.Count;
+    /// Whether `a` is the better witness than `b` (R-9): a high path before a medium one, then the shorter, then the
+    /// smaller fingerprint (a canonical choice between equally good paths: final review Minor 1).
+    public static bool Better(Trail a, Trail b) =>
+        a.Medium != b.Medium ? !a.Medium : a.Count != b.Count ? a.Count < b.Count : a.Fingerprint < b.Fingerprint;
+
+    /// The order Better gives (the better first).
+    public static int Order(Trail a, Trail b) => ReferenceEquals(a, b) ? 0 : Better(a, b) ? -1 : Better(b, a) ? 1 : 0;
 
     /// The steps in order (a longer trail: its first and last MaxReported / 2 steps around one omission step).
     public ImmutableList<PathStep> ToList()
@@ -385,10 +398,11 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             if (i < 0) all.Add(w);
             else if (Trail.Better(w.Path, all[i].Path)) all[i] = w;
         }
+        // A total order (the fingerprint last), so the bound keeps the same witnesses whatever order they came in.
         all.Sort((x, y) =>
             unscopedFirst && (x.Scope == null) != (y.Scope == null) ? (x.Scope == null ? -1 : 1)
-            : x.Path.Medium != y.Path.Medium ? (x.Path.Medium ? 1 : -1)
-            : x.Path.Count.CompareTo(y.Path.Count));
+            : Trail.Order(x.Path, y.Path) is var o && o != 0 ? o
+            : string.CompareOrdinal(CleanKey(x.CleanFor), CleanKey(y.CleanFor)));
         if (all.Count <= MaxWitnesses) return (all.ToImmutableArray(), false);
         var kept = all.Take(MaxWitnesses).ToList();
         Cover(all, kept, high: true);
@@ -423,6 +437,9 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             }
         }
     }
+
+    private static string CleanKey(ImmutableHashSet<string> rules) =>
+        rules.Count == 0 ? "" : string.Join(",", rules.OrderBy(r => r, StringComparer.Ordinal));
 
     private static bool SameWitnesses(ImmutableArray<Witness> a, ImmutableArray<Witness> b)
     {
@@ -536,10 +553,16 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             keyDerived = KeyDerived && other.KeyDerived;
             cleanFor = CleanFor.Count == 0 || other.CleanFor.Count == 0 ? ImmutableHashSet<string>.Empty : CleanFor.Intersect(other.CleanFor);
             sources = Sources;
-            foreach (var s in other.Sources)
+            if (Sources.Count + other.Sources.Count <= MaxSources)
             {
-                if (sources.Count >= MaxSources) break;
-                sources = sources.Add(s);
+                foreach (var s in other.Sources) sources = sources.Add(s);
+            }
+            else if (sources.Count < MaxSources)
+            {
+                // Beyond the bound, the first sources in the canonical order (final review Minor 10: the kept set does not
+                // depend on hash order).
+                var kept = Sources.Union(other.Sources).OrderBy(s => s, Comparer<Location>.Create(StableHash.Compare)).Take(MaxSources);
+                sources = ImmutableHashSet.CreateRange(kept);
             }
             path = Trail.Better(other.Path, Path) ? other.Path : Path;
             var mine = AllWitnesses;

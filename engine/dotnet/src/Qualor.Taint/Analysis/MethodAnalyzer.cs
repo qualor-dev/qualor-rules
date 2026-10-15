@@ -10,6 +10,7 @@ namespace Qualor.Taint;
 internal sealed class AnalysisContext
 {
     private readonly Dictionary<(string Rule, SyntaxTree Tree, TextSpan Span), Finding> _findings = new();
+    private readonly Dictionary<(string Rule, SyntaxTree Tree, TextSpan Span), Trail> _findingTrails = new();
     private readonly HashSet<(SyntaxTree, TextSpan)> _unmodelledSites = new();
     private readonly Dictionary<ISymbol, string> _names = new(SymbolEqualityComparer.Default);
 
@@ -130,11 +131,14 @@ internal sealed class AnalysisContext
     public void Report(string rule, SyntaxNode site, TaintValue value, ISymbol member)
     {
         var key = (rule, site.SyntaxTree, site.Span);
-        if (_findings.TryGetValue(key, out var old) && (old.Confidence == Confidence.High || value.Path.Medium)) return;
         var sink = site.GetLocation();
         var trail = value.Path.Add(new PathStep(sink, $"reaches the {rule} sink {Name(member)}"));
+        // The best path reported for the site is kept (R-9: high before medium, then the shorter, then canonically:
+        // Trail.Better), so the path does not depend on the order the paths were found in (final review Minor 1).
+        if (_findingTrails.TryGetValue(key, out var best) && !Trail.Better(trail, best)) return;
+        _findingTrails[key] = trail;
         var path = trail.ToList();
-        var others = value.Sources.Where(s => !s.Equals(path[0].Location)).OrderBy(s => s.SourceSpan.Start).ToList();
+        var others = value.Sources.Where(s => !s.Equals(path[0].Location)).OrderBy(s => s, Comparer<Location>.Create(StableHash.Compare)).ToList();
         _findings[key] = new Finding(rule, sink, path, others)
         {
             Message = Sinks.MessageFor(rule, member),

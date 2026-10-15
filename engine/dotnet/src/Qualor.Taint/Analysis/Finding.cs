@@ -81,6 +81,57 @@ public sealed record PathStep(Location Location, string Message)
 
     /// Where to report the step: its mapped file and lines (see Finding.SinkSpan).
     public FileLinePositionSpan Span => Location.GetMappedLineSpan();
+
+    private ulong _fingerprint;
+
+    /// A hash of the step that is the same in every run (its file, span, kind and message; no runtime-randomised string
+    /// hash): what a canonical choice between two equally good paths compares (Trail.Better; final review Minor 1).
+    internal ulong Fingerprint
+    {
+        get
+        {
+            if (_fingerprint != 0) return _fingerprint;
+            var h = StableHash.Of(Location.SourceTree?.FilePath ?? "");
+            h = StableHash.Mix(h, (ulong)Location.SourceSpan.Start);
+            h = StableHash.Mix(h, (ulong)Location.SourceSpan.Length);
+            h = StableHash.Mix(h, (ulong)Kind);
+            h = StableHash.Mix(h, StableHash.Of(Message));
+            return _fingerprint = h == 0 ? 1 : h;
+        }
+    }
+}
+
+/// A 64-bit FNV-1a hash and an order-sensitive mix, the same in every run (string.GetHashCode is randomised per process).
+internal static class StableHash
+{
+    private const ulong Offset = 14695981039346656037;
+    private const ulong Prime = 1099511628211;
+
+    public static ulong Of(string text)
+    {
+        var h = Offset;
+        foreach (var c in text)
+        {
+            h ^= c;
+            h *= Prime;
+        }
+        return h;
+    }
+
+    public static ulong Mix(ulong a, ulong b)
+    {
+        var h = a ^ (b + 0x9E3779B97F4A7C15 + (a << 6) + (a >> 2));
+        return h * Prime;
+    }
+
+    /// The canonical order of two locations: file path (ordinal), then start, then length.
+    public static int Compare(Location a, Location b)
+    {
+        var c = string.CompareOrdinal(a.SourceTree?.FilePath ?? "", b.SourceTree?.FilePath ?? "");
+        if (c != 0) return c;
+        c = a.SourceSpan.Start.CompareTo(b.SourceSpan.Start);
+        return c != 0 ? c : a.SourceSpan.Length.CompareTo(b.SourceSpan.Length);
+    }
 }
 
 /// One result: a sink site of a rule (the location of the sink argument or of the assignment of a property sink), the

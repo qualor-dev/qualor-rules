@@ -68,12 +68,10 @@ internal sealed record CallEffect(int Slot, Body Callee, int CalleeSlot, Immutab
     /// M3), else the first path unless the other is high and it is not (R-9); null when nothing changes.
     public static CallEffect? Joined(CallEffect old, ImmutableHashSet<string> cleanFor, Trail path)
     {
-        var narrower = !old.CleanFor.IsSubsetOf(cleanFor);
-        var newDirtier = cleanFor.Count < old.CleanFor.Count && cleanFor.IsSubsetOf(old.CleanFor);
-        var oldDirtier = old.CleanFor.Count < cleanFor.Count && old.CleanFor.IsSubsetOf(cleanFor);
-        var better = !ReferenceEquals(path, old.Path) && (newDirtier || (!oldDirtier && old.Path.Medium && !path.Medium));
-        if (!narrower && !better) return null;
-        return old with { CleanFor = narrower ? old.CleanFor.Intersect(cleanFor) : old.CleanFor, Path = better ? path : old.Path };
+        // Calls are keyed by cleanliness (RR2), so the two edges have the same CleanFor: the better path stays, chosen
+        // canonically (Trail.Better; final review Minor 1 and dead-code note 9: the narrower and dirtier branches could
+        // not be taken).
+        return !ReferenceEquals(path, old.Path) && Trail.Better(path, old.Path) ? old with { Path = path } : null;
     }
 }
 
@@ -200,9 +198,9 @@ internal sealed class BodySummary
         var sinks = Sinks;
         foreach (var (k, v) in other.Sinks)
         {
-            // The first path is kept, unless the other one is high and it is not (R-9); the marks meet.
+            // The better path is kept (R-9, then canonically: Trail.Better); the marks meet.
             if (!sinks.TryGetValue(k, out var old)) sinks = sinks.Add(k, v);
-            else if (old.Path.Medium && !v.Path.Medium) sinks = sinks.SetItem(k, v with { Marks = v.Marks.Meet(old.Marks) });
+            else if (Trail.Better(v.Path, old.Path)) sinks = sinks.SetItem(k, v with { Marks = v.Marks.Meet(old.Marks) });
             else if (old.Marks != old.Marks.Meet(v.Marks)) sinks = sinks.SetItem(k, old with { Marks = old.Marks.Meet(v.Marks) });
         }
         var calls = Calls;
@@ -284,8 +282,15 @@ internal sealed class BodySummary
                 if (!index.TryGetValue(k, out var e)) index[k] = e = (new List<SinkEffect>(), new List<CallEffect>(), new List<(object, TaintValue)>());
                 return e;
             }
-            foreach (var e in Sinks.Values) Of(e.Slot).Item1.Add(e);
-            foreach (var c in Calls.Values) Of(c.Slot).Item2.Add(c);
+            // In a canonical order (final review Minor 1): the dictionaries' order follows hashes that vary per process.
+            foreach (var e in Sinks.Values
+                         .OrderBy(e => e.RuleId, StringComparer.Ordinal).ThenBy(e => e.Site.SyntaxTree.FilePath, StringComparer.Ordinal)
+                         .ThenBy(e => e.Site.SpanStart).ThenBy(e => e.Site.Span.Length))
+                Of(e.Slot).Item1.Add(e);
+            foreach (var c in Calls.Values
+                         .OrderBy(c => c.Callee.Id).ThenBy(c => c.CalleeSlot).ThenBy(c => SummaryBuilder.CleanKey(c.CleanFor), StringComparer.Ordinal)
+                         .ThenBy(c => c.Marks.Key, StringComparer.Ordinal))
+                Of(c.Slot).Item2.Add(c);
             foreach (var h in Heap.Values)
             {
                 var seen = new HashSet<int>();
@@ -478,12 +483,12 @@ internal sealed class SummaryBuilder
         ObjWrites[(slot, key)] = ObjWrites.TryGetValue((slot, key), out var old) ? (old.Symbol, old.Value.Join(value)) : (member, value);
     }
 
-    /// The first path of a sink is kept, unless a later one is high and it is not (R-9).
+    /// The better path of a sink is kept (R-9, then canonically: Trail.Better).
     public void AddSink(int slot, string rule, SyntaxNode site, ISymbol member, Trail path, KeyMarks marks = default)
     {
         var key = (slot, rule, site.SyntaxTree, site.Span);
         if (!Sinks.TryGetValue(key, out var old)) Sinks[key] = new SinkEffect(slot, rule, site, member, path) { Marks = marks };
-        else if (old.Path.Medium && !path.Medium) Sinks[key] = new SinkEffect(slot, rule, site, member, path) { Marks = marks.Meet(old.Marks) };
+        else if (Trail.Better(path, old.Path)) Sinks[key] = new SinkEffect(slot, rule, site, member, path) { Marks = marks.Meet(old.Marks) };
         else if (old.Marks != old.Marks.Meet(marks)) Sinks[key] = old with { Marks = old.Marks.Meet(marks) };
     }
 
