@@ -1021,4 +1021,55 @@ public sealed class RequestScopedHeapTests
         var code = NoteCopy.Replace("KEEP", "Render()");
         Assert.Equal(Snippet.Marked(code), Snippet.Findings(code, "csharp.xss"));
     }
+
+    /// Task 32 fix round 2 (re-review RR1): narrowing must not clean data whose witness the witness bound dropped. Four
+    /// drafts write the note HTML-encoded and render the copy; Archive writes it raw and renders nothing; Publish writes
+    /// it raw through several locals (the longest path) and renders the copy. The copy joins six witnesses, more than the
+    /// bound: Publish's raw one is dropped while Archive's keeps xss covered. The render's scope leaves Archive out, so
+    /// every witness left is encoded, yet Publish's raw note reaches the sink in Publish's request: found.
+    private const string BoundedNotes = """
+        using System.Text.Encodings.Web;
+        public static class Notes
+        {
+            public static string Last = "";
+            public static string Tail = "";
+            public static string Shown = "";
+        }
+        public class NotesController : Controller
+        {
+            public IActionResult Draft1([FromQuery] string note) { Notes.Last = HtmlEncoder.Default.Encode(note); Copy(); return Render(); }
+            public IActionResult Draft2([FromQuery] string note) { Notes.Last = HtmlEncoder.Default.Encode(note); Copy(); return Render(); }
+            public IActionResult Draft3([FromQuery] string note) { Notes.Last = HtmlEncoder.Default.Encode(note); Copy(); return Render(); }
+            public IActionResult Draft4([FromQuery] string note) { Notes.Last = HtmlEncoder.Default.Encode(note); Copy(); return Render(); }
+            public IActionResult Archive([FromQuery] string note) { Notes.Last = note; Notes.Tail = note; Copy(); return Ok(); }
+            public IActionResult Publish([FromQuery] string note)
+            {
+                var first = note;
+                var second = first + "";
+                var third = second.Trim();
+                var fourth = third.ToString();
+                Notes.Last = fourth;
+                Copy();
+                return Render();
+            }
+            private static void Copy() => Notes.Shown = COPY;
+            private IActionResult Render() => Content("<p>" + Notes.Shown + "</p>", "text/html"); /*sink*/
+        }
+        """;
+
+    [Fact]
+    public void A_witness_the_bound_dropped_keeps_its_data_dirty_after_narrowing()
+    {
+        var code = BoundedNotes.Replace("COPY", "Notes.Last");
+        Assert.Equal(Snippet.Marked(code), Snippet.Findings(code, "csharp.xss"));
+    }
+
+    /// The same, with Archive's raw tail joined to the copy after the bound dropped Publish's witness: that join drops
+    /// nothing (Archive's scope and cleanliness are kept already), and the value stays marked truncated.
+    [Fact]
+    public void A_join_that_drops_nothing_keeps_the_mark_of_an_earlier_drop()
+    {
+        var code = BoundedNotes.Replace("COPY", "Notes.Last + Notes.Tail");
+        Assert.Equal(Snippet.Marked(code), Snippet.Findings(code, "csharp.xss"));
+    }
 }

@@ -266,6 +266,11 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
 
     public const int MaxWitnesses = 4;
 
+    /// Whether the witness bound ever dropped a witness of the request data (Task 32 fix round 2, RR1): a dropped
+    /// witness's scope and cleanliness are lost, so narrowing may not take the kept witnesses' cleanliness for the
+    /// value's. Joins unite it; ScopedTo (fresh data, one witness) clears it.
+    public bool Truncated { get; init; }
+
     /// The alternative witnesses (scope, path, cleanliness), best first (Trail.Better), Path the first; empty: Path is the
     /// only one, valid for Scope and CleanFor.
     public ImmutableArray<Witness> Witnesses { get; init; } = ImmutableArray<Witness>.Empty;
@@ -298,8 +303,10 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     }
 
     /// The request data narrowed to the entry points of `reach` (assumed to share some with Scope): its scope and its
-    /// witnesses (those whose scope shares none are dropped, unless none would be left). The value is cleaned for what
-    /// every kept witness is cleaned for (Task 32 fix round 1, I1): a dropped witness's dirtier data is no longer in it.
+    /// witnesses (those whose scope shares none are dropped, unless none would be left). When no witness was ever dropped
+    /// by the witness bound (Truncated), the value is also cleaned for what every kept witness is cleaned for (Task 32 fix
+    /// round 1, I1): the witnesses narrowing drops carry the only dirtier data, and it is out of `reach`. A value the bound
+    /// truncated keeps its CleanFor (a dropped witness's dirtier data may be in `reach`; fix round 2, RR1).
     public TaintValue Narrowed(Reach reach)
     {
         if (!Request) return this;
@@ -312,11 +319,20 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             else if (w.Scope.Intersects(reach)) kept.Add(new Witness(w.Scope.Intersect(reach), w.Path, w.CleanFor));
         }
         if (kept.Count == 0) return this with { Scope = scope, Witnesses = ImmutableArray<Witness>.Empty };
-        var witnesses = Merge(kept, ImmutableArray<Witness>.Empty);
-        var clean = witnesses[0].CleanFor;
-        for (var i = 1; i < witnesses.Length; i++) clean = Intersect(clean, witnesses[i].CleanFor);
-        var cleanFor = clean.Count == 0 || clean.IsSubsetOf(CleanFor) ? CleanFor : CleanFor.Union(clean);
-        return this with { Scope = scope, CleanFor = cleanFor, Path = witnesses[0].Path, Witnesses = witnesses.Length > 1 ? witnesses : ImmutableArray<Witness>.Empty };
+        var (witnesses, dropped) = Merge(kept, ImmutableArray<Witness>.Empty);
+        var cleanFor = CleanFor;
+        if (!Truncated)
+        {
+            // Merge's cover keeps the intersection of the kept witnesses' cleanliness when it drops some here.
+            var clean = witnesses[0].CleanFor;
+            for (var i = 1; i < witnesses.Length; i++) clean = Intersect(clean, witnesses[i].CleanFor);
+            if (clean.Count > 0 && !clean.IsSubsetOf(CleanFor)) cleanFor = CleanFor.Union(clean);
+        }
+        return this with
+        {
+            Scope = scope, CleanFor = cleanFor, Path = witnesses[0].Path, Truncated = Truncated || dropped,
+            Witnesses = witnesses.Length > 1 ? witnesses : ImmutableArray<Witness>.Empty,
+        };
     }
 
     /// This value with the path a finding of `rule` in a body `reach` reaches reports (R-E32 revised): the best witness
@@ -340,7 +356,8 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     /// Two witness lists merged: one per scope and cleanliness (the better path: high, then shorter), best first (the
     /// unscoped ones first when `unscopedFirst`), at most MaxWitnesses plus those that keep, for every rule, a witness
     /// and a high witness the full list has for it (so HighClean and the per-rule choice survive the bound).
-    private static ImmutableArray<Witness> Merge(IEnumerable<Witness> a, IEnumerable<Witness> b, bool unscopedFirst = false)
+    /// Dropped: whether the bound dropped a witness.
+    private static (ImmutableArray<Witness> Witnesses, bool Dropped) Merge(IEnumerable<Witness> a, IEnumerable<Witness> b, bool unscopedFirst = false)
     {
         var all = new List<Witness>();
         foreach (var w in a.Concat(b))
@@ -353,12 +370,12 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             unscopedFirst && (x.Scope == null) != (y.Scope == null) ? (x.Scope == null ? -1 : 1)
             : x.Path.Medium != y.Path.Medium ? (x.Path.Medium ? 1 : -1)
             : x.Path.Count.CompareTo(y.Path.Count));
-        if (all.Count <= MaxWitnesses) return all.ToImmutableArray();
+        if (all.Count <= MaxWitnesses) return (all.ToImmutableArray(), false);
         var kept = all.Take(MaxWitnesses).ToList();
         Cover(all, kept, high: true);
         Cover(all, kept, high: false);
         kept.Sort((x, y) => all.IndexOf(x).CompareTo(all.IndexOf(y)));
-        return kept.ToImmutableArray();
+        return (kept.ToImmutableArray(), kept.Count < all.Count);
     }
 
     /// Adds to `kept`, in `all`'s order, witnesses of `all` until every rule some witness of `all` (a high one, when
@@ -400,7 +417,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     /// Request data read from the request in a body that `reach` reaches: valid in those requests only (an empty reach,
     /// which EntryPoints never gives a body that reads the request, leaves it unscoped).
     public TaintValue ScopedTo(Reach reach) =>
-        !Request || reach.IsEmpty ? this : this with { Scope = reach, FromHeap = false, Witnesses = ImmutableArray<Witness>.Empty };
+        !Request || reach.IsEmpty ? this : this with { Scope = reach, FromHeap = false, Truncated = false, Witnesses = ImmutableArray<Witness>.Empty };
 
     /// The request data restricted to the entry points of `reach`: none when it shares no entry point with the scope
     /// and was read from the heap; unscoped data, and data read from the request that shares none (a caller the call
@@ -467,6 +484,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         var scope = Scope;
         var fromHeap = FromHeap;
         var keyOnly = KeyOnly;
+        var truncated = Truncated;
         var witnesses = Witnesses;
         if (Request && other.Request)
         {
@@ -474,6 +492,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             scope = Scope == null || other.Scope == null ? null : Scope.Union(other.Scope);
             fromHeap = FromHeap && other.FromHeap;
             keyOnly = KeyOnly && other.KeyOnly;
+            truncated = Truncated || other.Truncated;
             cleanFor = CleanFor.Count == 0 || other.CleanFor.Count == 0 ? ImmutableHashSet<string>.Empty : CleanFor.Intersect(other.CleanFor);
             sources = Sources;
             foreach (var s in other.Sources)
@@ -498,12 +517,13 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             {
                 // Both sides' witnesses, each with its scope and cleanliness: a finding picks the one for its request
                 // and its rule (WitnessFor; R-E32 revised).
-                var merged = Merge(mine, theirs, unscopedFirst: scope == null);
+                var (merged, dropped) = Merge(mine, theirs, unscopedFirst: scope == null);
+                truncated |= dropped;
                 path = merged[0].Path;
                 witnesses = merged.Length > 1 ? merged : ImmutableArray<Witness>.Empty;
             }
             requestChanged = cleanFor.Count != CleanFor.Count || !ReferenceEquals(sources, Sources) || !ReferenceEquals(path, Path)
-                || !ReferenceEquals(scope, Scope) || fromHeap != FromHeap || keyOnly != KeyOnly || !SameWitnesses(witnesses, Witnesses);
+                || !ReferenceEquals(scope, Scope) || fromHeap != FromHeap || keyOnly != KeyOnly || truncated != Truncated || !SameWitnesses(witnesses, Witnesses);
             if (cleanFor.Count == CleanFor.Count) cleanFor = CleanFor;
         }
         else if (other.Request)
@@ -515,6 +535,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             scope = other.Scope;
             fromHeap = other.FromHeap;
             keyOnly = other.KeyOnly;
+            truncated = other.Truncated;
             witnesses = other.Witnesses;
             requestChanged = true;
         }
@@ -527,7 +548,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         }
         var labels = MergeLabels(Labels, other.Labels, out var labelsChanged);
         if (!requestChanged && !labelsChanged) return this;
-        return new TaintValue(request, cleanFor, path) { Sources = sources, Labels = labels, Scope = scope, FromHeap = fromHeap, KeyOnly = keyOnly, Witnesses = witnesses };
+        return new TaintValue(request, cleanFor, path) { Sources = sources, Labels = labels, Scope = scope, FromHeap = fromHeap, KeyOnly = keyOnly, Truncated = truncated, Witnesses = witnesses };
     }
 
     /// The union of two sorted label arrays (one label per owner and slot: CleanFor intersected, the shorter path);
@@ -570,7 +591,9 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                 }
                 else
                 {
-                    var merged = Merge(x.AllPaths, y.AllPaths);
+                    // A label's paths have no scope: no narrowing chooses among them, and Merge's cover keeps the
+                    // intersection of their cleanliness, so a dropped path needs no Truncated flag (RR1).
+                    var (merged, _) = Merge(x.AllPaths, y.AllPaths);
                     p = merged[0].Path;
                     if (merged.Length > 1) alternatives = merged;
                 }
@@ -595,14 +618,14 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     /// Equal in the lattice (paths aside but for their confidence, R-9).
     public bool SameTaint(TaintValue other) =>
         ReferenceEquals(this, other)
-        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Sources.SetEquals(other.Sources) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly && SameHigh(this, other)))
+        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Sources.SetEquals(other.Sources) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly && Truncated == other.Truncated && SameHigh(this, other)))
             && SameLabels(other));
 
     /// Equal in the lattice, paths (but for their confidence) and source locations aside: what decides whether a summary
     /// or the heap changed.
     public bool SameFlow(TaintValue other) =>
         ReferenceEquals(this, other)
-        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly && SameHigh(this, other))) && SameLabels(other));
+        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly && Truncated == other.Truncated && SameHigh(this, other))) && SameLabels(other));
 
     private bool SameLabels(TaintValue other)
     {

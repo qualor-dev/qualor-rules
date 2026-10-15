@@ -1327,7 +1327,9 @@ internal sealed partial class MethodAnalyzer
             {
                 // Only the request part takes the medium step: the labels go to the callers' substitution (their own edges).
                 var rest = value.RequestPart.Step(at.Syntax.GetLocation(), $"written to {Describe(location)}", others);
-                value = (precise.Any ? precise : value.LabelPart).Join(rest);
+                // With no precise part, the rest keeps the model's objects and members (a join with the label part alone
+                // would make them unknown: fix round 2, RR-M1).
+                value = precise.Any ? precise.Join(rest) : rest.WithTaintOf(value.LabelPart);
             }
         }
         _body.KeyedWrite(location, value);
