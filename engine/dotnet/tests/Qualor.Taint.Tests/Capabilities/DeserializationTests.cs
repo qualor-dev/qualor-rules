@@ -244,5 +244,90 @@ public sealed class DeserializationTests
         }
         """);
 
+    /// Final review I1: the same drop when the request data reaches a helper's parameters (the seed path) rather than
+    /// returning from it (the substitution path): text found by a request key and deserialized in a helper, and a key given
+    /// to a helper that looks it up and hands the text to another that deserializes it.
+    private const string Archive = """
+        public static class Archive
+        {
+            public static void Report(string text, SqlConnection db)
+            {
+                var f = System.Text.Json.JsonSerializer.Deserialize<Filter>(text)!;
+                db.Execute("SELECT * FROM sales WHERE region = '" + f.Region + "'");
+            }
+            public static void ReportRaw(string text, SqlConnection db) => db.Execute("SELECT * FROM notes WHERE t = '" + text + "'"); /*sink*/
+            public static void Fetch(Dictionary<string, string> store, string key, SqlConnection db) => Report(store[key], db);
+            public static void FetchRaw(Dictionary<string, string> store, string key, SqlConnection db) => ReportRaw(store[key], db);
+            public static void Mix(Dictionary<string, string> store, string key, string extra, SqlConnection db) => Mixed(store[key] + extra, db);
+            public static void Mixed(string text, SqlConnection db)
+            {
+                var f = System.Text.Json.JsonSerializer.Deserialize<Filter>(text)!;
+                db.Execute("SELECT * FROM sales WHERE region = '" + f.Region + "'"); /*sink*/
+            }
+        }
+        """;
+
+    [Fact]
+    public void Cached_json_found_by_a_request_key_and_deserialized_in_a_helper_is_stored_data() => Expect(Types + Archive + """
+        public class ArchiveController : ControllerBase
+        {
+            private readonly Dictionary<string, string> _store = new();
+            private readonly SqlConnection _db = new();
+            public IActionResult Inline(string key)
+            {
+                Archive.Report(_store[key], _db);
+                return Ok();
+            }
+            public IActionResult Handed(string key)
+            {
+                Archive.Fetch(_store, key, _db);
+                return Ok();
+            }
+            public IActionResult RawText(string key)
+            {
+                Archive.FetchRaw(_store, key, _db);
+                return Ok();
+            }
+            public IActionResult WithMore(string key, string extra)
+            {
+                Archive.Mix(_store, key, extra, _db);
+                return Ok();
+            }
+        }
+        """);
+
+    [Fact]
+    public void Cached_json_a_helper_stores_by_a_request_key_and_another_deserializes_is_stored_data() => Expect(Types + """
+        public class Shelf { public string Text = ""; }
+        public class Tray { public string Text = ""; }
+        public class ShelfController : ControllerBase
+        {
+            private readonly Dictionary<string, string> _store = new();
+            private readonly Shelf _shelf = new();
+            private readonly Tray _raw = new();
+            private readonly SqlConnection _db = new();
+            public IActionResult Keep(string key)
+            {
+                Remember(key);
+                Use();
+                RememberRaw(key);
+                UseRaw();
+                return Ok();
+            }
+            private void Remember(string key) => _shelf.Text = _store[key];
+            private void Use()
+            {
+                var f = System.Text.Json.JsonSerializer.Deserialize<Filter>(_shelf.Text)!;
+                _db.Execute("SELECT * FROM sales WHERE region = '" + f.Region + "'");
+            }
+            private void RememberRaw(string key) => _raw.Text = key;
+            private void UseRaw()
+            {
+                var f = System.Text.Json.JsonSerializer.Deserialize<Filter>(_raw.Text)!;
+                _db.Execute("SELECT * FROM sales WHERE region = '" + f.Region + "'"); /*sink*/
+            }
+        }
+        """);
+
     private static void Expect(string code) => Assert.Equal(Snippet.Marked(code), Snippet.Findings(code));
 }

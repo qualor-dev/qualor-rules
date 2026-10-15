@@ -770,6 +770,9 @@ unmodelled-external: string-or-collection-return
   deserializers carry it: text found in a cache or table by a request key makes no request-data object, text that is
   request data otherwise (the body, a parameter, a key lookup joined with them) does. The mark (TaintValue.KeyDerived,
   Label.KeyDerived) is set by every key lookup, kept through summaries, and lost in a join with any other request data.
+  It holds the same way whichever way the request data travels: returned by a helper (a call site substitutes the
+  argument), or given to a helper's parameter, a callee's parameter after it, or written to the heap there (the seeds
+  carry the labels' marks through the sink, call and heap effects; final review I1).
 - `known-text:` (Task 29, a list of `{ member: T.M, text: "..." }`): the text of an external static string field or
   property, which the `string-prefix:` sanitizers read as written in place (learn.microsoft.com gives each value:
   `Uri.SchemeDelimiter` is "://", `Uri.UriSchemeHttps` "https").

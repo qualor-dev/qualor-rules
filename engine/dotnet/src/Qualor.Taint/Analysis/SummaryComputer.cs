@@ -328,17 +328,19 @@ internal sealed class SummaryComputer
             var (sinks, calls, heap) = body.Summary.EffectsOf(key.Slot, body.Id);
             foreach (var e in sinks)
             {
-                if (!value.TaintedFor(e.RuleId)) continue;
+                // The label's lookup-key marks, as a call site's substitution applies them (final review I1).
+                var marked = e.Marks.Apply(value);
+                if (!marked.TaintedFor(e.RuleId)) continue;
                 // The witness for the rule is chosen after the callee's steps are added: Extend makes the first witness
                 // the value's path again, which would drop the choice (Task 35, witness defect W1).
-                _ctx.Report(e.RuleId, e.Site, value.Extend(e.Path).WitnessFor(_entries.Of(body), e.RuleId), e.Member);
+                _ctx.Report(e.RuleId, e.Site, marked.Extend(e.Path).WitnessFor(_entries.Of(body), e.RuleId), e.Member);
             }
             foreach (var (location, symbolic) in heap)
             {
                 var written = BodySummary.Through(symbolic, body.Id, key.Slot, value);
                 if (written.Request) _heap.Write(location, written, _entries.WriteReach(body));
             }
-            foreach (var c in calls) Seed(c.Callee, c.CalleeSlot, value.Extend(c.Path).CleanedFor(c.CleanFor));
+            foreach (var c in calls) Seed(c.Callee, c.CalleeSlot, c.Marks.Apply(value.Extend(c.Path).CleanedFor(c.CleanFor)));
         }
     }
 
@@ -777,13 +779,13 @@ internal sealed class SummaryComputer
             foreach (var l in value.Labels)
                 if (Keeps(l.Owner))
                     // One edge per path of the label, with its cleanliness (fix round 3 of Task 28, RR2).
-                    foreach (var w in l.AllPaths) _computer.Builder(l.Owner).AddCall(l.Slot, callee, slot, w.CleanFor, w.Path);
+                    foreach (var w in l.AllPaths) _computer.Builder(l.Owner).AddCall(l.Slot, callee, slot, w.CleanFor, w.Path, KeyMarks.Of(l));
         }
 
         public void RecordSink(Label label, string rule, SyntaxNode site, ISymbol member)
         {
             // The label's path for this rule (RR1): the best one not cleaned for it.
-            if (Keeps(label.Owner)) _computer.Builder(label.Owner).AddSink(label.Slot, rule, site, member, label.PathFor(rule));
+            if (Keeps(label.Owner)) _computer.Builder(label.Owner).AddSink(label.Slot, rule, site, member, label.PathFor(rule), KeyMarks.Of(label));
         }
 
         /// Something is written into the receiver object (`this._f = v`, `this.P = v`, a collection write into a field).

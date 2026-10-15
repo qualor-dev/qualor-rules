@@ -25,13 +25,44 @@ public sealed record ParamEffect(
 /// A parameter of a body reaches a sink in the body itself (or in a lambda or local function nested in it): Slot the
 /// parameter (−1 `this`), Site the sink argument's syntax (or the assignment of a property sink), Member the sink
 /// member, Path the steps inside the body from its entry.
-internal sealed record SinkEffect(int Slot, string RuleId, SyntaxNode Site, ISymbol Member, Trail Path);
+internal sealed record SinkEffect(int Slot, string RuleId, SyntaxNode Site, ISymbol Member, Trail Path)
+{
+    /// How the parameter reaches the sink as far as lookup keys go (R-E23, R-E39; final review I1): applied to the request
+    /// data a seed brings, as a call site's substitution applies them to an argument.
+    public KeyMarks Marks { get; init; }
+}
+
+/// A label's lookup-key marks (Label.ViaKey, KeyDerived, DropsKeyDerived), carried by the global effects so the seed
+/// path treats request data as the substitution path does (SubstituteTaint; final review I1): a value-factory or
+/// deserializer between the parameter and the effect drops what reached it only through a lookup key, and a value that
+/// reaches the effect only as a key keeps that mark for the next one. Two effects of one key meet (each mark only where
+/// both have it: the dirtier side wins).
+internal readonly record struct KeyMarks(bool ViaKey, bool KeyDerived, bool DropsKeyDerived)
+{
+    public static KeyMarks Of(Label label) => new(label.ViaKey, label.KeyDerived, label.DropsKeyDerived);
+
+    public KeyMarks Meet(KeyMarks other) => new(ViaKey && other.ViaKey, KeyDerived && other.KeyDerived, DropsKeyDerived && other.DropsKeyDerived);
+
+    /// The request data `value` brings through an effect with these marks.
+    public TaintValue Apply(TaintValue value)
+    {
+        if (DropsKeyDerived) value = value.WithoutKeyDerived();
+        if (!value.Any) return value;
+        return ViaKey ? value.ViaKey() : KeyDerived ? value.KeyDerivedMark() : value;
+    }
+
+    /// A key part: the marks as letters (for the Calls key).
+    public string Key => (ViaKey ? "v" : "") + (KeyDerived ? "k" : "") + (DropsKeyDerived ? "d" : "");
+}
 
 /// A parameter of a body is passed to a parameter of a callee (CalleeSlot of Callee), cleaned on its way for CleanFor;
 /// Path the steps inside the body from its entry to the callee's entry. The callee's own effects are not copied into
 /// the caller: request data that reaches the parameter flows on along these edges (SummaryComputer.Seed).
 internal sealed record CallEffect(int Slot, Body Callee, int CalleeSlot, ImmutableHashSet<string> CleanFor, Trail Path)
 {
+    /// The label's lookup-key marks (final review I1; part of the Calls key).
+    public KeyMarks Marks { get; init; }
+
     /// `old` joined with another edge of the same parameters: CleanFor intersected; the path of the edge that is request
     /// data for strictly more rules (its path is a witness for every rule the joined edge is; fix round 1 of Task 28,
     /// M3), else the first path unless the other is high and it is not (R-9); null when nothing changes.
@@ -95,7 +126,8 @@ internal sealed class BodySummary
         ImmutableDictionary<(int, string, SyntaxTree, TextSpan), SinkEffect>.Empty;
 
     /// Keyed also by the edge's cleanliness (Clean: its CleanFor sorted and comma-joined; fix round 3 of Task 28, RR2):
-    /// a parameter passed on through paths of different cleanliness keeps one edge, and one path, per cleanliness.
+    /// a parameter passed on through paths of different cleanliness keeps one edge, and one path, per cleanliness; and by
+    /// its lookup-key marks (KeyMarks.Key, after a `|`; final review I1).
     public ImmutableDictionary<(int Slot, int Callee, int CalleeSlot, string Clean), CallEffect> Calls { get; init; } =
         ImmutableDictionary<(int, int, int, string), CallEffect>.Empty;
 
@@ -168,9 +200,10 @@ internal sealed class BodySummary
         var sinks = Sinks;
         foreach (var (k, v) in other.Sinks)
         {
-            // The first path is kept, unless the other one is high and it is not (R-9).
+            // The first path is kept, unless the other one is high and it is not (R-9); the marks meet.
             if (!sinks.TryGetValue(k, out var old)) sinks = sinks.Add(k, v);
-            else if (old.Path.Medium && !v.Path.Medium) sinks = sinks.SetItem(k, v);
+            else if (old.Path.Medium && !v.Path.Medium) sinks = sinks.SetItem(k, v with { Marks = v.Marks.Meet(old.Marks) });
+            else if (old.Marks != old.Marks.Meet(v.Marks)) sinks = sinks.SetItem(k, old with { Marks = old.Marks.Meet(v.Marks) });
         }
         var calls = Calls;
         foreach (var (k, v) in other.Calls)
@@ -409,7 +442,8 @@ internal sealed class BodySummary
         var result = TaintValue.Clean;
         foreach (var label in symbolic.Labels)
             if (label.Owner == owner && label.Slot == slot)
-                foreach (var path in label.AllPaths) result = result.Join(value.Extend(path.Path).CleanedFor(path.CleanFor));
+                // The label's lookup-key marks apply as at a call site (final review I1).
+                foreach (var path in label.AllPaths) result = result.Join(KeyMarks.Of(label).Apply(value.Extend(path.Path).CleanedFor(path.CleanFor)));
         return result;
     }
 }
@@ -445,16 +479,18 @@ internal sealed class SummaryBuilder
     }
 
     /// The first path of a sink is kept, unless a later one is high and it is not (R-9).
-    public void AddSink(int slot, string rule, SyntaxNode site, ISymbol member, Trail path)
+    public void AddSink(int slot, string rule, SyntaxNode site, ISymbol member, Trail path, KeyMarks marks = default)
     {
         var key = (slot, rule, site.SyntaxTree, site.Span);
-        if (!Sinks.TryGetValue(key, out var old) || (old.Path.Medium && !path.Medium)) Sinks[key] = new SinkEffect(slot, rule, site, member, path);
+        if (!Sinks.TryGetValue(key, out var old)) Sinks[key] = new SinkEffect(slot, rule, site, member, path) { Marks = marks };
+        else if (old.Path.Medium && !path.Medium) Sinks[key] = new SinkEffect(slot, rule, site, member, path) { Marks = marks.Meet(old.Marks) };
+        else if (old.Marks != old.Marks.Meet(marks)) Sinks[key] = old with { Marks = old.Marks.Meet(marks) };
     }
 
-    public void AddCall(int slot, Body callee, int calleeSlot, ImmutableHashSet<string> cleanFor, Trail path)
+    public void AddCall(int slot, Body callee, int calleeSlot, ImmutableHashSet<string> cleanFor, Trail path, KeyMarks marks = default)
     {
-        var key = (slot, callee.Id, calleeSlot, CleanKey(cleanFor));
-        if (!Calls.TryGetValue(key, out var old)) Calls[key] = new CallEffect(slot, callee, calleeSlot, cleanFor, path);
+        var key = (slot, callee.Id, calleeSlot, CleanKey(cleanFor) + "|" + marks.Key);
+        if (!Calls.TryGetValue(key, out var old)) Calls[key] = new CallEffect(slot, callee, calleeSlot, cleanFor, path) { Marks = marks };
         else if (CallEffect.Joined(old, cleanFor, path) is { } joined) Calls[key] = joined;
     }
 
