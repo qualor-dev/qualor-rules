@@ -10,6 +10,7 @@ written from the docs.
 git log --oneline <base>..<branch>
 git diff --stat <base>..<branch>
 npm run test:docker                      # must be green
+npm run test:engine                      # csharp batches: must be green too
 git diff <base>..<branch> -- rules | grep -E '^-.*(ruleid|ok):'   # removed annotations: see §3
 ```
 
@@ -94,6 +95,10 @@ Scan it the same way. Every miss is a defect unless the fixture records it as `t
   `severity`, `confidence` and `owasp` follow COVERAGE.md "Kind and severity"; the title and
   message are accurate and the message says how to fix it; `frameworks` matches the fixture;
   `since` is the version the run uses.
+- **csharp, the engine:** a changed source, sink, propagator or sanitizer is mirrored in
+  `models/csharp/<name>.yml` (or the model comments the difference); changed todo lines are
+  reflected in `engine/dotnet/expectations.yml`; the page's engine paragraph still opens Known
+  limits; no **Engine only** row was taken as OpenGrep work.
 - **Clean room:** every URL in `sources` is an allowed source; open a few and check they say what
   the rule relies on. Comments and messages are the implementer's own words.
 

@@ -355,10 +355,16 @@ update the sections the change affects (usually Known limits).
 
 ```sh
 npm run test:docker                      # green
+npm run test:engine                      # csharp: green (the engine reads the same fixtures)
 git status --porcelain                   # only this rule's files, its page and docs/rules/README.md
 git add rules/<lang>/<category>/<name>.yml rules/<lang>/<category>/<name>.<ext> docs/rules/<lang>/<name>.md docs/rules/README.md
 git commit -s -m "feat(<lang>): <name> rule for <frameworks>" -m "Backlog: <id>" -m "<docs used, limits (todo lines), probe counts>"
 ```
+
+**csharp:** the same commit carries the model change (`models/csharp/<name>.yml`) for a changed
+source, sink, propagator or sanitizer, or a comment in the model saying why the engine differs,
+and the `engine/dotnet/expectations.yml` entries for changed `todoruleid:`/`todook:` lines (SKILL.md
+"C# and the Roslyn engine"); add those files to the `git add` above.
 
 One commit per rule, and its body always holds the line `Backlog: <id>` (the controller finds an
 interrupted run's work by it). Maintenance rows: `fix(<lang>): ...` for behaviour,

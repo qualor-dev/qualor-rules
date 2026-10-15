@@ -62,6 +62,7 @@ git branch --list 'rules/*'       # nothing
 grep -c '| in-progress |' BACKLOG.md   # 0
 test -d node_modules || npm ci --ignore-scripts
 npm run test:docker               # baseline: check, tool tests, opengrep --test (OpenGrep 1.30.0)
+npm run test:engine               # csharp in the run: the Roslyn engine's tests (host .NET SDK; not part of npm test)
 ```
 
 Read `AGENTS.md`, `CLEAN-ROOM.md`, `BACKLOG.md`, `REFERENCE.md` and the newest three entries of
@@ -79,6 +80,28 @@ Read `AGENTS.md`, `CLEAN-ROOM.md`, `BACKLOG.md`, `REFERENCE.md` and the newest t
   measurements still need Docker). With neither: stop and ask the maintainer to build the image in
   qualor-cc (`docker build -f deploy/scanner/Dockerfile -t qualor/scanner:<tag> .`).
 - **Baseline red:** stop and report the failure. Do not start rules on a red tree.
+- **`npm run test:engine` cannot run** (no .NET SDK, or Windows Application Control blocks the
+  freshly built test DLLs): run it in a local `qualor/scanner-dotnet` image (SDK 8 and 10), or
+  leave C# rows out of this run and say so in the report.
+
+## C# and the Roslyn engine
+
+Under `qualor dotnet end`, Qualor's own Roslyn taint engine (`engine/dotnet`, models in
+`models/csharp/<name>.yml`, its fixture expectations in `engine/dotnet/expectations.yml`) runs
+every C# rule in place of OpenGrep; the OpenGrep rule runs elsewhere and as the fallback. Both
+read the same fixtures (`Fixture_matches` in the engine's tests). So, for every `csharp` row:
+
+- A change to a rule's sources, sinks, propagators or sanitizers is mirrored in its model, or the
+  difference is commented in the model file (models/README.md says how); a new or changed fixture
+  line keeps the engine at Missing 0 / Unexpected 0, and a changed `todoruleid:`/`todook:` line
+  updates `expectations.yml` (`must-find`, `must-stay-quiet`, `reported-todook`: the test pins them
+  exactly, both ways).
+- `npm run test:engine` is a gate next to `npm run test:docker` for the batch, before the review
+  and after the merge (CI runs it as its own step).
+- Rows whose notes start with **Engine only** are engine work (models and `engine/dotnet`), not
+  OpenGrep rules: skip them when you take rows (step 3) and leave them `todo`. Notes that start
+  with "Closed by the engine" are still OpenGrep work.
+- The page's Known limits keep the engine paragraph at their top; edit the bullets below it.
 
 ## 2. Top up the backlog
 
@@ -96,7 +119,8 @@ If the map runs dry, write the rules you have and put the question into the repo
 ## 3. Plan
 
 1. Take the first N `todo` rows in table order (of the language, if given). Maintenance rows
-   (`<lang>.<name>#<topic>`) count as rows.
+   (`<lang>.<name>#<topic>`) count as rows; rows marked **Engine only** do not (see "C# and the
+   Roslyn engine").
 2. Group them by language, keeping table order, and split each group into **batches of at most 4
    rows**: `<lang>-1`, `<lang>-2`, … (maintenance rows, being first in the table, land in the
    first batch). With N ≤ 5 there are no batches: you work inline.
@@ -221,6 +245,7 @@ the rule pages, does conflict when both sides added rules: rebuild it with
 ```sh
 L=python; K=1; D=<yyyymmdd>; W=E:/Personal/qualor/worktrees/qualor-rules-$L-$D-$K
 npm run test:docker               # must be green on main: if not, stop here (below)
+npm run test:engine               # a csharp batch: must be green on main too
 git worktree remove "$W"
 git branch -d rules/$L-$D-$K      # -d, never -D: an unmerged branch is a question for the maintainer
 ```
