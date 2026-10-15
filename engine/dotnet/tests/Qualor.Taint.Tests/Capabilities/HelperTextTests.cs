@@ -129,4 +129,37 @@ public sealed class HelperTextTests : ProbeModels
             }
         }
         """);
+
+    // ---- Final review I3: a helper in the caller's own call-graph cycle has no final returned text ----
+
+    /// The cycle's bodies are analysed in some order, and a finding once reported is never withdrawn: a helper of the same
+    /// component gives no text (as guard summaries: Summarised), so the result does not depend on that order. Outside a
+    /// cycle the helper's text is final and cleans.
+    [Fact]
+    public void A_helper_in_the_callers_cycle_gives_no_text_in_either_order() => Assert.Equal(new[] { 8, 12 }, Qualor.Taint.Tests.Intraprocedural.Snippet.Findings("""
+        public class AfterController : Controller
+        {
+            private string Home(int hops)
+            {
+                if (hops > 9) Jump("x");
+                return "https://home.contoso.test/";
+            }
+            public IActionResult Jump(string q) => Redirect(Home(0) + q);
+        }
+        public class BeforeController : Controller
+        {
+            public IActionResult Jump(string q) => Redirect(Start(0) + q);
+            private string Start(int hops)
+            {
+                if (hops > 9) Jump("x");
+                return "https://home.contoso.test/";
+            }
+            public IActionResult Leap(string q) => Redirect(Start(1) + q);
+        }
+        public class PlainController : Controller
+        {
+            private static string Home() => "https://home.contoso.test/";
+            public IActionResult Jump(string q) => Redirect(Home() + q);
+        }
+        """, "csharp.open-redirect"));
 }

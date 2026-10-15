@@ -798,7 +798,9 @@ internal sealed partial class MethodAnalyzer
         string? text = null;
         foreach (var target in _body.Targets(method, isVirtual, receiverType))
         {
-            if (target.Kind != TargetKind.Body) return null;
+            // A body of this body's own component has no final text yet (final review I3): read before it is analysed, it
+            // would leave a finding that a later round could not withdraw; as guard summaries (Summarised), it gives none.
+            if (target.Kind != TargetKind.Body || _body.SameComponent(target.Body!)) return null;
             _body.Depend(target.Body!);
             if (target.Body!.Summary.ReturnText is not { } t) return null;
             text = BodySummary.JoinText(text, t);

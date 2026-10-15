@@ -116,7 +116,9 @@ sanitizers:
   property initialised with a literal (in a type without a static constructor, which could assign it), and a call or read of a project member whose every return starts with the same
   text (its summary's returned text: the common start of what each `return` gives, a constant, a literal-initialised
   static, another such member, a `+` or interpolation of them; joined over the dispatch targets): `Api.Base + "/" + id`
-  with `static string Base => "https://api.example/v1"` reads as written in place (Task 23). A string held in a variable
+  with `static string Base => "https://api.example/v1"` reads as written in place (Task 23). A member in the caller's own
+  component of the call graph (a cycle through the caller) gives no text: its summary is not final while the component
+  runs (final review I3). A string held in a variable
   keeps the value it was built with; its text is not followed.
   An external static string the models know (`known-text:` of `propagators.yml`: `Uri.SchemeDelimiter`,
   `Uri.UriSchemeHttps`, ...) is known too (Task 29, ruling R-E22), and a value chosen between known texts (`c ? a : b`)
@@ -318,6 +320,10 @@ Guards written the way projects write them, read by the engine for every rule (n
 - Both summaries apply only when every target of the call (Dispatch) is such a body outside the caller's component of the
   call graph (a recursive helper's summary is not final while its component runs): a wrapper behind an interface one of
   whose implementations does not check is no guard.
+- Every cleaning that reads another body's summary reads only final summaries (a body outside the reader's component):
+  guard and exit summaries, the returned text of `string-prefix:` sanitizers, the provenance walk. A finding, once
+  reported, is never withdrawn, so a summary read before it is complete would leave a finding that depends on the order
+  the component's bodies are analysed in (final review I3).
 - **Provenance** (Task 35). A check that makes a local or parameter x of a type compared as text (a string, a char, a
   number, a bool, an enum; not a Uri, whose Equals ignores the user info and the fragment) one of the server's values (equal to a constant
   or to a value that carries nothing, a member of an allow-list or a server-built collection, a key a search found
