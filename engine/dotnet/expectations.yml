@@ -65,6 +65,38 @@ must-find:
   # the lambda in place, a Known limit of both rules).
   - { rule: csharp.unsafe-deserialization, line: 265, why: "new JavaScriptSerializer(resolver) with resolver = new SimpleTypeResolver()" }
   - { rule: csharp.tls-verification-disabled, line: 408, why: "ServerCertificateCustomValidationCallback = trustAll, a local assigned (m, c, ch, e) => true" }
+  # Task 19 (final review M1), the OpenGrep source limits every taint rule copies as todoruleid lines: the engine finds
+  # them through types (a body-bound class parameter, a handler of another class, a controller base named otherwise).
+  - { rule: csharp.command-injection, line: 534, why: "a Minimal API class parameter bound from the JSON body without [FromBody]: the engine's types tell it from a DI service" }
+  - { rule: csharp.command-injection, line: 555, why: "a handler declared in another class: the engine follows the mapped method group" }
+  - { rule: csharp.command-injection, line: 570, why: "a controller whose base class is named otherwise: the engine knows ControllerBase by type" }
+  - { rule: csharp.ldap-injection, line: 157, why: "a Minimal API class parameter bound from the JSON body without [FromBody]: the engine's types tell it from a DI service" }
+  - { rule: csharp.ldap-injection, line: 186, why: "a handler declared in another class: the engine follows the mapped method group" }
+  - { rule: csharp.ldap-injection, line: 405, why: "a controller whose base class is named otherwise: the engine knows ControllerBase by type" }
+  - { rule: csharp.open-redirect, line: 836, why: "a Minimal API class parameter bound from the JSON body without [FromBody]: the engine's types tell it from a DI service" }
+  - { rule: csharp.open-redirect, line: 855, why: "a handler declared in another class: the engine follows the mapped method group" }
+  - { rule: csharp.open-redirect, line: 868, why: "a controller whose base class is named otherwise: the engine knows ControllerBase by type" }
+  - { rule: csharp.path-traversal, line: 433, why: "a Minimal API class parameter bound from the JSON body without [FromBody]: the engine's types tell it from a DI service" }
+  - { rule: csharp.path-traversal, line: 453, why: "a handler declared in another class: the engine follows the mapped method group" }
+  - { rule: csharp.path-traversal, line: 466, why: "a controller whose base class is named otherwise: the engine knows ControllerBase by type" }
+  - { rule: csharp.regex-injection, line: 282, why: "a Minimal API class parameter bound from the JSON body without [FromBody]: the engine's types tell it from a DI service" }
+  - { rule: csharp.regex-injection, line: 301, why: "a handler declared in another class: the engine follows the mapped method group" }
+  - { rule: csharp.regex-injection, line: 314, why: "a controller whose base class is named otherwise: the engine knows ControllerBase by type" }
+  - { rule: csharp.sql-injection, line: 131, why: "a Minimal API class parameter bound from the JSON body without [FromBody]: the engine's types tell it from a DI service" }
+  - { rule: csharp.sql-injection, line: 225, why: "a handler declared in another class: the engine follows the mapped method group" }
+  - { rule: csharp.sql-injection, line: 1060, why: "a controller whose base class is named otherwise: the engine knows ControllerBase by type" }
+  - { rule: csharp.ssrf, line: 328, why: "a Minimal API class parameter bound from the JSON body without [FromBody]: the engine's types tell it from a DI service" }
+  - { rule: csharp.ssrf, line: 349, why: "a handler declared in another class: the engine follows the mapped method group" }
+  - { rule: csharp.ssrf, line: 365, why: "a controller whose base class is named otherwise: the engine knows ControllerBase by type" }
+  - { rule: csharp.xpath-injection, line: 240, why: "a Minimal API class parameter bound from the JSON body without [FromBody]: the engine's types tell it from a DI service" }
+  - { rule: csharp.xpath-injection, line: 259, why: "a handler declared in another class: the engine follows the mapped method group" }
+  - { rule: csharp.xpath-injection, line: 274, why: "a controller whose base class is named otherwise: the engine knows ControllerBase by type" }
+  - { rule: csharp.xss, line: 377, why: "a Minimal API class parameter bound from the JSON body without [FromBody]: the engine's types tell it from a DI service" }
+  - { rule: csharp.xss, line: 395, why: "a handler declared in another class: the engine follows the mapped method group" }
+  - { rule: csharp.xss, line: 408, why: "a controller whose base class is named otherwise: the engine knows ControllerBase by type" }
+  # A one-argument GetValueOrDefault(key) reads a table that request data changes: the engine follows the write into the
+  # table (OpenGrep takes the call for a read of the dictionary, a Known limit).
+  - { rule: csharp.sql-injection, line: 790, why: "GetValueOrDefault(key) on a table that request data was written into" }
 must-stay-quiet:
   # Results.File given a stream is no path: the engine goes by the overload (`param-types`), OpenGrep cannot (Known limit).
   - { rule: csharp.path-traversal, line: 367, why: "Results.File(Request.Body, ...): the Stream overload is no sink" }
@@ -103,6 +135,20 @@ must-stay-quiet:
   - { rule: csharp.ldap-injection, line: 120, why: "new DirectorySearcher(filter, AttributesFor(name)): a string[] parameter is no filter" }
   - { rule: csharp.ldap-injection, line: 315, why: "new DirectorySearcher(RootFor(ou)): a DirectoryEntry parameter is no filter" }
   - { rule: csharp.ldap-injection, line: 500, why: "new Acme.Catalog.SearchRequest { Filter = term }: another library's type" }
+# todook lines the engine reports, as the OpenGrep rule does: false positives both share (a test pins the list exactly,
+# so a line that becomes quiet, or a new one, is seen).
+reported-todook:
+  - { rule: csharp.command-injection, line: 451, why: "an argument vector holding the request data after the script: the vector is taken as a whole" }
+  - { rule: csharp.command-injection, line: 454, why: "request data after the script in a POSIX shell's argument string, a positional parameter, not shell code" }
+  - { rule: csharp.ldap-injection, line: 324, why: "a hand-written filter escaper is no sanitizer" }
+  - { rule: csharp.open-redirect, line: 649, why: "a host allow-list checked on a Uri parsed from the URL, not on the URL itself" }
+  - { rule: csharp.open-redirect, line: 705, why: "a stored document found by a request key through a lookup that is not awaited" }
+  - { rule: csharp.path-traversal, line: 337, why: "a containment check written in the condition on a path built again at the sink" }
+  - { rule: csharp.ssrf, line: 222, why: "a host allow-list checked on a Uri parsed from the URL, not on the URL itself" }
+  - { rule: csharp.ssrf, line: 247, why: "a stored instance found by a request key through a lookup that is not awaited" }
+  - { rule: csharp.tls-verification-disabled, line: 446, why: "an accept-all callback set only under a development flag" }
+  - { rule: csharp.unsafe-deserialization, line: 256, why: "TypeNameHandling.Auto with an allow-list SerializationBinder: the binder is not looked at" }
+  - { rule: csharp.xxe, line: 255, why: "an XmlUrlResolver on a document loaded only through a reader that refuses DTDs" }
 # Fixture lines that cannot compile in any form (an intentionally invalid shape); excluded from the engine comparison.
 uncompilable:
   - { rule: csharp.open-redirect, file: open-redirect.cs, line: 51, reason: "RedirectHttpResult.IsLocalUrl is not public in the ASP.NET Core 8 reference assemblies (added in .NET 10); the call does not bind" }

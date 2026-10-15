@@ -15,6 +15,10 @@ public sealed record Expectations(IReadOnlyList<ExpectedLine> MustFind, IReadOnl
     /// Lines that compile but whose annotation rests on an uncompilable line (`excluded:`); not compared either.
     public IReadOnlyList<ExpectedLine> Excluded { get; init; } = Array.Empty<ExpectedLine>();
 
+    /// todook lines the engine reports, as the OpenGrep rule does (`reported-todook:`): known false positives that both
+    /// share, pinned so that a change either way is seen.
+    public IReadOnlyList<ExpectedLine> ReportedTodoOk { get; init; } = Array.Empty<ExpectedLine>();
+
     public static Expectations Load(string path)
     {
         var yaml = new YamlStream();
@@ -23,6 +27,7 @@ public sealed record Expectations(IReadOnlyList<ExpectedLine> MustFind, IReadOnl
         return new Expectations(Entries(root, "must-find", "why"), Entries(root, "must-stay-quiet", "why"), Entries(root, "uncompilable", "reason"))
         {
             Excluded = Entries(root, "excluded", "reason"),
+            ReportedTodoOk = Entries(root, "reported-todook", "why"),
         };
     }
 

@@ -54,6 +54,7 @@ public class OpenGrepFixtureCompileTests
 
         Assert.All(expectations.MustFind, e => Assert.True(Has(e, "todoruleid"), "must-find " + e.File + ":" + e.Line + " is no todoruleid line"));
         Assert.All(expectations.MustStayQuiet, e => Assert.True(Has(e, "todook"), "must-stay-quiet " + e.File + ":" + e.Line + " is no todook line"));
+        Assert.All(expectations.ReportedTodoOk, e => Assert.True(Has(e, "todook"), "reported-todook " + e.File + ":" + e.Line + " is no todook line"));
         Assert.All(expectations.Excluded, e => Assert.True(Has(e, "ruleid", "ok", "todoruleid", "todook"), "excluded " + e.File + ":" + e.Line + " is not annotated"));
     }
 
@@ -133,5 +134,15 @@ public class OpenGrepFixtureTests
             Assert.Contains(result.TodoFound, a => a.File == e.File && a.Line == e.Line);
         foreach (var e in expectations.MustStayQuiet.Where(e => e.Rule == rule))
             Assert.DoesNotContain(result.TodoOkReported, a => a.File == e.File && a.Line == e.Line);
+        // A ratchet both ways: every todoruleid line the engine finds is pinned in must-find (so a regression is seen),
+        // and the todook lines it reports are exactly reported-todook (the false positives it shares with OpenGrep).
+        var unpinned = result.TodoFound
+            .Where(a => !expectations.MustFind.Any(e => e.Rule == rule && e.File == a.File && e.Line == a.Line))
+            .Select(a => a.File + ":" + a.Line).ToList();
+        Assert.True(unpinned.Count == 0, $"{rule}: todoruleid lines found but not in must-find (add them) [{string.Join(", ", unpinned)}]");
+        var reported = result.TodoOkReported.Select(a => a.File + ":" + a.Line).OrderBy(x => x, StringComparer.Ordinal).ToList();
+        var pinned = expectations.ReportedTodoOk.Where(e => e.Rule == rule).Select(e => e.File + ":" + e.Line).OrderBy(x => x, StringComparer.Ordinal).ToList();
+        Assert.True(reported.SequenceEqual(pinned),
+            $"{rule}: todook lines reported [{string.Join(", ", reported)}] differ from reported-todook [{string.Join(", ", pinned)}]");
     }
 }
