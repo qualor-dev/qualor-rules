@@ -148,7 +148,10 @@ sanitizers:
 # field with no request data (the root itself); a prefix held in a local or built in a conditional (`EndsInDirectorySeparator(root)
 # ? root : root + Path.DirectorySeparatorChar`); the check held in a bool local or joined with `||` to an equality with
 # the root; the path the one-argument GetFullPath was given is clean too (not GetFullPath(path, basePath), which resolves
-# against another base); and a helper returning the check's result (a guard summary).
+# against another base); and a helper returning the check's result (a guard summary). Since Task 35: the "is the root
+# itself" answer given apart (`if (full.Equals(top)) return true;` before the check); and a value searched for both
+# directory separators and found to hold none is one segment, as GetFileName's result (`..` too; BACKLOG.md
+# csharp.path-traversal#no-separator-segment).
 guards:
   - method: System.String.StartsWith
     arg: this

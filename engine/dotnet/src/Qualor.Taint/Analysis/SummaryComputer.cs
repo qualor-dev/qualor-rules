@@ -329,7 +329,9 @@ internal sealed class SummaryComputer
             foreach (var e in sinks)
             {
                 if (!value.TaintedFor(e.RuleId)) continue;
-                _ctx.Report(e.RuleId, e.Site, value.WitnessFor(_entries.Of(body), e.RuleId).Extend(e.Path), e.Member);
+                // The witness for the rule is chosen after the callee's steps are added: Extend makes the first witness
+                // the value's path again, which would drop the choice (Task 35, witness defect W1).
+                _ctx.Report(e.RuleId, e.Site, value.Extend(e.Path).WitnessFor(_entries.Of(body), e.RuleId), e.Member);
             }
             foreach (var (location, symbolic) in heap)
             {
@@ -445,7 +447,11 @@ internal sealed class SummaryComputer
                         var location = p.Locations.FirstOrDefault(l => l.IsInSource) ?? Location.None;
                         value = TaintValue.Source(location, $"request data enters here: parameter '{p.Name}' of {_ctx.Name(method)}").ScopedTo(run.WriteReach);
                     }
-                    if (body.IsLambda) value = value.Join(seed);
+                    if (body.IsLambda)
+                    {
+                        value = value.Join(seed);
+                        if (unit.LambdaSeeds.TryGetValue((SymbolKeys.Of(method), p.Ordinal), out var own)) value = value.Join(own);
+                    }
                     else if (p.RefKind != RefKind.Out) value = value.Join(TaintValue.Param(body.Id, p.Ordinal));
                     if (value.Any) entry.Set(p, value);
                     if (!body.IsLambda && EntryObjects(body, p, symbolic) is { } objects) entry.SetPointsTo(p, objects);
@@ -723,12 +729,13 @@ internal sealed class SummaryComputer
         public TaintValue LambdaReturn(IMethodSymbol lambda) =>
             _unit.LambdaReturns.TryGetValue(SymbolKeys.Of(lambda), out var v) ? v : TaintValue.Clean;
 
-        /// A lambda is given to a call whose other inputs are `value`: its parameters get it.
-        public void Seed(IMethodSymbol lambda, TaintValue value)
+        /// A lambda is given to a call whose other inputs are `value`: its parameters get it (`ordinal`: only that
+        /// parameter, Task 35's delegate binding).
+        public void Seed(IMethodSymbol lambda, TaintValue value, int ordinal = -1)
         {
             if (!value.Any) return;
             value = value.WithoutIdentity();
-            var key = SymbolKeys.Of(lambda);
+            var key = ordinal < 0 ? SymbolKeys.Of(lambda) : (SymbolKeys.Of(lambda), ordinal);
             _unit.LambdaSeeds[key] = _unit.LambdaSeeds.TryGetValue(key, out var old) ? old.Join(value) : value;
         }
 

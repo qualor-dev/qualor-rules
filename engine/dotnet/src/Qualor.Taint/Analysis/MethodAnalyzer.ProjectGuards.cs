@@ -275,6 +275,7 @@ internal sealed partial class MethodAnalyzer
         if (!equalTo.Any)
         {
             CleanAll(target, state, ref refined);
+            CleanDerived(target, null, target, state, ref refined);
             return;
         }
         var rules = CleanRules(equalTo);
@@ -475,6 +476,71 @@ internal sealed partial class MethodAnalyzer
         if (source != null) yield return source;
     }
 
+    private (string Rule, GuardModel Guard, MemberPattern FullPath)[]? _containments;
+
+    /// The model's containment guards: a check (`StartsWith`) of a value assigned from a full-path member (`assigned-from`).
+    private (string Rule, GuardModel Guard, MemberPattern FullPath)[] Containments() =>
+        _containments ??= _ctx.Sinks.Guards.Items
+            .Where(g => g.Guard.Kind == GuardKind.Result && g.Guard.When.Any(c => c.Kind == GuardConditionKind.ArgumentText))
+            .SelectMany(g => g.Guard.When.Where(c => c.Kind == GuardConditionKind.AssignedFrom).Take(1).Select(c => (g.Rule, g.Guard, c.Member!)))
+            .ToArray();
+
+    /// `x == root` holds where x is a full path (the containment guard's `assigned-from`) and root is the root of a
+    /// containment check of x in this body (Task 35, lever b): `if (full.Equals(top)) return true; ... return
+    /// full.StartsWith(top + separator);` in a helper says, where it returns true, that the path it was given is the
+    /// root or below it, whether the two answers are joined by `||` or not. x (and the path its GetFullPath was given:
+    /// FullPathSources, which a caller's full path given again resolves to) is then clean for the guard's rule as far as
+    /// the root is (Task 11's rule, ruling R-E41 refined): a root holding request data here (chosen by this request)
+    /// cleans nothing; one carrying what a caller gives keeps it for that rule (a guard summary's call site decides); one
+    /// stored earlier guards, as configuration does.
+    private void RootItself(IOperation x, IOperation root, TaintState state, ref TaintState? refined)
+    {
+        var containments = Containments();
+        if (containments.Length == 0 || RootVariable(root) is not { } rootSymbol) return;
+        if (!_operands.TryGetValue(root.Syntax, out var rootValue) || rootValue.Request) return;
+        foreach (var (rule, guard, fullPath) in containments)
+        {
+            var extra = rootValue.LabelPart.WithoutIdentity();
+            if (!IsFullPath(x, fullPath, ref extra) || !ChecksBelow(x, rootSymbol)) continue;
+            var rules = new[] { rule };
+            Clean(x, rules, state, ref refined, extra);
+            foreach (var source in FullPathSources(x, guard)) Clean(source, rules, state, ref refined, extra);
+        }
+    }
+
+    /// The variable a root is (a field, auto-property, local or parameter), also through a full-path call of it written
+    /// in place (`Path.GetFullPath(folder)`).
+    private static ISymbol? RootVariable(IOperation root)
+    {
+        if (VariableOf(root) is { } symbol) return symbol;
+        return Unwrapped(root) is IInvocationOperation { Arguments.Length: 1 } call && call.TargetMethod.IsStatic ? VariableOf(call.Arguments[0].Value) : null;
+    }
+
+    /// Whether `x` is a full path: a call of `member` written in place, or a local every assignment of which is one (or a
+    /// conditional of them and clean constants or fields: AssignedFrom, whose labels join `extra`).
+    private bool IsFullPath(IOperation x, MemberPattern member, ref TaintValue extra)
+    {
+        var value = Unwrapped(x);
+        if (value is IInvocationOperation inPlace) return SymbolMatch.Matches(member, inPlace.TargetMethod);
+        if (value is not ILocalReferenceOperation local || Assignments(local.Local) is not { Count: > 0 } all) return false;
+        foreach (var a in all)
+            if (!AssignedFrom(a, member, ref extra)) return false;
+        return true;
+    }
+
+    /// Whether the body checks `x.StartsWith(prefix)` (System.String's) with a prefix built from `root` (through locals
+    /// assigned from it): x is checked to lie below that root, so its equality with the root is the root-itself answer.
+    private bool ChecksBelow(IOperation x, ISymbol root)
+    {
+        foreach (var o in RootOriginal().Descendants())
+        {
+            if (o is IInvocationOperation { TargetMethod: { Name: "StartsWith", ContainingType.SpecialType: SpecialType.System_String }, Instance: { } instance } check
+                && check.Arguments.Length >= 1 && SameVariable(instance, x) && Mentions(check.Arguments[0].Value, root, 0))
+                return true;
+        }
+        return false;
+    }
+
     // ---- Membership ----
 
     private Dictionary<ILocalSymbol, bool>? _builtHere;
@@ -592,6 +658,7 @@ internal sealed partial class MethodAnalyzer
                 if (variable == null || !StableAfter(variable, after)) continue;
             }
             Clean(compared, _ctx.Sinks.AllowListRules, state, ref refined);
+            CleanDerived(compared, _ctx.Sinks.AllowListRules, after ?? call, state, ref refined);
         }
     }
 
@@ -1014,7 +1081,7 @@ internal sealed partial class MethodAnalyzer
     private bool StoredSomewhere(IOperation? op, int depth = 0)
     {
         if (op == null || depth > 3) return false;
-        foreach (var o in op.DescendantsAndSelf())
+        foreach (var o in WithoutIndices(op))
         {
             switch (o)
             {
@@ -1038,6 +1105,247 @@ internal sealed partial class MethodAnalyzer
             }
         }
         return false;
+    }
+
+    // ---- Provenance (Task 35, lever a) ----
+
+    /// A check that made `guarded` (a local or parameter) one of the server's values on this branch (equal to a constant
+    /// or to a value that carries nothing, a member of an allow-list or of a server-built collection, a registered key a
+    /// search found) holds for the values computed from it alone before the check too (`var file = FileOf(key);` then
+    /// the key looked up among the registered ones, then `file` read): a function of a server value is a server value.
+    /// Such a local is cleaned as the guarded value is (`rules`; null: every rule), in the guarded value's part only: its
+    /// request data (all of it the guarded value's) and the guarded value's labels; any other label (what a caller gives
+    /// for another parameter, the object's own state) stays. A local is derived (Derived) when:
+    /// - it is assigned once in the body (nothing else writes it, nor a lambda or local function), before `point`, the
+    ///   check;
+    /// - what it is assigned reads the guarded value or a local derived before it, every one of them unchanged since that
+    ///   assignment, and otherwise only constants; locals and parameters unchanged since that hold no request data and
+    ///   none of the guarded value's labels; `this`; fields and properties no request wrote request data to in any
+    ///   request (Heap.RequestAnywhere); and calls of .NET's own members or of project bodies (each target summarised,
+    ///   outside this component) that return no request data of their own: no lambda, await, assignment, object
+    ///   creation or dynamic call;
+    /// - its request data, if any, entered at sources the guarded value's request data entered at (none dropped by the
+    ///   bound).
+    /// A containment or a sanitizer's guard is no such check: a path below a root, with `..` added, is not below it.
+    private void CleanDerived(IOperation guarded, IReadOnlyCollection<string>? rules, IOperation point, TaintState state, ref TaintState? refined)
+    {
+        // Only from a value compared as text, a number or an enum (re-review M1): Uri.Equals, for one, ignores the user
+        // info and the fragment, so a Uri found among known ones says nothing of a part computed from it.
+        if (rules is { Count: 0 } || !IsEqualityType(guarded)) return;
+        var x = Unwrapped(guarded) switch
+        {
+            ILocalReferenceOperation l => (ISymbol)l.Local,
+            IParameterReferenceOperation p => p.Parameter,
+            _ => null,
+        };
+        if (x == null) return;
+        var guardedValue = state.Get(x);
+        if (!guardedValue.Any) return;
+        var cleaned = rules ?? _ctx.RuleIds;
+        foreach (var d in Derived(x, guardedValue, point, state))
+        {
+            var current = (refined ?? state).Get(d);
+            if (!current.Any || !FromGuardedOnly(current, guardedValue)) continue;
+            var next = CleanedAsGuarded(current, guardedValue, cleaned);
+            if (next.SameTaint(current)) continue;
+            refined ??= state.Clone();
+            refined.Set(d, next);
+        }
+    }
+
+    /// The locals computed from `x` alone before `point` (CleanDerived), in the order found.
+    private List<ILocalSymbol> Derived(ISymbol x, TaintValue guardedValue, IOperation point, TaintState state)
+    {
+        var result = new List<ILocalSymbol>();
+        if (_assignments == null) Assignments(x);
+        var from = new HashSet<ISymbol>(SymbolEqualityComparer.Default) { x };
+        // A local derived from a derived local: a few rounds (a chain written in source order needs one).
+        for (var round = 0; round < 3; round++)
+        {
+            var grew = false;
+            foreach (var (symbol, writes) in _assignments!)
+            {
+                if (symbol is not ILocalSymbol { RefKind: RefKind.None } local || from.Contains(local) || writes is not [var assigned]) continue;
+                if (assigned.Syntax.SpanStart >= point.Syntax.SpanStart || NestedWrites().Contains(local)) continue;
+                var expression = assigned is IFlowCaptureReferenceOperation ? WrittenAs(assigned) : assigned;
+                if (expression == null || !OnlyFrom(expression, assigned, from, guardedValue, state)) continue;
+                from.Add(local);
+                result.Add(local);
+                grew = true;
+            }
+            if (!grew) break;
+        }
+        return result;
+    }
+
+    /// Whether `expression` (assigned at `assigned`) reads one of `from` and otherwise nothing that may carry other
+    /// request data or the guarded value's labels (CleanDerived).
+    private bool OnlyFrom(IOperation expression, IOperation assigned, HashSet<ISymbol> from, TaintValue guardedValue, TaintState state)
+    {
+        var reads = false;
+        foreach (var o in expression.DescendantsAndSelf())
+        {
+            // A project value handed to .NET code that may run its overrides (re-review 3, M1).
+            if (BodyReads.HandsToDotnet(o)) return false;
+            switch (o)
+            {
+                case ILocalReferenceOperation l:
+                    if (!StableAfter(l.Local, assigned)) return false;
+                    if (from.Contains(l.Local)) reads = true;
+                    else if (!Other(state.Get(l.Local))) return false;
+                    break;
+                case IParameterReferenceOperation p:
+                    if (!StableAfter(p.Parameter, assigned)) return false;
+                    if (from.Contains(p.Parameter)) reads = true;
+                    else if (!Other(state.Get(p.Parameter))) return false;
+                    break;
+                case IFieldReferenceOperation f when SymbolKeys.InSource(f.Field) && _body.IsHeapMember(f.Field):
+                    if (!BodyReads.HeapTracked(f.Field.Type, _ctx.Sources.IsScalar) || _body.RequestAnywhere(f.Field)) return false;
+                    break;
+                case IPropertyReferenceOperation pr when !ReadClean(pr, Derived):
+                    return false;
+                case IInvocationOperation call:
+                    if (!PlainCall(call, Derived)) return false;
+                    break;
+                case IFlowCaptureReferenceOperation or IFlowAnonymousFunctionOperation or IAnonymousFunctionOperation or IAwaitOperation
+                    or IAssignmentOperation or IIncrementOrDecrementOperation or IDeclarationExpressionOperation or IObjectCreationOperation
+                    or IDynamicInvocationOperation or IDynamicMemberReferenceOperation or IDynamicIndexerAccessOperation or IDynamicObjectCreationOperation:
+                    return false;
+            }
+        }
+        return reads;
+
+        bool Derived(IOperation r) => (r is ILocalReferenceOperation { Local: var l } && from.Contains(l))
+            || (r is IParameterReferenceOperation { Parameter: var q } && from.Contains(q));
+
+        // Another input holds no request data and none of the guarded value's labels.
+        bool Other(TaintValue v) => !v.Request && !v.Labels.Any(l => guardedValue.Labels.Any(g => g.Owner == l.Owner && g.Slot == l.Slot));
+    }
+
+    /// A call whose result carries no request data but what it is given: one of .NET's own that is static or called on a
+    /// receiver `onDerived` accepts or a constant (its arguments are leaves of the derivation; an instance method of .NET
+    /// on anything else, `this`, a field or a static member, may read state that holds another part of the request:
+    /// re-review I1), or project bodies that read nothing a request wrote (CalleeClean).
+    private bool PlainCall(IInvocationOperation call, Func<IOperation, bool> onDerived)
+    {
+        var method = call.TargetMethod;
+        if (method.MethodKind == MethodKind.DelegateInvoke) return false;
+        if (!SymbolKeys.InSource(method)) return call.Instance == null || ReceiverAccepted(call.Instance, onDerived);
+        return CalleeClean(_body.Targets(method, call.IsVirtual, call.Instance?.Type), 0);
+    }
+
+    /// A receiver a .NET instance member may be read or called on in a derivation: one `onDerived` accepts (the guarded
+    /// value, a derived local; in a callee its own parameters and locals) or a constant. A static field or property is
+    /// none: what a request put into the object it holds (a builder's Append, an AsyncLocal's Value, an alias of a
+    /// request store) is not a write of the field (re-review I1).
+    private static bool ReceiverAccepted(IOperation receiver, Func<IOperation, bool> onDerived)
+    {
+        receiver = Unwrapped(receiver);
+        return receiver.ConstantValue.HasValue || onDerived(receiver);
+    }
+
+    /// A property read in a derivation (review C1): a project member that is a heap member no request wrote request data
+    /// to; a project property with a getter body (or an interface's, an abstract one, an indexer) as a call of its getter
+    /// (CalleeClean); a member of .NET only when it is static, gives a scalar, or is read on a receiver ReceiverAccepted
+    /// accepts (an instance member of .NET read on anything else, `HttpContext.Items[...]`, ViewData, a request's members,
+    /// an object a static field holds, may carry another part of the request).
+    private bool ReadClean(IPropertyReferenceOperation read, Func<IOperation, bool> onDerived)
+    {
+        var property = read.Property;
+        if (SymbolKeys.InSource(property))
+        {
+            if (_body.IsHeapMember(property) && !Dispatch.IsVirtualAccess(property, read.Instance))
+                return BodyReads.HeapTracked(property.Type, _ctx.Sources.IsScalar) && !_body.RequestAnywhere(property);
+            return property.GetMethod is { } getter && CalleeClean(_body.Targets(getter, Dispatch.IsVirtualAccess(property, read.Instance), read.Instance?.Type), 0);
+        }
+        if (property.IsStatic || (read.Type != null && _ctx.Sources.IsScalar(read.Type))) return true;
+        return read.Instance != null && ReceiverAccepted(read.Instance, onDerived);
+    }
+
+    private const int MaxCalleeDepth = 4;
+
+    private Dictionary<int, bool>? _bodiesClean;
+
+    /// Whether every target of a project call or getter gives back no request data but what it is given (review C1): each
+    /// is a body outside this component whose summary returns no request data of its own and that reads, itself and
+    /// through the calls and getters it makes (MaxCalleeDepth levels), no heap member some request wrote request data to,
+    /// no member of .NET (property, indexer or method) but static ones and those on its own parameters, locals or
+    /// constants, and makes no delegate, dynamic or project constructor call; or an auto-property no request wrote to.
+    private bool CalleeClean(IReadOnlyList<Target> targets, int depth)
+    {
+        if (targets.Count == 0 || depth > MaxCalleeDepth) return false;
+        foreach (var t in targets)
+        {
+            switch (t.Kind)
+            {
+                case TargetKind.Auto when t.Method.AssociatedSymbol is IPropertySymbol auto:
+                    if (_body.RequestAnywhere(auto)) return false;
+                    break;
+                case TargetKind.Body when t.Body is { } body && !_body.SameComponent(body):
+                    if (body.Summary.Return.Request || !BodyReadsClean(body, t.Method, depth)) return false;
+                    break;
+                default:
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    /// The reads of one body (CalleeClean): its read structure (BodyReads, built once per run and kept in the analysis
+    /// context, re-review M4), with the heap members' request writes asked now (they grow during the run, and asking
+    /// registers this unit to be analysed again when they do).
+    private bool BodyReadsClean(Body body, IMethodSymbol method, int depth)
+    {
+        _bodiesClean ??= new Dictionary<int, bool>();
+        if (_bodiesClean.TryGetValue(body.Id, out var known)) return known;
+        _bodiesClean[body.Id] = false;
+        var reads = _ctx.BodyReadsOf(body, () => BodyReads.Of(body, method, _body.IsHeapMember, _ctx.Sources.IsScalar));
+        var result = !reads.Rejected && reads.HeapMembers.All(m => !_body.RequestAnywhere(m))
+            && reads.Callees.All(c => CalleeClean(_body.Targets(c.Method, c.IsVirtual, c.ReceiverType), depth + 1));
+        _bodiesClean[body.Id] = result;
+        return result;
+    }
+
+    /// Whether the request data of `derived`, if any, entered where the guarded value's did (its sources among the
+    /// guarded value's, none dropped by the bound).
+    private static bool FromGuardedOnly(TaintValue derived, TaintValue guarded)
+    {
+        if (!derived.Request) return true;
+        if (!guarded.Request || derived.Sources.Count == 0 || derived.Sources.Count >= TaintValue.MaxSources) return false;
+        return derived.Sources.IsSubsetOf(guarded.Sources);
+    }
+
+    /// `derived` cleaned for `rules` in the guarded value's part: its request data and the labels the guarded value has.
+    private static TaintValue CleanedAsGuarded(TaintValue derived, TaintValue guarded, IReadOnlyCollection<string> rules)
+    {
+        var value = derived.RequestCleanedFor(rules);
+        if (value.Labels.Length == 0) return value;
+        var labels = value.Labels.Select(l => guarded.Labels.Any(g => g.Owner == l.Owner && g.Slot == l.Slot) ? l.Cleaned(rules) : l).ToImmutableArray();
+        return value with { Labels = labels };
+    }
+
+    /// `op` and its descendants but the indices of element reads (an array element's indices, an indexer's arguments;
+    /// Task 35): an element read reads its collection's data, whichever element the index selects, so a loop counter
+    /// (`names[n]`, written by `n++`) is not data a request stored.
+    private static IEnumerable<IOperation> WithoutIndices(IOperation op)
+    {
+        var pending = new Stack<IOperation>();
+        pending.Push(op);
+        while (pending.Count > 0)
+        {
+            var o = pending.Pop();
+            yield return o;
+            switch (o)
+            {
+                case IArrayElementReferenceOperation element:
+                    pending.Push(element.ArrayReference);
+                    continue;
+                case IPropertyReferenceOperation { Arguments.Length: > 0 } indexer:
+                    if (indexer.Instance != null) pending.Push(indexer.Instance);
+                    continue;
+            }
+            foreach (var child in o.ChildOperations) pending.Push(child);
+        }
     }
 
     /// A parameter's own label, not cleaned, and nothing else.

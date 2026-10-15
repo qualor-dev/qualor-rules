@@ -19,6 +19,9 @@ internal sealed class MemberTable<T>
 
     public bool IsEmpty => _entries.Count == 0;
 
+    /// Every entry (Task 35: the containment guards, MethodAnalyzer.RootItself).
+    public IEnumerable<T> Items => _entries.Select(e => e.Item);
+
     public T[] Match(ISymbol symbol, Access access)
     {
         if (_entries.Count == 0) return Array.Empty<T>();

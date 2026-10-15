@@ -78,8 +78,15 @@ internal sealed partial class MethodAnalyzer
                 // Only the built-in equality (or string's operator): a user-defined `==` may compare anything (ruling R-E13).
                 var builtIn = equality.OperatorMethod == null || equality.OperatorMethod.ContainingType?.SpecialType == SpecialType.System_String;
                 Equality(equality.LeftOperand, equality.RightOperand, (equality.OperatorKind == BinaryOperatorKind.Equals) == outcome, builtIn, state, ref refined);
+                // Task 35 (c): `x.IndexOfAny(separators) == -1`.
+                if (equality.OperatorMethod == null) IndexComparison(equality, outcome, state, ref refined);
                 break;
             }
+            // Task 35 (c): `x.IndexOf(separator) < 0`, `>= 0` false.
+            case IBinaryOperation { OperatorKind: BinaryOperatorKind.LessThan or BinaryOperatorKind.LessThanOrEqual or BinaryOperatorKind.GreaterThan
+                or BinaryOperatorKind.GreaterThanOrEqual, OperatorMethod: null } relation:
+                IndexComparison(relation, outcome, state, ref refined);
+                break;
             case IIsPatternOperation pattern:
                 Pattern(pattern.Value, pattern.Pattern, outcome, state, ref refined);
                 break;
@@ -105,14 +112,26 @@ internal sealed partial class MethodAnalyzer
     {
         if (equal && cleans)
         {
-            if (IsConstant(right) && IsEqualityType(left)) CleanAll(left, state, ref refined);
-            if (IsConstant(left) && IsEqualityType(right)) CleanAll(right, state, ref refined);
+            // Task 35 (a): a local computed from the value alone before the check is computed from that constant.
+            if (IsConstant(right) && IsEqualityType(left))
+            {
+                CleanAll(left, state, ref refined);
+                CleanDerived(left, null, left, state, ref refined);
+            }
+            if (IsConstant(left) && IsEqualityType(right))
+            {
+                CleanAll(right, state, ref refined);
+                CleanDerived(right, null, right, state, ref refined);
+            }
             // Task 33: a value equal to a sanitizer's result on it (`x == Path.GetFileName(x)`) is as clean as that result;
             // a value equal to another is as clean as that other.
             FixedPoint(left, right, state, ref refined);
             FixedPoint(right, left, state, ref refined);
             if (!IsConstant(right) && IsEqualityType(left) && _operands.TryGetValue(right.Syntax, out var r)) Narrow(left, r, right, state, ref refined);
             if (!IsConstant(left) && IsEqualityType(right) && _operands.TryGetValue(left.Syntax, out var l)) Narrow(right, l, left, state, ref refined);
+            // Task 35 (b): a full path equal to a containment check's root is the root itself.
+            RootItself(left, right, state, ref refined);
+            RootItself(right, left, state, ref refined);
         }
         if (IsNull(right)) NullCheck(left, !equal, state, ref refined);
         else if (IsNull(left)) NullCheck(right, !equal, state, ref refined);
@@ -126,11 +145,16 @@ internal sealed partial class MethodAnalyzer
                 Pattern(value, negated.Pattern, !outcome, state, ref refined);
                 break;
             case IConstantPatternOperation constant:
-                if (outcome) CleanAll(value, state, ref refined);
+                if (outcome)
+                {
+                    CleanAll(value, state, ref refined);
+                    CleanDerived(value, null, value, state, ref refined);
+                }
                 if (IsNull(constant.Value)) NullCheck(value, !outcome, state, ref refined);
                 break;
             case IBinaryPatternOperation { OperatorKind: BinaryOperatorKind.Or } alternatives when outcome && OnlyConstants(alternatives):
                 CleanAll(value, state, ref refined);
+                CleanDerived(value, null, value, state, ref refined);
                 break;
         }
 
@@ -177,12 +201,17 @@ internal sealed partial class MethodAnalyzer
             // Task 33: a collection the server built and the request never wrote is an allow-list too (a dictionary's keys:
             // ContainsKey, TryGetValue, Keys).
             if (value != null && comparers && (_ctx.AllowLists.IsTable(table, Model()?.Compilation) || ServerCollection(table, method.Name != "Contains")))
+            {
                 Clean(value, _ctx.Sinks.AllowListRules, state, ref refined);
+                CleanDerived(value, _ctx.Sinks.AllowListRules, call, state, ref refined);
+            }
         }
 
         // Task 33: a project method returning bool whose summary says what its arguments hold on this outcome; a search
         // whose predicate matched (`Any`, `Exists`).
         if (method.ReturnType.SpecialType == SpecialType.System_Boolean) GuardSummary(call, outcome, state, ref refined);
+        // Task 35 (c): `x.Contains(separator)` false.
+        if (!outcome && method.Name is "Contains" or "ContainsAny") ContainsCheck(call, outcome, state, ref refined);
         if (outcome && SearchOf(method) == Search.True) SearchNarrow(call, null, state, ref refined);
     }
 
@@ -462,6 +491,15 @@ internal sealed partial class MethodAnalyzer
         {
             switch (o)
             {
+                // Task 35 (review M1): a `ref` local made to refer to a variable writes it whenever it is written.
+                case IVariableDeclaratorOperation { Symbol.RefKind: not RefKind.None, Initializer: { } byRef } r:
+                    Spoil(r.Symbol);
+                    SpoilReferenced(byRef.Value);
+                    break;
+                case ISimpleAssignmentOperation { IsRef: true } refAssignment:
+                    SpoilReferenced(refAssignment.Target);
+                    SpoilReferenced(refAssignment.Value);
+                    break;
                 case ISimpleAssignmentOperation { Target: ILocalReferenceOperation l } a:
                     Add(l.Local, a.Value);
                     break;
@@ -506,6 +544,13 @@ internal sealed partial class MethodAnalyzer
         }
 
         void Spoil(ISymbol l) => _assignments![l] = null;
+
+        void SpoilReferenced(IOperation op)
+        {
+            while (op is IConversionOperation c) op = c.Operand;
+            if (op is ILocalReferenceOperation l) Spoil(l.Local);
+            else if (op is IParameterReferenceOperation p) Spoil(p.Parameter);
+        }
     }
 
     private static bool IsConstant(IOperation op)

@@ -468,4 +468,53 @@ public sealed class ConfidenceTests
         Assert.Equal(1, result.Stats.HighFindings);
         Assert.Equal(2, result.Stats.MediumFindings);
     }
+
+    // ---- Task 35 (W1): a callee's sink reports the witness chosen for its rule ----
+
+    /// One callee, two callers: the first gives a high value cleaned for path traversal (its file-name part), the second
+    /// a medium one (a member another method of the request wrote) that is not. The finding takes the dirty witness and
+    /// its confidence, not the first witness of the joined value.
+    private const string TwoCallers = """
+        public class Box { public string Name = ""; }
+        public class FilesController : ControllerBase
+        {
+            private readonly Box _box = new();
+            public IActionResult Clean(string q)
+            {
+                Save(Path.GetFileName(q));
+                return Ok();
+            }
+            public IActionResult Kept(string q)
+            {
+                _box.Name = q;
+                Relay();
+                return Ok();
+            }
+            private void Relay() => Save(_box.Name);
+            private void Save(string p) => System.IO.File.WriteAllText(Path.Combine("/srv/files", p), "");
+        """;
+
+    [Fact]
+    public void A_callees_sink_reports_the_witness_dirty_for_its_rule_and_its_confidence()
+    {
+        var f = Assert.Single(Snippet.Analyze(TwoCallers + "}").Findings, x => x.RuleId == "csharp.path-traversal");
+        Assert.Equal(Confidence.Medium, f.Confidence);
+        Assert.DoesNotContain(f.Path, s => s.Message.Contains("GetFileName", StringComparison.Ordinal));
+        Assert.Contains(f.Path, s => s.Message.Contains("Kept", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void A_high_witness_dirty_for_the_rule_still_makes_the_finding_high()
+    {
+        var f = Assert.Single(Snippet.Analyze(TwoCallers + """
+                public IActionResult Raw(string q)
+                {
+                    Save(q);
+                    return Ok();
+                }
+            }
+            """).Findings, x => x.RuleId == "csharp.path-traversal");
+        Assert.Equal(Confidence.High, f.Confidence);
+        Assert.Contains(f.Path, s => s.Message.Contains("Raw", StringComparison.Ordinal));
+    }
 }

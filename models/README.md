@@ -318,8 +318,80 @@ Guards written the way projects write them, read by the engine for every rule (n
 - Both summaries apply only when every target of the call (Dispatch) is such a body outside the caller's component of the
   call graph (a recursive helper's summary is not final while its component runs): a wrapper behind an interface one of
   whose implementations does not check is no guard.
+- **Provenance** (Task 35). A check that makes a local or parameter x of a type compared as text (a string, a char, a
+  number, a bool, an enum; not a Uri, whose Equals ignores the user info and the fragment) one of the server's values (equal to a constant
+  or to a value that carries nothing, a member of an allow-list or a server-built collection, a key a search found
+  among the registered ones) also holds for a local computed from x alone before the check: `var file = FileOf(key);`,
+  then `key` looked up and the lookup's miss thrown, then `file` read. The local is assigned once (nothing else writes
+  it, no lambda; a `ref` local or ref assignment that takes x or the local counts as a write), before the check; what
+  it is assigned reads x (or a local so computed before it), unchanged since, and every other part of it is provably
+  free of request data, so that all of its request data comes through x (review C1 of Task 35; the request data being
+  "from x's sources" is only a second check, since another part of the same request value enters at the same source):
+  - constants, `this`; locals and parameters unchanged since that hold no request data and none of x's labels;
+  - fields and auto-properties of the project no request wrote request data to in any request, of a type the heap
+    tracks: a string, a scalar, an enum, or a project type. A builder, an AsyncLocal, a collection, an array or any
+    other type of .NET can be filled by a request with no write of the member (Append, a Value set, an alias of the
+    request store), so a read of one, whether as a receiver or as a value given on, ends the derivation (re-review 2);
+  - a project property with a getter body (also an interface's, an abstract one, an indexer), as a call of its getter;
+  - members of .NET, properties, indexers and methods: static ones, properties giving a scalar, and instance ones
+    read or called on x (or such a local) or a constant. Any other receiver may hold another part of the request and
+    is no part of a derivation: `this`, a field, the request's members (`HttpContext.Items[...]`, ViewData), and a
+    static field or property, since what a request puts into the object it holds (a builder's Append, an AsyncLocal's
+    Value, an alias of the request's item store) is no write of the field (re-review I1);
+  - calls of project bodies (each target outside the caller's component) whose summary returns no request data of
+    their own and which read, themselves and through the calls and getters they make (four levels), no heap member
+    some request wrote request data to (nor one of a type the heap does not track), no member of .NET but static ones and those on their own parameters, locals or
+    constants, and make no delegate, dynamic or project constructor call (what each body reads is collected once per
+    run; the heap's request writes are asked at each use);
+  - no lambda, await, assignment, object creation or dynamic call.
+  - no project value handed to .NET code that may run its overrides (re-review 3): a project-typed value converted to
+    `object` or a .NET interface (`string.Concat(obj)`, `"x" + obj`, a boxing argument), an interpolation hole of a
+    project type, or a .NET method argument whose type mentions one (`string.Join<T>`): .NET may call a ToString
+    or Equals override the walk does not follow.
 
-Not covered (FN, by design): a helper's result that is not a bool (a found object checked for null by the caller; a
+  It is cleaned as x is, in x's part only: its request data and x's labels (what a caller gives for another parameter
+  stays, so a helper given a request folder still reports). A containment or a sanitizer's guard gives nothing to derived values: a
+  path below the root with `..` added is not below it.
+- **The root itself, answered apart** (Task 35). In a body that checks `x.StartsWith(prefix)` with the prefix built from
+  a root (a field, local or parameter, also as `GetFullPath(root)` written in place), where x is a full path (the
+  containment guard's `assigned-from`), `x == root` (any equality form) holds x as the root itself, whether it is joined
+  to the check by `||` or answered by an early `if (full.Equals(top)) return true;`: x, and the path its one-argument
+  GetFullPath was given, are clean for path traversal as far as the root is (Task 11's rule, ruling R-E41 refined): a
+  root holding this request's data cleans nothing, what a caller gives for the root stays for path traversal (a guard
+  summary's call site decides), a root stored earlier guards. A caller's full path given to such a helper is normalised
+  again there, which names the same file. An equality with a value no containment check of x uses is equality with a
+  value (above, R-E41 applies).
+- **No directory separator** (Task 35). Where a search for directory separators found none, the local or parameter
+  searched is one path segment, as Path.GetFileName leaves it: clean for path traversal (the rules GetFileName is a
+  sanitizer of). The searches: `IndexOf` and `IndexOfAny` of System.String, and MemoryExtensions' on a span (`AsSpan()`
+  of the value too), compared with a constant so that the branch admits no index of a match (`>= 0` false, `< 0`,
+  `== -1`); `Contains` and `ContainsAny` false. `IndexOf` and `Contains` look for one character (a char or a
+  one-character string constant: a longer string is a substring); a search from a start index or of a count checks part
+  of the value only and is no guard. A comparison given (`StringComparison`) must be `Ordinal` or `OrdinalIgnoreCase`
+  (review I1 of Task 35): a culture's comparison takes a separator followed by a combining mark as one text element and
+  does not find it (`"../\u0301x".IndexOf("/")` is -1 on ICU, and the path names the parent), so `IndexOf(string)`
+  without a comparison (the current culture) and any culture or invariant comparison are no guard; `Contains(string)`,
+  `Contains(char)`, `IndexOf(char)`, `IndexOfAny` and the span searches without a comparison are ordinal. The
+  separators: the constants '/' and '\', a string constant's
+  characters, Path.DirectorySeparatorChar and AltDirectorySeparatorChar, Path.GetInvalidFileNameChars() (it holds the
+  platform's separators; GetInvalidPathChars does not), given in place (an argument, an array or collection expression).
+  Both separators of a platform that has two must be absent on the branch (Windows: '\' and '/'): one search may find
+  both, or two searches one each (`if (x.Contains('/') || x.Contains('\\')) throw ...;`), the value unchanged between
+  them (each records a must-hold fact on the variable; an assignment ends it, a join keeps it only where every
+  predecessor has it). A check of DirectorySeparatorChar alone is no guard (on Windows `/` separates folders too). Like
+  GetFileName's result, `..` is such a segment; on Windows a check of the two separators alone also admits a
+  drive-relative `C:name` (BACKLOG.md `csharp.path-traversal#no-separator-segment`). Nothing is cleaned in a value
+  computed from x before the check.
+- **Element reads and stored data** (Task 35). The stored-data check (R-E41) reads an element read's collection, not its
+  index: `names[n]` in a loop `for (int n = 0; ...; n++)` is the collection's data, whatever the counter (written by
+  `n++`) selects, so membership written as a counting loop over a server collection is a guard summary as the `foreach`
+  form is.
+
+Not covered (FN, by design): a separator search given a collection held in a variable or a field
+(`IndexOfAny(_invalid)`), `SearchValues`, or a search through a call (`x.ToLowerInvariant().Contains('/')`); a value
+derived before a separator or containment check; a lambda given to an external member whose delegate binding is not
+known (below, "Delegate parameters") gets the call's receiver and every argument in each of its parameters, so a guard
+inside it may see a caller's value in the collection it searches; a helper's result that is not a bool (a found object checked for null by the caller; a
 `Task<bool>` or `ValueTask<bool>` awaited, `if (await IsSafeAsync(p))`; a `bool?`); a
 comparison through a project comparer or `string.Compare(...) == 0`; a bool local assigned more than once or written in a
 lambda; a predicate that is a method group or compares through a call; a member path's fact through a bool local;
@@ -771,7 +843,7 @@ one when it finds one (R-E32 as revised). A join keeps the witnesses of both sid
 cleanliness (the rules it is cleaned for), best first (high, then shorter), at most four plus those that keep a
 witness, and a high one, for every rule some witness had one for; a finding reports the best witness that reaches its
 sink and is not cleaned for its rule (an encoded value is no witness of an xss finding, but is one of a SQL finding; a
-rule's own source of another rule is none). A label (a parameter's path inside a summary) keeps its paths of different
+rule's own source of another rule is none; Task 35, witness defect W1: a sink inside a callee chooses its witness after the callee's steps are added to every witness, so a high witness cleaned for the rule that sorts first no longer stands in for a medium one that is not). A label (a parameter's path inside a summary) keeps its paths of different
 cleanliness the same way, bounded alike: a sink inside a callee records, per rule, the best path not cleaned for that
 rule, a call site substitutes the argument through each path with its own cleanliness, and a parameter passed on to
 a callee keeps one call edge per path's cleanliness. The rules a
@@ -924,6 +996,21 @@ false positives (FP) or misses (FN) there.
   a local (ruling R-E23: `Map(xs, n => Encode(n))` through a helper's `Select(f)` is reported), `Queryable`'s operators,
   and the result selectors of `GroupBy`, `Join`, `Zip` and `Aggregate` keep the source sequence (FP). A lambda's
   parameters are seeded alike: the outer element of a two-`from` query takes the inner elements' data too (FP).
+- Delegate parameters (Task 35): a lambda given to a member of .NET gets in each parameter what the member's documented
+  signature passes there (learn.microsoft.com, the API reference of each type), no longer the join of the call's
+  receiver and every argument:
+  - `ConcurrentDictionary`: GetOrAdd's `valueFactory` and AddOrUpdate's `addValueFactory` get the key (and the
+    `factoryArgument`: `GetOrAdd(key, static (k, owner) => ..., this)` gives `owner` the object, not the key);
+    `updateValueFactory` the key, the stored value (the dictionary's taint) and the `factoryArgument`;
+  - `List<T>` callbacks (ForEach, Find, FindAll, FindIndex, FindLast, FindLastIndex, Exists, TrueForAll, RemoveAll,
+    ConvertAll, Sort) and the `Array` ones given the array: an element (the list's or array's taint);
+  - `Enumerable`: a `predicate`, `selector`, `keySelector`, `elementSelector` or `collectionSelector` of a method with a
+    `source`: an element of the source (an index: nothing); Zip's result selector an element of `first` and one of
+    `second`; Join's and GroupJoin's key selectors an element of `outer` or `inner`, their result selector one of each;
+  - `TaskFactory.StartNew` given a `state`: the state; `Task.ContinueWith`: the task and its `state` (`Task.Run`'s
+    delegates take no parameter).
+  Every other member, a method group, and a parameter the list leaves open (Aggregate's accumulator, the result selectors
+  of GroupBy and SelectMany) keep the join, as before.
 - Lookups by a request key (ruling R-E18, narrowing R-E9; since Task 23): the key's taint reaches what a lookup finds
   only when it can carry an injection by itself (a string, a number, a sequence of them: `key:` in `propagators.yml`).
   Cost: a record found by a request key (a settings or tenant object, an entity, a content item) whose string field
@@ -1006,7 +1093,7 @@ false positives (FP) or misses (FN) there.
 - Witness paths (Task 34): when two callers pass values into one project helper that returns its parameter (a span
   helper such as `Skip(this ReadOnlySpan<char>, int)`), the witness of a finding found through one caller can start in
   the other and leave out that caller's sanitizer step (the helper's label path is shared by its call sites). The finding
-  is right; its witness can name a caller whose value was cleaned.
+  is right; its witness can name a caller whose value was cleaned. (Task 35 fixed a separate cause of wrong witnesses, W1: a callee's sink took the first witness of the joined value rather than the one chosen for its rule, and with it that witness's confidence.)
 - Views no build compiles (ASP.NET Core 2.x compiles views at run time, plugins copy theirs as Content; since Task 30,
   decision R-11): the hook records the project's `.cshtml` files (`razor-view=`) and the engine compiles those that have
   no generated class with the Razor 6.0 language API and MVC's extensions, `_ViewImports.cshtml` and the project's tag

@@ -28,6 +28,15 @@ internal sealed class AnalysisContext
     /// Model validation as a sanitizer (Task 31, decision R-12): the validation facts of bound members.
     public ModelValidation Validation { get; }
 
+    private readonly Dictionary<Body, BodyReads> _bodyReads = new();
+
+    /// The read structure of a body (Task 35, re-review M4: built once per run, MethodAnalyzer.BodyReadsClean).
+    public BodyReads BodyReadsOf(Body body, Func<BodyReads> build)
+    {
+        if (!_bodyReads.TryGetValue(body, out var reads)) _bodyReads[body] = reads = build();
+        return reads;
+    }
+
     /// Every rule id of the models.
     public string[] RuleIds { get; }
 
@@ -189,7 +198,8 @@ internal sealed class AnalysisContext
 ///   (`list.Add(x)`, `dict[k] = x`, `arr[i] = x`, `handler.AppendFormatted(x)`) taints the collection (engine policy,
 ///   not the models: open item (a) of Task 7).
 /// - Lambdas and method groups given to a call get the call's receiver and other arguments in their parameters (a
-///   method group: its summary applied to them); a lambda's value is what it returns.
+///   method group: its summary applied to them; Task 35: a lambda given to a member of .NET whose documented signature
+///   DelegateBinding knows gets in each parameter what the member passes there); a lambda's value is what it returns.
 /// - Sources: parameters (seeded at the entry), source members (sources.yml (6)) and bound properties (sources.yml (3))
 ///   at their reads. Sanitizers clean their result for their rule; `string-prefix:` sanitizers clean a value by the text
 ///   before it in a string built in place (StringValue), `lookup:` sanitizers the result of a body-less lookup.
@@ -2228,7 +2238,8 @@ internal sealed partial class MethodAnalyzer
     }
 
     /// Lambdas and method groups given to a call get the join of the call's receiver and other arguments in their
-    /// parameters (open item (b) of Task 7, for external and source callees alike): a lambda through its seed, a method
+    /// parameters (open item (b) of Task 7, for external and source callees alike), unless the member is one of .NET's
+    /// whose signature DelegateBinding knows (Task 35: each lambda parameter then gets what the member passes there): a lambda through its seed, a method
     /// group by applying its targets' summaries to it (that result is then the argument's value). SelectMany's result
     /// selector also gets what its collection selector returns, the elements it pairs with each source element (fix
     /// round 1 of Task 23, I1: the compiled form of a query with two `from` clauses).
@@ -2250,8 +2261,17 @@ internal sealed partial class MethodAnalyzer
             switch (DelegateOf(inputs[k].Operation))
             {
                 case IFlowAnonymousFunctionOperation lambda:
-                    _body.Seed(lambda.Symbol, others);
+                {
+                    // Task 35: a documented signature of .NET's binds each parameter to what the member passes it.
+                    var binding = definition != null && inputs[k].Parameter is { } given ? DelegateBinding(definition, given) : null;
+                    if (binding == null || binding.Length != lambda.Symbol.Parameters.Length)
+                    {
+                        _body.Seed(lambda.Symbol, others);
+                        break;
+                    }
+                    for (var j = 0; j < binding.Length; j++) _body.Seed(lambda.Symbol, binding[j] is { } sources ? Bound(sources, inputs, receiver) : others, j);
                     break;
+                }
                 case IMethodReferenceOperation reference:
                 {
                     // Its value is what the method returns given them (also with clean inputs: what it reads itself); an
