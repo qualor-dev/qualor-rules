@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { configs, probeArgs, reportLines, sq } from './scanner.mjs';
+import { configs, probeArgs, PRODUCT_EXCLUDES, reportLines, scanScript, sq, targetExcludes } from './scanner.mjs';
 
 function tree() {
   const dir = mkdtempSync(path.join(tmpdir(), 'qualor-rules-scanner-'));
@@ -55,3 +55,22 @@ test('prints findings and turns scan errors into warnings', () => {
   ]);
   assert.match(reportLines(undefined, 'x')[0], /no result/);
 });
+
+test('the probe leaves out what a Qualor scan leaves out (qualor-cc BUILTIN_EXCLUDES)', () => {
+  // Minified and vendored bundles, dependencies and build output never reach the rules in a Qualor scan; a probe that
+  // scans them measures something no user runs (nopCommerce's 163 vendored *.min.js took the JS rules past an hour).
+  for (const g of ['**/node_modules/**', '**/vendor/**', '**/*.min.js', '**/*.min.css', '**/dist/**', '**/obj/**', '**/*.g.cs']) {
+    assert.ok(PRODUCT_EXCLUDES.includes(g), g);
+  }
+  assert.deepEqual(targetExcludes(), [...PRODUCT_EXCLUDES]);
+  assert.deepEqual(targetExcludes(['fixtures/**']), [...PRODUCT_EXCLUDES, 'fixtures/**']);
+});
+
+test('each target is scanned with its excludes as --exclude arguments', () => {
+  const script = scanScript(['--config', '/src/rules'], [{ name: 'shop', dir: '/c/ref/shop', excludes: targetExcludes() }], '/c');
+  const line = script.find((l) => l.includes('/out/shop.json'));
+  assert.ok(line, script.join(' / '));
+  for (const g of PRODUCT_EXCLUDES) assert.ok(line.includes(`${sq('--exclude')} ${sq(g)}`), g);
+  assert.ok(line.startsWith(`cd ${sq('/cache/ref/shop')} && opengrep scan ${sq('--config')} ${sq('/src/rules')} `), line);
+});
+

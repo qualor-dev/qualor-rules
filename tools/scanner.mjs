@@ -5,8 +5,8 @@
 //   node tools/scanner.mjs probe [--recall] [--only a,b] <rule.yml|directory>...     (npm run probe --)
 //     Runs the named rules on the REFERENCE.md projects of their languages (`use` noise; --recall adds
 //     the recall sets) and on qualor-cc's local main, each cloned at its pinned commit into the main
-//     tree's git-ignored .tmp/ (shared by all worktrees), and prints every finding. Exits 1 when a
-//     rule reports anything on qualor-cc.
+//     tree's git-ignored .tmp/ (shared by all worktrees), leaving out what a Qualor scan leaves out
+//     (PRODUCT_EXCLUDES), and prints every finding. Exits 1 when a rule reports anything on qualor-cc.
 //   node tools/scanner.mjs scan <rule.yml|directory>... -- <file|directory>...       (npm run scan --)
 //     Runs the named rules on files of this tree (a reviewer's probe files under .tmp/, say) and
 //     prints every finding.
@@ -37,6 +37,53 @@ const image = process.env.QUALOR_SCANNER_IMAGE || 'qualor/scanner:6b1';
 // repositories.
 const SCAN = [...ENGINE.args, '--json', '--disable-version-check', '--no-rewrite-rule-ids', '--quiet', '--x-ignore-semgrepignore-files', '--max-target-bytes', '1048576'];
 const GIT_SAFE = ['-e', 'GIT_CONFIG_COUNT=1', '-e', 'GIT_CONFIG_KEY_0=safe.directory', '-e', 'GIT_CONFIG_VALUE_0=*'];
+/**
+ * The paths a Qualor scan never gives to an analyzer: a copy of qualor-cc's BUILTIN_EXCLUDES
+ * (packages/shared/src/config/schema.ts; keep the two equal). The probe leaves them out too, so it measures
+ * what users run: minified and vendored bundles, installed dependencies and build output (OpenGrep takes
+ * these globs as they are written). A reference project such as nopCommerce carries hundreds of vendored
+ * *.min.js files that no Qualor scan reaches.
+ */
+export const PRODUCT_EXCLUDES = Object.freeze([
+  '**/node_modules/**',
+  '**/.git/**',
+  '**/dist/**',
+  '**/build/**',
+  '**/target/**',
+  '**/*.min.js',
+  '**/*.min.css',
+  '**/vendor/**',
+  '.qualor/**',
+  '**/obj/**',
+  '**/bin/Debug/**',
+  '**/bin/Release/**',
+  '**/*.g.cs',
+  '**/*.g.i.cs',
+  '**/*.Designer.cs',
+  '**/.venv/**',
+  '**/venv/**',
+  '**/.tox/**',
+  '**/.nox/**',
+  '**/__pycache__/**',
+  '**/__pypackages__/**',
+  '**/.eggs/**',
+  '**/site-packages/**',
+  '**/Pods/**',
+  '**/Carthage/**',
+  '**/.build/**',
+  '**/.bundle/**',
+  '**/db/schema.rb',
+  '**/testdata/**',
+  '**/*.pb.go',
+  '**/CMakeFiles/**',
+  '**/cmake-build-*/**',
+  '**/_deps/**',
+]);
+
+/** A probe target's excludes: Qualor's built-in ones, then the target's own (qualor-cc's sources.exclude). */
+export function targetExcludes(own = []) {
+  return [...PRODUCT_EXCLUDES, ...own];
+}
 /** How many qualor-cc clones (one per main SHA) the probe keeps. */
 const KEEP_QUALOR_CC = 2;
 
@@ -196,13 +243,19 @@ function qualorCcClone(cache, main) {
  * Scans `targets` ({ name, dir under cache, excludes }) with the --config `args` in one container;
  * each result lands in `<out>/<name>.json` (stderr in `.err`).
  */
-export function scanTargets(args, targets, cache, out) {
+/** The container's shell script for scanTargets: one `opengrep scan` per target, with the target's excludes. */
+export function scanScript(args, targets, cache) {
   const lines = ['set -u'];
   for (const t of targets) {
     const dir = `/cache/${relTo(cache, t.dir)}`;
     const scan = [...args, ...SCAN, ...t.excludes.flatMap((e) => ['--exclude', e]), '--output', `/out/${t.name}.json`, '.'];
     lines.push(`cd ${sq(dir)} && opengrep scan ${scan.map(sq).join(' ')} >/dev/null 2>/out/${t.name}.err || echo "${t.name}: opengrep exited $?" >&2`);
   }
+  return lines;
+}
+
+export function scanTargets(args, targets, cache, out) {
+  const lines = scanScript(args, targets, cache);
   const status = docker(['run', '--rm', '--name', `qr-probe-${process.pid}`, '-e', 'HOME=/tmp', ...GIT_SAFE, '-v', `${root}:/src:ro`, '-v', `${cache}:/cache:ro`, '-v', `${out}:/out`, '--entrypoint', 'sh', image, '-c', lines.join('\n')]);
   if (status !== 0) throw new Error(`docker exited ${status}`);
 }
@@ -232,11 +285,11 @@ function probe(argv) {
   const targets = [];
   for (const p of projects) {
     if (!langs.has(p.lang) || (p.use === 'recall' && !recall && !only?.has(p.project)) || (only && !only.has(p.project))) continue;
-    targets.push({ name: p.project, dir: referenceClone(cache, p), excludes: [] });
+    targets.push({ name: p.project, dir: referenceClone(cache, p), excludes: targetExcludes() });
   }
   if (!only || only.has('qualor-cc')) {
     const cc = qualorCcClone(cache, main);
-    targets.push({ name: 'qualor-cc', label: `qualor-cc (main ${cc.sha.slice(0, 12)})`, dir: cc.dir, excludes: cc.excludes });
+    targets.push({ name: 'qualor-cc', label: `qualor-cc (main ${cc.sha.slice(0, 12)})`, dir: cc.dir, excludes: targetExcludes(cc.excludes) });
   }
   const out = outDir();
   scanTargets(args, targets, cache, out);
