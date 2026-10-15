@@ -35,6 +35,10 @@ public sealed class TaintEngine
     /// Test hook: called before each seed (request data at a body's parameter) runs its global effects.
     internal Action? BeforeSeed { get; set; }
 
+    /// Test hook: the clock the time budget reads (the system's by default; a test's manual clock makes the time limit
+    /// pass exactly where the test says, whatever the host's load).
+    internal TimeProvider Clock { get; set; } = TimeProvider.System;
+
     /// The summaries of the last run (the brief's view), by body symbol: for tests and diagnostics.
     internal IReadOnlyDictionary<IMethodSymbol, Summary> Summaries() =>
         _last?.Summaries() ?? new Dictionary<IMethodSymbol, Summary>(SymbolEqualityComparer.Default);
@@ -49,7 +53,7 @@ public sealed class TaintEngine
 
     public AnalysisResult Analyze(LoadedSolution solution, CancellationToken ct)
     {
-        var budget = new Budget(_options, ct);
+        var budget = new Budget(_options, ct, Clock);
         var ctx = new AnalysisContext(_models, _options);
         var misuse = new MisuseChecks(_models.Rules);
         SummaryComputer? computer = null;

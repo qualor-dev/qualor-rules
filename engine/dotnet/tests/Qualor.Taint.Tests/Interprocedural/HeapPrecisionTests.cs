@@ -173,9 +173,45 @@ public sealed class HeapPrecisionTests
     [Fact]
     public void The_budget_is_checked_while_seeds_run()
     {
-        // A chain of 300 calls: the controller's one seed drains through 300 call edges in one Drain. The hook lets the
-        // time limit pass at the first seed; the run stops there (R-E12) instead of draining all 300.
+        // A chain of 300 calls: the controller's one seed drains through 300 call edges in one Drain. The engine's clock
+        // is a manual one that stands still until the first seed, where the hook moves it past the limit; the run stops
+        // there (R-E12) instead of draining all 300. No wall-clock margin: a slow host cannot pass the limit earlier.
         const int length = 300;
+        var solution = Snippet.Compile(Chain(length));
+        var limit = TimeSpan.FromSeconds(3);
+        var clock = new ManualClock();
+        var seeds = 0;
+        var engine = new TaintEngine(Snippet.Models, new TaintEngineOptions(limit, 4L << 30))
+        {
+            Clock = clock,
+            BeforeSeed = () =>
+            {
+                if (seeds++ == 0) clock.Advance(limit);
+            },
+        };
+        var result = engine.Analyze(solution, CancellationToken.None);
+        Assert.False(result.Complete);
+        Assert.StartsWith("time limit of", result.IncompleteReason);
+        Assert.Equal(1, seeds);
+        Assert.True(result.Findings.Count < length);
+    }
+
+    [Fact]
+    public void The_same_chain_drains_fully_while_the_clock_stands_still()
+    {
+        // The control for the test above: without the clock moving, the one seed drains all 300 call edges and the run is
+        // complete, so the stop above is the budget check inside the drain, not the chain's size.
+        const int length = 300;
+        var solution = Snippet.Compile(Chain(length));
+        var engine = new TaintEngine(Snippet.Models, new TaintEngineOptions(TimeSpan.FromSeconds(3), 4L << 30)) { Clock = new ManualClock() };
+        var result = engine.Analyze(solution, CancellationToken.None);
+        Assert.True(result.Complete, result.IncompleteReason);
+        Assert.Equal(length, result.Findings.Count);
+    }
+
+    /// A controller whose one seed drains through a chain of `length` calls, each with a SQL sink of the request data.
+    private static string Chain(int length)
+    {
         var code = new System.Text.StringBuilder("public class Chain\n{\n    private readonly SqlConnection _c = new();\n");
         for (var i = 0; i < length; i++)
         {
@@ -184,23 +220,19 @@ public sealed class HeapPrecisionTests
         }
         code.Append("}\npublic class ItemsController : ControllerBase\n{\n    private readonly Chain _chain = new();\n");
         code.Append("    public IActionResult M(string q) { _chain.M0(q); return Ok(); }\n}\n");
-        var solution = Snippet.Compile(code.ToString());
-        var limit = TimeSpan.FromSeconds(3);
-        var clock = System.Diagnostics.Stopwatch.StartNew();
-        var seeds = 0;
-        var engine = new TaintEngine(Snippet.Models, new TaintEngineOptions(limit, 4L << 30))
-        {
-            BeforeSeed = () =>
-            {
-                if (seeds++ == 0 && clock.Elapsed < limit + TimeSpan.FromMilliseconds(200))
-                    Thread.Sleep(limit + TimeSpan.FromMilliseconds(200) - clock.Elapsed);
-            },
-        };
-        var result = engine.Analyze(solution, CancellationToken.None);
-        Assert.False(result.Complete);
-        Assert.StartsWith("time limit of", result.IncompleteReason);
-        Assert.Equal(1, seeds);
-        Assert.True(result.Findings.Count < length);
+        return code.ToString();
+    }
+
+    /// A clock that moves only when told to (the engine's budget reads its time from TaintEngine.Clock).
+    private sealed class ManualClock : TimeProvider
+    {
+        private long _ticks;
+
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+
+        public override long GetTimestamp() => Interlocked.Read(ref _ticks);
+
+        public void Advance(TimeSpan by) => Interlocked.Add(ref _ticks, by.Ticks);
     }
 
     private const string Usings = """
