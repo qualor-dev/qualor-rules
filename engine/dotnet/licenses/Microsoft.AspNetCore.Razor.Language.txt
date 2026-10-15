@@ -1,5 +1,5 @@
 Microsoft.AspNetCore.Razor.Language 6.0.36 (ASP.NET Core 6.0 Razor compiler, https://github.com/dotnet/aspnetcore, commit 64ea4108e7dcf1ca575f8dd2028363b0b1ef6ebc)
-Licence: MIT (the package's licence expression; its third-party notices: THIRD-PARTY-NOTICES.TXT in the package)
+Licence: MIT (the package's licence expression; its third-party notices: Microsoft.AspNetCore.Razor.THIRD-PARTY-NOTICES.TXT next to this file, the package's THIRD-PARTY-NOTICES.TXT unchanged)
 
 The MIT License (MIT)
 

@@ -1,2 +1,6 @@
 * text=auto eol=lf
 *.tar.gz binary
+# Third-party notices shipped in the pack byte for byte as their packages have them (CRLF included):
+# tools/release.mjs pins their SHA-256.
+engine/dotnet/licenses/*NOTICES.TXT -text
+engine/dotnet/licenses/*.rtf -text

@@ -1,5 +1,5 @@
 Microsoft.CodeAnalysis.Common and Microsoft.CodeAnalysis.CSharp 5.6.0 (.NET Compiler Platform "Roslyn", https://github.com/dotnet/roslyn)
-Licence: MIT
+Licence: MIT (third-party notices: Microsoft.CodeAnalysis.ThirdPartyNotices.rtf next to this file, the package's ThirdPartyNotices.rtf unchanged)
 
 The MIT License (MIT)
 

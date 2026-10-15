@@ -151,3 +151,35 @@ test('a third-party DLL without a licence text, or a *.pdb, is refused', () => {
   writeFileSync(path.join(dir, 'engine/dotnet/publish/Qualor.Taint.Cli.pdb'), 'x');
   assert.throws(() => buildRelease(dir), /\*\.pdb/);
 });
+
+test('a licence text covers its own DLL only (an exact name, or a listed alias)', () => {
+  const dir = copyRepo();
+  const publish = path.join(dir, 'engine/dotnet/publish');
+  // Microsoft.CodeAnalysis.txt names Roslyn's two packages: the CSharp DLL is its listed alias ...
+  writeFileSync(path.join(publish, 'Microsoft.CodeAnalysis.dll'), 'x');
+  writeFileSync(path.join(publish, 'Microsoft.CodeAnalysis.CSharp.dll'), 'x');
+  buildRelease(dir);
+  // ... but it does not cover another Microsoft.CodeAnalysis.* DLL, which needs its own text.
+  writeFileSync(path.join(publish, 'Microsoft.CodeAnalysis.Razor.dll'), 'x');
+  rmSync(path.join(dir, 'engine/dotnet/licenses/Microsoft.CodeAnalysis.Razor.txt'));
+  assert.throws(() => buildRelease(dir), /Microsoft\.CodeAnalysis\.Razor\.dll: no licence text/);
+});
+
+test('a DLL whose package carries third-party notices ships them, byte for byte as pinned', () => {
+  const dir = copyRepo();
+  const publish = path.join(dir, 'engine/dotnet/publish');
+  const licences = path.join(dir, 'engine/dotnet/licenses');
+  writeFileSync(path.join(publish, 'Microsoft.AspNetCore.Razor.Language.dll'), 'x');
+  writeFileSync(path.join(publish, 'System.Collections.Immutable.dll'), 'x');
+  writeFileSync(path.join(publish, 'Microsoft.CodeAnalysis.dll'), 'x');
+  const paths = JSON.parse(buildRelease(dir).manifestText).dotnetEngine.files.map((f) => f.path);
+  for (const n of ['Microsoft.AspNetCore.Razor.THIRD-PARTY-NOTICES.TXT', 'dotnet-runtime.THIRD-PARTY-NOTICES.TXT', 'Microsoft.CodeAnalysis.ThirdPartyNotices.rtf']) {
+    assert.ok(paths.includes(`dotnet/engine/licenses/${n}`), n);
+  }
+  const notices = path.join(licences, 'Microsoft.AspNetCore.Razor.THIRD-PARTY-NOTICES.TXT');
+  const original = readFileSync(notices);
+  writeFileSync(notices, Buffer.concat([original, Buffer.from('changed')]));
+  assert.throws(() => buildRelease(dir), /Microsoft\.AspNetCore\.Razor\.THIRD-PARTY-NOTICES\.TXT: SHA-256/);
+  rmSync(notices);
+  assert.throws(() => buildRelease(dir), /Microsoft\.AspNetCore\.Razor\.Language\.dll: its third-party notices/);
+});

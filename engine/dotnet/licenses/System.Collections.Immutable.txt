@@ -1,5 +1,5 @@
 System.Collections.Immutable 10.0.1 (https://github.com/dotnet/runtime)
-Licence: MIT
+Licence: MIT (third-party notices: dotnet-runtime.THIRD-PARTY-NOTICES.TXT next to this file, the package's THIRD-PARTY-NOTICES.TXT unchanged)
 
 The MIT License (MIT)
 
