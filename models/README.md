@@ -1109,3 +1109,60 @@ false positives (FP) or misses (FN) there.
 - Witness paths are not stable from run to run (seen in Task 31's measurement, from before it: the same code gave
   OrchardCore 30 and Jellyfin 10 results whose codeFlows differ, by alternative but equivalent paths). The finding set
   is stable: compare measurements by rule, file and line, not by the reported path.
+
+### High-confidence false positives left after Stage 6e (spec R-13)
+
+Spec R-13 replaced the "at most 3 high-confidence false positives" ceiling: every high-confidence false positive left
+on the noise projects must rest on a project-specific invariant or a recorded engine limit, named here and in
+MEASUREMENTS.md ("C# engine, re-measured after Stage 6d (Task 25b)", its "after Stage 6e" addendum). After Task 35 ten
+are left (high 34 true / 10 false); each is described in our own words, by file and line of the measured commit.
+
+- **nopCommerce, five redirects to the request's own URL** (csharp.open-redirect; `Nop.Web.Framework/Mvc/Filters`:
+  `HttpsRequirementAttribute.cs:106` and `:110`, `ValidateHoneypotAttribute.cs:90`, `WwwRequirementAttribute.cs:76` and
+  `:80`). Each filter redirects to "this page" again: the store's own location (scheme, Host header, path base; for the
+  `www.` filter with that prefix added or removed) followed by the request path. The location comes from a project helper
+  that assigns its result several times, trims a trailing slash, may return a URL stored in the settings and has an
+  empty-host branch. Invariant: a request always has a host, and the stored URL is the operator's, so the target never
+  leaves the site. Engine limit: the fixed-origin prefix is not followed through a local assigned several times, `TrimEnd`
+  or a helper that may return `""` or a stored text (see the fixed-origin bullet above); making the empty-host branch
+  safe would need that invariant, which the engine cannot prove.
+- **Jellyfin, four paths through the project's filename sanitizer** (csharp.path-traversal;
+  `Emby.Server.Implementations/Library/LibraryManager.cs:3842` and `:1374`,
+  `Emby.Server.Implementations/Serialization/MyXmlSerializer.cs:74`, `src/Jellyfin.Extensions/FileHelper.cs:16`). A
+  library folder named by an administrator's request (three sites: the folder, its collection-type marker file, its
+  options file), or an artist's studio name from a query (one site), becomes a folder name. The project's own sanitizer
+  replaces directory separators and invalid file-name characters with spaces; a name of only dots stays a dot segment,
+  and it is made harmless by project logic around it: a loop that picks another name while the folder exists, or the
+  trimming of trailing dots. Invariant: those two project steps together. Engine limit: a project's character-replacing
+  helper is no sanitizer (it would have to be trusted for every caller), and the rename loop is no guard. A user-declared
+  sanitizer would be a product option, not an engine change.
+- **nopCommerce, one view link with correlated conditions** (csharp.xss; `Nop.Web/Views/Checkout/_PickupPoints.cshtml:127`,
+  group G1b). After a failed post, the shipping-address step renders its own view again with the posted model. The
+  model factory replaces the pickup-point part of the model under the same store setting that makes the view render the
+  pickup partial, so the posted part never reaches the partial. The engine sees a conditional (weak) write in the
+  factory and an unrelated flag in the view. Engine limit: path conditions are not carried across a call into a view
+  (Objects above: "a member assigned only under a condition the caller decides"); a lever would cost three or more
+  engine tasks with a memory and time risk on nopCommerce, so it is not taken.
+
+The five other high false positives of Task 25b went to medium in Task 35: a guard carried to values derived from the
+guarded variable before the check (Jellyfin's configuration file read), containment checked by a helper that normalises
+an already normalised path again (the lyric save paths), and a "no directory separator" check (the subtitle save paths).
+What keeps those medium is a heap read, not the guard.
+
+### Firm-core misses (spec R-13)
+
+The firm core of the 6B-C# sink inventory is accepted at 3 of 6 flows (the media cache folder, 24.12, counts as
+constrained under ruling R-E37: a PhysicalFileProvider scopes the path to its root, so the engine's silence there is
+right). Found: the eShop webhook grant URL (a Minimal API body, high), the nopCommerce store HTTP client (high), the
+OrchardCore workflow form redirect (medium). The three misses, each an engine or model limit recorded above:
+
+- **The tus upload id** (OrchardCore, one flow, sites 22.9, 22.10, 22.11 and 22.13). The file id reaches the project's
+  store through a third-party tus library's callback; no documentation the models could cite says that id is
+  unvalidated request data, so it is no source (Task 29). Two of these sites were reported before Task 23, but only
+  through an unrelated settings path, never through the upload id.
+- **A framework callback** (OrchardCore, 23.1). A module's static-file provider is called by ASP.NET Core's static-file
+  middleware with the request path; no action, handler or documented source leads there, and callbacks a framework
+  makes into the project are not followed (Not followed, above).
+- **The Cyqwel SQL parser** (OrchardCore, 25.30). Query text is parsed into a third-party syntax tree and generated back
+  as SQL; the tree is neither string-like nor a collection, and no documentation basis exists for a model (ruling R-E38),
+  so the flow stops at the parser.

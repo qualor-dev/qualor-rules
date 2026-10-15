@@ -24,6 +24,15 @@ Entry format:
   branches left behind.
 ```
 
+## 2026-10-15: release preparation for the Roslyn engine and the C# rules (Phase 6B-C# R, Task 19 prep)
+
+- **Request:** the Roslyn engine plan's Task 19, preparation only: the spec R-13 acceptance written down, a robust budget test, and a current measurement for `/release-pack` (ruling R18 of the 6B-C# rules ledger). Nothing pushed, tagged or published.
+- **Done:** the budget test with a manual clock (TaintEngine.Clock test hook, a control test; the drain's check removed fails it); MEASUREMENTS.md "after Stage 6e" addendum to the Task 25b section and models/README.md "Known limits" sections for the 10 remaining high-confidence false positives and the 3 firm-core misses; `npm run measure` at the release tip.
+- **Blocked:** none. Acceptance under spec R-13: met (high 34 true / 10 false, each on a recorded invariant or limit; firm core 3 of 6 with the misses recorded; recall 23/26; budgets kept).
+- **Backlog:** none added.
+- **Measurement:** MEASUREMENTS.md 2026-10-15 (rules 6718e8e, all five languages, --taint-intrafile): every set identical to the 2026-10-13 entry; Benchmark §8.4 met in all six covered Java categories. `npm run measure -- --check` passes (42025b3). Engine tests 829/829 (828 + the new control test).
+- **Notes:** the next pack is 2026.10.5 (the 12 C# rules already say `since: 2026.10.5`); released in November it is 2026.11.0, with the `since:` lines renumbered and a new measurement. The release steps are in the controller's `release-handover.md`. The default `qualor/scanner:6b1` image is gone locally; the measurement ran with `QUALOR_SCANNER_IMAGE=qualor/scanner:rules-2026.10.4` (OpenGrep 1.30.0).
+
 ## 2026-10-15: Roslyn engine re-measured after Stage 6d (Phase 6B-C# R, Task 25b)
 
 - **Request:** the Roslyn engine plan's Task 25b: Task 25's measurement through the real product path again, after Stage 6d (Tasks 32, 33, 34), on `csharp` b008874 with a fresh local dev image.

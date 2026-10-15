@@ -281,6 +281,45 @@ The engine at `csharp` b008874 (Stage 6d: precise reach without fallback cycles,
 - **Time and memory** (the engine process inside `qualor dotnet end`): nopCommerce 1:23.1 / 3.42 GiB (the whole `end` 7:16), OrchardCore 1:37.4 / 3.40 GiB, Jellyfin 59.6 s / 1.34 GiB, eShop 12.4 s / 0.32 GiB, recall sets under 4 s. Budgets kept; nopCommerce memory is 0.33 GB under 4 GB. Tests 804 of 804; rebuild fidelity 352 of 352 projects with 0 errors.
 - **Acceptance: not met** (noise; firm core 3 of 7). Recall, fidelity, tests and budgets met. The maintainer decides on the noise criterion.
 
+#### After Stage 6e (Task 35, addendum, 2026-10-15)
+
+Stage 6e (`csharp` e765976) added three guard levers (a guard carried to values derived from the guarded variable
+before the check, containment by a helper that normalises an already normalised path again, a "no directory separator"
+check), fixed witness defect W1 and bound the parameters of lambdas given to .NET members by their documented
+signatures. Re-measured on all 11 sets with the Task 25b inputs: the finding sets are identical, and 5 Jellyfin findings
+went from high to medium (all false: the configuration file read, the two lyric save paths, the two subtitle save
+paths). No true finding was lost.
+
+- **Final numbers (noise projects):** high **34 true / 10 false**; medium **21 true / 248 false** (92.2 % false).
+  Recall **23 of 26**. Firm core **3 of 6 flows** (the media cache folder counted as constrained, ruling R-E37).
+  Budgets kept: nopCommerce 1:20–1:24 and 3.37–3.41 GiB for the engine on the kept inputs (Task 25b's real path:
+  1:23.1, 3.42 GiB, 0.33 GB under 4 GB), eShop 9.3 s / 0.31 GiB. Tests 828 of 828 (829 with Task 19's control test).
+- **Acceptance under spec R-13** (the noise ceiling replaced by: every remaining high false positive rests on a
+  documented project invariant or engine limit; firm core accepted at 3 of 6 with the misses recorded): **met**. The 10
+  remaining high-confidence false positives, by cause:
+  - **5 nopCommerce redirects to the request's own URL** (open-redirect, the `Https`, `ValidateHoneypot` and `Www`
+    requirement filters): each redirects to the same page again, built from the store's own location and the request
+    path. The location comes from a helper that assigns its result several times, trims it, may return the stored store
+    URL and has an empty-host branch. They are safe only because a request always has a host and the stored URL is the
+    operator's; the engine does not follow a fixed origin through such a helper.
+  - **4 Jellyfin paths through the project's filename sanitizer** (path-traversal: a new library folder, its marker
+    file and its options file, named by an administrator's request; a per-artist folder named by a query's studio name).
+    The sanitizer replaces separators and invalid characters with spaces; a dot-only name is then made harmless only by
+    the project's own logic (renaming while the folder exists, or trimming trailing dots), which the engine cannot
+    trust as a sanitizer for every caller.
+  - **1 nopCommerce view link with correlated conditions** (xss, the checkout pickup-points partial): after a failed
+    post the step renders its own view again; the model factory replaces the pickup part of the model under the same
+    setting that makes the view render that partial. The engine sees a conditional write in the factory and an
+    unrelated flag in the view; carrying path conditions across a call into a view was judged too costly (three or more
+    engine tasks, with a memory and time risk on nopCommerce).
+- **Firm-core misses (recorded):** the tus upload id (OrchardCore 22.9–22.13: a third-party library's callback, no
+  documented source), a framework callback (OrchardCore 23.1: the static-file middleware calls a module's file provider
+  with the request path), and the Cyqwel SQL parser (OrchardCore 25.30: a third-party syntax tree with no documentation
+  basis for a model).
+- Each cause is also in `models/README.md`, "Known limits" (sections "High-confidence false positives left after Stage
+  6e" and "Firm-core misses"); per-finding details in the controller's ledger (`engine-measurement-25b.md`,
+  `task-35-report.md`).
+
 ## 2026-10-12 rules f8b01fae64a77dfcd6d4f3b52bb483f94e244460 (js, python, java, go)
 
 OpenGrep 1.30.0 with --taint-intrafile; 4 rule directories; results in `.tmp/probe/2026-10-12T17-23-59-970Z`.
