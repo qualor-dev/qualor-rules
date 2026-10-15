@@ -76,7 +76,8 @@ commit on any machine with the same Node.js major version (the gzip stream comes
 zlib). Qualor's scanner pins that SHA-256.
 
 The tarball also carries the C# taint engine: `dotnet/engine/` (the published, framework-dependent
-`Qualor.Taint.Cli`, no `*.pdb`, with the licence text of every third-party DLL in
+`Qualor.Taint.Cli`, no `*.pdb`, with the licence text of every third-party DLL and the
+third-party notices its package carries, unchanged and pinned by SHA-256, in
 `dotnet/engine/licenses/`) and the models in `dotnet/models/csharp/`. The manifest's
 `dotnetEngine` (`{ version, entry, models, files: [{ path, sha256 }] }`) lists each of those
 files; the older fields are unchanged. `npm run release` first runs `npm run build:engine`
