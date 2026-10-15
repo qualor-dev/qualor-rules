@@ -60,6 +60,13 @@ internal sealed partial class MethodAnalyzer
                 Facts(either.LeftOperand, false, state, ref refined, depth + 1);
                 Facts(either.RightOperand, false, state, ref refined, depth + 1);
                 break;
+            // Task 33: `a || b` true (and `a && b` false) holds what both sides hold.
+            case IBinaryOperation { OperatorKind: BinaryOperatorKind.ConditionalOr } either:
+                EitherSide(either.LeftOperand, either.RightOperand, true, state, ref refined, depth);
+                break;
+            case IBinaryOperation { OperatorKind: BinaryOperatorKind.ConditionalAnd } both:
+                EitherSide(both.LeftOperand, both.RightOperand, false, state, ref refined, depth);
+                break;
             case IBinaryOperation { OperatorKind: BinaryOperatorKind.Equals or BinaryOperatorKind.NotEquals } equality:
             {
                 // `ModelState.IsValid == false` (Task 31): the check's own outcome.
@@ -85,6 +92,10 @@ internal sealed partial class MethodAnalyzer
             case IFlowCaptureReferenceOperation capture when _captured.TryGetValue(capture.Id, out var list) && list.Count == 1:
                 Facts(list[0], outcome, state, ref refined, depth + 1);
                 break;
+            // Task 33: a condition held in a bool local.
+            case ILocalReferenceOperation { Local: { Type.SpecialType: SpecialType.System_Boolean, RefKind: RefKind.None } flag } use:
+                StoredCondition(flag, use, outcome, state, ref refined, depth);
+                break;
         }
     }
 
@@ -96,6 +107,12 @@ internal sealed partial class MethodAnalyzer
         {
             if (IsConstant(right) && IsEqualityType(left)) CleanAll(left, state, ref refined);
             if (IsConstant(left) && IsEqualityType(right)) CleanAll(right, state, ref refined);
+            // Task 33: a value equal to a sanitizer's result on it (`x == Path.GetFileName(x)`) is as clean as that result;
+            // a value equal to another is as clean as that other.
+            FixedPoint(left, right, state, ref refined);
+            FixedPoint(right, left, state, ref refined);
+            if (!IsConstant(right) && IsEqualityType(left) && _operands.TryGetValue(right.Syntax, out var r)) Narrow(left, r, right, state, ref refined);
+            if (!IsConstant(left) && IsEqualityType(right) && _operands.TryGetValue(left.Syntax, out var l)) Narrow(right, l, left, state, ref refined);
         }
         if (IsNull(right)) NullCheck(left, !equal, state, ref refined);
         else if (IsNull(left)) NullCheck(right, !equal, state, ref refined);
@@ -131,7 +148,7 @@ internal sealed partial class MethodAnalyzer
     {
         var method = call.TargetMethod;
         if (outcome && _ctx.Validation.IsTryValidate(call)) TryValidated(call, state, ref refined);
-        if (outcome && method.Name == "Equals" && method.ContainingType is { SpecialType: not (SpecialType.None or SpecialType.System_Object) })
+        if (outcome && ((method.Name == "Equals" && method.ContainingType is { SpecialType: not (SpecialType.None or SpecialType.System_Object) }) || IsSpanEquals(method)))
         {
             if (call.Instance != null && call.Arguments.Length >= 1) Equality(call.Instance, call.Arguments[0].Value, true, true, state, ref refined);
             else if (method.IsStatic && call.Arguments.Length >= 2) Equality(call.Arguments[0].Value, call.Arguments[1].Value, true, true, state, ref refined);
@@ -141,18 +158,32 @@ internal sealed partial class MethodAnalyzer
         {
             if (guard.Kind != GuardKind.Result || guard.CleanWhen != outcome) continue;
             var checkedValue = guard.Arg < 0 ? ThisOperation(call) : SinkConditions.ArgumentValue(call, guard.Arg);
-            if (checkedValue != null && Holds(guard, call, checkedValue, state)) Clean(checkedValue, new[] { rule }, state, ref refined);
+            if (checkedValue == null || !Holds(guard, call, checkedValue, state, out var extra)) continue;
+            var rules = new[] { rule };
+            Clean(checkedValue, rules, state, ref refined, extra);
+            // Task 33: the path a checked full path was made of (`GetFullPath(p)`) resolves to the same file.
+            foreach (var source in FullPathSources(checkedValue, guard)) Clean(source, rules, state, ref refined, extra);
         }
 
-        if (outcome && _ctx.Sinks.AllowListRules.Length > 0 && method.Name is "Contains" or "ContainsKey" && !SymbolKeys.InSource(method))
+        if (outcome && _ctx.Sinks.AllowListRules.Length > 0 && method.Name is "Contains" or "ContainsKey" or "TryGetValue" && !SymbolKeys.InSource(method))
         {
             var first = call.Instance != null ? 0 : 1;
             var table = call.Instance ?? (call.Arguments.Length > 1 ? call.Arguments[0].Value : null);
             var value = call.Arguments.Length > first ? call.Arguments[first].Value : null;
-            // Any further argument is a comparer: only one of .NET's own (a project's comparer may say anything is equal).
-            var comparers = call.Arguments.Skip(first + 1).All(a => a.ArgumentKind == ArgumentKind.DefaultValue || AllowLists.IsNetComparer(Unwrapped(a.Value)));
-            if (value != null && comparers && _ctx.AllowLists.IsTable(table, Model()?.Compilation)) Clean(value, _ctx.Sinks.AllowListRules, state, ref refined);
+            // Any further argument (not an `out` value) is a comparer: only one of .NET's own (a project's comparer may say
+            // anything is equal).
+            var comparers = call.Arguments.Skip(first + 1).All(a => a.ArgumentKind == ArgumentKind.DefaultValue || a.Parameter?.RefKind == RefKind.Out
+                || AllowLists.IsNetComparer(Unwrapped(a.Value)));
+            // Task 33: a collection the server built and the request never wrote is an allow-list too (a dictionary's keys:
+            // ContainsKey, TryGetValue, Keys).
+            if (value != null && comparers && (_ctx.AllowLists.IsTable(table, Model()?.Compilation) || ServerCollection(table, method.Name != "Contains")))
+                Clean(value, _ctx.Sinks.AllowListRules, state, ref refined);
         }
+
+        // Task 33: a project method returning bool whose summary says what its arguments hold on this outcome; a search
+        // whose predicate matched (`Any`, `Exists`).
+        if (method.ReturnType.SpecialType == SpecialType.System_Boolean) GuardSummary(call, outcome, state, ref refined);
+        if (outcome && SearchOf(method) == Search.True) SearchNarrow(call, null, state, ref refined);
     }
 
     /// A null check of `checkedLocal`: where it is not null, the `not-null` guards of the call it was assigned clean that
@@ -161,16 +192,24 @@ internal sealed partial class MethodAnalyzer
     {
         if (!notNull) return;
         while (checkedLocal is IConversionOperation c) checkedLocal = c.Operand;
+        // Task 33: a search's result checked in place (`if (list.Find(...) is null) return;`).
+        if (checkedLocal is IInvocationOperation searched && SearchOf(searched.TargetMethod) == Search.NotNull)
+        {
+            SearchNarrow(searched, null, state, ref refined);
+            return;
+        }
         if (checkedLocal is not ILocalReferenceOperation local || Assignments(local.Local) is not [var assigned]) return;
         if (Awaited(assigned) is not { } call) return;
+        if (SearchOf(call.TargetMethod) == Search.NotNull) SearchNarrow(call, call, state, ref refined);
         foreach (var (rule, guard) in _ctx.Sinks.Guards.Match(call.TargetMethod, Access.Call))
         {
             if (guard.Kind != GuardKind.NotNull || SinkConditions.ArgumentValue(call, guard.Arg) is not { } checkedValue) continue;
-            if (UnchangedAfter(checkedValue, call) && Holds(guard, call, checkedValue, state))
+            if (UnchangedAfter(checkedValue, call) && Holds(guard, call, checkedValue, state, out var extra))
             {
-                Clean(checkedValue, new[] { rule }, state, ref refined);
+                Clean(checkedValue, new[] { rule }, state, ref refined, extra);
             }
-            else if (PathOf(checkedValue) is { } path && (refined ?? state).Fact(path) is { } fact && fact.Pending.Contains(call) && Holds(guard, call, checkedValue, state))
+            else if (PathOf(checkedValue) is { } path && (refined ?? state).Fact(path) is { } fact && fact.Pending.Contains(call) && Holds(guard, call, checkedValue, state, out var memberExtra)
+                && !memberExtra.Any)
             {
                 // A member given to the call and unchanged since (its pending fact survived every write and call).
                 refined ??= state.Clone();
@@ -209,6 +248,7 @@ internal sealed partial class MethodAnalyzer
         var type = Unwrapped(value).Type;
         if (type == null) return false;
         type = SourceFinder.UnwrapNullable(type);
+        if (IsCharSpan(type)) return true;
         return type.TypeKind == TypeKind.Enum || type.SpecialType is SpecialType.System_String or SpecialType.System_Char or SpecialType.System_Boolean
             or SpecialType.System_SByte or SpecialType.System_Byte or SpecialType.System_Int16 or SpecialType.System_UInt16 or SpecialType.System_Int32
             or SpecialType.System_UInt32 or SpecialType.System_Int64 or SpecialType.System_UInt64 or SpecialType.System_Decimal or SpecialType.System_Single
@@ -223,7 +263,11 @@ internal sealed partial class MethodAnalyzer
         if (_ctx.Sinks.Guards.IsEmpty) return;
         var guards = _ctx.Sinks.Guards.Match(method, Access.Call);
         if (guards.Length == 0) return;
-        foreach (var i in inputs) _guardArguments[i.Operation] = i.Value;
+        foreach (var i in inputs)
+        {
+            _guardArguments[i.Operation] = i.Value;
+            _guardArgumentsBySyntax[i.Operation.Syntax] = i.Value;
+        }
         if (operation is not IInvocationOperation call) return;
         foreach (var (_, guard) in guards)
         {
@@ -257,9 +301,12 @@ internal sealed partial class MethodAnalyzer
         return null;
     }
 
-    /// A guard's conditions (`when:`) at a call.
-    private bool Holds(GuardModel guard, IInvocationOperation call, IOperation checkedValue, TaintState state)
+    /// A guard's conditions (`when:`) at a call. `extra`: the parameter labels an `arg ... text` argument carries (Task 33:
+    /// in a helper given its root, the check holds as far as the caller's root is clean; Clean keeps them, for the
+    /// guard's rules, in the checked value).
+    private bool Holds(GuardModel guard, IInvocationOperation call, IOperation checkedValue, TaintState state, out TaintValue extra)
     {
+        extra = TaintValue.Clean;
         foreach (var c in guard.When)
         {
             switch (c.Kind)
@@ -268,17 +315,21 @@ internal sealed partial class MethodAnalyzer
                 {
                     var value = checkedValue;
                     while (value is IConversionOperation conversion) value = conversion.Operand;
+                    // Task 33: the call written in place (`Path.GetFullPath(p).StartsWith(...)`).
+                    if (value is IInvocationOperation inPlace && SymbolMatch.Matches(c.Member!, inPlace.TargetMethod)) break;
                     if (value is not ILocalReferenceOperation local || Assignments(local.Local) is not { Count: > 0 } all) return false;
-                    if (!all.All(a => Awaited(a) is { } from && SymbolMatch.Matches(c.Member!, from.TargetMethod))) return false;
+                    foreach (var a in all)
+                        if (!AssignedFrom(a, c.Member!, ref extra)) return false;
                     break;
                 }
                 case GuardConditionKind.ArgumentText:
                 {
                     if (SinkConditions.ArgumentValue(call, c.Arg) is not { } argument) return false;
-                    if (!_guardArguments.TryGetValue(argument, out var argumentValue) || argumentValue.Request) return false;
-                    var text = new System.Text.StringBuilder();
-                    GuardText(argument, text, 0);
-                    if (!c.Pattern!.IsMatch(text.ToString())) return false;
+                    if (!_guardArguments.TryGetValue(argument, out var argumentValue) && !_guardArgumentsBySyntax.TryGetValue(argument.Syntax, out argumentValue)) return false;
+                    if (argumentValue.Request) return false;
+                    // Every text the argument may have (Task 33: through locals and conditionals) must match.
+                    if (!GuardTexts(argument, 0, null).All(t => c.Pattern!.IsMatch(t))) return false;
+                    extra = extra.Join(argumentValue.LabelPart.WithoutIdentity());
                     break;
                 }
             }
@@ -286,39 +337,108 @@ internal sealed partial class MethodAnalyzer
         return true;
     }
 
-    /// The text a guard's argument is built from in place: constants, both sides of a string `+`, the text and holes of an
-    /// interpolated string, Path.DirectorySeparatorChar and AltDirectorySeparatorChar as '/'; any other value as Hole.
-    private static void GuardText(IOperation? op, System.Text.StringBuilder text, int depth)
+    private const int MaxTexts = 8;
+
+    /// The texts a guard's argument may have, built from: constants, both sides of a string `+`, the text and holes of an
+    /// interpolated string, Path.DirectorySeparatorChar and AltDirectorySeparatorChar as '/'; and (Task 33) what a local is
+    /// assigned (each assignment an alternative) and both arms of a conditional, where an arm that is a value `v` taken
+    /// when `Path.EndsInDirectorySeparator(v)` (or `v.EndsWith('/')`, ...) holds is a folder and a separator. Any other
+    /// value is a Hole. Beyond MaxTexts alternatives, a Hole alone (which no separator pattern matches).
+    private List<string> GuardTexts(IOperation? op, int depth, HashSet<ISymbol>? seen)
     {
         while (op is IConversionOperation c) op = c.Operand;
-        if (op == null || depth > 32) return;
+        if (op == null || depth > 32) return new List<string> { "" };
         if (op.ConstantValue is { HasValue: true, Value: string or char })
-        {
-            text.Append(Convert.ToString(op.ConstantValue.Value, System.Globalization.CultureInfo.InvariantCulture));
-            return;
-        }
+            return new List<string> { Convert.ToString(op.ConstantValue.Value, System.Globalization.CultureInfo.InvariantCulture) ?? "" };
         switch (op)
         {
             case IBinaryOperation { OperatorKind: BinaryOperatorKind.Add } b:
-                GuardText(b.LeftOperand, text, depth + 1);
-                GuardText(b.RightOperand, text, depth + 1);
-                break;
+                return Product(GuardTexts(b.LeftOperand, depth + 1, seen), GuardTexts(b.RightOperand, depth + 1, seen));
             case IInterpolatedStringOperation interpolated:
+            {
+                var texts = new List<string> { "" };
                 foreach (var part in interpolated.Parts)
                 {
-                    if (part is IInterpolatedStringTextOperation t) GuardText(t.Text, text, depth + 1);
-                    else if (part is IInterpolationOperation hole) GuardText(hole.Expression, text, depth + 1);
+                    if (part is IInterpolatedStringTextOperation t) texts = Product(texts, GuardTexts(t.Text, depth + 1, seen));
+                    else if (part is IInterpolationOperation hole) texts = Product(texts, GuardTexts(hole.Expression, depth + 1, seen));
                 }
-                break;
+                return texts;
+            }
             case IFieldReferenceOperation { Field: { Name: "DirectorySeparatorChar" or "AltDirectorySeparatorChar", ContainingType: { } type } }
                 when SymbolMatch.MetadataName(type) == "System.IO.Path":
-                text.Append('/');
-                break;
+                return new List<string> { "/" };
+            case ILocalReferenceOperation l when Assignments(l.Local) is { Count: > 0 } all && (seen == null || !seen.Contains(l.Local)):
+            {
+                seen = seen == null ? new HashSet<ISymbol>(SymbolEqualityComparer.Default) : new HashSet<ISymbol>(seen, SymbolEqualityComparer.Default);
+                seen.Add(l.Local);
+                var texts = new List<string>();
+                foreach (var a in all) texts.AddRange(GuardTexts(a is IFlowCaptureReferenceOperation ? WrittenAs(a) : a, depth + 1, seen));
+                return Capped(texts);
+            }
+            case IConditionalOperation { WhenFalse: { } whenFalse } conditional:
+            {
+                var texts = ArmTexts(conditional, conditional.WhenTrue, true, depth, seen);
+                texts.AddRange(ArmTexts(conditional, whenFalse, false, depth, seen));
+                return Capped(texts);
+            }
             default:
-                text.Append(Hole);
-                break;
+                return new List<string> { Hole.ToString() };
         }
     }
+
+    private List<string> ArmTexts(IConditionalOperation conditional, IOperation arm, bool whenTrue, int depth, HashSet<ISymbol>? seen)
+    {
+        if (EndsInSeparator(conditional.Condition) is { } check && check.Holds == whenTrue && SameVariable(arm, check.Value))
+            return new List<string> { Hole + "/" };
+        return GuardTexts(arm, depth + 1, seen);
+    }
+
+    /// `Path.EndsInDirectorySeparator(v)`, `v.EndsWith(c)` with c a separator (a constant '/' or '\', "/" or "\",
+    /// Path.DirectorySeparatorChar or AltDirectorySeparatorChar), or a negation of one: the value and whether the check
+    /// holds when the condition is true.
+    private static (IOperation Value, bool Holds)? EndsInSeparator(IOperation condition)
+    {
+        var holds = true;
+        while (true)
+        {
+            while (condition is IConversionOperation c) condition = c.Operand;
+            if (condition is IUnaryOperation { OperatorKind: UnaryOperatorKind.Not } not)
+            {
+                holds = !holds;
+                condition = not.Operand;
+                continue;
+            }
+            break;
+        }
+        if (condition is not IInvocationOperation call) return null;
+        var method = call.TargetMethod;
+        if (method.Name == "EndsInDirectorySeparator" && method.IsStatic && method.ContainingType is { } path && SymbolMatch.MetadataName(path) == "System.IO.Path"
+            && call.Arguments.Length == 1 && Unwrapped(call.Arguments[0].Value).Type?.SpecialType == SpecialType.System_String)
+            return (call.Arguments[0].Value, holds);
+        if (method.Name == "EndsWith" && method.ContainingType?.SpecialType == SpecialType.System_String && call.Instance != null && call.Arguments.Length >= 1
+            && IsSeparator(call.Arguments[0].Value))
+            return (call.Instance, holds);
+        return null;
+
+        static bool IsSeparator(IOperation op)
+        {
+            op = Unwrapped(op);
+            if (op.ConstantValue is { HasValue: true, Value: '/' or '\\' or "/" or "\\" }) return true;
+            return op is IFieldReferenceOperation { Field: { Name: "DirectorySeparatorChar" or "AltDirectorySeparatorChar", ContainingType: { } t } }
+                && SymbolMatch.MetadataName(t) == "System.IO.Path";
+        }
+    }
+
+    private static List<string> Product(List<string> a, List<string> b)
+    {
+        var result = new List<string>(a.Count * b.Count);
+        foreach (var x in a)
+            foreach (var y in b)
+                result.Add(x + y);
+        return Capped(result);
+    }
+
+    private static List<string> Capped(List<string> texts) => texts.Count <= MaxTexts ? texts : new List<string> { Hole.ToString() };
 
     /// What a local is assigned in this body (its declaration's initializer too); null when it is also written otherwise
     /// (a `ref` or `out` argument, a compound assignment, a deconstruction, an increment).
@@ -416,16 +536,20 @@ internal sealed partial class MethodAnalyzer
         }
     }
 
-    /// The value is clean for these rules on this branch. A member's access path gets the fact.
-    private void Clean(IOperation value, IReadOnlyCollection<string> rules, TaintState state, ref TaintState? refined)
+    /// The value is clean for these rules on this branch. A member's access path gets the fact. With `extra` (Task 33:
+    /// the labels a guard's condition read, Holds), the value stays request data for these rules as far as they are: a
+    /// local or parameter keeps them for these rules only; a member gets no fact.
+    private void Clean(IOperation value, IReadOnlyCollection<string> rules, TaintState state, ref TaintState? refined, TaintValue? extra = null)
     {
+        var also = extra is { Any: true } ? extra.CleanedFor(_ctx.AllBut(rules)) : null;
         foreach (var key in Keys(value))
         {
             var current = (refined ?? state).Get(key);
             if (!current.Any) continue;
             refined ??= state.Clone();
-            refined.Set(key, current.CleanedFor(rules));
+            refined.Set(key, also == null ? current.CleanedFor(rules) : current.CleanedFor(rules).WithTaintOf(also));
         }
+        if (also != null) return;
         if (rules.Count > 0 && PathOf(value) is { } path && CanHold(path))
         {
             refined ??= state.Clone();

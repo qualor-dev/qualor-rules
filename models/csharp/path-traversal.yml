@@ -126,7 +126,12 @@ sanitizers:
 # folder (U+FFFC). Inside the failing branch the path is the one that failed.
 # Differences: OpenGrep needs the check written as `if (!full.StartsWith(prefix))` before the use; the engine reads the
 # condition on the control-flow graph, so a positive check guarding its then-branch and a separator added by
-# interpolation count too; a check on a GetFullPath result written in the condition itself (no local) does not.
+# interpolation count too. Since Task 33 (models/README.md, "Guards in project code"): a check on a GetFullPath result
+# written in the condition itself; a full path assigned in a conditional whose other arm is a constant or a read-only
+# field with no request data (the root itself); a prefix held in a local or built in a conditional (`EndsInDirectorySeparator(root)
+# ? root : root + Path.DirectorySeparatorChar`); the check held in a bool local or joined with `||` to an equality with
+# the root; the path the one-argument GetFullPath was given is clean too (not GetFullPath(path, basePath), which resolves
+# against another base); and a helper returning the check's result (a guard summary).
 guards:
   - method: System.String.StartsWith
     arg: this

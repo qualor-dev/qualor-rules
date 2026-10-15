@@ -126,10 +126,23 @@ internal sealed class BodySummary
     /// The member slots the global effects use (a call site passes its argument's member for each).
     public ImmutableArray<int> MemberSlots { get; init; } = ImmutableArray<int>.Empty;
 
+    /// Guard summaries (Task 33): what a parameter the body never reassigns (passed by value, not a scalar) holds where
+    /// the body returns true (Outcome true) or false, in the body's labels, recorded only where that differs from the
+    /// parameter as given (its own label, not cleaned): `bool IsInside(string root, string p)` returns true only where p
+    /// is clean for path traversal, or where root's request data says otherwise. A call site applies it on the branch of
+    /// that outcome (MethodAnalyzer.ApplyGuardValue). Null: no parameter is tracked, or the body was not analysed yet
+    /// (nothing is known); a missing entry: the parameter as given.
+    public ImmutableDictionary<(bool Outcome, int Slot), TaintValue>? Guards { get; init; }
+
+    /// Exit summaries (Task 33): what such a parameter holds at every normal exit (a body that throws unless its check
+    /// holds), recorded and read as Guards (a call site applies it after the call).
+    public ImmutableDictionary<int, TaintValue>? Exits { get; init; }
+
     /// No local effect: a call site gets nothing back (a generic helper's view model aside, which the call site writes).
     public bool NoLocalEffects => !Return.Any && !ToThis.Any && Refs.IsEmpty && !Return.KnowsIdentity && ObjWrites.IsEmpty && (ParamExit == null || ParamExit.IsEmpty);
 
-    public bool IsEmpty => NoTaint && ReturnText == null && ParamExit == null && !Return.KnowsIdentity && TopWrites == null && Escapes.IsEmpty && ObjWrites.IsEmpty;
+    public bool IsEmpty => NoTaint && ReturnText == null && ParamExit == null && !Return.KnowsIdentity && TopWrites == null && Escapes.IsEmpty && ObjWrites.IsEmpty
+        && Guards == null && Exits == null;
 
     /// No effect on taint at all (the public view lists only the bodies that have one).
     public bool NoTaint => !Return.Any && !ToThis.Any && Refs.IsEmpty && ObjWrites.IsEmpty && Sinks.IsEmpty && Calls.IsEmpty && Heap.IsEmpty && RequestHeap.IsEmpty;
@@ -195,8 +208,33 @@ internal sealed class BodySummary
             ParamExit = paramExit,
             TopWrites = TopWrites ?? other.TopWrites,
             Escapes = Escapes.Union(other.Escapes),
+            Guards = Met(Guards, other.Guards),
+            Exits = Met(Exits, other.Exits),
         };
         return summary.WithMemberSlots();
+    }
+
+    /// Two guard (or exit) summaries joined: an entry on both sides holds the join of its values; an entry missing on one
+    /// side is the parameter as given there, so the join drops it; an unknown side (null) adds nothing.
+    private static ImmutableDictionary<TKey, TaintValue>? Met<TKey>(ImmutableDictionary<TKey, TaintValue>? a, ImmutableDictionary<TKey, TaintValue>? b)
+        where TKey : notnull
+    {
+        if (a == null || ReferenceEquals(a, b)) return b ?? a;
+        if (b == null) return a;
+        var met = ImmutableDictionary<TKey, TaintValue>.Empty;
+        foreach (var (k, v) in a)
+            if (b.TryGetValue(k, out var w)) met = met.Add(k, v.Join(w));
+        return met;
+    }
+
+    private static bool SameGuards<TKey>(ImmutableDictionary<TKey, TaintValue>? a, ImmutableDictionary<TKey, TaintValue>? b)
+        where TKey : notnull
+    {
+        if (ReferenceEquals(a, b)) return true;
+        if (a == null || b == null || a.Count != b.Count) return false;
+        foreach (var (k, v) in a)
+            if (!b.TryGetValue(k, out var w) || !v.SameFlow(w)) return false;
+        return true;
     }
 
     private Dictionary<int, (List<SinkEffect> Sinks, List<CallEffect> Calls, List<(object Location, TaintValue Value)> Heap)>? _bySlot;
@@ -247,7 +285,7 @@ internal sealed class BodySummary
         {
             Return = Return, ToThis = ToThis, Refs = Refs, Sinks = Sinks, Calls = Calls, Heap = Heap, RequestHeap = RequestHeap,
             ReturnText = ReturnText, Symbolic = Symbolic, ObjWrites = ObjWrites, ParamExit = ParamExit, TopWrites = TopWrites,
-            Escapes = Escapes, MemberSlots = slots.ToImmutableArray(),
+            Escapes = Escapes, MemberSlots = slots.ToImmutableArray(), Guards = Guards, Exits = Exits,
         };
     }
 
@@ -258,6 +296,8 @@ internal sealed class BodySummary
         if (!Return.SameFlow(other.Return) || !ToThis.SameFlow(other.ToThis) || Refs.Count != other.Refs.Count) return false;
         if (ReturnText != other.ReturnText) return false;
         foreach (var (k, v) in Refs) if (!other.Refs.TryGetValue(k, out var o) || !v.SameFlow(o)) return false;
+        // Task 33: a guard or exit summary that changed changes what a call site's branch knows.
+        if (!SameGuards(Guards, other.Guards) || !SameGuards(Exits, other.Exits)) return false;
         // Task 27: the objects and members a call gets back, what it writes into its arguments' objects, the strong updates
         // it may end, and the member slots its global effects ask the call sites for.
         if (!Return.SameIdentity(other.Return) || ObjWrites.Count != other.ObjWrites.Count
@@ -390,6 +430,8 @@ internal sealed class SummaryBuilder
     public HashSet<object>? TopWrites;
     public readonly HashSet<int> Escapes = new();
     public bool Symbolic;
+    public ImmutableDictionary<(bool Outcome, int Slot), TaintValue>? Guards;
+    public ImmutableDictionary<int, TaintValue>? Exits;
 
     public void AddObjWrite(int slot, object key, ISymbol member, TaintValue value)
     {
@@ -435,6 +477,8 @@ internal sealed class SummaryBuilder
             ParamExit = Symbolic ? (ParamExit ?? new Dictionary<int, MemberMap>()).ToImmutableDictionary() : null,
             TopWrites = TopWrites,
             Escapes = Escapes.ToImmutableHashSet(),
+            Guards = Guards,
+            Exits = Exits,
         }.WithMemberSlots();
     }
 }

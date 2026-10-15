@@ -30,6 +30,9 @@ internal sealed class Heap
 {
     private readonly Dictionary<object, Writes> _values = new();
     private readonly Dictionary<object, HashSet<(Unit Unit, Reach Reach)>> _readers = new();
+
+    /// The units that asked whether a location holds request data in any request (RequestAnywhere: guards, Task 33).
+    private readonly Dictionary<object, HashSet<Unit>> _anyReaders = new();
     private readonly HashSet<(object Key, Reach Writer)> _changed = new();
     private readonly Dictionary<ISymbol, bool> _members = new(SymbolEqualityComparer.Default);
     private readonly Dictionary<KeyedStore, HashSet<KeyedLocation>> _stores = new();
@@ -133,6 +136,19 @@ internal sealed class Heap
         if (_stores.TryGetValue(location.Store, out var entries))
             foreach (var entry in entries) value = value.Join(ReadKey(entry, reader, reach));
         return value;
+    }
+
+    /// Whether request data was written to a location (a member's field location, which every write of it joins; a
+    /// dictionary's keys, KeysLocation) in any request: what a membership guard asks of the collection it searches (Task
+    /// 33; data another request stored there defeats the check in this one). `reader` is analysed again when it changes.
+    public bool RequestAnywhere(object location, Unit reader)
+    {
+        var key = Key(location);
+        if (!_anyReaders.TryGetValue(key, out var readers)) _anyReaders[key] = readers = new HashSet<Unit>();
+        readers.Add(reader);
+        if (!_values.TryGetValue(key, out var writes)) return false;
+        if (writes.Value.Request) return true;
+        return writes.More != null && writes.More.Values.Any(v => v.Request);
     }
 
     /// A read that found no write in the reader's requests is clean (it knows no member).
@@ -288,10 +304,17 @@ internal sealed class Heap
         if (_changed.Count == 0) return Array.Empty<Unit>();
         var dirty = new HashSet<Unit>();
         foreach (var (key, writer) in _changed)
+        {
             if (_readers.TryGetValue(key, out var readers))
                 foreach (var (unit, reach) in readers)
                     if (reach.Intersects(writer)) dirty.Add(unit);
+            if (_anyReaders.TryGetValue(key, out var any)) dirty.UnionWith(any);
+        }
         _changed.Clear();
         return dirty;
     }
 }
+
+/// The keys written into a dictionary held in a field (Task 33): a heap location of its own, since a dictionary's value
+/// carries what it holds, not its keys (ruling R-E21). `Member` is the field's heap key.
+internal sealed record KeysLocation(object Member);

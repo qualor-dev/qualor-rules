@@ -285,6 +285,7 @@ internal sealed partial class MethodAnalyzer
                 {
                     ReturnValue = ReturnValue.Join(value);
                     if (TrackReturnText) ReturnText = BodySummary.JoinText(ReturnText, KnownText(block.BranchValue) ?? HoleText);
+                    RecordGuardReturn(block.BranchValue, state);
                 }
                 Feed(handlers, state);
             }
@@ -384,7 +385,9 @@ internal sealed partial class MethodAnalyzer
         // Task 27: only an operation whose value is the object it was given (a variable, a conversion, a branch, a call's
         // returned object, an allocation, a member's exactly known value) keeps objects and members.
         if (value.HasIdentity && !KeepsIdentity(operation)) value = value.WithoutIdentity();
-        return value.Any && operation.Type is { } type && _ctx.Sources.IsScalar(type) ? TaintValue.Clean : value;
+        var result = value.Any && operation.Type is { } type && _ctx.Sources.IsScalar(type) ? TaintValue.Clean : value;
+        if (operation.Parent != null) RecordOperand(operation, result);
+        return result;
     }
 
     private static bool KeepsIdentity(IOperation operation) => operation is ILocalReferenceOperation or IParameterReferenceOperation
@@ -434,6 +437,7 @@ internal sealed partial class MethodAnalyzer
             case IFlowCaptureOperation capture:
             {
                 var value = Value(capture.Value, state);
+                RecordCaptured(capture.Value, value);
                 if (state.HasFacts) state.Forget(p => SymbolOrCapture.Comparer.Equals(p.Root, capture.Id));
                 state.Set(capture.Id, value);
                 RecordIdentity(capture.Id, capture.Value.Type, value, state);
@@ -1684,8 +1688,9 @@ internal sealed partial class MethodAnalyzer
         }
         else if (property.IsIndexer && operation.Instance != null)
         {
-            // An indexer write is a collection write (`dict[k] = v`).
+            // An indexer write is a collection write (`dict[k] = v`); its key is the dictionary's (Task 33).
             Write(operation.Instance, value, state);
+            if (inputs.Length > 1) RecordKeys(operation.Instance, inputs[0].Value);
         }
     }
 
@@ -1759,6 +1764,7 @@ internal sealed partial class MethodAnalyzer
         if (copy) return CopyOf(operation, receiver);
         if (state.HasFacts || _body.RootSymbolic) CallEffects(instance, receiver, inputs, state, targets);
         if (method != null) GuardArguments(operation, method, inputs, state);
+        if (method != null) RecordCallInputs(operation, method, instanceValue, inputs, targets);
         HigherOrder(inputs, instanceValue, state, definition);
 
         var all = JoinInputs(inputs);
@@ -1839,6 +1845,10 @@ internal sealed partial class MethodAnalyzer
             // found by an id) is stored data for those rules; a method with a body is followed instead.
             if (!anyBody && result.Any && method.MethodKind == MethodKind.Ordinary) result = result.CleanedFor(_ctx.Sinks.Lookups(method.Name));
             if (!anyBody && method.MethodKind == MethodKind.Ordinary && _ctx.Sinks.HasAwaitedLookups) _bodyless.Add(operation);
+            // Task 33: what a project method's exit summary says its arguments hold after it returned; a search that
+            // returned found its match.
+            if (anyBody) ApplyExits(operation, targets, instanceValue, reduced ? null : instance, inputs, state);
+            else SearchReturned(operation, state);
         }
 
         if (_ctx.Sinks.AllowListRules.Length > 0 && method.Name is "GetValueOrDefault" or "TryGetValue" && thisOperation != null
@@ -2258,7 +2268,10 @@ internal sealed partial class MethodAnalyzer
             var dictionary = IsDictionary(method.IsExtensionMethod ? (method.ReducedFrom ?? method).Parameters.FirstOrDefault()?.Type : method.ContainingType);
             var written = TaintValue.Clean;
             foreach (var i in inputs)
+            {
                 if (i.RefKind != RefKind.Out && !ReferenceEquals(i.Operation, thisOperation) && !(dictionary && i.Parameter?.Name == "key")) written = written.Join(i.Value);
+                if (dictionary && i.Parameter?.Name == "key") RecordKeys(thisOperation, i.Value);
+            }
             Write(thisOperation, written, state);
         }
         return result;

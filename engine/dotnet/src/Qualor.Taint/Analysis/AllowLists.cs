@@ -92,6 +92,208 @@ internal sealed class AllowLists
         return true;
     }
 
+    private readonly Dictionary<IFieldSymbol, bool> _servers = new(SymbolEqualityComparer.Default);
+
+    /// Whether a field holds a collection built by the server (Task 33, membership guards; models/README.md
+    /// "Membership"): a field declared in source of .NET's own collection type that no other assembly can reach, every use
+    /// of which (in its class's files, or its compilation's) is a known read (IsRead), a removal, an assignment of the
+    /// whole collection from a known build (KnownBuild), or, in a constructor of its type, a write into it. Whether it
+    /// holds request data is the caller's question (the heap: what its builds and writes put there, in any request; a
+    /// dictionary's keys apart, KeysLocation). Cached per field.
+    public bool IsServerCollection(IFieldSymbol field, Compilation? compilation)
+    {
+        field = field.OriginalDefinition;
+        if (_servers.TryGetValue(field, out var known)) return known;
+        var result = compilation != null && ComputeServer(field, compilation);
+        _servers[field] = result;
+        return result;
+    }
+
+    private static bool ComputeServer(IFieldSymbol field, Compilation compilation)
+    {
+        if (field.IsConst || field.DeclaringSyntaxReferences.Length != 1 || !IsNetCollection(field.Type) || VisibleOutside(field)) return false;
+        var reference = field.DeclaringSyntaxReferences[0];
+        if (!compilation.ContainsSyntaxTree(reference.SyntaxTree)) return false;
+        var dictionary = IsDictionary(field.Type);
+        var models = new Dictionary<SyntaxTree, SemanticModel>();
+        SemanticModel Model(SyntaxTree tree)
+        {
+            if (!models.TryGetValue(tree, out var m)) models[tree] = m = compilation.GetSemanticModel(tree);
+            return m;
+        }
+        if (reference.GetSyntax() is VariableDeclaratorSyntax { Initializer.Value: { } value } && !KnownBuild(Model(reference.SyntaxTree).GetOperation(value), dictionary))
+            return false;
+        var trees = field.DeclaredAccessibility == Accessibility.Private
+            ? field.ContainingType.DeclaringSyntaxReferences.Select(r => r.SyntaxTree).Where(compilation.ContainsSyntaxTree).Distinct()
+            : compilation.SyntaxTrees;
+        foreach (var tree in trees)
+        {
+            foreach (var name in tree.GetRoot().DescendantNodes().OfType<IdentifierNameSyntax>())
+            {
+                if (name.Identifier.ValueText != field.Name) continue;
+                var model = Model(tree);
+                if (!SymbolEqualityComparer.Default.Equals(model.GetSymbolInfo(name).Symbol?.OriginalDefinition, field)) continue;
+                SyntaxNode node = name;
+                if (name.Parent is MemberAccessExpressionSyntax access && access.Name == name) node = access;
+                else if (name.Parent is MemberBindingExpressionSyntax binding && binding.Name == name) node = binding;
+                if (model.GetOperation(node) is not { } operation) return false;
+                if (IsRead(operation) || IsRemoval(operation)) continue;
+                if (operation.Parent is ISimpleAssignmentOperation assignment && ReferenceEquals(assignment.Target, operation))
+                {
+                    if (!KnownBuild(assignment.Value, dictionary)) return false;
+                    continue;
+                }
+                if (IsWriteInto(operation) && InConstructorOf(model, name, field)) continue;
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// Whether a local holds a collection built here (Task 33): of .NET's own collection type, every use of which in
+    /// `body` (the operation tree that declares it, its lambdas too) is a known read, a removal, an assignment from a known
+    /// build, or, for a collection that is no dictionary, a write into it (what it adds is in the local's value; a
+    /// dictionary's keys are not, ruling R-E21).
+    public static bool IsBuiltHere(ILocalSymbol local, IOperation body)
+    {
+        if (!IsNetCollection(local.Type)) return false;
+        var dictionary = IsDictionary(local.Type);
+        foreach (var o in body.DescendantsAndSelf())
+        {
+            switch (o)
+            {
+                case IVariableDeclaratorOperation d when SymbolEqualityComparer.Default.Equals(d.Symbol, local):
+                    if (d.Initializer != null && !KnownBuild(d.Initializer.Value, dictionary)) return false;
+                    break;
+                case ILocalReferenceOperation l when SymbolEqualityComparer.Default.Equals(l.Local, local):
+                    if (l.IsDeclaration || IsRead(l) || IsRemoval(l)) break;
+                    if (l.Parent is ISimpleAssignmentOperation assignment && ReferenceEquals(assignment.Target, l))
+                    {
+                        if (!KnownBuild(assignment.Value, dictionary)) return false;
+                        break;
+                    }
+                    if (!dictionary && IsWriteInto(l)) break;
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    private static readonly HashSet<string> RemovalNames = new(StringComparer.Ordinal)
+    {
+        "Remove", "RemoveAt", "RemoveAll", "RemoveWhere", "RemoveRange", "Clear", "TryRemove", "ExceptWith", "IntersectWith", "TrimExcess",
+        "EnsureCapacity",
+    };
+
+    private static readonly HashSet<string> WriteNames = new(StringComparer.Ordinal)
+    {
+        "Add", "AddRange", "Insert", "InsertRange", "Push", "Enqueue", "TryAdd", "AddOrUpdate", "GetOrAdd", "UnionWith",
+        "SymmetricExceptWith", "TryUpdate",
+    };
+
+    /// The receiver of a method of .NET's collections that only takes elements out.
+    private static bool IsRemoval(IOperation use) =>
+        use.Parent is IInvocationOperation call && ReferenceEquals(call.Instance, use) && !SymbolKeys.InSource(call.TargetMethod)
+        && RemovalNames.Contains(call.TargetMethod.Name);
+
+    /// The receiver of a write of .NET's collections (an Add, an indexer set), no element taken by `ref`.
+    private static bool IsWriteInto(IOperation use)
+    {
+        switch (use.Parent)
+        {
+            case IInvocationOperation call when ReferenceEquals(call.Instance, use):
+                return !SymbolKeys.InSource(call.TargetMethod) && WriteNames.Contains(call.TargetMethod.Name)
+                    && call.Arguments.All(a => a.Parameter == null || a.Parameter.RefKind == RefKind.None);
+            case IPropertyReferenceOperation { Property.IsIndexer: true } indexer when ReferenceEquals(indexer.Instance, use):
+                return indexer.Parent is ISimpleAssignmentOperation set && ReferenceEquals(set.Target, indexer) && indexer.Syntax.Parent is not RefExpressionSyntax;
+            default:
+                return false;
+        }
+    }
+
+    /// Whether a use is inside an instance constructor of the field's type (a static constructor for a static field).
+    private static bool InConstructorOf(SemanticModel model, SyntaxNode use, IFieldSymbol field) =>
+        model.GetEnclosingSymbol(use.SpanStart) is IMethodSymbol { MethodKind: MethodKind.Constructor or MethodKind.StaticConstructor } m
+        && m.IsStatic == field.IsStatic && SymbolEqualityComparer.Default.Equals(m.ContainingType?.OriginalDefinition, field.ContainingType.OriginalDefinition);
+
+    /// A known build of a whole collection (Task 33): a value whose request data the collection's value then carries,
+    /// with .NET's own comparers only:
+    /// - an array or a collection expression;
+    /// - a `new` of .NET's own collection type whose comparer arguments are .NET's own; for a dictionary, given no other
+    ///   collection (copying one copies keys its value does not carry) and an initializer whose keys are constants;
+    /// - .NET's ToArray, ToList, ToHashSet, ToDictionary, ToFrozenSet, ToFrozenDictionary, the immutable ToImmutable* and
+    ///   Create*, Array.Empty, an `Empty` member; a dictionary only from a key selector given there.
+    internal static bool KnownBuild(IOperation? op, bool dictionary)
+    {
+        switch (Unwrap(op))
+        {
+            case IArrayCreationOperation or IArrayInitializerOperation or ICollectionExpressionOperation:
+                return !dictionary;
+            case IObjectCreationOperation creation:
+            {
+                if (creation.Type is not { } type || !IsNetCollection(type)) return false;
+                foreach (var a in creation.Arguments)
+                {
+                    var p = a.Parameter?.Type;
+                    if (p != null && IsComparerType(p))
+                    {
+                        if (!IsNetComparer(Unwrap(a.Value))) return false;
+                    }
+                    else if (dictionary && p != null && p.SpecialType != SpecialType.System_Int32)
+                    {
+                        return false;
+                    }
+                }
+                if (creation.Initializer == null) return true;
+                return creation.Initializer.Initializers.All(i => i switch
+                {
+                    IInvocationOperation add => !dictionary || (add.Arguments.Length > 0 && Constant(add.Arguments[0].Value)),
+                    ISimpleAssignmentOperation { Target: IPropertyReferenceOperation { Property.IsIndexer: true } indexer } =>
+                        !dictionary || indexer.Arguments.All(a => Constant(a.Value)),
+                    _ => false,
+                });
+            }
+            case IInvocationOperation call:
+            {
+                var method = call.TargetMethod;
+                if (SymbolKeys.InSource(method)) return false;
+                if (!BuildNames.Contains(method.Name) && !(method.Name == "Empty" && method.ContainingType?.SpecialType == SpecialType.System_Array)) return false;
+                foreach (var a in call.Arguments)
+                    if (a.Parameter?.Type is { } p && IsComparerType(p) && a.ArgumentKind != ArgumentKind.DefaultValue && !IsNetComparer(Unwrap(a.Value))) return false;
+                // A dictionary's keys must come from a key selector given here (its value then carries them).
+                return !dictionary || call.Arguments.Any(a => a.Parameter?.Name == "keySelector");
+            }
+            case IFieldReferenceOperation { Field: { IsStatic: true, Name: "Empty" } f }:
+                return !SymbolKeys.InSource(f);
+            case IPropertyReferenceOperation { Property: { IsStatic: true, Name: "Empty" } p }:
+                return !SymbolKeys.InSource(p);
+            default:
+                return false;
+        }
+    }
+
+    private static readonly HashSet<string> BuildNames = new(StringComparer.Ordinal)
+    {
+        "ToArray", "ToList", "ToHashSet", "ToDictionary", "ToFrozenSet", "ToFrozenDictionary", "ToImmutableArray", "ToImmutableList",
+        "ToImmutableHashSet", "ToImmutableDictionary", "ToImmutableSortedSet", "ToImmutableSortedDictionary", "Create", "CreateRange",
+    };
+
+    private static bool IsComparerType(ITypeSymbol type)
+    {
+        static bool Named(ITypeSymbol t) => SymbolMatch.MetadataName(t.OriginalDefinition) is "System.Collections.Generic.IEqualityComparer`1"
+            or "System.Collections.Generic.IComparer`1" or "System.Collections.IEqualityComparer" or "System.Collections.IComparer";
+        return Named(type) || type.AllInterfaces.Any(Named);
+    }
+
+    /// A dictionary: a type that is or implements IDictionary<K, V> or IReadOnlyDictionary<K, V>.
+    internal static bool IsDictionary(ITypeSymbol? type)
+    {
+        if (type == null) return false;
+        static bool Named(ITypeSymbol t) => SymbolMatch.MetadataName(t.OriginalDefinition) is
+            "System.Collections.Generic.IDictionary`2" or "System.Collections.Generic.IReadOnlyDictionary`2";
+        return Named(type) || type.AllInterfaces.Any(Named);
+    }
+
     /// A field no code of another assembly can reach: it or a type that holds it is private, internal or private
     /// protected.
     private static bool VisibleOutside(ISymbol field)
@@ -102,7 +304,7 @@ internal sealed class AllowLists
     }
 
     /// Whether this use of the table only reads it.
-    private static bool IsRead(IOperation use)
+    internal static bool IsRead(IOperation use)
     {
         var current = use;
         while (current.Parent is IConversionOperation { IsImplicit: true } conversion && conversion.Type is { } target
@@ -146,7 +348,7 @@ internal sealed class AllowLists
     }
 
     /// .NET's own collection: an array, or a type of System.Collections.Generic, Frozen or Immutable declared in metadata.
-    private static bool IsNetCollection(ITypeSymbol type)
+    internal static bool IsNetCollection(ITypeSymbol type)
     {
         if (type is IArrayTypeSymbol) return true;
         if (type is not INamedTypeSymbol named || SymbolKeys.InSource(named)) return false;
@@ -184,22 +386,38 @@ internal sealed class AllowLists
 
     private static bool Constant(IOperation? op) => op != null && (op.ConstantValue.HasValue || (Unwrap(op)?.ConstantValue.HasValue ?? false));
 
-    /// One of .NET's own comparers (StringComparer.Ordinal, EqualityComparer<T>.Default, ...): a value of a type declared
-    /// in metadata that is an equality comparer or a comparer.
+    /// One of .NET's own comparers that tells strings apart by every character they hold (review I4 of Task 33: a
+    /// comparer that ignores symbols calls `../etc/passwd` equal to `etcpasswd`): StringComparer's Ordinal,
+    /// OrdinalIgnoreCase, InvariantCulture(IgnoreCase) and CurrentCulture(IgnoreCase), StringComparer.FromComparison(...),
+    /// StringComparer.Create(culture, ignoreCase), StringComparer.Create and the GetStringComparer extension of CompareInfo with constant
+    /// options None or IgnoreCase, EqualityComparer<T>.Default and Comparer<T>.Default.
     internal static bool IsNetComparer(IOperation? op)
     {
-        if (op?.Type is not { } type || SymbolKeys.InSource(type)) return false;
-        static bool Named(ITypeSymbol t) => SymbolMatch.MetadataName(t) is "System.Collections.Generic.IEqualityComparer`1" or "System.Collections.Generic.IComparer`1"
-            or "System.Collections.IEqualityComparer" or "System.Collections.IComparer";
-        if (!Named(type) && !type.AllInterfaces.Any(Named)) return false;
-        // A value typed by the interface may be anything: only a member of .NET's own types gives one of its comparers.
-        return op switch
+        switch (op)
         {
-            IPropertyReferenceOperation p => !SymbolKeys.InSource(p.Property),
-            IFieldReferenceOperation f => !SymbolKeys.InSource(f.Field),
-            IInvocationOperation i => !SymbolKeys.InSource(i.TargetMethod),
-            _ => false,
-        };
+            case IPropertyReferenceOperation { Property: { IsStatic: true } p }:
+            {
+                var type = SymbolMatch.MetadataName(p.ContainingType.OriginalDefinition);
+                return (type == "System.StringComparer" && p.Name is "Ordinal" or "OrdinalIgnoreCase" or "InvariantCulture" or "InvariantCultureIgnoreCase"
+                        or "CurrentCulture" or "CurrentCultureIgnoreCase")
+                    || (type is "System.Collections.Generic.EqualityComparer`1" or "System.Collections.Generic.Comparer`1" && p.Name == "Default");
+            }
+            case IInvocationOperation { TargetMethod: { } m } call:
+            {
+                var type = m.ContainingType is { } t ? SymbolMatch.MetadataName(t.OriginalDefinition) : "";
+                if (type == "System.StringComparer" && m.Name == "FromComparison") return true;
+                if (!(type == "System.StringComparer" && m.Name == "Create") && !(type == "System.Globalization.GlobalizationExtensions" && m.Name == "GetStringComparer")) return false;
+                foreach (var a in call.Arguments)
+                {
+                    if (a.Parameter?.Type is not { } pt) continue;
+                    if (SymbolMatch.MetadataName(pt) == "System.Globalization.CompareOptions"
+                        && Unwrap(a.Value)?.ConstantValue is not { HasValue: true, Value: 0 or 1 }) return false;
+                }
+                return true;
+            }
+            default:
+                return false;
+        }
     }
 
     private static IOperation? Unwrap(IOperation? op)

@@ -462,6 +462,12 @@ internal sealed class SummaryComputer
             builder.Return = builder.Return.Join(returned);
             if (symbolic && analyzer.ExitState is { } exitState && body.Symbol is { IsIterator: false } owner) builder.ParamExit = ParamExit(owner, exitState, analyzer);
             if (analyzer.TrackReturnText) builder.ReturnText = BodySummary.JoinText(builder.ReturnText, analyzer.ReturnText);
+            // Task 33: what the body's parameters hold where it returns true or false, and at its exit.
+            if (!body.IsLambda && analyzer.GuardSummaries(body.Id) is { } guards)
+            {
+                builder.Guards = guards.Returns;
+                builder.Exits = guards.Exits;
+            }
             if (analyzer.ExitState is { } exit && body.Symbol != null)
             {
                 foreach (var p in body.Symbol.Parameters)
@@ -782,6 +788,23 @@ internal sealed class SummaryComputer
         }
 
         public bool IsHeapMember(ISymbol member) => _computer._heap.IsMember(member);
+
+        /// Whether request data was written to a heap member (or to the keys of the dictionary a field holds) in any request
+        /// (Heap.RequestAnywhere; Task 33's membership guards); this unit is analysed again when that changes.
+        public bool RequestAnywhere(ISymbol member, bool keys = false)
+        {
+            var heap = _computer._heap;
+            var definition = SymbolKeys.Definition(member);
+            return heap.RequestAnywhere(keys ? new KeysLocation(heap.Key(definition)) : definition, _unit);
+        }
+
+        /// Request data written as a key into the dictionary a field holds (Task 33): recorded under this body's requests.
+        public void WriteKeys(ISymbol field, TaintValue key)
+        {
+            if (!key.Request) return;
+            var heap = _computer._heap;
+            heap.Write(new KeysLocation(heap.Key(SymbolKeys.Definition(field))), key, WriteReach);
+        }
 
         /// The request data of a member for this body (Heap.Read): through unknown objects (null) its field location,
         /// through known objects (the parameter objects aside, which the caller substitutes) theirs and the writes through

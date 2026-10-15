@@ -157,9 +157,15 @@ guards:
   # meet; inside the failing branch the URL is the one that failed.
   # Differences: OpenGrep recognises the check on a receiver named Url, urlHelper, interaction or *InteractionService
   # and in an if condition alone or as one side of && or ||; the engine takes the members on any receiver and in any
-  # condition (a deeper one too). RedirectHttpResult.IsLocalUrl is public from ASP.NET Core 10 on (not in the reference
-  # assemblies of 8): not modelled.
+  # condition (a deeper one too).
   - method: Microsoft.AspNetCore.Mvc.IUrlHelper.IsLocalUrl
+    arg: 0
+    clean-when: true
+  # RedirectHttpResult.IsLocalUrl (learn.microsoft.com, Microsoft.AspNetCore.Http.HttpResults, ASP.NET Core 10 and later):
+  # true when the URL has no host or authority part and an absolute path (or a virtual path `~/`). Public from ASP.NET
+  # Core 10 on; a project on 8 does not have it (the fixture references are 8: expectations.yml lists the name).
+  # Difference: the OpenGrep rule does not know it (Task 33).
+  - method: Microsoft.AspNetCore.Http.HttpResults.RedirectHttpResult.IsLocalUrl
     arg: 0
     clean-when: true
   - method: Duende.IdentityServer.Services.IIdentityServerInteractionService.IsValidReturnUrl

@@ -160,3 +160,4 @@ unresolved-model-names:
   - { name: "System.Web.UI.ObjectStateFormatter", reason: ".NET Framework only (System.Web); the unsafe-deserialization shim declares it" }
   - { name: "Duende.IdentityServer.Services.IIdentityServerInteractionService", reason: "Duende IdentityServer (commercial licence) is not a fixture reference; the open-redirect shim declares the interface the fixture uses" }
   - { name: "System.Text.RegularExpressions.Regex.EnumerateSplits [Method]", reason: "added in .NET 9; the fixture references are .NET 8 (a project on .NET 9 or later has it)" }
+  - { name: "Microsoft.AspNetCore.Http.HttpResults.RedirectHttpResult.IsLocalUrl [Method]", reason: "public from ASP.NET Core 10; the fixture references are ASP.NET Core 8 (Task 33's tests declare the type in the snippet)" }

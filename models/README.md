@@ -172,9 +172,16 @@ two successors the state as the condition leaves it on that branch.
   again; a value assigned anew after the check is whatever it is assigned.
 - `when:` conditions: `assigned-from: T.M` holds when the checked value is a local whose every assignment in the body
   (its initializer too) is a call of T.M (through `await` and `ConfigureAwait`), and the local is written no other way
-  (`ref`, `out`, `+=`, deconstruction); `arg: N, text: R` holds when argument N carries no request data and the text it
-  is built from in place matches R: constants, both sides of a string `+`, the text and holes of an interpolated
-  string, `Path.DirectorySeparatorChar` and `Path.AltDirectorySeparatorChar` as `/`, any other value as U+FFFC.
+  (`ref`, `out`, `+=`, deconstruction); since Task 33 also when the checked value is a call of T.M written in place, or
+  an assignment is a conditional (`c ? a : b`) each arm of which is a call of T.M, a string constant or a read-only field
+  that holds no request data there. `arg: N, text: R` holds when argument N carries no request data and every text it may
+  have matches R: the text built from constants, both sides of a string `+`, the text and holes of an interpolated
+  string, `Path.DirectorySeparatorChar` and `Path.AltDirectorySeparatorChar` as `/`, any other value as U+FFFC; since
+  Task 33 a local is each value it is assigned and a conditional each of its arms (at most 8 texts), and an arm `v` taken
+  where `Path.EndsInDirectorySeparator(v)` (or `v.EndsWith('/')`, `'\\'`, the separator fields) holds reads as a folder
+  and a separator (`EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar`). The parameters
+  argument N carries (a helper given its root) stay in the checked value for the guard's rule: it is clean there as far
+  as the caller's root is (section "Guards in project code").
 - `clean-when: not-null`: where a null check (`x != null`, `x == null`, `x is null`, `x is not null`) says that a local
   x is not null, and x is assigned once in the body, from the (awaited) result of a call of the guard's member, that
   call's argument `arg` is clean for the rule, when it is a local or a parameter assigned nowhere after the call, or a
@@ -242,6 +249,79 @@ a field through the call graph's dispatch is a follow-up). Follow-up: a callee t
 without being given it or an object whose type reaches it (the object kept in a static, or in a field typed `object`,
 then changed there) is not seen (FN); the member writes the callee summaries already record (the heap writes of each
 body, closed over its calls) could end the facts of the members a call may write.
+
+### Guards in project code (Task 33)
+
+Guards written the way projects write them, read by the engine for every rule (none needs a model entry):
+
+- **Equality with a value.** Where `x == y` (or `x.Equals(y)`, `string.Equals(x, y, ...)`, the spans' `Equals`) holds,
+  x's text is y's: x is clean for the rules y is clean for; where y carries no request data at all (a field holding
+  server data, a value of the caller's), x holds what y holds (in a helper: what the caller gives for y; for a value
+  that holds only what callers give, only when y holds the elements of a collection parameter, the shape of membership
+  written as a loop: `foreach (var item in items) if (value.Equals(item, comparison)) return true;`, or the object's own
+  state, `this` or a member read through it: `full.Equals(_root)` in a store's helper). A summary applied at a call site
+  (below) changes an argument only for the rules where what it gives is no more than what the argument holds (request
+  data for a rule only where the argument has some; no caller's value the argument does not hold, the object's own state
+  aside): a server value compared with a collection the request fills stays the server's. The comparison
+  given to `Equals` is not read (a culture-sensitive comparison may ignore characters no rule treats as special).
+- **Stored data never vouches** (ruling R-E41). Equality with a value and every membership (below) read nothing a
+  request may have stored: when the other side reads a field or auto-property of the project (directly, through a local
+  assigned from one, or as the argument a guard summary compares with) to which some request wrote request data in any
+  request, the comparison cleans nothing. Data written only at startup or from configuration (no request data) still
+  guards. Within one request the heap is request-scoped (decision R-6), so without this a value another request stored
+  (`Seen.Add(tag)`, `_last = v`) would look clean and vouch for the same text sent again. A containment check is no
+  allow-list (ruling R-E41 refined): `x.StartsWith(root + separator)` and, joined to it by `||`, its "is the root itself"
+  arm `x.Equals(root)` keep Task 11's rule for the root: a root the current request chose (request data where the check
+  runs) never guards, a root stored earlier guards as configuration does (startup, tenant setup, admin settings). Cost:
+  a containment root an attacker could have stored in an earlier request (an admin-level write) is trusted.
+- **Fixed point.** `x == S(x)` with S a sanitizer of the models (`name == Path.GetFileName(name)`,
+  `string.Equals(Path.GetFileName(name), name, StringComparison.Ordinal)`) makes x as clean as S's result: a single
+  segment, as the GetFileName sanitizer (`..` is such a segment too, as there: `Path.Combine(root, "..")` names the
+  root's parent, so a recursive directory sink such as `Directory.Delete(Combine(root, name), true)` given `..` acts on
+  the parent; the sanitizer has the same reach, a known limit, review M1 of Task 33).
+- **Conditions as written.** `a || b` true and `a && b` false hold what both of their ways hold (the left side, and the
+  right side after the left one had the other outcome; the join of the two). A bool local assigned once
+  (`var allowed = full.Equals(root) || full.StartsWith(prefix); if (!allowed) throw ...;`) is read as its condition,
+  for the locals and parameters that no code assigns after the assignment (nor a lambda), when the check comes after it
+  and the condition writes nothing (no assignment, `out`, `ref` or await); a member's fact is not kept that way.
+- **Containment.** Besides the extended `when:` conditions above, the path a checked full path was made of (the
+  argument of `GetFullPath` written in place, or of every assignment of the checked local when they all take the same
+  local or parameter, unchanged after each) is clean too: `var full = Path.GetFullPath(p); if (!full.StartsWith(root +
+  "/")) return; File.ReadAllText(p);` reads the same file. Only the one-argument `GetFullPath(path)`:
+  `GetFullPath(path, basePath)` resolves against another base than a sink given the path (the working directory).
+- **Membership** (section "Allow-lists"): in a collection the server built and the request never wrote, and the
+  searches of .NET's collections whose predicate compares the value with an element: `First`, `Single`, `Last` that
+  returned (they throw on a miss), `Any`, `Array.Exists`, `List.Exists` true, `FirstOrDefault`, `SingleOrDefault`,
+  `LastOrDefault`, `Array.Find`, `List.Find` not null (an element of a reference type; the result checked in place or held
+  in a local assigned once), with a lambda `e => e.Key == key` (`==`, string's and the spans' `Equals`, either side of
+  `&&`): the compared value is clean for the allow-list rules where the element side carries no request data (the element
+  itself of a server-built collection, or fields and auto-properties of the project that no request wrote in any request:
+  registered keys), and the collection searched carries nothing at the check (no request data and no value a caller
+  gives; a field of the object's own state only as that field) and is read from nothing a request wrote in any request:
+  a posted list searched for a posted code proves nothing (review C1).
+- **Guard summaries.** A project method returning bool records, for each parameter it never assigns (passed by value,
+  not a scalar), what the parameter holds where it returns true and where it returns false (a returned condition read as
+  written): `bool IsInside(string root, string p)` returning `GetFullPath(p).StartsWith(root + "/")` says p is clean for
+  path traversal where it returns true, as far as root is; a wrapper of a guard (`CheckIsLocalUrl(url) => url != "" &&
+  RedirectHttpResult.IsLocalUrl(url)`) is that guard. A call's branch of that outcome gives each argument (a local, a
+  parameter or a member path) what the summary says, with the caller's arguments in place of the callee's parameters.
+- **Exit summaries.** Every project method records what such a parameter holds at its normal exits: a method that
+  throws unless its check holds (`EnsureInside(p)`, a lookup whose `First` throws on a miss) cleans its argument after the
+  call; one that returns early on a failing check does not. An iterator records none (it runs nothing when called); an
+  async method's exit is where its task completes, so it applies only to a call awaited right there (`await
+  EnsureAsync(p)`, also through `ConfigureAwait`), not to `_ = EnsureAsync(p);` or a task awaited later.
+- Both summaries apply only when every target of the call (Dispatch) is such a body outside the caller's component of the
+  call graph (a recursive helper's summary is not final while its component runs): a wrapper behind an interface one of
+  whose implementations does not check is no guard.
+
+Not covered (FN, by design): a helper's result that is not a bool (a found object checked for null by the caller; a
+`Task<bool>` or `ValueTask<bool>` awaited, `if (await IsSafeAsync(p))`; a `bool?`); a
+comparison through a project comparer or `string.Compare(...) == 0`; a bool local assigned more than once or written in a
+lambda; a predicate that is a method group or compares through a call; a member path's fact through a bool local;
+membership in a collection a caller gives (a parameter), unless the helper compares element by element (above); a
+dictionary whose keys a caller's helper writes or that is copied from another dictionary (keys are not request data in a
+dictionary's value, ruling R-E21; the Keys location covers the keys written into a field's dictionary directly).
+Over-approximations (FP) are unchanged: a guard is never assumed where these conditions fail.
 
 ### Model validation
 
@@ -381,10 +461,32 @@ though a host can be written as one decimal number (`http://2130706433/` is 127.
   table.
 - **lookups**: an element read by the table's indexer; `GetValueOrDefault(key)` and `GetValueOrDefault(key, d)` (the
   value of `d` itself still counts); the `out` value of `TryGetValue`.
-- **membership**: where `T.Contains(x)` or `T.ContainsKey(x)` holds (the extension method, also called as a static
-  `Enumerable.Contains(T, x)`, and on the table's `Keys` or `Values`; a comparer given to it must be one of .NET's
-  own), x is clean, as a guard (above): the branch of an `if`, the code after `if (!T.Contains(x)) return/throw ...;`,
-  a ternary `T.Contains(x) ? x : "fallback"`.
+- **membership**: where `T.Contains(x)`, `T.ContainsKey(x)` or `T.TryGetValue(x, out ...)` holds (the extension
+  method, also called as a static `Enumerable.Contains(T, x)`, and on the table's `Keys` or `Values`; a comparer given to
+  it must be one of .NET's own), x is clean, as a guard (above): the branch of an `if`, the code after `if
+  (!T.Contains(x)) return/throw ...;`, a ternary `T.Contains(x) ? x : "fallback"`.
+- **server-built collections** (Task 33; ruling R-E41): membership also cleans x in a collection the server built that
+  no request wrote: a field declared in source of .NET's own collection type (not `static` or `readonly` necessarily) that no other
+  assembly can reach, every use of which is a known read (above), a removal (`Remove`, `Clear`, ...), an assignment of the
+  whole collection from a known build, or, in a constructor of its type, a write into it (`Add`, an indexer set); and no
+  request data was ever written to it (the heap, in any request: data another request stored there would defeat the
+  check), nor, searched by key, to a dictionary's keys (recorded apart, KeysLocation, since a dictionary's value does not
+  carry its keys: ruling R-E21). A local qualifies when every use of it in its method is such a read, removal or
+  assignment, or (no dictionary) a write into it, its value holds nothing at the check and what it was built from reads
+  nothing a request wrote in any request (`var copy = Seen.ToList()` with `Seen` written by another request is none;
+  ruling R-E41). A known build: an array or a
+  collection expression; a `new` of .NET's collection type whose comparers are .NET's own (for a dictionary: given no
+  other collection, an initializer of constant keys); .NET's `ToArray`, `ToList`, `ToHashSet`, `ToDictionary`,
+  `ToFrozenSet`, `ToFrozenDictionary`, `ToImmutable*`, `Create*` with .NET's comparers (a dictionary only from a key
+  selector given there), `Array.Empty`, an `Empty` member. So `_formats = new HashSet<string>(naming.Extensions,
+  StringComparer.OrdinalIgnoreCase)` in a constructor and `_stores = factories.SelectMany(f => f.Stores()).ToArray()`
+  are allow-lists while nothing writes request data into them.
+- **.NET's own comparers** (review I4 of Task 33): only those that tell every character apart, so that a value "in" the
+  collection is one of its texts (case aside): `StringComparer.Ordinal`, `OrdinalIgnoreCase`, `InvariantCulture(IgnoreCase)`,
+  `CurrentCulture(IgnoreCase)`, `StringComparer.FromComparison(...)`, `StringComparer.Create(culture, ignoreCase)`,
+  `StringComparer.Create` and `CompareInfo.GetStringComparer` with constant options `None` or `IgnoreCase`,
+  `EqualityComparer<T>.Default`, `Comparer<T>.Default`. A comparer that ignores symbols (`CompareOptions.IgnoreSymbols`
+  calls `../etc/passwd` equal to `etcpasswd`), or any other, is no guard.
 
 ### Conditional sinks (`when:`)
 
