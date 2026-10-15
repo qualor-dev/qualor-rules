@@ -94,8 +94,6 @@ internal sealed class ObjSet : IEquatable<ObjSet>
 /// member known, the identity of a join: a value not yet seen); a missing map (null where one is expected) knows nothing.
 internal sealed class MemberMap
 {
-    public const int MaxMembers = 32;
-
     public static readonly MemberMap All = new(ImmutableDictionary<ISymbol, TaintValue>.Empty.WithComparers(SymbolEqualityComparer.Default), true);
 
     private MemberMap(ImmutableDictionary<ISymbol, TaintValue> values, bool all)

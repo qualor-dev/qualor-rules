@@ -182,7 +182,7 @@ internal sealed partial class MethodAnalyzer
         {
             if (guard.Kind != GuardKind.Result || guard.CleanWhen != outcome) continue;
             var checkedValue = guard.Arg < 0 ? ThisOperation(call) : SinkConditions.ArgumentValue(call, guard.Arg);
-            if (checkedValue == null || !Holds(guard, call, checkedValue, state, out var extra)) continue;
+            if (checkedValue == null || !Holds(guard, call, checkedValue, out var extra)) continue;
             var rules = new[] { rule };
             Clean(checkedValue, rules, state, ref refined, extra);
             // Task 33: the path a checked full path was made of (`GetFullPath(p)`) resolves to the same file.
@@ -233,11 +233,11 @@ internal sealed partial class MethodAnalyzer
         foreach (var (rule, guard) in _ctx.Sinks.Guards.Match(call.TargetMethod, Access.Call))
         {
             if (guard.Kind != GuardKind.NotNull || SinkConditions.ArgumentValue(call, guard.Arg) is not { } checkedValue) continue;
-            if (UnchangedAfter(checkedValue, call) && Holds(guard, call, checkedValue, state, out var extra))
+            if (UnchangedAfter(checkedValue, call) && Holds(guard, call, checkedValue, out var extra))
             {
                 Clean(checkedValue, new[] { rule }, state, ref refined, extra);
             }
-            else if (PathOf(checkedValue) is { } path && (refined ?? state).Fact(path) is { } fact && fact.Pending.Contains(call) && Holds(guard, call, checkedValue, state, out var memberExtra)
+            else if (PathOf(checkedValue) is { } path && (refined ?? state).Fact(path) is { } fact && fact.Pending.Contains(call) && Holds(guard, call, checkedValue, out var memberExtra)
                 && !memberExtra.Any)
             {
                 // A member given to the call and unchanged since (its pending fact survived every write and call).
@@ -333,7 +333,7 @@ internal sealed partial class MethodAnalyzer
     /// A guard's conditions (`when:`) at a call. `extra`: the parameter labels an `arg ... text` argument carries (Task 33:
     /// in a helper given its root, the check holds as far as the caller's root is clean; Clean keeps them, for the
     /// guard's rules, in the checked value).
-    private bool Holds(GuardModel guard, IInvocationOperation call, IOperation checkedValue, TaintState state, out TaintValue extra)
+    private bool Holds(GuardModel guard, IInvocationOperation call, IOperation checkedValue, out TaintValue extra)
     {
         extra = TaintValue.Clean;
         foreach (var c in guard.When)

@@ -679,10 +679,6 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         return changed ? result.ToImmutableArray() : a;
     }
 
-    /// Whether data cleaned for `a` is request data for strictly more rules than data cleaned for `b` (a ⊂ b): its path
-    /// is a witness for every rule the other's is (a label has one path: MergeLabels keeps the dirtier side's).
-    private static bool Dirtier(ImmutableHashSet<string> a, ImmutableHashSet<string> b) => a.Count < b.Count && a.IsSubsetOf(b);
-
     /// Equal in the lattice (paths aside but for their confidence, R-9).
     public bool SameTaint(TaintValue other) =>
         ReferenceEquals(this, other)

@@ -397,7 +397,7 @@ internal sealed partial class Dispatch
             RegisteredByType(method, invocation.Arguments, unit);
             return;
         }
-        if (ScanNames.Contains(name) && (IsRegistration(method, invocation.Instance) || IsAutofac(method, invocation.Instance)))
+        if (ScanNames.Contains(name) && (IsRegistration(method, invocation.Instance) || IsAutofac(invocation.Instance)))
         {
             _hosting.Add(unit.Own);
             Scan(invocation, unit.Own);
@@ -570,7 +570,7 @@ internal sealed partial class Dispatch
         return m.IsExtensionMethod && m.Parameters.Length > 0 && (IsServices(m.Parameters[0].Type) || IsAutofacBuilder(m.Parameters[0].Type));
     }
 
-    private static bool IsAutofac(IMethodSymbol method, IOperation? instance) =>
+    private static bool IsAutofac(IOperation? instance) =>
         instance?.Type is { } receiver && IsAutofacBuilder(receiver);
 
     private static bool IsServices(ITypeSymbol type) =>
