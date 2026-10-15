@@ -31,7 +31,7 @@ Entry format:
 - **Blocked:** none. Acceptance under spec R-13: met (high 34 true / 10 false, each on a recorded invariant or limit; firm core 3 of 6 with the misses recorded; recall 23/26; budgets kept).
 - **Backlog:** none added.
 - **Measurement:** MEASUREMENTS.md 2026-10-15 (rules 6718e8e, all five languages, --taint-intrafile): every set identical to the 2026-10-13 entry; Benchmark §8.4 met in all six covered Java categories. `npm run measure -- --check` passes (42025b3). Engine tests 829/829 (828 + the new control test).
-- **Notes:** the next pack is 2026.10.5 (the 12 C# rules already say `since: 2026.10.5`); released in November it is 2026.11.0, with the `since:` lines renumbered and a new measurement. The release steps are in the controller's `release-handover.md`. The default `qualor/scanner:6b1` image is gone locally; the measurement ran with `QUALOR_SCANNER_IMAGE=qualor/scanner:rules-2026.10.4` (OpenGrep 1.30.0).
+- **Notes:** the next pack is 2026.10.5 (the 12 C# rules already say `since: 2026.10.5`); released in November it is 2026.11.0, with the `since:` lines renumbered and a new measurement. The release steps are in the controller's `release-handover.md`. The measurement ran with `QUALOR_SCANNER_IMAGE=qualor/scanner:rules-2026.10.4` (OpenGrep 1.30.0); the default `qualor/scanner:6b1` is still present locally too (OpenGrep 1.30.0; an earlier version of this note said it was gone, corrected in the final review's fix round).
 
 ## 2026-10-15: Roslyn engine re-measured after Stage 6d (Phase 6B-C# R, Task 25b)
 

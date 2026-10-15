@@ -9,12 +9,15 @@ Shipped with the engine (the pack's dotnet/ directory):
 - System.Collections.Immutable 10.0.1 and System.Reflection.Metadata 10.0.1 (Roslyn's
   dependencies on net8.0), Copyright (c) .NET Foundation and Contributors, MIT licence,
   https://github.com/dotnet/runtime
-- YamlDotNet 18.1.0 (the engine's models, from Task 5 of the engine plan), Copyright (c) Antoine
-  Aubry and contributors, MIT licence, https://github.com/aaubry/YamlDotNet
+- YamlDotNet 18.1.0 (reads the engine's models), Copyright (c) Antoine Aubry and contributors, MIT
+  licence, https://github.com/aaubry/YamlDotNet
 - Microsoft.AspNetCore.Razor.Language 6.0.36, Microsoft.AspNetCore.Mvc.Razor.Extensions 6.0.36 and
-  Microsoft.CodeAnalysis.Razor 6.0.36 (the Razor compiler for the views no build compiles, from Task 30
-  of the engine plan), Copyright (c) Microsoft Corporation / .NET Foundation and Contributors, MIT
-  licence, https://github.com/dotnet/aspnetcore
+  Microsoft.CodeAnalysis.Razor 6.0.36 (the Razor compiler for the views no build compiles),
+  Copyright (c) Microsoft Corporation / .NET Foundation and Contributors, MIT licence,
+  https://github.com/dotnet/aspnetcore
+
+Each one's licence text, and the third-party notices its package carries (unchanged), are in the
+pack's dotnet/engine/licenses/ (engine/dotnet/licenses/ here).
 
 Used to build and test the engine only, not shipped:
 - Microsoft.CodeAnalysis.Analyzers 5.3.0 (Roslyn's dependency; its analyzers are not run), MIT
@@ -37,7 +40,7 @@ Used to build and test the engine only, not shipped:
   https://github.com/npgsql/npgsql). Their dependencies (Azure.Core, Azure.Identity, Microsoft.Identity.Client,
   Microsoft.IdentityModel.*, Microsoft.SqlServer.Server, System.ClientModel, System.Memory.Data, Newtonsoft.Json.Bson,
   Microsoft.AspNetCore.JsonPatch: MIT; SQLitePCLRaw.*: Apache License 2.0) are restored with them.
-  Fluid.Core 2.40.0 (the Fluid template engine the Task 34 model tests compile against; Copyright (c) Sebastien Ros, MIT
+  Fluid.Core 2.40.0 (the Fluid template engine the model tests compile against; Copyright (c) Sebastien Ros, MIT
   licence, https://github.com/sebastienros/fluid), test-only, with its dependencies Parlot 1.5.2 (Copyright (c)
-  Sebastien Ros, BSD-3-Clause licence (permissive, OSI-approved), test-only; accepted as Npgsql's PostgreSQL licence was,
-  ruling R-E8) and TimeZoneConverter 7.2.0 (Copyright (c) Matt Johnson-Pint, MIT licence).
+  Sebastien Ros, BSD-3-Clause licence (permissive, OSI-approved), test-only) and TimeZoneConverter 7.2.0 (Copyright (c)
+  Matt Johnson-Pint, MIT licence).

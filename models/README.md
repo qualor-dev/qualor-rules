@@ -857,7 +857,7 @@ result's `level` is `warning`, a high one keeps the rule's `error`; `analysisSta
 R-E29's cost: a constant-key `ViewData` flow whose writer is code around every action (a filter) counts high. A
 member written and read through one known object (`o.Name = q; Save(o)` reading `o.Name`) is a heap read, so medium.
 
-## Known limits (measured 2026-10-14, MEASUREMENTS.md "C# engine")
+## Known limits (measured 2026-10-14 to 2026-10-15, Tasks 18, 25, 25b and 35; MEASUREMENTS.md "C# engine")
 
 What the engine does by design or does not model, as measured on the reference projects; each one is a source of
 false positives (FP) or misses (FN) there.

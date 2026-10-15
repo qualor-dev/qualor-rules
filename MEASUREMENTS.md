@@ -26,6 +26,9 @@ current rules).
 
 OpenGrep 1.30.0 with --taint-intrafile; 5 rule directories; results in `.tmp/probe/2026-10-15T12-52-20-536Z`.
 
+The C# Roslyn engine's measurements (by hand: Tasks 18, 25 and 25b, and the "after Stage 6e" addendum with the
+final numbers) are in the 2026-10-13 entry below, after its C# recall sections.
+
 ### juice-shop (js, 1618a611b173): 22 finding(s), 652 files, 17 error(s)
 
 - js.code-injection: 1

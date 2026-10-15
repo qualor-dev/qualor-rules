@@ -2,14 +2,17 @@
 
 The security rules of [Qualor](https://qualor.dev)'s `qualor` engine: [OpenGrep](https://github.com/opengrep/opengrep)
 rules, mostly taint rules, that follow data from an HTTP request to a dangerous call in JavaScript
-and TypeScript, Python, Java, Go and C#. Once the pack is published, the `qualor/scanner` image will
-run them on every scan.
+and TypeScript, Python, Java, Go and C#. The `qualor/scanner` image runs them on every scan; for C#
+under `qualor dotnet end`, the pack's own Roslyn taint engine (`engine/dotnet`) runs the C# rules
+across files and projects instead.
 
 ## Licence
 
-**Source-available, not open source.** The rules are licensed under the PolyForm Shield License
-1.0.0 ([`LICENSE`](LICENSE)). This section summarises it in plain words; the licence text
-decides.
+**Source-available, not open source.** The rules, the C# engine's models and the C# engine's
+source (`engine/dotnet`) are licensed under the PolyForm Shield License 1.0.0
+([`LICENSE`](LICENSE)). This section summarises it in plain words; the licence text decides. The
+pack's `dotnet/engine/` also holds third-party components under their own licences (MIT): see
+[`NOTICE`](NOTICE).
 
 - You may use, change and share the rules for any purpose, free of charge and in any Qualor
   edition, except providing a product that competes with Qualor or with the rules themselves.
