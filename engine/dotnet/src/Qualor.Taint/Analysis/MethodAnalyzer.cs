@@ -1292,7 +1292,8 @@ internal sealed partial class MethodAnalyzer
     /// The request data of a keyed store entry for this body, with a path step at the read (R-9, R-E29): a constant key's
     /// entry and a view model are high (value passing within the request: what was written under the store's "any key"
     /// carries its medium write step), a read with a key that is not a constant medium; the part of the data this body
-    /// shares with its writers only through an unresolved view name's fallback edges is medium (StepKind.ViewFallback).
+    /// shares with its writers only through fallback edges is medium (Task 32: StepKind.ViewFallback for an unresolved view
+    /// name's, StepKind.DispatchFallback when a fallback dispatch call is all that is missing).
     private TaintValue Keyed(KeyedLocation location, IOperation read)
     {
         var value = _body.KeyedRead(location);
@@ -1301,9 +1302,9 @@ internal sealed partial class MethodAnalyzer
         var message = $"read from {Describe(location)}";
         if (location.Key == null) return value.Step(at, message, StepKind.AnyKeyEntry);
         var kind = location.Store == KeyedStore.ViewModel ? StepKind.ViewModel : StepKind.KeyedEntry;
-        var precise = _body.ThroughResolvedEdges(value);
+        var (precise, rest) = _body.ThroughResolvedEdges(value);
         if (ReferenceEquals(precise, value)) return value.Step(at, message, kind);
-        var fallback = value.Step(at, message, StepKind.ViewFallback);
+        var fallback = value.Step(at, message, rest);
         return precise.Any ? precise.Step(at, message, kind).Join(fallback) : fallback;
     }
 
@@ -1317,16 +1318,16 @@ internal sealed partial class MethodAnalyzer
     }
 
     /// The view's model read under its type's entries (Task 27: what all of them know of its members). The view-model
-    /// edge is high (R-E29), but for what the view shares with its writer only through an unresolved view name (as Keyed).
+    /// edge is high (R-E29), but for what the view shares with its writer only through fallback edges (as Keyed).
     private TaintValue Keyed(IEnumerable<KeyedLocation> locations, IOperation read)
     {
         var value = _body.KeyedRead(locations);
         if (!value.Any) return value;
         var at = read.Syntax.GetLocation();
         const string message = "read from the view's model";
-        var precise = _body.ThroughResolvedEdges(value);
+        var (precise, rest) = _body.ThroughResolvedEdges(value);
         if (ReferenceEquals(precise, value)) return value.Step(at, message, StepKind.ViewModel);
-        var fallback = value.Step(at, message, StepKind.ViewFallback);
+        var fallback = value.Step(at, message, rest);
         return precise.Any ? precise.Step(at, message, StepKind.ViewModel).Join(fallback) : fallback;
     }
 

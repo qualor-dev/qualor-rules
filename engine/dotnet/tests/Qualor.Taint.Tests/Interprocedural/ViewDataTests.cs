@@ -980,4 +980,136 @@ public sealed class ViewDataTests
             "/src/App/Views/Search/Find.cshtml:1 Medium",
         }, Confidences(result));
     }
+
+    // ---- The precise reach ignores fallback cycles (Task 32, defect D1 of Task 25) ----
+
+    /// A posted ticket goes to Refund's view, which renders a "Slot" view component by type; the slot's view renders a
+    /// partial whose name is chosen at run time (a fallback edge to every view). Edit's view (only Edit renders it, from
+    /// stored data) renders the partial `_Body`, which writes the ticket's note raw; with `editUsesSlot` it also renders
+    /// the slot, so the slot's fallback edge closes a cycle through Edit's view. Refund's view and its partial `_Line`
+    /// are rendered by Refund over resolved edges (the controls).
+    private static AnalysisResult SlotCycle(bool editUsesSlot)
+    {
+        const string web = """
+            public class Ticket
+            {
+                public int Id { get; set; }
+                public string Note { get; set; } = "";
+            }
+            public class SlotViewComponent : ViewComponent
+            {
+                public IViewComponentResult Invoke(string place) => View(new List<string> { place });
+            }
+            public class TicketsController : Controller
+            {
+                public IActionResult Edit(int id) => View(new Ticket { Id = id, Note = "kept" });
+
+                [HttpPost]
+                public IActionResult Refund(int id, Ticket ticket) => View(ticket);
+            }
+            """;
+        var edit = (editUsesSlot ? "Write(await Component.InvokeAsync(typeof(SlotViewComponent), new { place = \"edit\" }));\n" : "")
+            + "Write(await Html.PartialAsync(\"_Body\", Model));";
+        return Analyze(web,
+            View("Views_Tickets_Refund", "Ticket", "/src/App/Views/Tickets/Refund.cshtml", """
+                Write(Html.Raw(Model.Note));
+                Write(await Component.InvokeAsync(typeof(SlotViewComponent), new { place = "refund" }));
+                Write(await Html.PartialAsync("_Line", Model));
+                """),
+            View("Views_Tickets_Edit", "Ticket", "/src/App/Views/Tickets/Edit.cshtml", edit),
+            View("Views_Tickets__Body", "Ticket", "/src/App/Views/Tickets/_Body.cshtml", """
+                Write(Html.Raw(Model.Note));
+                """),
+            View("Views_Tickets__Line", "Ticket", "/src/App/Views/Tickets/_Line.cshtml", """
+                Write(Html.Raw(Model.Note));
+                """),
+            View("Views_Shared_Components_Slot_Default", "List<string>", "/src/App/Views/Shared/Components/Slot/Default.cshtml", """
+                Write(await Html.PartialAsync((string)ViewData["part"] ?? "_Empty"));
+                """));
+    }
+
+    [Fact]
+    public void A_view_the_action_never_renders_is_medium_when_a_fallback_edge_closes_a_cycle_through_it()
+    {
+        var result = SlotCycle(editUsesSlot: true);
+
+        // `_Body` shares the posted ticket with Refund only through the slot's fallback edge, although Edit's view and the
+        // slot form one component of the whole call graph; Refund's own view (inside that component too) and its partial
+        // keep the view-model edge.
+        Assert.Equal(1, result.Stats.UnresolvedViews);
+        Assert.Equal(new[]
+        {
+            "/src/App/Views/Tickets/Refund.cshtml:1 High",
+            "/src/App/Views/Tickets/_Body.cshtml:1 Medium",
+            "/src/App/Views/Tickets/_Line.cshtml:1 High",
+        }, Confidences(result));
+        var body = result.Findings.Single(f => f.SinkSpan.Path.EndsWith("_Body.cshtml", StringComparison.Ordinal));
+        Assert.Contains(body.Path, s => s.Kind == StepKind.ViewFallback);
+    }
+
+    [Fact]
+    public void A_view_the_action_never_renders_is_medium_without_a_cycle()
+    {
+        var result = SlotCycle(editUsesSlot: false);
+
+        Assert.Equal(new[]
+        {
+            "/src/App/Views/Tickets/Refund.cshtml:1 High",
+            "/src/App/Views/Tickets/_Body.cshtml:1 Medium",
+            "/src/App/Views/Tickets/_Line.cshtml:1 High",
+        }, Confidences(result));
+    }
+
+    /// Refund's view hands its helper to a panel service through an interface; the panel renders `_Body` (which writes the
+    /// ticket's note raw). No panel is created or registered: with two implementations the call is a class-hierarchy
+    /// fallback, with one it is no guess (R-E32).
+    private static AnalysisResult PanelCall(bool twoPanels)
+    {
+        var web = """
+            public class Ticket { public string Note { get; set; } = ""; }
+            public interface IPanel { Task<Microsoft.AspNetCore.Html.IHtmlContent> Show(IHtmlHelper html); }
+            public static class Panels { public static IPanel Current = null!; }
+            public class NotePanel : IPanel
+            {
+                public Task<Microsoft.AspNetCore.Html.IHtmlContent> Show(IHtmlHelper html) => html.PartialAsync("_Body");
+            }
+            public class TicketsController : Controller
+            {
+                [HttpPost]
+                public IActionResult Refund(Ticket ticket) => View(ticket);
+            }
+            """;
+        if (twoPanels)
+            web += """
+
+                public class EmptyPanel : IPanel
+                {
+                    public Task<Microsoft.AspNetCore.Html.IHtmlContent> Show(IHtmlHelper html) => Task.FromResult<Microsoft.AspNetCore.Html.IHtmlContent>(Microsoft.AspNetCore.Html.HtmlString.Empty);
+                }
+                """;
+        return Analyze(web,
+            View("Views_Tickets_Refund", "Ticket", "/src/App/Views/Tickets/Refund.cshtml", """
+                Write(await Panels.Current.Show(Html));
+                """),
+            View("Views_Shared__Body", "Ticket", "/src/App/Views/Shared/_Body.cshtml", """
+                Write(Html.Raw(Model.Note));
+                """));
+    }
+
+    [Fact]
+    public void A_view_model_shared_only_through_a_class_hierarchy_fallback_call_is_medium()
+    {
+        var result = PanelCall(twoPanels: true);
+
+        Assert.Equal(new[] { "/src/App/Views/Shared/_Body.cshtml:1 Medium" }, Confidences(result));
+        Assert.Contains(result.Findings.Single().Path, s => s.Kind == StepKind.DispatchFallback);
+    }
+
+    [Fact]
+    public void A_view_model_shared_through_a_call_with_one_candidate_is_high()
+    {
+        var result = PanelCall(twoPanels: false);
+
+        Assert.Equal(new[] { "/src/App/Views/Shared/_Body.cshtml:1 High" }, Confidences(result));
+    }
 }

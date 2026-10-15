@@ -65,6 +65,10 @@ internal sealed class Unit
     /// (decision R-7).
     public List<CallSite>? PendingSites { get; set; }
 
+    /// The callee keys only fallback dispatch gives (Dispatch.IsFallback: a class-hierarchy or scanning guess of more than
+    /// one candidate) while the call graph is built; null when there are none.
+    public HashSet<object>? FallbackKeys { get; set; }
+
     public List<Unit> Callees { get; } = new();
 
     /// The index of the unit's strongly connected component, callees' components first.
@@ -115,6 +119,11 @@ internal sealed class CallGraph
     public List<Unit> Units { get; } = new();
 
     public List<List<Unit>> Sccs { get; } = new();
+
+    /// The edges (caller, callee) only fallback dispatch gives: every call of the caller that may run the callee is a
+    /// class-hierarchy or scanning guess of more than one candidate (Dispatch.IsFallback, R-9). They are edges of the
+    /// call graph and of its components like any other; EntryPoints leaves them out of the precise reach (Task 32).
+    public HashSet<(Unit From, Unit To)> FallbackCalls { get; } = new();
 
     public IReadOnlyList<Body> AllBodies => _all;
 
@@ -219,17 +228,33 @@ internal sealed class CallGraph
         {
             if (unit.PendingSites is not { } sites) continue;
             unit.PendingSites = null;
+            // The keys that are no guess: the calls that need no dispatch (in CalleeKeys already) and the dispatched
+            // targets of no fallback.
+            var direct = unit.CalleeKeys.Count;
+            HashSet<object>? sure = null;
             try
             {
                 foreach (var site in sites)
                 {
                     _dispatch.Count(site);
-                    foreach (var target in _dispatch.Targets(site)) unit.CalleeKeys.Add(_dispatch.Key(target));
+                    foreach (var target in _dispatch.Targets(site))
+                    {
+                        var key = _dispatch.Key(target);
+                        unit.CalleeKeys.Add(key);
+                        if (_dispatch.IsFallback(site.Method, site.IsVirtual, site.Receiver, target)) (unit.FallbackKeys ??= new HashSet<object>()).Add(key);
+                        else (sure ??= new HashSet<object>()).Add(key);
+                    }
                 }
             }
             catch (Exception e) when (e is not OperationCanceledException)
             {
                 // As above: an ordering aid.
+            }
+            if (unit.FallbackKeys is { } fallback)
+            {
+                if (sure != null) fallback.ExceptWith(sure);
+                fallback.ExceptWith(unit.CalleeKeys.Take(direct));
+                if (fallback.Count == 0) unit.FallbackKeys = null;
             }
         }
         return Order(entries);
@@ -312,9 +337,23 @@ internal sealed class CallGraph
         foreach (var unit in Units)
         {
             var seen = new HashSet<Unit>();
+            var fallback = unit.FallbackKeys;
+            HashSet<Unit>? guessed = null;
+            HashSet<Unit>? sure = null;
             foreach (var key in unit.CalleeKeys)
-                if (_bodies.TryGetValue(key, out var body) && seen.Add(body.Unit)) unit.Callees.Add(body.Unit);
+            {
+                if (!_bodies.TryGetValue(key, out var body)) continue;
+                if (seen.Add(body.Unit)) unit.Callees.Add(body.Unit);
+                // A callee only fallback keys give is a fallback edge (another key of the same unit is a sure call).
+                if (fallback == null) continue;
+                if (fallback.Contains(key)) (guessed ??= new HashSet<Unit>()).Add(body.Unit);
+                else (sure ??= new HashSet<Unit>()).Add(body.Unit);
+            }
+            if (guessed != null)
+                foreach (var callee in guessed)
+                    if (callee != unit && (sure == null || !sure.Contains(callee))) FallbackCalls.Add((unit, callee));
             unit.CalleeKeys.Clear();
+            unit.FallbackKeys = null;
             foreach (var callee in unit.Callees)
                 if (callee != unit) _called.Add(callee);
         }
@@ -326,7 +365,19 @@ internal sealed class CallGraph
 
     private void Components()
     {
-        var n = Units.Count;
+        var (of, components) = StronglyConnected(Units, null);
+        foreach (var unit in Units) unit.Scc = of[unit.Id];
+        Sccs.AddRange(components);
+    }
+
+    /// The strongly connected components of `units` (a unit's Id is its index) over the edges `keep` accepts (every
+    /// edge when null), by Tarjan's algorithm (iterative), in bottom-up order (a component after every component it
+    /// calls); `Of[unit.Id]` is the index of the unit's component.
+    internal static (int[] Of, List<List<Unit>> Components) StronglyConnected(List<Unit> units, Func<Unit, Unit, bool>? keep)
+    {
+        var sccs = new List<List<Unit>>();
+        var n = units.Count;
+        var of = new int[n];
         var index = new int[n];
         var low = new int[n];
         var onStack = new bool[n];
@@ -347,11 +398,13 @@ internal sealed class CallGraph
                     stack.Push(v);
                     onStack[v] = true;
                 }
-                var callees = Units[v].Callees;
+                var callees = units[v].Callees;
                 var descended = false;
                 while (i < callees.Count)
                 {
-                    var w = callees[i++].Id;
+                    var callee = callees[i++];
+                    if (keep != null && !keep(units[v], callee)) continue;
+                    var w = callee.Id;
                     if (index[w] == -1)
                     {
                         work.Push((v, i));
@@ -370,11 +423,11 @@ internal sealed class CallGraph
                     {
                         w = stack.Pop();
                         onStack[w] = false;
-                        Units[w].Scc = Sccs.Count;
-                        component.Add(Units[w]);
+                        of[w] = sccs.Count;
+                        component.Add(units[w]);
                     }
                     while (w != v);
-                    Sccs.Add(component);
+                    sccs.Add(component);
                 }
                 if (work.Count > 0)
                 {
@@ -383,6 +436,7 @@ internal sealed class CallGraph
                 }
             }
         }
+        return (of, sccs);
     }
 
     public static bool IsGraphRoot(IOperation? operation) => operation is IMethodBodyOperation or IConstructorBodyOperation

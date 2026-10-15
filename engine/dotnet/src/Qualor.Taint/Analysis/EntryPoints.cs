@@ -43,9 +43,12 @@ namespace Qualor.Taint;
 ///     initializers.
 ///   A view is identified by the generator's RazorCompiledItem attributes, else by its `#line` file. A view name that
 ///   cannot be resolved reaches every view and view component of the caller's project and of the projects that
-///   reference it, a view component name every view component of the solution (counted: UnresolvedViews; such fallback
-///   edges are left out of PreciseOf, so keyed data a view shares with its writer only through them is medium, R-9); a path name
+///   reference it, a view component name every view component of the solution (counted: UnresolvedViews); a path name
 ///   no compiled view has (a runtime-compiled view) reaches nothing (counted: UncompiledViews).
+/// - Precise reach (R-9, Task 32): the reach over the edges that are no guess, without these fallback edges and without the
+///   calls fallback dispatch alone gives (CallGraph.FallbackCalls), propagated over the components those edges form
+///   (PreciseOf; ViewPreciseOf keeps the dispatch edges). Keyed data a view shares with its writer only through fallback
+///   edges is medium. The full reach, fallback edges included, scopes the request data and the heap.
 internal sealed class EntryPoints
 {
     private const string RazorPageBase = "Microsoft.AspNetCore.Mvc.Razor.RazorPageBase";
@@ -115,11 +118,17 @@ internal sealed class EntryPoints
 
     private Reach[] _sccReach = Array.Empty<Reach>();
 
-    /// Each component's reach without the edges of unresolved view names (R-9): what a keyed store or view model read
-    /// shares with its writers through resolved edges only (PreciseOf).
-    private Reach[] _sccPrecise = Array.Empty<Reach>();
+    /// The reach without fallback edges (R-9, Task 32): what a keyed store or view model read shares with its writers
+    /// through resolved edges only (PreciseOf), and through every edge but an unresolved view name's (ViewPreciseOf).
+    /// Each is propagated over the components of the call graph without those edges, not over the call graph's own
+    /// components: a cycle that only a fallback edge closes (a view component whose view renders a view by a name chosen
+    /// at run time, invoked from a view that view reaches) would give its members one shared reach (defect D1).
+    private Partition _precise = Partition.Empty;
+    private Partition _viewPrecise = Partition.Empty;
     private readonly HashSet<(Unit From, Unit To)> _fallbackEdges = new();
+    private readonly HashSet<(Unit From, Unit To)> _resolvedEdges = new();
     private readonly Dictionary<int, Reach> _bodyPrecise = new();
+    private readonly Dictionary<int, Reach> _bodyViewPrecise = new();
     private readonly Dictionary<Unit, List<(List<TextSpan> Spans, int Bit)>> _handlerBits = new();
     private readonly Dictionary<int, Reach> _bodyReach = new();
     private readonly Dictionary<int, Reach> _bodyWriteReach = new();
@@ -503,7 +512,7 @@ internal sealed class EntryPoints
         var views = _views.Values.OfType<ViewClass>().ToList();
         var components = _components.Values.OfType<ComponentClass>().ToList();
         var edges = new Dictionary<Unit, HashSet<Unit>>();
-        var resolved = new HashSet<(Unit, Unit)>();
+        var resolved = _resolvedEdges;
         void Edge(Unit from, IEnumerable<Unit> targets, bool fallback = false)
         {
             if (!edges.TryGetValue(from, out var seen)) edges[from] = seen = new HashSet<Unit>(from.Callees) { from };
@@ -543,8 +552,6 @@ internal sealed class EntryPoints
                     break;
             }
         }
-        // An edge a resolved view name (or a call) also gives is no fallback.
-        _fallbackEdges.ExceptWith(resolved);
         foreach (var (view, type) in _tagHelpers)
             foreach (var b in SelfAndBases(type))
                 if (_tagHelperUnits.TryGetValue(SymbolKeys.Of(b.OriginalDefinition), out var units)) Edge(view, units);
@@ -553,6 +560,9 @@ internal sealed class EntryPoints
                 foreach (var constructor in constructors) Edge(constructor, initializers);
         foreach (var (caller, type) in _implicitNews)
             if (_initializersOf.TryGetValue(type, out var initializers)) Edge(caller, initializers);
+        // An edge a resolved view name, a tag helper or an initializer (or a call) also gives is no view fallback;
+        // `resolved` also holds the calls these edges repeat (a fallback dispatch edge among them is a sure one).
+        _fallbackEdges.ExceptWith(resolved);
     }
 
     /// Whether project `project` is `caller` or references it.
@@ -793,7 +803,6 @@ internal sealed class EntryPoints
             entries.Add(new Entry(around, null, null));
         }
         if (entries.Count > explicitCount) reach = Propagate(graph, entries);
-        var precise = _fallbackEdges.Count == 0 ? reach : Propagate(graph, entries, _fallbackEdges);
 
         Count = entries.Count;
         foreach (var e in entries)
@@ -802,10 +811,20 @@ internal sealed class EntryPoints
         var all = new ulong[_words];
         for (var i = 0; i < entries.Count; i++) all[i >> 6] |= 1UL << (i & 63);
         _all = _table.Of(all);
-        _sccReach = new Reach[graph.Sccs.Count];
-        for (var s = 0; s < reach.Length; s++) _sccReach[s] = reach[s] == null ? Reach.None : _table.Of(reach[s]!);
-        _sccPrecise = new Reach[graph.Sccs.Count];
-        for (var s = 0; s < precise.Length; s++) _sccPrecise[s] = precise[s] == null ? Reach.None : _table.Of(precise[s]!);
+        _sccReach = Intern(reach);
+        var full = new Partition(null, _sccReach);
+        // The fallback edges of dispatch (a resolved view, tag helper or initializer edge that repeats one is sure).
+        var dispatch = graph.FallbackCalls;
+        if (dispatch.Count > 0 && _resolvedEdges.Count > 0)
+        {
+            dispatch = new HashSet<(Unit, Unit)>(dispatch);
+            dispatch.ExceptWith(_resolvedEdges);
+        }
+        var views = _fallbackEdges;
+        _viewPrecise = views.Count == 0 ? full : PreciseReach(graph, entries, edge => !views.Contains(edge));
+        _precise = dispatch.Count == 0 ? _viewPrecise
+            : views.Count == 0 ? PreciseReach(graph, entries, edge => !dispatch.Contains(edge))
+            : PreciseReach(graph, entries, edge => !views.Contains(edge) && !dispatch.Contains(edge));
         for (var i = 0; i < entries.Count; i++)
         {
             if (entries[i].Handler is not { } handler) continue;
@@ -829,12 +848,16 @@ internal sealed class EntryPoints
     /// An entry point: units it starts in, or a Minimal API handler (its unit and spans) with its callees' keys.
     private sealed record Entry(List<Unit>? Units, List<object>? Callees, (Unit Owner, List<TextSpan> Spans)? Handler);
 
-    /// The reach of every component from `entries`, over the call graph's edges but `skip` (R-9: an unresolved view
-    /// name's fallback edges).
-    private static ulong[]?[] Propagate(CallGraph graph, List<Entry> entries, HashSet<(Unit, Unit)>? skip = null)
+    /// The reach of every component of the call graph from `entries`, over all its edges.
+    private static ulong[]?[] Propagate(CallGraph graph, List<Entry> entries) =>
+        Propagate(graph, graph.Sccs, unit => unit.Scc, entries, null);
+
+    /// The reach of every component of `components` (bottom-up, `of` a unit's component) from `entries`, over the call
+    /// graph's edges `keep` accepts (every edge when null).
+    private static ulong[]?[] Propagate(CallGraph graph, List<List<Unit>> components, Func<Unit, int> of, List<Entry> entries, Func<(Unit, Unit), bool>? keep)
     {
         var words = (entries.Count + 63) / 64;
-        var reach = new ulong[]?[graph.Sccs.Count];
+        var reach = new ulong[]?[components.Count];
         void Set(int scc, int bit)
         {
             reach[scc] ??= new ulong[words];
@@ -843,25 +866,53 @@ internal sealed class EntryPoints
         for (var i = 0; i < entries.Count; i++)
         {
             if (entries[i].Units is { } units)
-                foreach (var unit in units) Set(unit.Scc, i);
+                foreach (var unit in units) Set(of(unit), i);
             else
                 foreach (var key in entries[i].Callees!)
-                    if (graph.UnitOf(key) is { } callee) Set(callee.Scc, i);
+                    if (graph.UnitOf(key) is { } callee) Set(of(callee), i);
         }
         // Components are in bottom-up order (callees first): callers are done before their callees.
-        for (var s = graph.Sccs.Count - 1; s >= 0; s--)
+        for (var s = components.Count - 1; s >= 0; s--)
         {
             var own = reach[s];
             if (own == null) continue;
-            foreach (var unit in graph.Sccs[s])
+            foreach (var unit in components[s])
                 foreach (var callee in unit.Callees)
                 {
-                    if (callee.Scc == s || (skip != null && skip.Contains((unit, callee)))) continue;
-                    var target = reach[callee.Scc] ??= new ulong[words];
+                    var c = of(callee);
+                    if (c == s || (keep != null && !keep((unit, callee)))) continue;
+                    var target = reach[c] ??= new ulong[words];
                     for (var w = 0; w < words; w++) target[w] |= own[w];
                 }
         }
         return reach;
+    }
+
+    /// The reach over the edges `keep` accepts, per component of the call graph formed from those edges only (Task 32).
+    private Partition PreciseReach(CallGraph graph, List<Entry> entries, Func<(Unit, Unit), bool> keep)
+    {
+        var (of, components) = CallGraph.StronglyConnected(graph.Units, (from, to) => keep((from, to)));
+        return new Partition(of, Intern(Propagate(graph, components, unit => of[unit.Id], entries, keep)));
+    }
+
+    private Reach[] Intern(ulong[]?[] bits)
+    {
+        var sets = new Reach[bits.Length];
+        for (var s = 0; s < bits.Length; s++) sets[s] = bits[s] == null ? Reach.None : _table.Of(bits[s]!);
+        return sets;
+    }
+
+    /// A reach per component of some partition of the units: `Of[unit.Id]` the unit's component, or (null) the call
+    /// graph's own components (Unit.Scc).
+    private sealed record Partition(int[]? Of, Reach[] Sets)
+    {
+        public static readonly Partition Empty = new(null, Array.Empty<Reach>());
+
+        public Reach For(Unit unit)
+        {
+            var c = Of == null ? unit.Scc : unit.Id < Of.Length ? Of[unit.Id] : -1;
+            return c >= 0 && c < Sets.Length ? Sets[c] : Reach.None;
+        }
     }
 
     /// The entry points a body is reached from (what it reads the heap under): its unit's component's, or, for a body in
@@ -886,15 +937,23 @@ internal sealed class EntryPoints
         return reach;
     }
 
-    /// The entry points a body is reached from over resolved edges only (R-9): its reach without what only an unresolved
-    /// view name's fallback edges give it; the reach itself when they give it nothing.
-    public Reach PreciseOf(Body body)
+    /// The entry points a body is reached from over resolved edges only (R-9, Task 32): its reach without what only
+    /// fallback edges give it (an unresolved view name's, or a call's that fallback dispatch resolves, Dispatch.IsFallback);
+    /// the reach itself when they give it nothing.
+    public Reach PreciseOf(Body body) => Narrowed(body, _precise, _bodyPrecise);
+
+    /// The entry points a body is reached from over every edge but an unresolved view name's fallback edges: PreciseOf
+    /// and what fallback dispatch adds (the part of a read that is only a dispatch guess away from its writer).
+    public Reach ViewPreciseOf(Body body) => Narrowed(body, _viewPrecise, _bodyViewPrecise);
+
+    private Reach Narrowed(Body body, Partition partition, Dictionary<int, Reach> cache)
     {
-        if (_bodyPrecise.TryGetValue(body.Id, out var cached)) return cached;
+        if (cache.TryGetValue(body.Id, out var cached)) return cached;
         var reach = Of(body);
-        var scc = body.Unit.Scc;
-        if (scc < _sccPrecise.Length && !ReferenceEquals(_sccPrecise[scc], _sccReach[scc])) reach = reach.Intersect(_sccPrecise[scc]);
-        _bodyPrecise[body.Id] = reach;
+        var unit = body.Unit;
+        var scc = unit.Scc;
+        if (scc < _sccReach.Length && partition.For(unit) is var narrow && !ReferenceEquals(narrow, _sccReach[scc])) reach = reach.Intersect(narrow);
+        cache[body.Id] = reach;
         return reach;
     }
 

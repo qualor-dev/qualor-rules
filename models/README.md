@@ -609,7 +609,15 @@ key (`ViewData["k"]`, `ViewBag.K`, `HttpContext.Items["k"]`). A path is medium w
 | `any-key-entry` | a keyed store entry written or read with a key that is not a constant, or a view model of type object |
 | `key-lookup` | an element found by a request key (R-E9/R-E18: a dictionary or JSON lookup, `GetValueOrDefault`, a `key:` propagator) |
 | `view-fallback` | a keyed entry or view model a view shares with its writer only through an unresolved view name (every view of the project) |
-| `dispatch-fallback` | a call of more than one candidate resolved by the class-hierarchy fallback (no implementation created or registered), or a target of it only types opened by scanning or reflection run (R-7, Task 26), also beside registered ones (R-E32 as revised); a body's call steps, and an auto-property's or external member's result |
+| `dispatch-fallback` | a call of more than one candidate resolved by the class-hierarchy fallback (no implementation created or registered), or a target of it only types opened by scanning or reflection run (R-7, Task 26), also beside registered ones (R-E32 as revised); a body's call steps, and an auto-property's or external member's result; and a keyed entry or view model a view shares with its writer only through such a call (Task 32) |
+
+What a keyed read shares with its writer "through resolved edges" is the precise reach (Task 32): the entry points that
+reach the reading body over the call graph without the fallback edges of unresolved view names and of fallback dispatch,
+computed over the strongly connected components of that graph. A cycle that only a fallback edge closes (a view component
+whose view renders a view by a name chosen at run time, invoked from one of the views that name reaches) therefore gives
+its members no shared precise reach: a view an action never renders reads that action's model as `view-fallback` even
+when it invokes the same component. The request scope of data and of the heap still uses the whole call graph, fallback
+edges included, so the precise reach changes confidence only, never a finding.
 
 (`keyed-entry` and `view-model` steps are named too; they are high.) Of the paths to one sink the engine reports a high
 one when it finds one (R-E32 as revised). A join keeps the witnesses of both sides, each with its scope and its
