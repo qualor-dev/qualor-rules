@@ -78,7 +78,15 @@ public record Message(string Text);
 ## Known limits
 
 <!-- begin: known-limits -->
-- A formatter is found when its type is written in the same file: a variable, field or parameter declared with it (also `var x = new BinaryFormatter()`), with or without a namespace. One returned by a helper, or kept in a member of another file, is missed.
+Under `qualor dotnet end`, Qualor's Roslyn engine checks this rule in OpenGrep's place, on the
+projects the build compiled, with the compiler's types: a formatter is found by its type wherever
+the object comes from (a helper's result, a field declared in another file), and it reads all C# the
+compiler accepts. The engine's own limits are listed in the
+[models' README](../../../models/README.md), sections "Misuse rules" and "Known limits". The bullets
+below are the OpenGrep rule's: it runs outside `qualor dotnet end`, on C# files no compiled project
+covers, and as the fallback when the engine cannot finish.
+
+- OpenGrep finds a formatter when its type is written in the same file: a variable, field or parameter declared with it (also `var x = new BinaryFormatter()`), with or without a namespace. One returned by a helper, or kept in a member of another file, is missed.
 - `TypeNameHandling` is reported where it is set to `Auto`, `All`, `Objects` or `Arrays` in the code. A value kept in a variable or constant is missed. A `SerializationBinder` that allows only expected types is not looked at: the setting is still reported. Settings used only to write JSON are reported too. The attribute form is matched as text, so it can also fire inside a comment or string.
 - A `SimpleTypeResolver` kept in a variable before it is given to `JavaScriptSerializer`, and custom type resolvers, are missed.
 - Code in a file OpenGrep cannot parse (some C# 11 and 12 syntax: `$$"""` raw strings, `class X : Y;`, some multi-line collection expressions) is not checked.

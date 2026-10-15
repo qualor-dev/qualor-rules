@@ -75,6 +75,13 @@ public class ApiClient
 ## Known limits
 
 <!-- begin: known-limits -->
+Under `qualor dotnet end`, Qualor's Roslyn engine checks this rule in OpenGrep's place, on the
+projects the build compiled, with the compiler's types: a handler, a stream and a callback are
+matched by their types rather than by name, and it reads all C# the compiler accepts. The engine's
+own limits are listed in the [models' README](../../../models/README.md), sections "Misuse rules"
+and "Known limits". The bullets below are the OpenGrep rule's: it runs outside `qualor dotnet end`,
+on C# files no compiled project covers, and as the fallback when the engine cannot finish.
+
 - A lambda is checked where it is given directly to one of the properties or constructors above. A callback kept in a variable first is missed.
 - A method is reported where it is declared, not where it is used; a method that returns `true` after a check that neither returns nor throws (a log line, an `if` that only logs) is reported too.
 - A block-bodied callback counts as accepting everything only when it returns `true` and has no other `return` and no `throw`. Callbacks that accept only some errors (a host name mismatch, say) are not reported.

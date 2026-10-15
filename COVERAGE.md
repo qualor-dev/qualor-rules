@@ -127,7 +127,9 @@ client's `get`) needs a propagator of its own.
   Path parameters, query strings, form fields, headers, cookies and JSON bodies bound through the
   framework's decoder or binder all belong in the block.
 - Not in scope yet: Koa, NestJS (`@Param`/`@Query`/`@Body`), Hapi; aiohttp, Tornado, Starlette
-  without FastAPI; Quarkus-specific APIs beyond the Jakarta REST annotations, Micronaut, Spring WebFlux; Fiber, Beego; classic ASP.NET (System.Web, MVC 5, Web API 2), Blazor, Razor markup (`.cshtml`, `.razor`). Each is a framework to add.
+  without FastAPI; Quarkus-specific APIs beyond the Jakarta REST annotations, Micronaut, Spring WebFlux; Fiber, Beego; classic ASP.NET (System.Web, MVC 5, Web API 2), Blazor. Each is a framework to add.
+  Razor markup: engine only (`qualor dotnet end`; compiled `.cshtml` views and pages, not Blazor's
+  `MarkupString`); the OpenGrep rules do not read it.
 - The shared items (sources, request propagators, shared sanitizers) must stay **byte-identical**
   in every rule that carries them. Compare them with a script after every change to the block,
   and run the per-alternative mutation sweep (rule-procedure.md step 4) on each rule. Items that
@@ -265,6 +267,17 @@ What each language's block holds today (2026-10-11 run):
   without lines: other files (intrafile), `$$"""` raw strings, body-less types (`class X : Y;`)
   and some multi-line collection expressions, which OpenGrep 1.30 parses only partly (a finding
   there comes from error recovery, never counted).
+- **csharp, the Roslyn engine** (`engine/dotnet`, models in `models/csharp`, spec 2026-10-13 of
+  the engine plan): under `qualor dotnet end` the engine runs all 12 C# rules in OpenGrep's place
+  on the projects the build compiled (the OpenGrep rules stay for other C# files and as the
+  fallback). It follows request data across methods, files and projects, through properties,
+  expression-bodied members and DI-registered services, and into compiled Razor views and pages
+  (`.cshtml`), with request-scoped heap data and high or medium confidence. Its models mirror each
+  rule's sources, sinks and sanitizers, and every difference is commented in the model file
+  (`models/README.md`); a change to a C# rule's sources, sinks, sanitizers or fixture lines goes
+  into the model and `engine/dotnet/expectations.yml` in the same commit, checked by
+  `npm run test:engine` (not part of `npm test`). Its limits are in `models/README.md` "Known
+  limits"; several `todoruleid:` lines above are found by the engine (pinned as `must-find`).
 
 ### Test code
 

@@ -77,6 +77,14 @@ public class InvoiceParser
 ## Known limits
 
 <!-- begin: known-limits -->
+Under `qualor dotnet end`, Qualor's Roslyn engine checks this rule in OpenGrep's place, on the
+projects the build compiled, with the compiler's types: a parser, a settings object and a resolver
+are matched by their types rather than by name, and it reads all C# the compiler accepts. The
+engine's own limits are listed in the [models' README](../../../models/README.md), sections "Misuse
+rules" and "Known limits". The bullets below are the OpenGrep rule's: it runs outside
+`qualor dotnet end`, on C# files no compiled project covers, and as the fallback when the engine
+cannot finish.
+
 - Only `new XmlUrlResolver()` counts as a resolver. One kept in a variable, returned by a helper or written as a custom `XmlResolver` class is missed.
 - For `XmlReaderSettings`, `DtdProcessing.Parse` and the resolver must be set in the same block or the same initializer, as literals; set in different methods they are missed.
 - `DtdProcessing.Parse` without a resolver is not reported: external references are not fetched with the defaults of .NET Framework 4.5.2 and later, .NET Core and .NET 5+. Such a parser still expands internal entities without a limit unless `MaxCharactersFromEntities` is set. Before .NET Framework 4.5.2 the default resolver fetched, so a bare `XmlTextReader`, `XmlDocument` or a `Parse` setting was unsafe there; the rule does not know the target framework.

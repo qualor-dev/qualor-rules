@@ -100,8 +100,21 @@ public class SearchController : ControllerBase
 ## Known limits
 
 <!-- begin: known-limits -->
-- Razor views (`.cshtml`) and Razor components (`.razor`) are not analysed, so `@Html.Raw(...)`
-  and `MarkupString` in markup, the main raw-HTML outputs of MVC and Razor Pages, are not checked.
+Under `qualor dotnet end`, Qualor's Roslyn taint engine runs this rule in OpenGrep's place, on the
+projects the build compiled. It follows request data across methods, files and projects, through
+properties, expression-bodied members and services registered for dependency injection, and into the
+code of compiled Razor views and pages (`.cshtml`), and it reads all C# the compiler accepts. A
+finding is of high confidence, or medium ("Possible" in Qualor) when its path goes through data
+stored earlier in the request, a lookup by a request key, or a call or view the engine could not
+narrow down. The engine's own limits are listed in the [models' README](../../../models/README.md),
+section "Known limits". The bullets below are the OpenGrep rule's: it runs outside
+`qualor dotnet end`, on C# files no compiled project covers, and as the fallback when the engine
+cannot finish.
+
+- OpenGrep does not analyse Razor views (`.cshtml`) or Razor components (`.razor`), so
+  `@Html.Raw(...)` and `MarkupString` in markup, the main raw-HTML outputs of MVC and Razor Pages,
+  are not checked by this rule. The engine checks `@Html.Raw(...)` and `HtmlString` in compiled
+  `.cshtml` views and pages; Blazor's `MarkupString` is checked by neither.
 - Taint is followed through the methods of one file, not into other files: request data passed to
   a view, a view component or a service is missed. Request data read inside an expression-bodied
   method (`=> ...`) or a property getter is missed.
