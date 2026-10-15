@@ -1063,7 +1063,7 @@ public sealed class ViewDataTests
     /// Refund's view hands its helper to a panel service through an interface; the panel renders `_Body` (which writes the
     /// ticket's note raw). No panel is created or registered: with two implementations the call is a class-hierarchy
     /// fallback, with one it is no guess (R-E32).
-    private static AnalysisResult PanelCall(bool twoPanels)
+    private static AnalysisResult PanelCall(bool twoPanels, bool directToo = false)
     {
         var web = """
             public class Ticket { public string Note { get; set; } = ""; }
@@ -1088,9 +1088,8 @@ public sealed class ViewDataTests
                 }
                 """;
         return Analyze(web,
-            View("Views_Tickets_Refund", "Ticket", "/src/App/Views/Tickets/Refund.cshtml", """
-                Write(await Panels.Current.Show(Html));
-                """),
+            View("Views_Tickets_Refund", "Ticket", "/src/App/Views/Tickets/Refund.cshtml",
+                (directToo ? "Write(await ((NotePanel)Panels.Current).Show(Html));" + Environment.NewLine : "") + "Write(await Panels.Current.Show(Html));"),
             View("Views_Shared__Body", "Ticket", "/src/App/Views/Shared/_Body.cshtml", """
                 Write(Html.Raw(Model.Note));
                 """));
@@ -1111,5 +1110,124 @@ public sealed class ViewDataTests
         var result = PanelCall(twoPanels: false);
 
         Assert.Equal(new[] { "/src/App/Views/Shared/_Body.cshtml:1 High" }, Confidences(result));
+    }
+
+    [Fact]
+    public void A_fallback_call_the_same_body_also_calls_directly_is_no_guess()
+    {
+        // The view also calls the note panel's Show without dispatch (a non-virtual call on the class type): the edge to
+        // it is sure, though the interface call alone would be a two-candidate guess.
+        var result = PanelCall(twoPanels: true, directToo: true);
+
+        Assert.Equal(new[] { "/src/App/Views/Shared/_Body.cshtml:1 High" }, Confidences(result));
+    }
+
+    [Fact]
+    public void A_view_named_at_run_time_and_also_by_a_constant_reaches_it_over_a_resolved_edge()
+    {
+        const string web = """
+            public class Ticket { public string Note { get; set; } = ""; }
+            public class TicketsController : Controller
+            {
+                [HttpPost]
+                public IActionResult Refund(Ticket ticket) => View(ticket);
+            }
+            """;
+        // The run-time name comes first (its fallback edge to `_Body` is added first); the constant name repeats the edge.
+        var result = Analyze(web,
+            View("Views_Tickets_Refund", "Ticket", "/src/App/Views/Tickets/Refund.cshtml", """
+                Write(await Html.PartialAsync((string)ViewData["part"] ?? "_Empty"));
+                Write(await Html.PartialAsync("_Body", Model));
+                """),
+            View("Views_Tickets__Body", "Ticket", "/src/App/Views/Tickets/_Body.cshtml", """
+                Write(Html.Raw(Model.Note));
+                """));
+
+        Assert.Equal(1, result.Stats.UnresolvedViews);
+        Assert.Equal(new[] { "/src/App/Views/Tickets/_Body.cshtml:1 High" }, Confidences(result));
+    }
+
+    // ---- The writer side (Task 32 fix round 1, I2) ----
+
+    /// The Show action asks a filler service, through an interface, to fill its view data from the query (an entry and a
+    /// ViewBag property); the action's own view writes both raw. No filler is created: with two of them the call is a
+    /// class-hierarchy guess.
+    private static AnalysisResult FillerCall(bool twoFillers)
+    {
+        var web = """
+            public interface IFiller { void Fill(Controller page); }
+            public static class Fillers { public static IFiller Current = null!; }
+            public class QueryFiller : IFiller
+            {
+                public void Fill(Controller page)
+                {
+                    page.ViewData["Title"] = page.Request.Query["title"].ToString();
+                    page.ViewBag.Tag = page.Request.Query["tag"].ToString();
+                }
+            }
+            public class ReportsController : Controller
+            {
+                public IActionResult Show()
+                {
+                    Fillers.Current.Fill(this);
+                    return View();
+                }
+            }
+            """;
+        if (twoFillers) web += Environment.NewLine + "public class QuietFiller : IFiller { public void Fill(Controller page) { } }";
+        return Analyze(web,
+            View("Views_Reports_Show", "object", "/src/App/Views/Reports/Show.cshtml", """
+                Write(Html.Raw(ViewData["Title"]));
+                Write(Html.Raw(ViewBag.Tag));
+                """));
+    }
+
+    [Fact]
+    public void Request_data_a_helper_writes_that_the_action_reaches_only_through_a_fallback_call_is_medium()
+    {
+        var result = FillerCall(twoFillers: true);
+
+        Assert.Equal(new[]
+        {
+            "/src/App/Views/Reports/Show.cshtml:1 Medium",
+            "/src/App/Views/Reports/Show.cshtml:2 Medium",
+        }, Confidences(result));
+        Assert.All(result.Findings, f => Assert.Contains(f.Path, s => s.Kind == StepKind.DispatchFallback));
+    }
+
+    [Fact]
+    public void Request_data_a_helper_writes_that_the_action_reaches_through_a_call_with_one_candidate_is_high()
+    {
+        var result = FillerCall(twoFillers: false);
+
+        Assert.Equal(new[]
+        {
+            "/src/App/Views/Reports/Show.cshtml:1 High",
+            "/src/App/Views/Reports/Show.cshtml:2 High",
+        }, Confidences(result));
+    }
+
+    [Fact]
+    public void Request_data_a_partial_reached_only_through_a_run_time_view_name_writes_is_medium()
+    {
+        const string web = """
+            public class ReportsController : Controller
+            {
+                public IActionResult Show() => View();
+            }
+            """;
+        // Show's view renders a partial by a name chosen at run time, then writes the entry raw; `_Header` (reached only
+        // through that name) sets the entry from the query.
+        var result = Analyze(web,
+            View("Views_Reports_Show", "object", "/src/App/Views/Reports/Show.cshtml", """
+                Write(await Html.PartialAsync((string)ViewData["header"] ?? "_None"));
+                Write(Html.Raw(ViewData["Title"]));
+                """),
+            View("Views_Reports__Header", "object", "/src/App/Views/Reports/_Header.cshtml", """
+                ViewData["Title"] = Context.Request.Query["title"].ToString();
+                """));
+
+        Assert.Equal(new[] { "/src/App/Views/Reports/Show.cshtml:2 Medium" }, Confidences(result));
+        Assert.Contains(result.Findings.Single().Path, s => s.Kind == StepKind.ViewFallback);
     }
 }

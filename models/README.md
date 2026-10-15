@@ -616,8 +616,12 @@ reach the reading body over the call graph without the fallback edges of unresol
 computed over the strongly connected components of that graph. A cycle that only a fallback edge closes (a view component
 whose view renders a view by a name chosen at run time, invoked from one of the views that name reaches) therefore gives
 its members no shared precise reach: a view an action never renders reads that action's model as `view-fallback` even
-when it invokes the same component. The request scope of data and of the heap still uses the whole call graph, fallback
-edges included, so the precise reach changes confidence only, never a finding.
+when it invokes the same component. The writer side is checked the same way (Task 32 fix round 1): request data a body
+writes to a keyed entry under a constant key or to a view model is high only for the entry points that reach the writing
+body over resolved edges; for the others (a helper only a fallback dispatch call reaches, a partial only a run-time view
+name reaches) the write is a `dispatch-fallback` or `view-fallback` step, so the action's own view reads it medium. Code
+around every action writes for every entry point on both sides (R-E17). The request scope of data and of the heap still
+uses the whole call graph, fallback edges included, so the precise reach changes confidence only, never a finding.
 
 (`keyed-entry` and `view-model` steps are named too; they are high.) Of the paths to one sink the engine reports a high
 one when it finds one (R-E32 as revised). A join keeps the witnesses of both sides, each with its scope and its

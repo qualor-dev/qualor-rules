@@ -812,15 +812,33 @@ internal sealed class SummaryComputer
         /// Task 32), and the kind of step the rest takes: the value itself when no fallback edge is behind this body (or
         /// the data is unscoped), else the value narrowed to the entry points that reach it over resolved edges (clean
         /// when none); the rest is a dispatch fallback when the data reaches this body over every edge but an unresolved
-        /// view name's, else a view fallback.
+        /// view name's (and not over resolved edges alone), else a view fallback.
         public (TaintValue Precise, StepKind Others) ThroughResolvedEdges(TaintValue value)
         {
-            if (!value.Request || value.Scope is not { } scope) return (value, StepKind.ViewFallback);
             var entries = _computer._entries;
-            var precise = entries.PreciseOf(_body);
-            if (ReferenceEquals(precise, Reach)) return (value, StepKind.ViewFallback);
-            var rest = scope.Intersects(entries.ViewPreciseOf(_body)) ? StepKind.DispatchFallback : StepKind.ViewFallback;
-            return (scope.Intersects(precise) ? value.Narrowed(precise) : TaintValue.Clean, rest);
+            return Split(value, Reach, entries.PreciseOf(_body), entries.ViewPreciseOf(_body));
+        }
+
+        /// The part of request data written here to a keyed store under a constant key or to a view model that this body
+        /// writes over resolved edges (Task 32 fix round 1, I2: the writer side of R-9), and the kind of step the rest
+        /// takes, as ThroughResolvedEdges does for a read. The reaches are widened as WriteReach is: code around every
+        /// action writes for every request (R-E17, R-E29's cost).
+        public (TaintValue Precise, StepKind Others) WrittenThroughResolvedEdges(TaintValue value)
+        {
+            var entries = _computer._entries;
+            return Split(value, WriteReach, entries.Widen(entries.PreciseOf(_body)), entries.Widen(entries.ViewPreciseOf(_body)));
+        }
+
+        /// `value` split by `precise` (a part of `full`): the value itself when they are the same set (or the data is
+        /// unscoped), else the value narrowed to `precise` (clean when it shares none), and the step kind of the rest: a
+        /// dispatch fallback when some of its data is in `viewPrecise` but not in `precise` (only fallback dispatch stands
+        /// between them), else a view fallback.
+        private static (TaintValue Precise, StepKind Others) Split(TaintValue value, Reach full, Reach precise, Reach viewPrecise)
+        {
+            if (!value.Request || value.Scope is not { } scope || ReferenceEquals(precise, full)) return (value, StepKind.ViewFallback);
+            var dispatched = scope.Intersect(viewPrecise);
+            var others = !dispatched.IsEmpty && !ReferenceEquals(dispatched.Intersect(precise), dispatched) ? StepKind.DispatchFallback : StepKind.ViewFallback;
+            return (scope.Intersects(precise) ? value.Narrowed(precise) : TaintValue.Clean, others);
         }
 
         /// A write to a heap symbol: its request data to the heap, its labels to their owners' summaries. Through known

@@ -1169,7 +1169,7 @@ internal sealed partial class MethodAnalyzer
             case IDynamicMemberReferenceOperation member when KeyedStores.IsViewBag(member.Instance):
                 // `ViewBag.K = v` sets the ViewData entry K (Task 22); it runs no code of the application.
                 Value(member.Instance, state);
-                _body.KeyedWrite(KeyedStores.ViewBagLocation(member.MemberName), Named(value, assignment, "ViewBag." + member.MemberName));
+                KeyedWrite(KeyedStores.ViewBagLocation(member.MemberName), Named(value, assignment, "ViewBag." + member.MemberName), assignment);
                 break;
             default:
                 // A target the engine does not follow (a dynamic member, an event, a ref): what it changes is unknown.
@@ -1309,11 +1309,27 @@ internal sealed partial class MethodAnalyzer
     }
 
     /// A write to a keyed store entry; under the store's "any key" (a key that is not a constant, a model of type object)
-    /// it is a medium step (R-9, R-E29), so every read that joins that entry carries it.
+    /// it is a medium step (R-9, R-E29), so every read that joins that entry carries it. Under a constant key (or a typed
+    /// view model) the request data this body writes only for the entry points that reach it through fallback edges is
+    /// a medium step too (Task 32 fix round 1, I2: a helper only a fallback dispatch call reaches, a partial only a run-time
+    /// view name reaches); the rest keeps the value-passing edge.
     private void KeyedWrite(KeyedLocation location, TaintValue value, IOperation at)
     {
         // A value without taint still goes to the body (a view model's objects and members: Task 27).
-        if (value.Any && location.Key == null) value = value.Step(at.Syntax.GetLocation(), $"written to {Describe(location)}", StepKind.AnyKeyEntry);
+        if (value.Any && location.Key == null)
+        {
+            value = value.Step(at.Syntax.GetLocation(), $"written to {Describe(location)}", StepKind.AnyKeyEntry);
+        }
+        else if (value.Request && !ReferenceEquals(location, KeyedLocation.Generic))
+        {
+            var (precise, others) = _body.WrittenThroughResolvedEdges(value);
+            if (!ReferenceEquals(precise, value))
+            {
+                // Only the request part takes the medium step: the labels go to the callers' substitution (their own edges).
+                var rest = value.RequestPart.Step(at.Syntax.GetLocation(), $"written to {Describe(location)}", others);
+                value = (precise.Any ? precise : value.LabelPart).Join(rest);
+            }
+        }
         _body.KeyedWrite(location, value);
     }
 

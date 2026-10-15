@@ -338,20 +338,14 @@ internal sealed class CallGraph
         {
             var seen = new HashSet<Unit>();
             var fallback = unit.FallbackKeys;
-            HashSet<Unit>? guessed = null;
-            HashSet<Unit>? sure = null;
             foreach (var key in unit.CalleeKeys)
             {
                 if (!_bodies.TryGetValue(key, out var body)) continue;
                 if (seen.Add(body.Unit)) unit.Callees.Add(body.Unit);
-                // A callee only fallback keys give is a fallback edge (another key of the same unit is a sure call).
-                if (fallback == null) continue;
-                if (fallback.Contains(key)) (guessed ??= new HashSet<Unit>()).Add(body.Unit);
-                else (sure ??= new HashSet<Unit>()).Add(body.Unit);
+                // A key in FallbackKeys is never also a sure key of the unit (Finish takes those out), and while the graph
+                // is ordered each unit has one key (its root body's), so its callee is a fallback edge.
+                if (fallback != null && fallback.Contains(key) && body.Unit != unit) FallbackCalls.Add((unit, body.Unit));
             }
-            if (guessed != null)
-                foreach (var callee in guessed)
-                    if (callee != unit && (sure == null || !sure.Contains(callee))) FallbackCalls.Add((unit, callee));
             unit.CalleeKeys.Clear();
             unit.FallbackKeys = null;
             foreach (var callee in unit.Callees)
