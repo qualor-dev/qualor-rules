@@ -870,7 +870,9 @@ and the same line on stderr, and counts them in `analysisStats` (`projectsWithEr
 as far as its compilation allows. A project a recorded source of which (or its generated-file directory) could not be
 read, or that has no source at all, was analysed without part of its code: the run is incomplete (exit 3, with the
 reason), so Qualor runs the OpenGrep C# rules instead (R-4); a solution none of whose sources load is never reported
-as complete with no findings.
+as complete with no findings. An incomplete run also names its kind in `analysisStats.incompleteKind`, by the precedence
+of its reason: `budget` (the time or memory limit, a cancellation, an iteration cap), then `failed` (too many bodies or
+files whose analysis threw: R-E10), then `load` (sources that did not load); a complete run has no kind.
 
 R-E29's cost: a constant-key `ViewData` flow whose writer is code around every action (a filter) counts high. A
 member written and read through one known object (`o.Name = q; Save(o)` reading `o.Name`) is a heap read, so medium.

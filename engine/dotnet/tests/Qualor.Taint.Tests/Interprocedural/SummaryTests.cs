@@ -468,6 +468,7 @@ public sealed class SummaryTests
         var result = Snippet.Analyze(code, new TaintEngineOptions(TimeSpan.FromMinutes(1), 4L << 30, MaxIterationsPerScc: 1));
         Assert.False(result.Complete);
         Assert.StartsWith("iteration cap in ItemsController.", result.IncompleteReason);
+        Assert.Equal("budget", result.Stats.IncompleteKind);
         Assert.True(Snippet.Analyze(code).Complete);
     }
 }

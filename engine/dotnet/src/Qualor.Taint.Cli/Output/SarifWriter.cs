@@ -210,6 +210,7 @@ public static class SarifWriter
         w.WriteNumber("projects", stats.Projects);
         w.WriteNumber("methods", stats.Methods);
         w.WriteNumber("failedMethods", stats.FailedMethods);
+        if (stats.IncompleteKind != null) w.WriteString("incompleteKind", stats.IncompleteKind);
         w.WriteNumber("projectsWithErrors", stats.ProjectsWithErrors);
         w.WriteNumber("projectsWithoutSources", stats.ProjectsWithoutSources);
         w.WriteNumber("unresolvedReferences", stats.UnresolvedReferences);

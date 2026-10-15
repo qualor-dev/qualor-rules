@@ -173,6 +173,11 @@ public sealed record AnalysisStats(int Projects, int Methods, int Sccs, int Unmo
     /// none of them could resolve, and one line per such project (`<project> (<tfm>): ...`, its first error).
     public int ProjectsWithErrors { get; init; }
 
+    /// Why an incomplete run stopped, as a kind (null for a complete run), by the precedence of its reason: "budget" (the
+    /// time or memory limit, a cancellation, an iteration cap), "failed" (too many bodies or files whose analysis threw:
+    /// ruling R-E10), "load" (a project whose sources did not all load: ruling R-E42).
+    public string? IncompleteKind { get; init; }
+
     public int ProjectsWithoutSources { get; init; }
 
     public int UnresolvedReferences { get; init; }

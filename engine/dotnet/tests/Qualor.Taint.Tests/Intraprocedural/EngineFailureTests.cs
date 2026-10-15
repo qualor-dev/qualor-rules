@@ -23,13 +23,14 @@ public sealed class EngineFailureTests
     {
         var result = Run(120);
         Assert.Equal((true, 1, 119, 119), (result.Complete, result.Stats.FailedMethods, result.Stats.Methods, result.Findings.Count));
+        Assert.Null(result.Stats.IncompleteKind);
     }
 
     [Fact]
     public void One_failed_body_in_two_makes_the_run_incomplete()
     {
         var result = Run(2);
-        Assert.Equal((false, "1 of 2 bodies failed (more than 1 %); first: Snippet.cs:3: InvalidOperationException: injected"),
-            (result.Complete, result.IncompleteReason));
+        Assert.Equal((false, "1 of 2 bodies failed (more than 1 %); first: Snippet.cs:3: InvalidOperationException: injected", "failed"),
+            (result.Complete, result.IncompleteReason, result.Stats.IncompleteKind));
     }
 }

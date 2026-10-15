@@ -85,13 +85,20 @@ public sealed class TaintEngine
         }
         _last = computer;
         budget.Sample();
-        var reason = budget.Exceeded ?? computer?.Incomplete ?? computer?.FailureReason() ?? MisuseFailure(misuse) ?? LoadFailure(solution);
+        // The reason and its kind, in one precedence (budget first): a budget or iteration cap, failed bodies or files
+        // (R-E10), sources that did not load (R-E42). The kind lets a caller name the fallback without reading the text.
+        var (reason, kind) = budget.Exceeded is { } overBudget ? (overBudget, "budget")
+            : computer?.Incomplete is { } capped ? (capped, "budget")
+            : (computer?.FailureReason() ?? MisuseFailure(misuse)) is { } failed ? (failed, "failed")
+            : LoadFailure(solution) is { } unloaded ? (unloaded, "load")
+            : ((string?)null, (string?)null);
         var findings = Deduplicate(solution, ctx.Findings)
             .OrderBy(f => f.Sink.SourceTree?.FilePath, StringComparer.Ordinal).ThenBy(f => f.Sink.SourceSpan.Start).ThenBy(f => f.RuleId, StringComparer.Ordinal)
             .ToList();
         var stats = new AnalysisStats(solution.Projects.Count, computer?.Methods ?? 0, graph?.Sccs.Count ?? 0, ctx.UnmodelledExternalCalls, budget.Elapsed, budget.PeakMemoryBytes)
         {
             FailedMethods = (computer?.Failed ?? 0) + misuse.Failed,
+            IncompleteKind = kind,
             ProjectsWithErrors = solution.Projects.Count(p => p.Errors.Count > 0 || p.SourcesMissing),
             ProjectsWithoutSources = solution.Projects.Count(p => p.SourcesMissing),
             UnresolvedReferences = solution.Projects.Sum(p => p.UnresolvedReferences),

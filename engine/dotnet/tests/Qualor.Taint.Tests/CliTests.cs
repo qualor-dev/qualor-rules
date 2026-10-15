@@ -465,9 +465,37 @@ public sealed class CliTests : TempDirs
         using var doc = ReadSarif(sarif);
         Assert.False(Invocation(doc).GetProperty("executionSuccessful").GetBoolean());
         Assert.Equal(1, Stats(doc).GetProperty("projectsWithoutSources").GetInt32());
+        Assert.Equal("load", Stats(doc).GetProperty("incompleteKind").GetString());
         Assert.Contains(Notes(doc), n => n.Level == "error" && n.Text.Contains("sources") && n.Text.Contains("App.csproj"));
         // The rest is still analysed (the result is partial, which the caller does not use: R-4).
         Assert.NotEmpty(doc.RootElement.GetProperty("runs")[0].GetProperty("results").EnumerateArray());
+    }
+
+    [Fact]
+    public void A_run_over_its_budget_and_missing_sources_is_incomplete_for_its_budget()
+    {
+        var (inputs, root) = AppInputs();
+        File.AppendAllText(Path.Combine(inputs, "app.txt"), "source=" + Path.Combine(root, "Gone.cs") + "\n", new UTF8Encoding(false));
+        var sarif = Path.Combine(root, "r.sarif");
+
+        var code = Qualor.Taint.Cli.Program.Run(
+            new[] { "analyze", "--inputs", inputs, "--models", Models, "--sarif", sarif, "--root", root, "--time-limit", "0" }, TextWriter.Null);
+
+        Assert.Equal(3, code);
+        using var doc = ReadSarif(sarif);
+        Assert.Equal("budget", Stats(doc).GetProperty("incompleteKind").GetString());
+    }
+
+    [Fact]
+    public void A_complete_run_names_no_incomplete_kind()
+    {
+        var (inputs, root) = AppInputs();
+        var sarif = Path.Combine(root, "r.sarif");
+
+        Assert.Equal(0, Qualor.Taint.Cli.Program.Run(new[] { "analyze", "--inputs", inputs, "--models", Models, "--sarif", sarif, "--root", root }, TextWriter.Null));
+
+        using var doc = ReadSarif(sarif);
+        Assert.False(Stats(doc).TryGetProperty("incompleteKind", out _));
     }
 
     [Fact]
