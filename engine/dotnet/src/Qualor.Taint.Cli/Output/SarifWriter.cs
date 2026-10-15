@@ -150,6 +150,8 @@ public static class SarifWriter
         var notes = new List<(string Level, string Text)>();
         if (!result.Complete) notes.Add(("error", "analysis incomplete: " + result.IncompleteReason));
         foreach (var e in inputErrors) notes.Add(("warning", "input: " + e));
+        // Ruling R-E42: one warning per project the solution could not load or compile cleanly.
+        foreach (var p in result.Stats.ProjectProblems) notes.Add(("warning", "project: " + p));
         if (mapper.Outside.Count > 0)
             notes.Add(("note", $"{mapper.Outside.Count} file(s) outside --root are reported with absolute paths, first: {mapper.Outside.First()}"));
         if (notes.Count > 0)
@@ -175,6 +177,9 @@ public static class SarifWriter
         w.WriteNumber("projects", stats.Projects);
         w.WriteNumber("methods", stats.Methods);
         w.WriteNumber("failedMethods", stats.FailedMethods);
+        w.WriteNumber("projectsWithErrors", stats.ProjectsWithErrors);
+        w.WriteNumber("projectsWithoutSources", stats.ProjectsWithoutSources);
+        w.WriteNumber("unresolvedReferences", stats.UnresolvedReferences);
         w.WriteStartArray("firstErrors");
         foreach (var e in stats.FirstErrors) w.WriteStringValue(e);
         w.WriteEndArray();

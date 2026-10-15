@@ -117,6 +117,17 @@ public sealed record AnalysisStats(int Projects, int Methods, int Sccs, int Unmo
 
     public int FailedMethods { get; init; }
 
+    /// Ruling R-E42 (final review I2): the projects with errors while loading or compiling (each is analysed as far as its
+    /// compilation allows), those of them whose sources did not all load (the run is then incomplete), the references
+    /// none of them could resolve, and one line per such project (`<project> (<tfm>): ...`, its first error).
+    public int ProjectsWithErrors { get; init; }
+
+    public int ProjectsWithoutSources { get; init; }
+
+    public int UnresolvedReferences { get; init; }
+
+    public IReadOnlyList<string> ProjectProblems { get; init; } = Array.Empty<string>();
+
     public IReadOnlyList<string> FirstErrors { get; init; } = Array.Empty<string>();
 
     /// The request entry points the heap is scoped to (spec §5 "Heap", decision R-6; EntryPoints): actions, Razor Pages

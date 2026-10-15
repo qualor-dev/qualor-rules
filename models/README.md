@@ -863,6 +863,15 @@ then the rules with a high witness), is well-founded and the fixed point ends. A
 result's `level` is `warning`, a high one keeps the rule's `error`; `analysisStats` counts `highFindings` and
 `mediumFindings`. Qualor shows a medium finding as "possible".
 
+Load and compile problems (ruling R-E42, final review I2): `analyze` reports every project it could not load or compile
+cleanly, as a `warning` notification (`project: <path> (<tfm>): ..., N error(s) while loading or compiling; first: ...`)
+and the same line on stderr, and counts them in `analysisStats` (`projectsWithErrors`, `projectsWithoutSources`,
+`unresolvedReferences`). Compile errors and unresolved references alone leave the run complete: the project is analysed
+as far as its compilation allows. A project a recorded source of which (or its generated-file directory) could not be
+read, or that has no source at all, was analysed without part of its code: the run is incomplete (exit 3, with the
+reason), so Qualor runs the OpenGrep C# rules instead (R-4); a solution none of whose sources load is never reported
+as complete with no findings.
+
 R-E29's cost: a constant-key `ViewData` flow whose writer is code around every action (a filter) counts high. A
 member written and read through one known object (`o.Name = q; Save(o)` reading `o.Name`) is a heap read, so medium.
 

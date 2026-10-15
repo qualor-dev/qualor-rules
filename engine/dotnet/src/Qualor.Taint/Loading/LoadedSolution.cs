@@ -20,6 +20,18 @@ public sealed record ProjectCompilation(CompilationInput Input, CSharpCompilatio
     /// as far as it goes); and one line for the project (`<project>: tag helper discovery failed: …`) when its tag helpers
     /// could not be discovered (its views then render them as markup). Never in Errors.
     public IReadOnlyList<string> EngineViewErrors { get; init; } = Array.Empty<string>();
+
+    /// The recorded sources (and the generated-file directory) that could not be read (QT0001): a project with a source
+    /// not loaded, or with no syntax tree at all, is analysed without part of its code (ruling R-E42: the run is
+    /// incomplete).
+    public int SourcesNotLoaded { get; init; }
+
+    /// The metadata references that could not be read and the project references dropped with no assembly to stand for
+    /// them (their types are missing; ruling R-E42: counted and warned, the run stays complete).
+    public int UnresolvedReferences { get; init; }
+
+    /// Whether part of the project's code could not be loaded (ruling R-E42).
+    public bool SourcesMissing => SourcesNotLoaded > 0 || !Compilation.SyntaxTrees.Any();
 }
 
 /// The whole solution's compilations, referenced projects before the projects that reference them.

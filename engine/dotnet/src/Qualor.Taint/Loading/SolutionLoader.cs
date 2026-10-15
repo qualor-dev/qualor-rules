@@ -111,6 +111,8 @@ public static class SolutionLoader
     {
         var input = node.Input;
         var errors = new List<Diagnostic>(node.LoadErrors);
+        var sourcesNotLoaded = 0;
+        var unresolvedReferences = 0;
         var parseOptions = new CSharpParseOptions(input.LanguageVersion, preprocessorSymbols: input.Defines)
             .WithFeatures(Features(input));
         var fallbacks = new List<string>();
@@ -135,6 +137,7 @@ public static class SolutionLoader
             catch (Exception e) when (IsFileFailure(e))
             {
                 errors.Add(Diagnostic.Create(MissingFile, Location.None, $"generated-dir {generatedDir} cannot be listed: {e.Message}"));
+                sourcesNotLoaded++;
                 generated = Array.Empty<string>();
             }
             Array.Sort(generated, StringComparer.Ordinal);
@@ -148,19 +151,29 @@ public static class SolutionLoader
         foreach (var path in input.References.Distinct(StringComparer.Ordinal))
         {
             if (cache.Get(path) is { } reference) references.Add(reference);
-            else errors.Add(Diagnostic.Create(MissingFile, Location.None, $"reference {path} cannot be read"));
+            else
+            {
+                errors.Add(Diagnostic.Create(MissingFile, Location.None, $"reference {path} cannot be read"));
+                unresolvedReferences++;
+            }
         }
         foreach (var dependency in node.Dependencies)
         {
             if (dependency.Compilation is { } compilation) references.Add(compilation.ToMetadataReference());
             else if (!AddFallback(node.DependencyAssemblies[dependency], out var why))
+            {
                 errors.Add(Diagnostic.Create(ReferenceCycle, Location.None,
                     $"project reference {dependency.Input.ProjectPath} ({dependency.Input.TargetFramework}) closes a cycle and was dropped; {why}"));
+                unresolvedReferences++;
+            }
         }
         foreach (var (reference, assembly) in node.Unresolved)
         {
             if (!AddFallback(assembly, out var why))
+            {
                 errors.Add(Diagnostic.Create(MissingProjectReference, Location.None, $"project reference {reference} has no recorded input; {why}"));
+                unresolvedReferences++;
+            }
         }
 
         var options = new CSharpCompilationOptions(input.OutputKind,
@@ -191,6 +204,8 @@ public static class SolutionLoader
         }
         return new ProjectCompilation(input, result, errors)
         {
+            SourcesNotLoaded = sourcesNotLoaded,
+            UnresolvedReferences = unresolvedReferences,
             FallbackAssemblies = fallbacks,
             EngineViews = views.Views.Select(v => v.Path).ToList(),
             EngineViewErrors = viewErrors,
@@ -226,6 +241,7 @@ public static class SolutionLoader
             catch (Exception e) when (IsFileFailure(e) || e is InvalidDataException)
             {
                 errors.Add(Diagnostic.Create(MissingFile, Location.None, $"source {path} cannot be read: {e.Message}"));
+                sourcesNotLoaded++;
                 return;
             }
             trees.Add(CSharpSyntaxTree.ParseText(text, parseOptions, path, ct));
@@ -251,6 +267,16 @@ public static class SolutionLoader
             features["InterceptorsPreviewNamespaces"] = namespaces;
         }
         return features;
+    }
+
+    /// A loading or compiler error as one line: "CS0246 /src/App/P.cs(3,11): The type or namespace name 'Missing' could
+    /// not be found ...", or "QT0001 source /src/App/Gone.cs cannot be read: ..." for one with no source location.
+    public static string Format(Diagnostic d)
+    {
+        var message = d.GetMessage(System.Globalization.CultureInfo.InvariantCulture);
+        if (!d.Location.IsInSource) return $"{d.Id} {message}";
+        var span = d.Location.GetLineSpan();
+        return $"{d.Id} {span.Path}({span.StartLinePosition.Line + 1},{span.StartLinePosition.Character + 1}): {message}";
     }
 
     /// What a recorded path can throw: I/O and access failures, and a malformed path (a NUL character, a bad format).

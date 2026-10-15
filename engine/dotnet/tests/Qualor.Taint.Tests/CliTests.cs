@@ -385,6 +385,89 @@ public sealed class CliTests : TempDirs
         Assert.Contains("memory limit", invocation.GetProperty("toolExecutionNotifications")[0].GetProperty("message").GetProperty("text").GetString());
     }
 
+    // ---- Final review I2, ruling R-E42: load and compile problems are reported ----
+
+    private static JsonElement Stats(JsonDocument doc) => doc.RootElement.GetProperty("runs")[0].GetProperty("properties").GetProperty("analysisStats");
+
+    private static JsonElement Invocation(JsonDocument doc) => doc.RootElement.GetProperty("runs")[0].GetProperty("invocations")[0];
+
+    private static IEnumerable<(string Level, string Text)> Notes(JsonDocument doc) =>
+        Invocation(doc).TryGetProperty("toolExecutionNotifications", out var notes)
+            ? notes.EnumerateArray().Select(n => (n.GetProperty("level").GetString()!, n.GetProperty("message").GetProperty("text").GetString()!))
+            : Enumerable.Empty<(string, string)>();
+
+    [Fact]
+    public void Compile_errors_alone_are_warnings_and_counted()
+    {
+        var (inputs, root) = AppInputs("class Broken { Missing m; }");
+        var sarif = Path.Combine(root, "r.sarif");
+        var log = new StringWriter();
+
+        var code = Qualor.Taint.Cli.Program.Run(new[] { "analyze", "--inputs", inputs, "--models", Models, "--sarif", sarif, "--root", root }, log);
+
+        Assert.Equal(0, code);
+        using var doc = ReadSarif(sarif);
+        Assert.True(Invocation(doc).GetProperty("executionSuccessful").GetBoolean());
+        Assert.Equal(1, Stats(doc).GetProperty("projectsWithErrors").GetInt32());
+        Assert.Equal(0, Stats(doc).GetProperty("projectsWithoutSources").GetInt32());
+        var note = Assert.Single(Notes(doc), n => n.Level == "warning" && n.Text.Contains("App.csproj"));
+        Assert.Contains("CS0246", note.Text);
+        Assert.Contains("App.csproj", log.ToString());
+        Assert.NotEmpty(doc.RootElement.GetProperty("runs")[0].GetProperty("results").EnumerateArray());
+    }
+
+    [Fact]
+    public void A_project_with_a_source_that_does_not_load_makes_the_run_incomplete()
+    {
+        var (inputs, root) = AppInputs();
+        File.AppendAllText(Path.Combine(inputs, "app.txt"), "source=" + Path.Combine(root, "Gone.cs") + "\n", new UTF8Encoding(false));
+        var sarif = Path.Combine(root, "r.sarif");
+
+        var code = Qualor.Taint.Cli.Program.Run(new[] { "analyze", "--inputs", inputs, "--models", Models, "--sarif", sarif, "--root", root }, TextWriter.Null);
+
+        Assert.Equal(3, code);
+        using var doc = ReadSarif(sarif);
+        Assert.False(Invocation(doc).GetProperty("executionSuccessful").GetBoolean());
+        Assert.Equal(1, Stats(doc).GetProperty("projectsWithoutSources").GetInt32());
+        Assert.Contains(Notes(doc), n => n.Level == "error" && n.Text.Contains("sources") && n.Text.Contains("App.csproj"));
+        // The rest is still analysed (the result is partial, which the caller does not use: R-4).
+        Assert.NotEmpty(doc.RootElement.GetProperty("runs")[0].GetProperty("results").EnumerateArray());
+    }
+
+    [Fact]
+    public void A_solution_whose_sources_all_fail_to_load_is_not_complete_with_no_findings()
+    {
+        var root = TempDir();
+        var inputs = Path.Combine(root, "compilations");
+        Directory.CreateDirectory(inputs);
+        File.WriteAllText(Path.Combine(inputs, "app.txt"), string.Join("\n", "qualor-compilation=1", "project=" + Path.Combine(root, "App.csproj"), "tfm=net8.0",
+            "assembly=App", "output-kind=Library", "source=" + Path.Combine(root, "A.cs"), "source=" + Path.Combine(root, "B.cs")) + "\n", new UTF8Encoding(false));
+        var sarif = Path.Combine(root, "r.sarif");
+
+        var code = Qualor.Taint.Cli.Program.Run(new[] { "analyze", "--inputs", inputs, "--models", Models, "--sarif", sarif, "--root", root }, TextWriter.Null);
+
+        Assert.Equal(3, code);
+        using var doc = ReadSarif(sarif);
+        Assert.False(Invocation(doc).GetProperty("executionSuccessful").GetBoolean());
+        Assert.Equal(1, Stats(doc).GetProperty("projectsWithoutSources").GetInt32());
+    }
+
+    [Fact]
+    public void An_unreadable_reference_is_counted_and_warned()
+    {
+        var (inputs, root) = AppInputs();
+        File.AppendAllText(Path.Combine(inputs, "app.txt"), "reference=" + Path.Combine(root, "gone", "Lib.dll") + "\n", new UTF8Encoding(false));
+        var sarif = Path.Combine(root, "r.sarif");
+
+        var code = Qualor.Taint.Cli.Program.Run(new[] { "analyze", "--inputs", inputs, "--models", Models, "--sarif", sarif, "--root", root }, TextWriter.Null);
+
+        Assert.Equal(0, code);
+        using var doc = ReadSarif(sarif);
+        Assert.Equal(1, Stats(doc).GetProperty("unresolvedReferences").GetInt32());
+        Assert.Equal(1, Stats(doc).GetProperty("projectsWithErrors").GetInt32());
+        Assert.Contains(Notes(doc), n => n.Level == "warning" && n.Text.Contains("Lib.dll"));
+    }
+
     [Fact]
     public void A_broken_model_directory_exits_2_with_the_model_error_on_stderr()
     {

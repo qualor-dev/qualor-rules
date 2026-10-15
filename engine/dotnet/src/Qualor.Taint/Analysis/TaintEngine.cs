@@ -85,13 +85,17 @@ public sealed class TaintEngine
         }
         _last = computer;
         budget.Sample();
-        var reason = budget.Exceeded ?? computer?.Incomplete ?? computer?.FailureReason() ?? MisuseFailure(misuse);
+        var reason = budget.Exceeded ?? computer?.Incomplete ?? computer?.FailureReason() ?? MisuseFailure(misuse) ?? LoadFailure(solution);
         var findings = Deduplicate(solution, ctx.Findings)
             .OrderBy(f => f.Sink.SourceTree?.FilePath, StringComparer.Ordinal).ThenBy(f => f.Sink.SourceSpan.Start).ThenBy(f => f.RuleId, StringComparer.Ordinal)
             .ToList();
         var stats = new AnalysisStats(solution.Projects.Count, computer?.Methods ?? 0, graph?.Sccs.Count ?? 0, ctx.UnmodelledExternalCalls, budget.Elapsed, budget.PeakMemoryBytes)
         {
             FailedMethods = (computer?.Failed ?? 0) + misuse.Failed,
+            ProjectsWithErrors = solution.Projects.Count(p => p.Errors.Count > 0 || p.SourcesMissing),
+            ProjectsWithoutSources = solution.Projects.Count(p => p.SourcesMissing),
+            UnresolvedReferences = solution.Projects.Sum(p => p.UnresolvedReferences),
+            ProjectProblems = solution.Projects.Where(p => p.Errors.Count > 0 || p.SourcesMissing).Select(Problem).ToList(),
             FirstErrors = (computer?.Errors ?? Array.Empty<string>()).Concat(misuse.Errors).Take(AnalysisStats.MaxErrors).ToList(),
             EntryPoints = entries?.Count ?? 0,
             ViewEdges = entries?.ViewEdges ?? 0,
@@ -109,6 +113,29 @@ public sealed class TaintEngine
             MediumFindings = findings.Count(f => f.Confidence == Confidence.Medium),
         };
         return new AnalysisResult(findings, reason == null, reason, stats);
+    }
+
+    /// Ruling R-E42: a project whose sources did not all load (a recorded source or the generated-file directory not
+    /// read, or no syntax tree at all) was analysed without part of its code, so the run is incomplete (R-4: the caller
+    /// falls back to the OpenGrep rules); compile errors and unresolved references alone are warnings.
+    private static string? LoadFailure(LoadedSolution solution)
+    {
+        var missing = solution.Projects.Where(p => p.SourcesMissing).ToList();
+        return missing.Count == 0 ? null
+            : $"the sources of {missing.Count} project(s) could not be loaded; first: {Problem(missing[0])}";
+    }
+
+    /// One line for a project with load or compile problems: its path and framework, what is missing, its error count
+    /// and its first error.
+    private static string Problem(ProjectCompilation p)
+    {
+        var parts = new List<string>();
+        if (p.SourcesNotLoaded > 0) parts.Add($"{p.SourcesNotLoaded} source(s) not loaded");
+        else if (!p.Compilation.SyntaxTrees.Any()) parts.Add("no source loaded");
+        if (p.UnresolvedReferences > 0) parts.Add($"{p.UnresolvedReferences} reference(s) not resolved");
+        parts.Add($"{p.Errors.Count} error(s) while loading or compiling");
+        var first = p.Errors.Count > 0 ? "; first: " + SolutionLoader.Format(p.Errors[0]) : "";
+        return $"{p.Input.ProjectPath} ({p.Input.TargetFramework}): {string.Join(", ", parts)}{first}";
     }
 
     /// The view path of an EngineViewErrors line (`<path>: <reason>`; a Windows path's drive colon is no separator).

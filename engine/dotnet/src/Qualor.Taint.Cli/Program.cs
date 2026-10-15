@@ -116,6 +116,8 @@ public static class Program
             var solution = SolutionLoader.Load(read, CancellationToken.None);
             var engine = new TaintEngine(modelSet, new TaintEngineOptions(timeLimit, memoryMb << 20) { SourceRoot = root });
             var result = engine.Analyze(solution, CancellationToken.None);
+            // Ruling R-E42: every project the solution could not load or compile cleanly, on stderr as in the SARIF.
+            foreach (var problem in result.Stats.ProjectProblems) log.WriteLine($"project: {problem}");
             options.TryGetValue("--version", out var version);
             SarifWriter.Write(output, modelSet, result, version ?? PackVersion(models), root, inputErrors);
             log.WriteLine($"{result.Findings.Count} finding(s); {(result.Complete ? "complete" : "incomplete: " + result.IncompleteReason)}");
@@ -197,15 +199,5 @@ public static class Program
     }
 
     /// "CS0246 /src/App/P.cs(3,11): The type or namespace name 'Missing' could not be found ..."
-    private static string Format(Diagnostic d)
-    {
-        var message = d.GetMessage(CultureInfo.InvariantCulture);
-        if (!d.Location.IsInSource) return $"{d.Id} {message}";
-        var span = d.Location.GetLineSpan();
-        var b = new StringBuilder();
-        b.Append(d.Id).Append(' ').Append(span.Path)
-            .Append('(').Append(span.StartLinePosition.Line + 1).Append(',').Append(span.StartLinePosition.Character + 1).Append("): ")
-            .Append(message);
-        return b.ToString();
-    }
+    private static string Format(Diagnostic d) => SolutionLoader.Format(d);
 }
