@@ -171,6 +171,23 @@ The engine after Stages 6b and 6c (`csharp` at f9aacf1: request-scoped heap, mem
 - **Time and memory** (the engine process inside `qualor dotnet end`, `/usr/bin/time -v`): nopCommerce 1:14.7 / 3.19 GiB (the whole `end` 7:10), OrchardCore 1:26.4 / 3.11 GiB, Jellyfin 55.0 s / 1.32 GiB, eShop 9.7 s / 0.32 GiB, eShopOnWeb 7.2 s / 0.29 GiB, recall sets under 3 s. Budgets kept (nopCommerce 10 min / 4 GB, eShop 1 min). Rebuild fidelity 352 of 352 projects with 0 errors (OrchardCore.Benchmarks included).
 - **Acceptance: not met** (noise, firm core); fixtures and tests (733 of 733), fidelity, recall and budgets met.
 
+### C# engine, re-measured after Stage 6d (Task 25b, by hand, 2026-10-15)
+
+The engine at `csharp` b008874 (Stage 6d: precise reach without fallback cycles, guards in project code and membership guards, Minimal API bodies, file providers, Fluid, deserializers and caches) through the same real product path as Task 25. A local image `qualor/scanner-dotnet:dev-roslyn-25b` (qualor-cc `phase-6b-csharp` 0c6f0068 with this branch's pack) ran `qualor dotnet begin`, `dotnet build` and `qualor dotnet end --dry-run` on a fresh copy of each clone. Every report carried the engine's findings with their confidence, and no run fell back to OpenGrep. The results equal the Stage 6d tasks' own measurements by rule, file, line and confidence. Details and the per-finding analysis are in the controller's ledger `engine-measurement-25b.md` (Phase 6B-C# R, Task 25b).
+
+- **Recall: 23 of 26** (target 22, met), unchanged; every recall-set finding is high confidence.
+- **Sink inventory:** firm core 3 of 7 flows: the eShop webhook grant URL (a Minimal API body), the nopCommerce store HTTP client and the OrchardCore workflow form redirect. With the media cache folder counted as constrained (a file provider scopes it to its root), it is 3 of 6. Unconstrained (a) sites 4 of 4. (b) sites 59 of 112 (33 of 56 unconstrained).
+- **Noise: 313 findings on the noise projects; high confidence 34 true and 15 false (target: at most 3 false), medium 21 true and 243 false (92.0 % false).** Since Task 25:
+  - 33 high false positives went to medium (the fallback-cycle defect fixed);
+  - 27 went away or to medium through guards in project helpers and membership guards;
+  - 4 true findings became high (the eShop webhook grant URL, two Jellyfin tuner URLs fetched on validation, a Jellyfin channel cache file).
+- **The 15 remaining high false positives:**
+  - 5 redirects to the request's own URL and 4 paths through Jellyfin's filename sanitizer rest on project invariants the engine cannot see soundly;
+  - 1 needs path conditions correlated across a call and a view;
+  - 5 have a further lever, about 2.5 engine tasks: a guard carried to values derived before it, containment checked by a helper that normalises the path again, and a "no directory separator" check.
+- **Time and memory** (the engine process inside `qualor dotnet end`): nopCommerce 1:23.1 / 3.42 GiB (the whole `end` 7:16), OrchardCore 1:37.4 / 3.40 GiB, Jellyfin 59.6 s / 1.34 GiB, eShop 12.4 s / 0.32 GiB, recall sets under 4 s. Budgets kept; nopCommerce memory is 0.33 GB under 4 GB. Tests 804 of 804; rebuild fidelity 352 of 352 projects with 0 errors.
+- **Acceptance: not met** (noise; firm core 3 of 7). Recall, fidelity, tests and budgets met. The maintainer decides on the noise criterion.
+
 ## 2026-10-12 rules f8b01fae64a77dfcd6d4f3b52bb483f94e244460 (js, python, java, go)
 
 OpenGrep 1.30.0 with --taint-intrafile; 4 rule directories; results in `.tmp/probe/2026-10-12T17-23-59-970Z`.

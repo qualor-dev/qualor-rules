@@ -24,6 +24,15 @@ Entry format:
   branches left behind.
 ```
 
+## 2026-10-15: Roslyn engine re-measured after Stage 6d (Phase 6B-C# R, Task 25b)
+
+- **Request:** the Roslyn engine plan's Task 25b: Task 25's measurement through the real product path again, after Stage 6d (Tasks 32, 33, 34), on `csharp` b008874 with a fresh local dev image.
+- **Done:** MEASUREMENTS.md 2026-10-13 entry, section "C# engine, re-measured after Stage 6d (Task 25b)". No engine change.
+- **Blocked:** acceptance: not met. Noise: 15 high-confidence false positives (target 3; Task 25 had 75); medium false-positive rate 92.0 %. Firm core: 3 of 7 flows (3 of 6 with the media cache folder constrained). Met: tests 804/804, fidelity 352/352, recall 23/26, budgets (nopCommerce engine 1:23 / 3.42 GiB, eShop 12.4 s). Of the 15, 9 rest on project invariants (own-URL redirects, Jellyfin's filename sanitizer), 5 have a lever (about 2.5 engine tasks), and 1 needs path correlation across a call and a view. The maintainer decides on the noise criterion.
+- **Backlog:** none added here; the levers are in the controller's `engine-measurement-25b.md`.
+- **Measurement:** recall aspgoat 10/12, vulnerablelightapp 8/8, dvcsharp-api 3/3, murayama-vulnerable-api 1/1, vulnerablecoreapp 1/2; noise (high T/F, medium T/F) eshop 1/0, eshop-on-web 1/0, nopcommerce 17/6, 7/95, jellyfin 13/9, 8/94, orchardcore 2/0, 6/54. Equal to the Stage 6d tasks' own measurements.
+- **Notes:** measurement files in `.tmp/t25b-measure/` (git-ignored); local images `qualor/scanner:dev-roslyn-25b`, `qualor/scanner-dotnet:dev-roslyn-25b`, `qr-measure/scanner-dotnet:dev-roslyn-25b-time` and volumes `qr-t25b-work-*` kept. One timing-sensitive budget test failed once under the measurement's load and passed on an idle host.
+
 ## 2026-10-15: Roslyn engine re-measured (Phase 6B-C# R, Task 25)
 
 - **Request:** the Roslyn engine plan's Task 25: Task 18's measurement again after Stages 6b and 6c, through the real product path (`qualor dotnet begin`, `dotnet build`, `qualor dotnet end`) in a local dev image, with acceptance per spec §6 as amended (noise counts high-confidence false positives).
