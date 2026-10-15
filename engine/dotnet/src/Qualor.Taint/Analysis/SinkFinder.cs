@@ -63,6 +63,7 @@ internal sealed class SinkFinder
     private readonly List<(string Rule, System.Text.RegularExpressions.Regex Name)> _awaitedLookups = new();
     private readonly Dictionary<string, string[]> _awaitedLookupCache = new(StringComparer.Ordinal);
     private readonly MemberTable<(string Rule, string ReceiverType)> _receiverSanitizers = new();
+    private readonly MemberTable<IReadOnlyList<string>> _keepingSanitizers = new();
     private readonly List<(string Rule, string Type, string Method)> _named = new();
     private readonly Dictionary<ISymbol, string[]> _namedCache = new(SymbolEqualityComparer.Default);
     private readonly MemberTable<(string Rule, KeySanitizer Sanitizer)> _keySanitizers = new();
@@ -84,6 +85,7 @@ internal sealed class SinkFinder
             foreach (var l in rule.LookupSanitizers) _lookups.Add((rule.RuleId, l));
             foreach (var l in rule.AwaitedLookupSanitizers) _awaitedLookups.Add((rule.RuleId, l));
             foreach (var (member, receiverType) in rule.ReceiverSanitizers) _receiverSanitizers.Add(member, (rule.RuleId, receiverType));
+            foreach (var (member, kept) in rule.KeepingSanitizers) _keepingSanitizers.Add(member, kept);
             foreach (var (type, method) in rule.NamedSanitizers) _named.Add((rule.RuleId, type, method));
             foreach (var g in rule.Guards) Guards.Add(g.Member, (rule.RuleId, g));
             if (rule.AllowLists) allowLists.Add(rule.RuleId);
@@ -118,6 +120,14 @@ internal sealed class SinkFinder
         hit = _named.Where(n => n.Method == method.Name && n.Type == method.ContainingType?.Name).Select(n => n.Rule).Distinct().ToArray();
         _namedCache[method.OriginalDefinition] = hit;
         return hit;
+    }
+
+    /// The properties of the call's result that keep what the call was given (`keep-members:`, R-E37 refined).
+    public IReadOnlyCollection<string> KeptMembers(IMethodSymbol method)
+    {
+        if (_keepingSanitizers.IsEmpty) return Array.Empty<string>();
+        var hits = _keepingSanitizers.Match(method, Access.Call);
+        return hits.Length == 0 ? Array.Empty<string>() : hits.SelectMany(k => k).Distinct(StringComparer.Ordinal).ToList();
     }
 
     /// The rules whose `receiver-type:` sanitizers this call is: the member matches and the receiver's static type is

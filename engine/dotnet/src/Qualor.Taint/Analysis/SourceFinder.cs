@@ -17,6 +17,15 @@ internal sealed class SourceFinder
     private readonly HashSet<string> _propertyAttributes, _boundClassAttributes;
     private readonly HashSet<string> _mapMethodNames;
     private readonly HashSet<(SyntaxTree Tree, TextSpan Span)> _handlers = new();
+    private readonly HashSet<(SyntaxTree Tree, TextSpan Span)> _bodyHandlers = new();
+    private readonly MinimalApiBody? _body;
+    private readonly HashSet<string> _specialTypes, _registrars, _registrationTypes, _serviceBases, _libraryBodyTypes, _noBodyVerbs, _bodyMapMethods;
+    private readonly List<Compilation> _compilations = new();
+    /// The simple names of the body handlers' parameter types (and their type arguments): the registration scan binds only
+    /// the calls whose text names one of them.
+    private readonly HashSet<string> _bodyCandidateNames = new(StringComparer.Ordinal);
+    private HashSet<ISymbol>? _services;
+    private readonly Dictionary<ITypeSymbol, bool> _bodyTypeCache = new(SymbolEqualityComparer.Default);
     private readonly MemberTable<MemberPattern> _members = new();
     private readonly Dictionary<ISymbol, bool> _parameterCache = new(SymbolEqualityComparer.Default);
     private readonly Dictionary<ISymbol, bool> _propertyCache = new(SymbolEqualityComparer.Default);
@@ -49,6 +58,14 @@ internal sealed class SourceFinder
         _propertyAttributes = Set(model.BoundProperties.PropertyAttributes);
         _boundClassAttributes = Set(model.BoundProperties.ClassAttributes);
         _mapMethodNames = Set(model.MinimalApi.MapMethods.Select(m => m.MemberName));
+        _body = model.MinimalApi.Body;
+        _specialTypes = Set(_body?.SpecialTypes ?? Array.Empty<string>());
+        _registrars = Set(_body?.Registrars ?? Array.Empty<string>());
+        _registrationTypes = Set(_body?.RegistrationTypes ?? Array.Empty<string>());
+        _serviceBases = Set(_body?.ServiceBases ?? Array.Empty<string>());
+        _libraryBodyTypes = Set(_body?.LibraryBodyTypes ?? Array.Empty<string>());
+        _bodyMapMethods = Set(_body?.MapMethods ?? Array.Empty<string>());
+        _noBodyVerbs = new HashSet<string>(_body?.NoBodyVerbs ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
         foreach (var member in model.Members) _members.Add(member, member);
     }
 
@@ -83,6 +100,7 @@ internal sealed class SourceFinder
     /// method wherever it is declared), by their declaring syntax.
     public void RegisterHandlers(Compilation compilation, CancellationToken ct)
     {
+        _compilations.Add(compilation);
         foreach (var tree in compilation.SyntaxTrees)
         {
             ct.ThrowIfCancellationRequested();
@@ -99,13 +117,73 @@ internal sealed class SourceFinder
                 model ??= compilation.GetSemanticModel(tree);
                 if (model.GetOperation(call, ct) is not IInvocationOperation invocation) continue;
                 if (!_model.MinimalApi.MapMethods.Any(p => SymbolMatch.Matches(p, invocation.TargetMethod))) continue;
+                var body = BindsBody(invocation);
                 foreach (var argument in invocation.Arguments)
                 {
                     var handler = HandlerOf(argument.Value);
                     if (handler == null) continue;
-                    foreach (var r in handler.DeclaringSyntaxReferences) _handlers.Add((r.SyntaxTree, r.Span));
+                    foreach (var r in handler.DeclaringSyntaxReferences)
+                    {
+                        _handlers.Add((r.SyntaxTree, r.Span));
+                        if (body) _bodyHandlers.Add((r.SyntaxTree, r.Span));
+                    }
+                    if (body)
+                        foreach (var p in handler.Parameters) AddCandidateNames(p.Type, 0);
                 }
             }
+        }
+    }
+
+    /// Whether a map call's handler binds the body (sources.yml (4) `body:`): a body map method (POST, PUT, PATCH), or the
+    /// verbs method with a verb outside the no-body ones or with verbs the engine cannot read (a variable list).
+    private bool BindsBody(IInvocationOperation invocation)
+    {
+        if (_body == null) return false;
+        var name = invocation.TargetMethod.Name;
+        if (_bodyMapMethods.Contains(name)) return true;
+        if (name != _body.VerbsMethod) return false;
+        // MapMethods(endpoints, pattern, IEnumerable<string> httpMethods, handler).
+        var verbs = invocation.Arguments.FirstOrDefault(a => a.Parameter?.Type is INamedTypeSymbol
+        {
+            OriginalDefinition.SpecialType: SpecialType.System_Collections_Generic_IEnumerable_T,
+            TypeArguments: [{ SpecialType: SpecialType.System_String }],
+        });
+        if (verbs == null) return true;
+        var value = verbs.Value;
+        while (value is IConversionOperation c) value = c.Operand;
+        IEnumerable<IOperation>? elements = value switch
+        {
+            IArrayCreationOperation { Initializer: { } init } => init.ElementValues,
+            ICollectionExpressionOperation collection => collection.Elements,
+            _ => null,
+        };
+        if (elements == null) return true;
+        foreach (var element in elements)
+        {
+            var e = element;
+            while (e is IConversionOperation c) e = c.Operand;
+            var verb = e.ConstantValue is { HasValue: true, Value: string text } ? text
+                : e is IFieldReferenceOperation { Field: { IsStatic: true } field } && SymbolMatch.MetadataName(field.ContainingType) == _body.VerbFields
+                    ? field.Name : null;
+            if (verb == null || !_noBodyVerbs.Contains(verb)) return true;
+        }
+        return false;
+    }
+
+    /// The simple names of a parameter type, its element type and its type arguments (a registration of a body candidate
+    /// names one of them).
+    private void AddCandidateNames(ITypeSymbol type, int depth)
+    {
+        if (depth > 3) return;
+        switch (UnwrapNullable(type))
+        {
+            case IArrayTypeSymbol array:
+                AddCandidateNames(array.ElementType, depth + 1);
+                break;
+            case INamedTypeSymbol named:
+                _bodyCandidateNames.Add(named.Name);
+                foreach (var a in named.TypeArguments) AddCandidateNames(a, depth + 1);
+                break;
         }
     }
 
@@ -126,6 +204,10 @@ internal sealed class SourceFinder
 
     private bool IsHandler(IMethodSymbol method) =>
         _handlers.Count > 0 && method.OriginalDefinition.DeclaringSyntaxReferences.Any(r => _handlers.Contains((r.SyntaxTree, r.Span)));
+
+    /// A handler some map call binds the body for.
+    private bool IsBodyHandler(IMethodSymbol method) =>
+        _bodyHandlers.Count > 0 && method.OriginalDefinition.DeclaringSyntaxReferences.Any(r => _bodyHandlers.Contains((r.SyntaxTree, r.Span)));
 
     /// Whether this syntax (a lambda, a local function, a method declaration) is a handler given to a map method.
     public bool IsHandlerSyntax(SyntaxNode node) => _handlers.Count > 0 && _handlers.Contains((node.SyntaxTree, node.Span));
@@ -183,6 +265,7 @@ internal sealed class SourceFinder
         if (HasAttribute(parameter.GetAttributes(), _notSourceAttributes)) return false;
         if (HasAttribute(parameter.GetAttributes(), _bindingAttributes) && !IsNeverSourceType(parameter.Type)) return true;
         if (IsHandler(method) && _minimalSourceTypes.Contains(SymbolMatch.MetadataName(UnwrapNullable(parameter.Type)))) return true;
+        if (IsBodyHandler(method) && !HasAttribute(parameter.GetAttributes(), _bindingAttributes) && IsBodyType(parameter.Type)) return true;
         if (method.MethodKind != MethodKind.Ordinary || method.IsStatic || method.ContainingType == null) return false;
         if (IsNeverSourceType(parameter.Type)) return false;
 
@@ -233,6 +316,161 @@ internal sealed class SourceFinder
             && !IsNeverSourceType(property.Type);
         _propertyCache[property] = result;
         return result;
+    }
+
+    // ---- Minimal API body (sources.yml (4) `body:`, Task 34) ----
+
+    /// Whether a body handler's parameter of this type (with no binding attribute) binds from the body: not a special type
+    /// or a never-source type; a solution type that neither binds itself nor is a DI service, a collection of body values
+    /// or of text, or a library body type.
+    private bool IsBodyType(ITypeSymbol type)
+    {
+        type = UnwrapNullable(type);
+        if (_bodyTypeCache.TryGetValue(type, out var cached)) return cached;
+        var result = !_specialTypes.Contains(SymbolMatch.MetadataName(type)) && !IsNeverSourceType(type) && IsBodyValue(type, 0);
+        _bodyTypeCache[type] = result;
+        return result;
+    }
+
+    private bool IsBodyValue(ITypeSymbol type, int depth)
+    {
+        type = UnwrapNullable(type);
+        if (depth > 3) return false;
+        if (type is IArrayTypeSymbol array) return IsBodyElement(array.ElementType, depth);
+        if (type is not INamedTypeSymbol named) return false;
+        var name = SymbolMatch.MetadataName(named.OriginalDefinition);
+        if (named.IsGenericType && (_scalarCollections.Contains(name) || _sourceInterfaces.Contains(name) || _libraryBodyTypes.Contains(name)))
+            return named.TypeArguments.Any(a => IsBodyElement(a, depth));
+        for (var t = named; t != null; t = t.BaseType)
+            if (_libraryBodyTypes.Contains(SymbolMatch.MetadataName(t))) return true;
+        if (named.DeclaringSyntaxReferences.Length == 0 || named.IsAbstract || named.IsStatic
+            || named.TypeKind is not (TypeKind.Class or TypeKind.Struct)) return false;
+        return !BindsItself(named) && !IsService(named);
+    }
+
+    /// An element of a body collection: text or a body value.
+    private bool IsBodyElement(ITypeSymbol element, int depth)
+    {
+        element = UnwrapNullable(element);
+        return StringLike.Contains(SymbolMatch.MetadataName(element)) || (!IsScalar(element) && IsBodyValue(element, depth + 1));
+    }
+
+    /// A type with a static BindAsync (custom binding) or TryParse (route or query binding), declared or inherited, or one
+    /// implementing IBindableFromHttpContext<T> or IParsable<T>.
+    private static bool BindsItself(INamedTypeSymbol type)
+    {
+        foreach (var i in type.AllInterfaces)
+            if (SymbolMatch.MetadataName(i.OriginalDefinition) is "Microsoft.AspNetCore.Http.IBindableFromHttpContext`1" or "System.IParsable`1")
+                return true;
+        for (INamedTypeSymbol? t = type; t != null; t = t.BaseType)
+            foreach (var m in t.GetMembers())
+            {
+                if (m is not IMethodSymbol { IsStatic: true, Parameters.Length: > 0 } method) continue;
+                if (method.Name == "BindAsync" && SymbolMatch.MetadataName(method.Parameters[0].Type) == "Microsoft.AspNetCore.Http.HttpContext")
+                    return true;
+                if (method.Name == "TryParse" && method.Parameters[0].Type.SpecialType == SpecialType.System_String
+                    && method.Parameters[^1].RefKind == RefKind.Out)
+                    return true;
+            }
+        return false;
+    }
+
+    /// A DI service: derived from a service base, or named by a registration in the solution.
+    private bool IsService(INamedTypeSymbol type)
+    {
+        for (var b = type.BaseType; b != null; b = b.BaseType)
+            if (_serviceBases.Contains(SymbolMatch.MetadataName(b))) return true;
+        _services ??= ScanRegistrations();
+        return _services.Contains(type.OriginalDefinition);
+    }
+
+    /// The types the solution's registrations name: the type arguments of a call whose receiver (or an extension method's
+    /// `this`) is a registrar or which is a member of a registration type, and the `typeof` types among its arguments; the
+    /// `typeof` arguments of a registration type's construction. Only calls whose text names a body candidate are bound.
+    private HashSet<ISymbol> ScanRegistrations()
+    {
+        var services = new HashSet<ISymbol>(SymbolEqualityComparer.Default);
+        if (_bodyCandidateNames.Count == 0) return services;
+        foreach (var compilation in _compilations)
+            foreach (var tree in compilation.SyntaxTrees)
+            {
+                SemanticModel? model = null;
+                foreach (var node in tree.GetRoot().DescendantNodes())
+                {
+                    if (node is not (InvocationExpressionSyntax or BaseObjectCreationExpressionSyntax) || !NamesCandidate(node)) continue;
+                    model ??= compilation.GetSemanticModel(tree);
+                    switch (model.GetOperation(node))
+                    {
+                        case IInvocationOperation call when IsRegistration(call):
+                            foreach (var t in call.TargetMethod.TypeArguments) AddService(services, t);
+                            foreach (var a in call.Arguments) AddTypeOfs(services, a);
+                            break;
+                        case IObjectCreationOperation { Type: { } created } creation when _registrationTypes.Contains(SymbolMatch.MetadataName(created)):
+                            foreach (var a in creation.Arguments) AddTypeOfs(services, a);
+                            break;
+                    }
+                }
+            }
+        return services;
+    }
+
+    /// Whether the call's or creation's own type arguments or `typeof` arguments name a body candidate (by simple name), or
+    /// the call is an `Add*`/`TryAdd*` call with arguments and no written type arguments: its type arguments may be inferred
+    /// (`AddSingleton(new Settings())`, `AddScoped(sp => new Repo())`; fix round 1 of Task 34, I3).
+    private bool NamesCandidate(SyntaxNode node)
+    {
+        if (node is InvocationExpressionSyntax { ArgumentList.Arguments.Count: > 0 } inferred
+            && (inferred.Expression switch
+            {
+                IdentifierNameSyntax id => id.Identifier.ValueText,
+                MemberAccessExpressionSyntax { Name: IdentifierNameSyntax id } => id.Identifier.ValueText,
+                MemberBindingExpressionSyntax { Name: IdentifierNameSyntax id } => id.Identifier.ValueText,
+                _ => null,
+            }) is { } plain
+            && (plain.StartsWith("Add", StringComparison.Ordinal) || plain.StartsWith("TryAdd", StringComparison.Ordinal)))
+            return true;
+        IEnumerable<TypeSyntax> named = node switch
+        {
+            InvocationExpressionSyntax { Expression: GenericNameSyntax g } => g.TypeArgumentList.Arguments,
+            InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax { Name: GenericNameSyntax g } } => g.TypeArgumentList.Arguments,
+            InvocationExpressionSyntax { Expression: MemberBindingExpressionSyntax { Name: GenericNameSyntax g } } => g.TypeArgumentList.Arguments,
+            _ => Array.Empty<TypeSyntax>(),
+        };
+        var arguments = node switch
+        {
+            InvocationExpressionSyntax i => i.ArgumentList.Arguments,
+            BaseObjectCreationExpressionSyntax { ArgumentList: { } list } => list.Arguments,
+            _ => default,
+        };
+        var typeOfs = arguments.SelectMany(a => a.Expression.DescendantNodesAndSelf().OfType<TypeOfExpressionSyntax>()).Select(t => t.Type);
+        return named.Concat(typeOfs).Any(t => t.DescendantNodesAndSelf().OfType<SimpleNameSyntax>()
+            .Any(id => _bodyCandidateNames.Contains(id.Identifier.ValueText)));
+    }
+
+    private bool IsRegistration(IInvocationOperation call)
+    {
+        var method = call.TargetMethod;
+        if (method.ContainingType is { } c && _registrationTypes.Contains(SymbolMatch.MetadataName(c))) return true;
+        if (call.Instance?.Type is { } receiver && IsRegistrar(receiver)) return true;
+        var m = method.ReducedFrom ?? method;
+        if (m.IsExtensionMethod && m.Parameters.Length > 0 && IsRegistrar(m.Parameters[0].Type)) return true;
+        // A static helper given the registrar as any argument (`Plumbing.Wire<T>(builder.Services)`; I3).
+        return call.Arguments.Any(a => a.Value is { Type: { } t } && IsRegistrar(t))
+            || call.Arguments.Any(a => a.Value is IConversionOperation { Operand.Type: { } o } && IsRegistrar(o));
+    }
+
+    private bool IsRegistrar(ITypeSymbol type) =>
+        _registrars.Contains(SymbolMatch.MetadataName(type)) || type.AllInterfaces.Any(i => _registrars.Contains(SymbolMatch.MetadataName(i)));
+
+    private static void AddService(HashSet<ISymbol> services, ITypeSymbol type)
+    {
+        if (type is INamedTypeSymbol named) services.Add(named.OriginalDefinition);
+    }
+
+    private static void AddTypeOfs(HashSet<ISymbol> services, IOperation argument)
+    {
+        foreach (var op in argument.DescendantsAndSelf())
+            if (op is ITypeOfOperation typeOf) AddService(services, typeOf.TypeOperand);
     }
 
     // ---- Types ----

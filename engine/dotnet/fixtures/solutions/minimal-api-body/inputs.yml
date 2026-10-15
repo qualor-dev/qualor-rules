@@ -1,0 +1,10 @@
+# Task 34 (firm core 01.33): a Minimal API handler's complex-type parameter without a binding attribute is bound from the
+# request body (aspnet/core/fundamentals/minimal-apis/parameter-binding, "Binding Precedence"), unless the type is a
+# service the container provides. The endpoints are mapped in one project, the services registered in another; the
+# address sent in the body is downloaded in a third.
+rule: csharp.ssrf
+projects:
+  - { name: Model, folder: Model }
+  - { name: Imaging, folder: Imaging, references: [Model] }
+  - { name: Endpoints, folder: Endpoints, references: [Model, Imaging] }
+  - { name: Host, folder: Host, references: [Model, Imaging, Endpoints] }

@@ -117,6 +117,23 @@ sanitizers:
   - method: System.IO.Path.GetFileName
   - method: System.IO.Path.GetFileNameWithoutExtension
   - method: System.IO.Path.GetExtension
+  # (Task 34, G5: each names every overload, the ReadOnlySpan<char> ones included, which return the same characters as a
+  # span; SpanSanitizerTests.)
+  # File providers (Task 34, ruling R-E37 refined; learn.microsoft.com aspnet/core/fundamentals/file-providers):
+  # PhysicalFileProvider "scopes all paths to a directory and its children. This scoping prevents access to the file
+  # system outside of the specified directory and its children", so the PhysicalPath of the file it finds and the entries
+  # of the directory it enumerates for a path stay under its root (or the PhysicalPath is null). The provider follows a
+  # symbolic link under its root that points out of it; the engine counts what the link reaches as the root's own
+  # content, not the request's path. A file it does not find is a NotFoundFileInfo (dotnet/api/
+  # microsoft.extensions.fileproviders.notfoundfileinfo: "The name of the file that could not be found") whose Name is the
+  # path as given, so the result's Name keeps the request data (`keep-members`: the result keeps it as a whole, and its
+  # PhysicalPath is clean only where its members are known exactly: in place or through a local; passed to a method or
+  # kept in a field, the PhysicalPath is reported, an over-report). A provider known only by its interface
+  # (IFileProvider, a CompositeFileProvider, the environment's content and web root providers) may be any implementation:
+  # its results keep the path (propagators.yml).
+  - method: Microsoft.Extensions.FileProviders.PhysicalFileProvider.GetFileInfo
+    keep-members: [Name]
+  - method: Microsoft.Extensions.FileProviders.PhysicalFileProvider.GetDirectoryContents
 # A full path checked against the base folder: `full` is clean where `full.StartsWith(prefix)` holds (the code after a
 # failing check that always leaves the method, an if branch), when every assignment of the local `full` in the method
 # is a Path.GetFullPath call and the prefix carries no request data and ends with a directory separator: a string

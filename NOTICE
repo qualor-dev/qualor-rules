@@ -37,3 +37,7 @@ Used to build and test the engine only, not shipped:
   https://github.com/npgsql/npgsql). Their dependencies (Azure.Core, Azure.Identity, Microsoft.Identity.Client,
   Microsoft.IdentityModel.*, Microsoft.SqlServer.Server, System.ClientModel, System.Memory.Data, Newtonsoft.Json.Bson,
   Microsoft.AspNetCore.JsonPatch: MIT; SQLitePCLRaw.*: Apache License 2.0) are restored with them.
+  Fluid.Core 2.40.0 (the Fluid template engine the Task 34 model tests compile against; Copyright (c) Sebastien Ros, MIT
+  licence, https://github.com/sebastienros/fluid), test-only, with its dependencies Parlot 1.5.2 (Copyright (c)
+  Sebastien Ros, BSD-3-Clause licence (permissive, OSI-approved), test-only; accepted as Npgsql's PostgreSQL licence was,
+  ruling R-E8) and TimeZoneConverter 7.2.0 (Copyright (c) Matt Johnson-Pint, MIT licence).

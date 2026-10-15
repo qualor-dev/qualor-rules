@@ -92,13 +92,16 @@ internal sealed class Trail
 /// compares a label's Path.Medium, CleanFor and HighClean (fix round 3, RM1).
 internal sealed class Label
 {
-    public Label(int owner, int slot, ImmutableHashSet<string> cleanFor, Trail path, bool viaKey = false, ImmutableArray<Witness> alternatives = default)
+    public Label(int owner, int slot, ImmutableHashSet<string> cleanFor, Trail path, bool viaKey = false, ImmutableArray<Witness> alternatives = default,
+        bool keyDerived = false, bool dropsKeyDerived = false)
     {
+        DropsKeyDerived = dropsKeyDerived;
         Owner = owner;
         Slot = slot;
         CleanFor = cleanFor;
         Path = path;
         ViaKey = viaKey;
+        KeyDerived = keyDerived || viaKey;
         Alternatives = alternatives.IsDefault ? ImmutableArray<Witness>.Empty : alternatives;
     }
 
@@ -133,10 +136,12 @@ internal sealed class Label
     }
 
     /// This label with each path mapped by `map` (its cleanliness unchanged); `cleanFor` the label's new CleanFor.
-    public Label Map(Func<Trail, Trail> map, ImmutableHashSet<string>? cleanFor = null, bool? viaKey = null)
+    public Label Map(Func<Trail, Trail> map, ImmutableHashSet<string>? cleanFor = null, bool? viaKey = null, bool? keyDerived = null,
+        bool? dropsKeyDerived = null)
     {
         var alternatives = Alternatives.IsEmpty ? Alternatives : Alternatives.Select(w => w with { Path = map(w.Path) }).ToImmutableArray();
-        return new Label(Owner, Slot, cleanFor ?? CleanFor, alternatives.IsEmpty ? map(Path) : alternatives[0].Path, viaKey ?? ViaKey, alternatives);
+        return new Label(Owner, Slot, cleanFor ?? CleanFor, alternatives.IsEmpty ? map(Path) : alternatives[0].Path, viaKey ?? ViaKey, alternatives,
+            keyDerived ?? KeyDerived, dropsKeyDerived ?? DropsKeyDerived);
     }
 
     /// This label cleaned for `rules` (each path too).
@@ -144,7 +149,7 @@ internal sealed class Label
     {
         var alternatives = Alternatives.IsEmpty ? Alternatives
             : Alternatives.Select(w => rules.All(w.CleanFor.Contains) ? w : w with { CleanFor = w.CleanFor.Union(rules) }).ToImmutableArray();
-        return new Label(Owner, Slot, CleanFor.Union(rules), Path, ViaKey, alternatives);
+        return new Label(Owner, Slot, CleanFor.Union(rules), Path, ViaKey, alternatives, KeyDerived, DropsKeyDerived);
     }
 
     /// The parameter reaches the value only as the key of a lookup whose element is typed by a type parameter (fix round
@@ -152,6 +157,15 @@ internal sealed class Label
     /// shaped method drops such labels from its result; any other call keeps them. A join keeps the flag only when both
     /// sides have it (a plain flow of the parameter wins).
     public bool ViaKey { get; }
+
+    /// The parameter reaches the value only as the key of a lookup, whatever the element's type (ruling R-E39; ViaKey implies
+    /// it): a deserializer (`drop-key-only:`) does not pass it on. A join keeps the flag only when both sides have it.
+    public bool KeyDerived { get; }
+
+    /// The parameter reaches the value only through a deserializer (`drop-key-only:`, R-E39): a call site substitutes the
+    /// argument without what reached it only through a lookup key (a project's own deserializing wrapper given cached
+    /// text). A join keeps the flag only when both sides have it (a plain flow of the parameter wins).
+    public bool DropsKeyDerived { get; }
 
     public int Owner { get; }
 
@@ -263,6 +277,11 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     /// request counterpart of Label.ViaKey, R-E23): a value-factory shaped call drops it from its result. A join keeps
     /// it only when both request parts have it.
     public bool KeyOnly { get; init; }
+
+    /// The request data reached this value only as the key of a lookup, whatever the element's type (ruling R-E39; KeyOnly
+    /// implies it): a deserializer (`drop-key-only:`) does not pass it on, so JSON text found in a cache by a request key does
+    /// not make the object read from it request data. A join keeps it only when both request parts have it.
+    public bool KeyDerived { get; init; }
 
     public const int MaxWitnesses = 4;
 
@@ -447,9 +466,29 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     /// This value with every label marked as reaching it only through a type-parameter-typed key lookup (Label.ViaKey).
     public TaintValue ViaKey()
     {
-        var value = Request && !KeyOnly ? this with { KeyOnly = true } : this;
+        var value = Request && !(KeyOnly && KeyDerived) ? this with { KeyOnly = true, KeyDerived = true } : this;
         return value.Labels.Length == 0 || value.Labels.All(l => l.ViaKey) ? value
             : value with { Labels = value.Labels.Select(l => l.ViaKey ? l : l.Map(p => p, viaKey: true)).ToImmutableArray() };
+    }
+
+    /// This value with its request data and every label marked as reaching it only through a lookup key (R-E39).
+    public TaintValue KeyDerivedMark()
+    {
+        var value = Request && !KeyDerived ? this with { KeyDerived = true } : this;
+        return value.Labels.Length == 0 || value.Labels.All(l => l.KeyDerived) ? value
+            : value with { Labels = value.Labels.Select(l => l.KeyDerived ? l : l.Map(p => p, keyDerived: true)).ToImmutableArray() };
+    }
+
+    /// This value without what reached it only through a lookup key (R-E39): its request data unless that came by a key,
+    /// and its labels that did not.
+    public TaintValue WithoutKeyDerived()
+    {
+        if (!Any) return this;
+        var value = Request && KeyDerived ? LabelPart : this;
+        if (value.Labels.Length == 0 || value.Labels.All(l => l.DropsKeyDerived && !l.KeyDerived)) return value;
+        // The labels kept are marked: their arguments lose their key-only part at the call site (Summary substitution).
+        var labels = value.Labels.Where(l => !l.KeyDerived).Select(l => l.DropsKeyDerived ? l : l.Map(p => p, dropsKeyDerived: true)).ToImmutableArray();
+        return value.Request || labels.Length > 0 ? value with { Labels = labels } : Clean;
     }
 
     /// The request data of this value, without its labels.
@@ -485,6 +524,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         var fromHeap = FromHeap;
         var keyOnly = KeyOnly;
         var truncated = Truncated;
+        var keyDerived = KeyDerived;
         var witnesses = Witnesses;
         if (Request && other.Request)
         {
@@ -493,6 +533,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             fromHeap = FromHeap && other.FromHeap;
             keyOnly = KeyOnly && other.KeyOnly;
             truncated = Truncated || other.Truncated;
+            keyDerived = KeyDerived && other.KeyDerived;
             cleanFor = CleanFor.Count == 0 || other.CleanFor.Count == 0 ? ImmutableHashSet<string>.Empty : CleanFor.Intersect(other.CleanFor);
             sources = Sources;
             foreach (var s in other.Sources)
@@ -523,7 +564,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                 witnesses = merged.Length > 1 ? merged : ImmutableArray<Witness>.Empty;
             }
             requestChanged = cleanFor.Count != CleanFor.Count || !ReferenceEquals(sources, Sources) || !ReferenceEquals(path, Path)
-                || !ReferenceEquals(scope, Scope) || fromHeap != FromHeap || keyOnly != KeyOnly || truncated != Truncated || !SameWitnesses(witnesses, Witnesses);
+                || !ReferenceEquals(scope, Scope) || fromHeap != FromHeap || keyOnly != KeyOnly || truncated != Truncated || keyDerived != KeyDerived || !SameWitnesses(witnesses, Witnesses);
             if (cleanFor.Count == CleanFor.Count) cleanFor = CleanFor;
         }
         else if (other.Request)
@@ -536,6 +577,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
             fromHeap = other.FromHeap;
             keyOnly = other.KeyOnly;
             truncated = other.Truncated;
+            keyDerived = other.KeyDerived;
             witnesses = other.Witnesses;
             requestChanged = true;
         }
@@ -548,7 +590,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         }
         var labels = MergeLabels(Labels, other.Labels, out var labelsChanged);
         if (!requestChanged && !labelsChanged) return this;
-        return new TaintValue(request, cleanFor, path) { Sources = sources, Labels = labels, Scope = scope, FromHeap = fromHeap, KeyOnly = keyOnly, Truncated = truncated, Witnesses = witnesses };
+        return new TaintValue(request, cleanFor, path) { Sources = sources, Labels = labels, Scope = scope, FromHeap = fromHeap, KeyOnly = keyOnly, Truncated = truncated, KeyDerived = keyDerived, Witnesses = witnesses };
     }
 
     /// The union of two sorted label arrays (one label per owner and slot: CleanFor intersected, the shorter path);
@@ -582,6 +624,8 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                 var y = b[j++];
                 var cf = x.CleanFor.Count == 0 || y.CleanFor.Count == 0 ? ImmutableHashSet<string>.Empty : x.CleanFor.Intersect(y.CleanFor);
                 var viaKey = x.ViaKey && y.ViaKey;
+                var keyDerived = x.KeyDerived && y.KeyDerived;
+                var dropsKeyDerived = x.DropsKeyDerived && y.DropsKeyDerived;
                 // Paths of one cleanliness: the better one; else both sides' paths, each with its cleanliness (RR1).
                 Trail p;
                 var alternatives = ImmutableArray<Witness>.Empty;
@@ -597,9 +641,10 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
                     p = merged[0].Path;
                     if (merged.Length > 1) alternatives = merged;
                 }
-                if (cf.Count != x.CleanFor.Count || !ReferenceEquals(p, x.Path) || viaKey != x.ViaKey || !SameWitnesses(alternatives, x.Alternatives))
+                if (cf.Count != x.CleanFor.Count || !ReferenceEquals(p, x.Path) || viaKey != x.ViaKey || keyDerived != x.KeyDerived
+                    || dropsKeyDerived != x.DropsKeyDerived || !SameWitnesses(alternatives, x.Alternatives))
                 {
-                    result.Add(new Label(x.Owner, x.Slot, cf.Count == x.CleanFor.Count ? x.CleanFor : cf, p, viaKey, alternatives));
+                    result.Add(new Label(x.Owner, x.Slot, cf.Count == x.CleanFor.Count ? x.CleanFor : cf, p, viaKey, alternatives, keyDerived, dropsKeyDerived));
                     changed = true;
                 }
                 else
@@ -618,14 +663,14 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
     /// Equal in the lattice (paths aside but for their confidence, R-9).
     public bool SameTaint(TaintValue other) =>
         ReferenceEquals(this, other)
-        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Sources.SetEquals(other.Sources) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly && Truncated == other.Truncated && SameHigh(this, other)))
+        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Sources.SetEquals(other.Sources) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly && Truncated == other.Truncated && KeyDerived == other.KeyDerived && SameHigh(this, other)))
             && SameLabels(other));
 
     /// Equal in the lattice, paths (but for their confidence) and source locations aside: what decides whether a summary
     /// or the heap changed.
     public bool SameFlow(TaintValue other) =>
         ReferenceEquals(this, other)
-        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly && Truncated == other.Truncated && SameHigh(this, other))) && SameLabels(other));
+        || (Request == other.Request && (!Request || (CleanFor.SetEquals(other.CleanFor) && Equals(Scope, other.Scope) && FromHeap == other.FromHeap && KeyOnly == other.KeyOnly && Truncated == other.Truncated && KeyDerived == other.KeyDerived && SameHigh(this, other))) && SameLabels(other));
 
     private bool SameLabels(TaintValue other)
     {
@@ -634,7 +679,7 @@ internal sealed record TaintValue(bool Request, ImmutableHashSet<string> CleanFo
         {
             var x = Labels[k];
             var y = other.Labels[k];
-            if (x.Owner != y.Owner || x.Slot != y.Slot || x.ViaKey != y.ViaKey || x.Path.Medium != y.Path.Medium || !x.CleanFor.SetEquals(y.CleanFor)) return false;
+            if (x.Owner != y.Owner || x.Slot != y.Slot || x.ViaKey != y.ViaKey || x.KeyDerived != y.KeyDerived || x.DropsKeyDerived != y.DropsKeyDerived || x.Path.Medium != y.Path.Medium || !x.CleanFor.SetEquals(y.CleanFor)) return false;
             // A rule's path that turned high is a change (fix round 3 of Task 28, RM1), as for request data (SameHigh).
             var hx = x.HighClean;
             var hy = y.HighClean;

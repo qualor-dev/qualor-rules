@@ -185,6 +185,30 @@ propagators:
   - method: Microsoft.Extensions.Caching.Distributed.IDistributedCache.Get*   # Get, GetAsync
     from: [this]
     key: [0]
+  # Cache writes (ruling R-E40): the value put into a cache is written into the cache object, which the reads above read
+  # (`from: [this]`/`[0]`). The cache is an object like any other (Task 27): what a request writes into it is that
+  # request's data (decision R-6), so a value read back by its key in the same request is request data, also through a
+  # deserializer (R-E39), and what another request wrote is not. learn.microsoft.com dotnet/api/
+  # microsoft.extensions.caching.memory.cacheextensions.set ("Associate a value with a key in the IMemoryCache"),
+  # .imemorycache.createentry ("Create or overwrite an entry in the cache"), .icacheentry.value ("Gets or set the value of
+  # the cache entry"), .cacheentryextensions.setvalue, microsoft.extensions.caching.distributed.idistributedcache.set and
+  # .setasync ("Sets a value with the given key"), .distributedcacheextensions.set, .setstring and their async forms.
+  - method: Microsoft.Extensions.Caching.Memory.CacheExtensions.Set      # (cache, key, value[, expiry or options])
+    from: [2]
+    to: [0]
+  - method: Microsoft.Extensions.Caching.Memory.IMemoryCache.CreateEntry
+    from: [this]
+    entry: true
+  - property-set: Microsoft.Extensions.Caching.Memory.ICacheEntry.Value
+  - method: Microsoft.Extensions.Caching.Memory.CacheEntryExtensions.SetValue   # (entry, value) → the entry
+    from: [1]
+    to: [0]
+  - method: Microsoft.Extensions.Caching.Distributed.IDistributedCache.Set*     # Set, SetAsync (key, value, options)
+    from: [1]
+    to: [this]
+  - method: Microsoft.Extensions.Caching.Distributed.DistributedCacheExtensions.Set*   # Set, SetAsync, SetString, SetStringAsync
+    from: [2]
+    to: [0]
   - method: System.Collections.Concurrent.ConcurrentDictionary`2.GetOrAdd
     from: [this, 1, 2]
   - method: System.Collections.Concurrent.ConcurrentDictionary`2.AddOrUpdate
@@ -196,6 +220,12 @@ propagators:
   - property-get: System.Collections.IEnumerator.Current
   - property-get: System.Collections.Generic.KeyValuePair`2.Key
   - property-get: System.Collections.Generic.KeyValuePair`2.Value
+  # A pair made from a key and a value holds them (Task 34; dotnet/api/system.collections.generic.keyvaluepair-2.-ctor:
+  # "Initializes a new instance of the KeyValuePair<TKey,TValue> structure with the specified key and value"; a struct
+  # is neither string-like nor a collection, so `unmodelled-external` would drop them). The pair has one taint, the join of
+  # both: its Key carries the value's data too (FP, models/README.md Known limits).
+  - method: System.Collections.Generic.KeyValuePair`2..ctor
+  - method: System.Collections.Generic.KeyValuePair.Create
   # The request body read through its PipeReader (Request.BodyReader: ReadAsync, the result's Buffer, its
   # segments, decoded with Encoding.GetString). OpenGrep carries taint through every call; none of these
   # results is string-like or a collection, so `unmodelled-external` would drop it at the first step.
@@ -228,6 +258,118 @@ propagators:
     from: [args]
   - method: System.Text.EncodingExtensions.GetString          # (this Encoding, in ReadOnlySequence<byte>)
     from: [1]
+  # File providers (Task 34, firm core 24.12; learn.microsoft.com aspnet/core/fundamentals/file-providers, dotnet/api/
+  # microsoft.extensions.fileproviders.ifileprovider.getfileinfo, .ifileinfo.physicalpath, .ifileinfo.name,
+  # .idirectorycontents): the IFileInfo a provider gives for a path describes the file at that path, so it holds the
+  # path (IFileInfo is neither string-like nor a collection: `unmodelled-external` would drop it). Its PhysicalPath and
+  # Name, and the entries of the IDirectoryContents GetDirectoryContents gives (an IEnumerable<IFileInfo>), are then read
+  # through the string-or-collection default. The provider itself is no path (`from: [0]`). PhysicalFileProvider's
+  # results stay under its root: a path-traversal sanitizer (path-traversal.yml).
+  - method: Microsoft.Extensions.FileProviders.IFileProvider.GetFileInfo
+    from: [0]
+  # Fluid templates (Task 34, firm core 25.30; the Fluid.Core package, 2.40.0: its README, "Hello World",
+  # "Thread-safety", "Converting CLR types", "Encoding", and its API documentation, Fluid.xml). Values reach a template
+  # through its TemplateContext: the model given to the constructor ("Fluid templates can read public properties and
+  # fields from the model"), the values set on it (`SetValue(name, value)`: a FluidValue, made from a CLR value by
+  # `FluidValue.Create(value, options)`, "Sets a value on the context"; or a CLR value, the TemplateContextExtensions
+  # overloads); Render and RenderAsync give "the rendered template as a string", or write it to the TextWriter given.
+  # Encoding: "By default Fluid doesn't encode the output"; with an encoder (HtmlEncoder.Default), the template can still
+  # keep a value from being encoded ("a special `raw` filter or `{% raw %} ... {% endraw %}` tag"), and the engine does
+  # not read templates (stored text): the rendered text holds the values for every rule, whatever the encoder.
+  # Not modelled: a value given through a template-context property set (`Model = x`), a custom value converter or member
+  # access strategy, the obsolete Render(template, context, encoder, writer), the context a fluent SetValue returns
+  # (`Render(new TemplateContext(o).SetValue("n", v))` loses v), a template parsed from request text (its source never
+  # reaches the rendered text).
+  - method: Fluid.Values.FluidValue.Create
+    from: [0]
+  - method: Fluid.Values.StringValue.Create
+    from: [0]
+  - method: Fluid.Values.StringValue..ctor
+    from: [0]
+  - method: Fluid.Values.ObjectValue..ctor
+  - method: Fluid.Values.FluidValue.ToStringValue
+  - method: Fluid.Values.FluidValue.ToObjectValue
+  - method: Fluid.TemplateContext..ctor          # (model, options, allowModelMembers), (model, allowModelMembers, comparer)
+    from: [0]
+    param-types: [System.Object]
+  - method: Fluid.TemplateContext.SetValue       # (name, FluidValue)
+    from: [1]
+    to: [this]
+  - method: Fluid.TemplateContextExtensions.SetValue   # (this context, name, value): string, object, int, ...
+    from: [2]
+    to: [0]
+  - method: Fluid.FluidTemplateExtensions.Render       # (template, context[, encoder, isolateContext]) → string
+    from: [1]
+    param-types: [Fluid.TemplateContext]
+  - method: Fluid.FluidTemplateExtensions.RenderAsync  # (template, context[, encoder, isolateContext]) → ValueTask<string>
+    from: [1]
+    param-types: [Fluid.TemplateContext]
+  - method: Fluid.FluidTemplateExtensions.RenderAsync  # (template, writer, context[, encoder, isolateContext])
+    from: [2]
+    to: [1]
+    param-types: [Fluid.TemplateContext]
+  - method: Fluid.IFluidTemplate.RenderAsync           # (writer, encoder, context)
+    from: [2]
+    to: [0]
+  # JSON deserialization (Task 34, ruling R-E38): the object made from JSON text holds that text's data, whatever its
+  # type (a DTO, a dictionary, `object`, a bare `T` inside a project's generic wrapper: `unmodelled-external` would drop
+  # every one that is neither string-like nor a collection). learn.microsoft.com dotnet/api/
+  # system.text.json.jsonserializer.deserialize ("Parses the text representing a single JSON value into a TValue"; also
+  # from a Stream, a Utf8JsonReader, a JsonDocument, JsonElement or JsonNode), .deserializeasync,
+  # .deserializeasyncenumerable; newtonsoft.com/json/help JsonConvert.DeserializeObject ("Deserializes the JSON to the
+  # specified .NET type"), JToken.ToObject ("Creates an instance of the specified .NET type from the JToken"). Only the
+  # JSON (argument 0, or the token) reaches the result; the type, options and context do not.
+  # `drop-key-only` (ruling R-E39): JSON text that is request data only through a lookup key (a cache entry or a table
+  # row found by a request key: R-E18 lets the key reach a string found by it) does not make the object request data; the
+  # stored object is the cache's, as R-E18 says of an object found by a key. Text that is also request data otherwise
+  # (the body, a parameter, a key lookup joined with them) passes.
+  - method: System.Text.Json.JsonSerializer.Deserialize*   # Deserialize, DeserializeAsync, DeserializeAsyncEnumerable
+    from: [0]
+    drop-key-only: true
+  - method: Newtonsoft.Json.JsonConvert.DeserializeObject*  # DeserializeObject, DeserializeObjectAsync (obsolete)
+    from: [0]
+    drop-key-only: true
+  - method: Newtonsoft.Json.Linq.JToken.ToObject
+    from: [this]
+    drop-key-only: true
+  # Fix round 1 of Task 34, M3: the other parsers of JSON and XML text, with the same key-only rule.
+  # learn.microsoft.com dotnet/api/system.text.json.jsondocument.parse ("Parses text representing a single JSON value into
+  # a JsonDocument"), .jsondocument.rootelement ("Gets the root element of this JSON document"), .jsonelement.getproperty
+  # and .jsonelement.trygetproperty (a property of the element), system.text.json.nodes.jsonnode.parse ("Parses text
+  # representing a single JSON value"), .jsonnode.item (a child node), system.xml.serialization.xmlserializer.deserialize
+  # ("Deserializes the XML document contained by the specified Stream / TextReader / XmlReader"), system.io.stringreader.
+  # -ctor ("Initializes a new instance of the StringReader class that reads from the specified string");
+  # newtonsoft.com/json/help JObject.Parse, JToken.Parse, JArray.Parse ("Load a ... from a string that contains JSON"),
+  # JsonConvert.DeserializeAnonymousType ("Deserializes the JSON to the given anonymous type").
+  - method: System.Text.Json.JsonDocument.Parse*        # Parse, ParseAsync, ParseValue
+    from: [0]
+    drop-key-only: true
+  - property-get: System.Text.Json.JsonDocument.RootElement
+  - method: System.Text.Json.JsonElement.GetProperty
+    from: [this]
+  - method: System.Text.Json.JsonElement.TryGetProperty
+    from: [this]
+    to: [out]
+  - method: System.Text.Json.Nodes.JsonNode.Parse
+    from: [0]
+    drop-key-only: true
+  - property-get: System.Text.Json.Nodes.JsonNode.Item  # node["name"], node[0]
+  - method: Newtonsoft.Json.Linq.JObject.Parse
+    from: [0]
+    drop-key-only: true
+  - method: Newtonsoft.Json.Linq.JToken.Parse
+    from: [0]
+    drop-key-only: true
+  - method: Newtonsoft.Json.Linq.JArray.Parse
+    from: [0]
+    drop-key-only: true
+  - method: Newtonsoft.Json.JsonConvert.DeserializeAnonymousType
+    from: [0]
+    drop-key-only: true
+  - method: System.Xml.Serialization.XmlSerializer.Deserialize
+    from: [0]
+    drop-key-only: true
+  - method: System.IO.StringReader..ctor
   # The request body read as text.
   - method: System.IO.StreamReader..ctor
   - method: System.IO.TextReader.ReadToEnd*     # ReadToEnd, ReadToEndAsync

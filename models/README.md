@@ -94,8 +94,13 @@ reports a serializer built for a type the request names). Like the taint rules, 
 `sanitizers` take `method:` or `property-get:` (the member's result is clean), or one of the kinds below. A `method:`
 sanitizer may add `receiver-type: T`: the result is clean only when the receiver (its static type) is T or derives
 from T (`System.Text.Encodings.Web.TextEncoder.Encode` with `receiver-type: System.Text.Encodings.Web.UrlEncoder` is
-UrlEncoder.Encode, not HtmlEncoder.Encode). A user-defined conversion operator named as a sanitizer (`op_Implicit`)
-cleans a conversion to `System.String` only (PathString's text); its conversions to other types keep the value.
+UrlEncoder.Encode, not HtmlEncoder.Encode). A `method:` sanitizer may instead add `keep-members: [names]` (ruling R-E37
+refined, fix round 2): the result keeps what the call was given as a whole value; where the engine knows its properties
+exactly (in place, through a local), the named ones hold that value and every other one the cleaned value
+(PhysicalFileProvider.GetFileInfo: the PhysicalPath stays under the root, a not-found file's Name is the path as given).
+A read that lost the exact members reads the whole value: an over-report, never a miss.
+A user-defined conversion operator named as a sanitizer (`op_Implicit`) cleans a conversion to `System.String` only
+(PathString's text); its conversions to other types keep the value.
 
 ```yaml
 sanitizers:
@@ -608,12 +613,40 @@ Every key is required, except `validation`.
 | `controllers` | The parameters of a controller's actions. A class is a controller when it derives from one of `bases`, when one of its base classes has a name ending in one of `base-name-suffixes`, when it derives from `System.Object` only and its own name ends in one of `name-suffixes`, or when it or a base class carries one of `class-attributes`; never with one of `not-class-attributes`. Actions: its methods (`public-methods-only`: the public ones) without one of `not-method-attributes`. |
 | `razor-pages` | The parameters of a page model's handlers: methods (`public-methods-only`) whose names start with one of `handler-prefixes`, in a class derived from one of `bases`. |
 | `bound-properties` | A property with one of `property-attributes`; every public property of a class with one of `class-attributes`. |
-| `minimal-api` | The parameters of one of `source-types` (or `Nullable` of one) of a handler (lambda, local function or method group) given to one of `map-methods` (method names, no `*` needed). |
+| `minimal-api` | The parameters of one of `source-types` (or `Nullable` of one) of a handler (lambda, local function or method group) given to one of `map-methods` (method names, no `*` needed). Optional `body` (Task 34): the complex-type parameters bound from the request body, below. |
 | `binding-attributes` | A parameter with one of these attributes, in any method, local function or lambda. |
 | `not-source-attributes` | A parameter with one of these attributes is never a source (a DI service). |
 | `parameter-types` | The types that are never sources in `controllers`, `razor-pages`, `bound-properties` and `binding-attributes`: `scalars` (and `Nullable` of them), arrays and `scalar-collections` of them unless the element is one of `not-scalar-elements`, enums when `enums-are-scalar`, `not-source-types`, and interfaces (DI services) when `interfaces-are-services`, except `source-interfaces`. |
 | `members` | Reads that are sources: `property-get:` and `method:` entries (the call's value). |
 | `validation` | Optional (Task 31): model validation as a sanitizer, section "Model validation": `model-state` and `is-valid` (the action's `ModelState.IsValid`), `try-validate`, `api-controller-attributes`, `suppress-option`, `not-validated-attributes`, and the attributes `range`, `regular-expression` and `enum-data-type`. |
+
+### Minimal API body binding (`minimal-api: body:`, Task 34)
+
+A Minimal API handler's parameter without a binding attribute is bound by the precedence of
+learn.microsoft.com aspnet/core/fundamentals/minimal-apis/parameter-binding ("Binding Precedence"): an explicit attribute,
+the special types (`special-types`), a type with a static `BindAsync` (or `IBindableFromHttpContext<T>`), string or a type
+with a static `TryParse` (or `IParsable<T>`: route or query), a service the container provides, and last the body. The
+engine takes the parameter for the body (request data, a bound object like a controller action's model) when:
+
+- the handler is given to one of `map-methods` (MapPost, MapPut, MapPatch), or to `verbs-method` (MapMethods) with an
+  HTTP method outside `no-body-verbs` ("GET, HEAD, OPTIONS, and DELETE don't implicitly bind from body"; a verb named by
+  a constant or a static field of `verb-fields`, HttpMethods.Options; a list that is not written in place counts as one
+  that may bind it);
+- its type is not a special type, not a never-source type (`parameter-types`: scalars, enums, interfaces, ...), has no
+  static `BindAsync` or `TryParse`, and is not a service;
+- its type is declared in the solution (a class, record or struct, not abstract or static), an array or one of the
+  `parameter-types` collections whose element is text or such a type, or one of `library-body-types` (or derived from
+  one). Any other library type (a SqlConnection, LinkGenerator, an HttpClient) is taken for a service the framework
+  registers.
+
+A service is a type derived from one of `service-bases` (EF Core's DbContext) or a type a registration in the solution
+names: a type argument or a `typeof` argument of a call whose receiver, or an extension method's `this`, is one of
+`registrars` (IServiceCollection, IHostApplicationBuilder: `AddScoped<T>()`, `AddDbContext<T>()`, a provider's
+`builder.AddXxxDbContext<T>(...)`, a project's own `AddStore<T>(this IServiceCollection)`), of a member of
+`registration-types` (ServiceDescriptor), or a `typeof` given to a ServiceDescriptor constructor. The service and the
+implementation type count alike (the safe side for noise). The scan binds only the calls whose type arguments or
+`typeof` arguments name a body candidate by its simple name, after every project's handlers are known. OpenGrep takes no
+such parameter for request data (it cannot tell it from a DI service without types).
 
 ## `propagators.yml`
 
@@ -643,7 +676,10 @@ unmodelled-external: string-or-collection-return
   found by a request key (a settings or tenant record, an entity, a content item, `object`) is not request data, nor are
   its members. A key that reaches a value typed by a type parameter is marked (ruling R-E23): a call of a value-factory
   shaped method drops it from its result (below), any other call keeps it.
-- Entries take `method:` or `property-get:`.
+- Entries take `method:` or `property-get:`, or `property-set:` (ruling R-E40, alone: the value assigned to the property
+  is written into the receiver; `ICacheEntry.Value`).
+- `entry: true` (ruling R-E40, a method propagator): the call gives an entry of its receiver (`IMemoryCache.CreateEntry`);
+  a write into that entry (into a local the call initialises, or into the call itself) is a write into the receiver.
 - `only-for: [rule ids]` (Task 29): what the propagator returns stays request data for these rules only (clean for the
   others). `System.Type.GetType` and `Assembly.GetType` pass a type name on to the Type for
   `csharp.unsafe-deserialization` only: a real type's name holds no quote, `<` or path separator, so it is no free text
@@ -651,6 +687,11 @@ unmodelled-external: string-or-collection-return
 - `param-types: [types]` (Task 29, a method propagator whose `from` names parameter ordinals only): it applies only to
   the overloads whose parameters at those ordinals have one of these types (`XmlDocument.Load` of a Stream, TextReader or
   XmlReader holds the data it reads; `Load(string fileName)` does not).
+- `drop-key-only: true` (ruling R-E39, a method propagator): what reached its inputs only as the key of a lookup (R-E18's
+  string found by a request key, R-E23's type-parameter element) does not pass to its outputs; the rest does. The JSON
+  deserializers carry it: text found in a cache or table by a request key makes no request-data object, text that is
+  request data otherwise (the body, a parameter, a key lookup joined with them) does. The mark (TaintValue.KeyDerived,
+  Label.KeyDerived) is set by every key lookup, kept through summaries, and lost in a join with any other request data.
 - `known-text:` (Task 29, a list of `{ member: T.M, text: "..." }`): the text of an external static string field or
   property, which the `string-prefix:` sanitizers read as written in place (learn.microsoft.com gives each value:
   `Uri.SchemeDelimiter` is "://", `Uri.UriSchemeHttps` "https").
@@ -904,8 +945,68 @@ false positives (FP) or misses (FN) there.
   in a field; a layout reads none of an action's heap data (it is an entry
   point of its own); a view model given as a model expression (`<partial for>`, editor and display templates); callbacks a framework or library makes into the project
   (static-file providers, tus stores: no documentation says the store's file id is unvalidated request data, Task 29); externals whose result is neither string-like nor a collection and that no
-  propagator names (`IFileProvider.GetFileInfo` → `IFileInfo.PhysicalPath`, Fluid values); a Minimal API body object
-  bound without `[FromBody]`.
+  propagator names; a value given to a Fluid template through a context property set (`context.Model = x`), a custom
+  value converter or member access strategy (Task 34); a Minimal API body parameter whose type a registration the engine
+  cannot see names as a service is still reported (an Autofac-only registration, a scan: FP), and one whose type a
+  registration names only as an implementation (`AddSingleton<IClock, Clock>` and a `Clock` parameter) is not (FN).
+- Through a PhysicalFileProvider (Task 34, ruling R-E37 refined): the PhysicalPath of the file it finds and the entries of
+  the directory it enumerates for a request path are clean for csharp.path-traversal (its documentation: the provider
+  "scopes all paths to a directory and its children"; a path it cannot serve gives a file that does not exist and has no
+  PhysicalPath). The result's `Name` keeps the request data (`keep-members: [Name]`): a file that is not found is a
+  NotFoundFileInfo whose Name is the path as given (`../x`). The provider follows a symbolic link under its root that
+  points out of it; the engine counts what the link reaches as the root's own content. The PhysicalPath is clean only
+  where the engine knows the result's members exactly (in place, through a local): a result passed to a project method or
+  kept in a field and read elsewhere is read as a whole, so its PhysicalPath is reported (FP, fix round 2 RR-I2). Costs
+  (FN): a provider whose root itself is chosen by the request (`new PhysicalFileProvider(root)` with a request-built
+  root: its results are clean although the root is not). A provider known only as an `IFileProvider` keeps the path in
+  every member.
+- A Fluid template's rendered text holds the values it was given for every rule, also when rendered with an HtmlEncoder
+  (the template may write a value `raw`; templates are not read): FP for csharp.xss where the template encodes every
+  value. Not followed (FN, fix round 1 of Task 34, M4): the context a fluent `SetValue` returns (`template.Render(new
+  TemplateContext(o).SetValue("n", v))` loses `v`), a template parsed from request text (`FluidParser.Parse(source)`: the
+  source never reaches the rendered text), a value given through a context property set (`Model = x`), a custom value
+  converter or member access strategy.
+- A key-value pair (Task 34, R-E38): `new KeyValuePair<K, V>(k, v)` and `KeyValuePair.Create` give the pair one taint, the
+  join of key and value, so the pair's `Key` carries the value's data too (FP; nopCommerce's localized resources: 15 medium
+  findings, +0.13 GiB in Task 34's measurement).
+- JSON deserialization (Task 34, ruling R-E38): `JsonSerializer.Deserialize*`, `JsonConvert.DeserializeObject*` and
+  `JToken.ToObject` pass the JSON's taint to the object they make, whatever its static type (a DTO, a dictionary, a bare
+  `T` in a project's generic wrapper such as `Read<T>(text) => JsonSerializer.Deserialize<T>(text)`), so its members
+  read from the result are request data, unless the JSON is request data only through a lookup key (R-E39,
+  `drop-key-only`): a cache entry found by a request key deserializes into stored data. The other parsers carry the same
+  rule (fix round 1, M3): `JsonDocument.Parse*` (with `RootElement`, `JsonElement.GetProperty`/`TryGetProperty`),
+  `JsonNode.Parse` (with its indexer), `JObject.Parse`, `JToken.Parse`, `JArray.Parse`,
+  `JsonConvert.DeserializeAnonymousType` and `XmlSerializer.Deserialize` (with `StringReader`). A converter, a
+  `JsonSerializerContext` or `PopulateObject` is not followed.
+  - Caches (ruling R-E40): a value put into an IMemoryCache (`CacheExtensions.Set`, `CreateEntry` and the entry's `Value`,
+    `CacheEntryExtensions.SetValue`) or an IDistributedCache (`Set`, `SetAsync`, `SetString`, `SetStringAsync`) is written
+    into the cache object (`to:` the receiver; the entry of `CreateEntry` is its cache, `entry: true`), so the same
+    request reads it back as request data, deserialized too. What another request put into the cache is not this
+    request's data (decision R-6). The cache object is one location for every key (fix round 2, RR-M1): in a request
+    that puts request data into a cache, every read of that cache returns it, whatever its key (a read with another
+    constant key too: FP). A per-key cache store would avoid it only for constant keys; the measured caches compute their
+    keys.
+  - R-E39's remaining cost (FN; review I2 of Task 34): JSON that another request put into an IMemoryCache, an
+    IDistributedCache or a dictionary, read back by a key and deserialized, is missed (it was found at R-E38 only through
+    the key); so is JSON a request puts into a cache through an API not named above (a project's own cache, an entry
+    written after a `using` block's local is reassigned, a third-party cache). A text stored in a field and deserialized
+    in another method keeps the key's taint (FP, the mark does not cross the heap).
+- Not followed (FN), Task 34:
+  - A Minimal API parameter of a type with a static `BindAsync` (or `IBindableFromHttpContext<T>`) or `TryParse` (or
+    `IParsable<T>`), other than string: by the binding precedence it is bound from the request (the context, the route or
+    the query), not from the body, and the engine takes it for no source (fix round 1, M1).
+  - A text parsed into a syntax tree by a third-party library and generated back (OrchardCore's SQL queries go through
+    the Cyqwel SQL parser and generator: the tree is neither string-like nor a collection, and no documentation the
+    models could cite describes its API; firm core 25.30 is missed there).
+  - The result of an interface with no implementation in the solution is not known to come from anywhere else: it
+    carries its arguments' taint through the `unmodelled-external` default (Jellyfin's lyric providers: the request's
+    lyric id reaches the downloaded lyric's format, and so a save path; FP). This is what keeps Jellyfin's
+    `LyricManager` save sites reported, not the Path sanitizers: their `ReadOnlySpan<char>` overloads clean as the string
+    ones do (Task 34, G5).
+- Witness paths (Task 34): when two callers pass values into one project helper that returns its parameter (a span
+  helper such as `Skip(this ReadOnlySpan<char>, int)`), the witness of a finding found through one caller can start in
+  the other and leave out that caller's sanitizer step (the helper's label path is shared by its call sites). The finding
+  is right; its witness can name a caller whose value was cleaned.
 - Views no build compiles (ASP.NET Core 2.x compiles views at run time, plugins copy theirs as Content; since Task 30,
   decision R-11): the hook records the project's `.cshtml` files (`razor-view=`) and the engine compiles those that have
   no generated class with the Razor 6.0 language API and MVC's extensions, `_ViewImports.cshtml` and the project's tag

@@ -70,10 +70,13 @@ public static class ModelLoader
         var b = doc.Fields(top.Required("bound-properties"), "property-attributes", "class-attributes");
         var bound = new BoundPropertySources(doc.Types(b.Required("property-attributes")), doc.Types(b.Required("class-attributes")));
 
-        var m = doc.Fields(top.Required("minimal-api"), "map-methods", "source-types");
+        var m = doc.Fields(top.Required("minimal-api"), "map-methods", "source-types", "body");
         var mapMethods = doc.Sequence(m.Required("map-methods")).Select(n => doc.Pattern(n, MemberKind.Method)).ToList();
         if (mapMethods.Any(p => p.Kind != MemberKind.Method)) throw doc.Error(m.Required("map-methods"), "map-methods are methods");
-        var minimal = new MinimalApiSources(mapMethods, doc.Types(m.Required("source-types"), arrays: true));
+        var minimal = new MinimalApiSources(mapMethods, doc.Types(m.Required("source-types"), arrays: true))
+        {
+            Body = m.Optional("body") is { } bodyNode ? ReadBody(doc, bodyNode, mapMethods) : null,
+        };
 
         var t = doc.Fields(top.Required("parameter-types"), "scalars", "scalar-collections", "not-scalar-elements", "enums-are-scalar",
             "not-source-types", "interfaces-are-services", "source-interfaces");
@@ -88,6 +91,21 @@ public static class ModelLoader
         {
             Validation = top.Optional("validation") is { } vn ? ReadValidation(doc, vn) : null,
         };
+    }
+
+    /// sources.yml (4) `body:` (Task 34): its map methods and verbs method name map methods of (4).
+    private static MinimalApiBody ReadBody(Doc doc, YamlNode node, IReadOnlyList<MemberPattern> mapMethods)
+    {
+        var b = doc.Fields(node, "map-methods", "verbs-method", "no-body-verbs", "verb-fields", "special-types", "registrars",
+            "registration-types", "service-bases", "library-body-types");
+        var known = mapMethods.Select(p => p.MemberName).ToHashSet(StringComparer.Ordinal);
+        var bodyMethods = doc.Names(b.Required("map-methods"));
+        var verbsMethod = doc.Name(b.Required("verbs-method"));
+        foreach (var name in bodyMethods.Append(verbsMethod))
+            if (!known.Contains(name)) throw doc.Error(node, $"{name}: no map method of minimal-api map-methods");
+        return new MinimalApiBody(bodyMethods, verbsMethod, doc.Names(b.Required("no-body-verbs")), doc.Type(b.Required("verb-fields")),
+            doc.Types(b.Required("special-types")), doc.Types(b.Required("registrars")), doc.Types(b.Required("registration-types")),
+            doc.Types(b.Required("service-bases")), doc.Types(b.Required("library-body-types")));
     }
 
     /// sources.yml (7) `validation:` (Task 31).
@@ -131,7 +149,16 @@ public static class ModelLoader
         var onlyForNodes = new List<(YamlNode Node, string Id)>();
         foreach (var node in doc.Sequence(top.Required("propagators")))
         {
-            var (pattern, f) = doc.Member(node, new[] { "method", "property-get" }, "from", "to", "key", "only-for", "param-types");
+            var (pattern, f) = doc.Member(node, new[] { "method", "property-get", "property-set" }, "from", "to", "key", "only-for", "param-types",
+                "drop-key-only", "entry");
+            if (pattern.Kind == MemberKind.PropertySet)
+            {
+                // A property set (ruling R-E40): the assigned value is written into the receiver; nothing else to say.
+                foreach (var key in new[] { "from", "to", "key", "only-for", "param-types", "drop-key-only", "entry" })
+                    if (f.Optional(key) is { } extra) throw doc.Error(extra, $"{key} does not belong to a property-set propagator (the value reaches the receiver)");
+                list.Add(new PropagatorModel(pattern, new[] { "args" }, new[] { "this" }));
+                continue;
+            }
             var from = f.Optional("from") is { } fromNode
                 ? doc.Positions(fromNode, "from", "this", "args")
                 : pattern.Kind switch { MemberKind.Constructor => new[] { "args" }, MemberKind.PropertyGet => new[] { "this" }, _ => new[] { "this", "args" } };
@@ -164,7 +191,10 @@ public static class ModelLoader
                 paramTypes = doc.Types(ptNode, arrays: true);
                 if (paramTypes.Count == 0) throw doc.Error(ptNode, "param-types must not be empty");
             }
-            list.Add(new PropagatorModel(pattern, from, to) { Keys = keys, OnlyFor = onlyFor, ParamTypes = paramTypes });
+            var dropKeyOnly = f.Optional("drop-key-only") is { } dropNode && doc.Bool(dropNode);
+            var entry = f.Optional("entry") is { } entryNode && doc.Bool(entryNode);
+            if (entry && pattern.Kind != MemberKind.Method) throw doc.Error(node, "entry belongs to a method propagator");
+            list.Add(new PropagatorModel(pattern, from, to) { Keys = keys, OnlyFor = onlyFor, ParamTypes = paramTypes, DropKeyOnly = dropKeyOnly, Entry = entry });
         }
         var policyNode = top.Required("unmodelled-external");
         var policy = doc.String(policyNode);
@@ -235,6 +265,7 @@ public static class ModelLoader
         var lookups = new List<Regex>();
         var awaitedLookups = new List<Regex>();
         var receiverSanitizers = new List<(MemberPattern, string)>();
+        var keepingSanitizers = new List<(MemberPattern, IReadOnlyList<string>)>();
         var namedSanitizers = new List<(string, string)>();
         var keySanitizers = new List<KeySanitizer>();
         var allowLists = false;
@@ -243,7 +274,8 @@ public static class ModelLoader
             var sanitizerKinds = new[] { "method", "property-get", "string-prefix", "lookup", "by-name", "allow-list" };
             foreach (var n in doc.Sequence(sn))
             {
-                var f = doc.Fields(n, "method", "property-get", "string-prefix", "type", "lookup", "awaited", "receiver-type", "by-name", "allow-list", "key", "key-is");
+                var f = doc.Fields(n, "method", "property-get", "string-prefix", "type", "lookup", "awaited", "receiver-type", "by-name", "allow-list", "key", "key-is",
+                    "keep-members");
                 var present = sanitizerKinds.Where(k => f.Optional(k) != null).ToList();
                 if (present.Count != 1) throw doc.Error(n, $"a sanitizer names exactly one of {string.Join(", ", sanitizerKinds)}");
                 var sanitizerKind = present[0];
@@ -251,11 +283,11 @@ public static class ModelLoader
                 {
                     "string-prefix" => new[] { "type" },
                     "lookup" => new[] { "awaited" },
-                    "method" => new[] { "receiver-type", "key", "key-is" },
+                    "method" => new[] { "receiver-type", "key", "key-is", "keep-members" },
                     "property-get" => new[] { "key", "key-is" },
                     _ => Array.Empty<string>(),
                 };
-                foreach (var key in new[] { "type", "awaited", "receiver-type", "key", "key-is" })
+                foreach (var key in new[] { "type", "awaited", "receiver-type", "key", "key-is", "keep-members" })
                     if (f.Optional(key) is { } extra && Array.IndexOf(allowed, key) < 0) throw doc.Error(extra, $"{key} does not belong to a {sanitizerKind} sanitizer");
                 switch (sanitizerKind)
                 {
@@ -299,8 +331,16 @@ public static class ModelLoader
                     }
                     default:
                     {
-                        var pattern = doc.Member(n, new[] { "method", "property-get" }, "receiver-type").Pattern;
-                        if (f.Optional("receiver-type") is { } rt) receiverSanitizers.Add((pattern, doc.Type(rt)));
+                        var pattern = doc.Member(n, new[] { "method", "property-get" }, "receiver-type", "keep-members").Pattern;
+                        if (f.Optional("keep-members") is { } km)
+                        {
+                            if (f.Optional("receiver-type") != null) throw doc.Error(km, "keep-members does not go with receiver-type");
+                            var kept = doc.Names(km);
+                            if (kept.Count == 0) throw doc.Error(km, "keep-members must name at least one property");
+                            keepingSanitizers.Add((pattern, kept));
+                            sanitizers.Add(pattern);
+                        }
+                        else if (f.Optional("receiver-type") is { } rt) receiverSanitizers.Add((pattern, doc.Type(rt)));
                         else sanitizers.Add(pattern);
                         break;
                     }
@@ -362,6 +402,7 @@ public static class ModelLoader
             LookupSanitizers = lookups,
             AwaitedLookupSanitizers = awaitedLookups,
             ReceiverSanitizers = receiverSanitizers,
+            KeepingSanitizers = keepingSanitizers,
             NamedSanitizers = namedSanitizers,
             AllowLists = allowLists,
             KeySanitizers = keySanitizers,

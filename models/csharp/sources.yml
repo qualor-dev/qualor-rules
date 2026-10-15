@@ -52,8 +52,37 @@ bound-properties:
 # one of `map-methods` (a lambda, a local function or a method group).
 # Difference: OpenGrep follows a method-group handler only when it is a local function of the top-level program
 # or a method of the class whose MapXxx extension method maps it (a Known limit); the engine resolves the
-# delegate to its method wherever it is declared. Like OpenGrep, a complex-type parameter bound from the JSON
-# body without [FromBody] is not a source (it cannot be told from a DI service without DI analysis).
+# delegate to its method wherever it is declared.
+# `body` (Task 34, firm core 01.33): in ASP.NET Core 7 and later a complex-type parameter without a binding attribute is
+# bound from the request body (aspnet/core/fundamentals/minimal-apis/parameter-binding, "Binding Precedence"):
+# 1. an explicit attribute (5) decides (a not-source attribute too);
+# 2. `special-types` are bound from the request's context, not from the body (HttpContext, HttpRequest, HttpResponse,
+#    ClaimsPrincipal, CancellationToken, the form types, Stream, PipeReader: the source ones are `source-types`);
+# 3. a type with a valid static BindAsync binds itself (also IBindableFromHttpContext<T>): not the body;
+# 4. string, or a type with a static TryParse (also IParsable<T>), binds from the route or the query: the rules of
+#    `source-types` and `parameter-types` stay as they are. A BindAsync or TryParse type (other than string) is request
+#    data that is not the body; it is no source here (FN, fix round 1 of Task 34, M1: its object holds what BindAsync or
+#    TryParse made of the request);
+# 5. "If the parameter type is a service provided by dependency injection, it uses that service as the source": a type
+#    a registration names, read from the solution (a call whose receiver, or an extension method's `this`, or any of its
+#    arguments (a project's static helper given the services), is one of `registrars`, or a member of
+#    `registration-types`: its type arguments, written or inferred (`AddSingleton(new Settings())`), and the types of
+#    `typeof` among its
+#    arguments, the service and the implementation alike), and a type derived from `service-bases` (an EF Core
+#    DbContext, which the container provides: AddDbContext and the providers' Aspire helpers);
+# 6. "The parameter is from the body".
+# Only handlers mapped by `map-methods` (POST, PUT, PATCH; Map and MapFallback, which no verb restricts) or by `verbs-method` with an HTTP method outside
+# `no-body-verbs` bind the body: "The HTTP methods GET, HEAD, OPTIONS, and DELETE don't implicitly bind from body"
+# (a verb named by a constant or a static field of `verb-fields`; any other verb, or a list the engine cannot read,
+# may be one that binds it). The body is a type declared in the solution (a class, record or struct; not abstract,
+# static or an interface), an array or one of the `parameter-types` collections of a body type or of text, or one of
+# `library-body-types` (or derived from one: JsonObject is a JsonNode); any other library type is taken for a service
+# the framework registers (LinkGenerator, an HttpClient, a SqlConnection: the container's own registrations are not in
+# the solution). The engine sees no container other than Microsoft's (an Autofac-only registration is not read: its
+# type would be taken for the body) and no registration made by reflection over a type list (a scan): a handler
+# parameter of such a type is reported as the body.
+# Difference: OpenGrep takes a complex-type parameter without [FromBody] for no source (it cannot be told from a DI
+# service without the registrations); the engine follows the documented precedence.
 minimal-api:
   map-methods:
     - Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapGet
@@ -62,6 +91,10 @@ minimal-api:
     - Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapDelete
     - Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapPatch
     - Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapMethods
+    # Fix round 1 of Task 34, M2: Map (every HTTP method) and MapFallback (learn.microsoft.com dotnet/api/
+    # microsoft.aspnetcore.builder.endpointroutebuilderextensions.map, .mapfallback).
+    - Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.Map
+    - Microsoft.AspNetCore.Builder.EndpointRouteBuilderExtensions.MapFallback
   source-types:
     - System.String
     - System.String[]
@@ -71,6 +104,32 @@ minimal-api:
     - Microsoft.AspNetCore.Http.IFormCollection
     - System.IO.Stream
     - System.IO.Pipelines.PipeReader
+  body:
+    map-methods: [MapPost, MapPut, MapPatch, Map, MapFallback]
+    verbs-method: MapMethods
+    no-body-verbs: [GET, HEAD, OPTIONS, DELETE]
+    verb-fields: Microsoft.AspNetCore.Http.HttpMethods
+    special-types:
+      - Microsoft.AspNetCore.Http.HttpContext
+      - Microsoft.AspNetCore.Http.HttpRequest
+      - Microsoft.AspNetCore.Http.HttpResponse
+      - System.Security.Claims.ClaimsPrincipal
+      - System.Threading.CancellationToken
+      - Microsoft.AspNetCore.Http.IFormCollection
+      - Microsoft.AspNetCore.Http.IFormFileCollection
+      - Microsoft.AspNetCore.Http.IFormFile
+      - System.IO.Stream
+      - System.IO.Pipelines.PipeReader
+    registrars:
+      - Microsoft.Extensions.DependencyInjection.IServiceCollection
+      - Microsoft.Extensions.Hosting.IHostApplicationBuilder
+    registration-types: [Microsoft.Extensions.DependencyInjection.ServiceDescriptor]
+    service-bases: [Microsoft.EntityFrameworkCore.DbContext]
+    library-body-types:
+      - System.Collections.Generic.Dictionary`2
+      - System.Text.Json.JsonElement
+      - System.Text.Json.JsonDocument
+      - System.Text.Json.Nodes.JsonNode
 
 # (5) Parameters bound from the request by one of these attributes, in any method, local function or lambda
 # (Minimal API handlers, method-group handlers, Razor Pages handlers), the `parameter-types` excepted.

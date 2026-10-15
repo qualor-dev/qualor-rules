@@ -387,7 +387,11 @@ internal sealed class BodySummary
                 foreach (var path in label.AllPaths)
                 {
                     var v = stepped.Extend(path.Path).CleanedFor(path.CleanFor);
-                    result = result.Join(label.ViaKey ? v.ViaKey() : v);
+                    // Through a deserializer only (R-E39): the argument's key-only part does not pass.
+                    if (label.DropsKeyDerived) v = v.WithoutKeyDerived();
+                    if (!v.Any) continue;
+                    // A label that reached the result only through a lookup key keeps that mark on the argument (R-E23, R-E39).
+                    result = result.Join(label.ViaKey ? v.ViaKey() : label.KeyDerived ? v.KeyDerivedMark() : v);
                 }
             }
             else if (keep(label.Owner))

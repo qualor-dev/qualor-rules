@@ -1206,6 +1206,8 @@ internal sealed partial class MethodAnalyzer
             case ILocalReferenceOperation l:
                 state.Add(l.Local, value);
                 _body.Assigned(l.Local, state.Get(l.Local));
+                // A local an `entry:` call initialised (a cache entry, R-E40): the write reaches the entry's owner too.
+                if (EntryOwner(l.Local) is { } entryOwner) Write(entryOwner, value, state);
                 break;
             case IParameterReferenceOperation p:
                 state.Add(p.Parameter, value);
@@ -1231,7 +1233,38 @@ internal sealed partial class MethodAnalyzer
             case IInvocationOperation invocation when IsFluent(invocation.TargetMethod) && ThisOperation(invocation) is { } receiver:
                 Write(receiver, value, state);
                 break;
+            case IInvocationOperation entryCall when IsEntryCall(entryCall.TargetMethod) && ThisOperation(entryCall) is { } owner:
+                Write(owner, value, state);
+                break;
         }
+    }
+
+    /// A call whose propagator says it gives an entry of its receiver (`entry: true`, R-E40).
+    private bool IsEntryCall(IMethodSymbol method)
+    {
+        foreach (var p in _ctx.Propagators.Match(method, Access.Call))
+            if (p.Entry) return true;
+        return false;
+    }
+
+    private readonly Dictionary<ILocalSymbol, IOperation?> _entryOwners = new(SymbolEqualityComparer.Default);
+
+    /// The receiver of the `entry:` call a local is declared with (`using var entry = cache.CreateEntry(key)`), or null.
+    private IOperation? EntryOwner(ILocalSymbol local)
+    {
+        if (_entryOwners.TryGetValue(local, out var known)) return known;
+        IOperation? owner = null;
+        if (Model() is { } model)
+            foreach (var reference in local.DeclaringSyntaxReferences)
+            {
+                if (reference.GetSyntax() is not Microsoft.CodeAnalysis.CSharp.Syntax.VariableDeclaratorSyntax { Initializer.Value: { } init }
+                    || init.SyntaxTree != model.SyntaxTree) continue;
+                var op = model.GetOperation(init);
+                while (op is IConversionOperation c) op = c.Operand;
+                if (op is IInvocationOperation call && IsEntryCall(call.TargetMethod)) owner = ThisOperation(call);
+            }
+        _entryOwners[local] = owner;
+        return owner;
     }
 
     /// A weak write (a collection write) into a field or auto-property: a heap member is tainted by its symbol only
@@ -1535,6 +1568,13 @@ internal sealed partial class MethodAnalyzer
                 }));
             }
         }
+        else if (!property.IsStatic && receiver.Members is { IsAll: false } keptMembers && keptMembers.TryGet(property.OriginalDefinition, out var keptValue))
+        {
+            // A property a `keep-members:` sanitizer left as the call was given it (R-E37 refined).
+            foreach (var a in operation.Arguments) Value(a.Value, state);
+            unknownIdentity = true;
+            result = result.Join(keptValue.Any ? keptValue.Step(operation.Syntax.GetLocation(), $"read from {_ctx.Name(property)}") : keptValue);
+        }
         else
         {
             unknownIdentity = true;
@@ -1601,7 +1641,7 @@ internal sealed partial class MethodAnalyzer
                     foreach (var i in index)
                     {
                         if (!p.Keys.Contains(i.Ordinal) || !i.Value.Any) continue;
-                        var key = i.Value.Step(operation.Syntax.GetLocation(), $"looked up by key in {_ctx.Name(property)}", StepKind.KeyLookup);
+                        var key = i.Value.Step(operation.Syntax.GetLocation(), $"looked up by key in {_ctx.Name(property)}", StepKind.KeyLookup).KeyDerivedMark();
                         result = result.Join(later ? key.ViaKey() : key);
                     }
                 }
@@ -1691,6 +1731,11 @@ internal sealed partial class MethodAnalyzer
             // An indexer write is a collection write (`dict[k] = v`); its key is the dictionary's (Task 33).
             Write(operation.Instance, value, state);
             if (inputs.Length > 1) RecordKeys(operation.Instance, inputs[0].Value);
+        }
+        else if (operation.Instance != null && value.Any && _ctx.Propagators.Match(property, Access.Set).Length > 0)
+        {
+            // A `property-set:` propagator (ruling R-E40, a cache entry's Value): the value is written into the receiver.
+            Write(operation.Instance, value, state);
         }
     }
 
@@ -1870,7 +1915,12 @@ internal sealed partial class MethodAnalyzer
 
         KeyedCall(operation, method, instance, inputs, state);
         if (IsUpdateModel(method)) UpdateModel(operation, method, inputs, state);
+        var uncleaned = result;
         result = result.CleanedFor(_ctx.Sinks.Sanitizes(method, Access.Call));
+        // `keep-members:` (R-E37 refined, fix round 2 RR-I2): the result keeps what the call was given as a whole; its kept
+        // properties are that exactly, its other properties the cleaned value. A read that lost the exact members (the
+        // result passed to a method, kept in a field) reads the whole value: an over-report, never a miss.
+        if (uncleaned.Any && _ctx.Sinks.KeptMembers(method) is { Count: > 0 } kept) result = WithKeptMembers(result, uncleaned, method.ReturnType, kept);
         if (result.Any)
         {
             result = result.CleanedFor(_ctx.Sinks.SanitizesByName(method));
@@ -1879,6 +1929,21 @@ internal sealed partial class MethodAnalyzer
             result = result.CleanedFor(_ctx.Sinks.SanitizesOnReceiver(method, receiverOperation?.Type));
         }
         return result.WithTaintOf(ownSource);
+    }
+
+    /// The uncleaned value `raw`, with every instance property (not an indexer) of `type` and its interfaces known exactly:
+    /// the named ones as `raw`, the others as the `cleaned` value.
+    private static TaintValue WithKeptMembers(TaintValue cleaned, TaintValue raw, ITypeSymbol type, IReadOnlyCollection<string> names)
+    {
+        var builder = ImmutableDictionary.CreateBuilder<ISymbol, TaintValue>(SymbolEqualityComparer.Default);
+        if (raw.Members is { IsAll: false } known) builder.AddRange(known.Values);
+        var exactRaw = raw.WithoutIdentity();
+        var exactClean = cleaned.WithoutIdentity();
+        foreach (var t in new[] { type }.Concat(type.AllInterfaces))
+            foreach (var member in t.GetMembers())
+                if (member is IPropertySymbol { IsStatic: false, IsIndexer: false })
+                    builder[member.OriginalDefinition] = names.Contains(member.Name) ? exactRaw : exactClean;
+        return builder.Count == 0 ? cleaned : raw with { Members = MemberMap.Of(builder.ToImmutable()) };
     }
 
     /// A lookup in an allow-list table: GetValueOrDefault gives one of its constants or the default value given (the
@@ -2367,6 +2432,8 @@ internal sealed partial class MethodAnalyzer
                     from = from.Join(i.Value);
             }
         }
+        // `drop-key-only:` (ruling R-E39, the deserializers): what reached the inputs only through a lookup key does not pass.
+        if (p.DropKeyOnly) from = from.WithoutKeyDerived();
         // A lookup key (`key:`) reaches a `return` or `out` value only when that value can carry an injection by itself
         // (ruling R-E18): an object found by a request key is not request data.
         var key = TaintValue.Clean;
@@ -2377,7 +2444,8 @@ internal sealed partial class MethodAnalyzer
         var through = $"passed through {_ctx.Name(method)}";
         from = from.Any ? from.Step(site, through) : from;
         // What only the key gives the element found is a medium step (R-9, R-E29); the collection's own data stays high.
-        var byKey = key.Any ? key.Step(site, $"looked up by key in {_ctx.Name(method)}", StepKind.KeyLookup) : TaintValue.Clean;
+        // ... marked as reaching the element only through the key (R-E39), which a deserializer does not pass on.
+        var byKey = key.Any ? key.Step(site, $"looked up by key in {_ctx.Name(method)}", StepKind.KeyLookup).KeyDerivedMark() : TaintValue.Clean;
         var keyed = key.Any ? from.Join(byKey) : TaintValue.Clean;
         var keyedLater = key.Any ? from.Join(byKey.ViaKey()) : TaintValue.Clean;
         // An element typed by a type parameter may or may not carry: the key's labels pass marked (Label.ViaKey, R-E23).

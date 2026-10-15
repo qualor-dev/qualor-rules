@@ -177,6 +177,12 @@ public sealed record RuleModel(
     /// derives from it).
     public IReadOnlyList<(MemberPattern Member, string ReceiverType)> ReceiverSanitizers { get; init; } = Array.Empty<(MemberPattern, string)>();
 
+    /// Method sanitizers with `keep-members:` (ruling R-E37 refined, fix round 2): the result keeps what the call was given
+    /// as a whole; its properties are known exactly, these as that value and the others as the cleaned value
+    /// (PhysicalFileProvider.GetFileInfo: PhysicalPath stays under the root, but a not-found file's Name is the path as
+    /// given). A read that lost the exact members reads the whole value.
+    public IReadOnlyList<(MemberPattern Member, IReadOnlyList<string> Kept)> KeepingSanitizers { get; init; } = Array.Empty<(MemberPattern, IReadOnlyList<string>)>();
+
     /// Sanitizers by simple names (`by-name: Type.Method`): a method of that name on a type of that simple name, in any
     /// namespace.
     public IReadOnlyList<(string Type, string Method)> NamedSanitizers { get; init; } = Array.Empty<(string, string)>();
@@ -235,8 +241,24 @@ public sealed record RazorPageSources(IReadOnlyList<string> Bases, IReadOnlyList
 /// of ClassAttributes.
 public sealed record BoundPropertySources(IReadOnlyList<string> PropertyAttributes, IReadOnlyList<string> ClassAttributes);
 
-/// Minimal APIs: the parameters of SourceTypes (also Nullable of them) of a handler given to one of MapMethods.
-public sealed record MinimalApiSources(IReadOnlyList<MemberPattern> MapMethods, IReadOnlyList<string> SourceTypes);
+/// Minimal APIs: the parameters of SourceTypes (also Nullable of them) of a handler given to one of MapMethods; with
+/// Body, also a handler's complex-type parameter that binds from the request body.
+public sealed record MinimalApiSources(IReadOnlyList<MemberPattern> MapMethods, IReadOnlyList<string> SourceTypes)
+{
+    /// sources.yml (4) `body:` (Task 34); null: no parameter binds from the body without [FromBody].
+    public MinimalApiBody? Body { get; init; }
+}
+
+/// Minimal API body binding (sources.yml (4) `body:`, models/README.md): a parameter with no binding attribute, of a
+/// handler mapped by one of MapMethods (by name), or by VerbsMethod with an HTTP method outside NoBodyVerbs (VerbFields:
+/// the type whose static fields name the HTTP methods), is the body unless it is one of SpecialTypes, has a static
+/// BindAsync or TryParse, is a never-source type, or is a DI service: a type a call on one of Registrars (or a
+/// RegistrationTypes member) names, or one derived from ServiceBases. A library type is the body only when it is an
+/// array, one of the parameter types' collections or LibraryBodyTypes (or derived from one).
+public sealed record MinimalApiBody(
+    IReadOnlyList<string> MapMethods, string VerbsMethod, IReadOnlyList<string> NoBodyVerbs, string VerbFields,
+    IReadOnlyList<string> SpecialTypes, IReadOnlyList<string> Registrars, IReadOnlyList<string> RegistrationTypes,
+    IReadOnlyList<string> ServiceBases, IReadOnlyList<string> LibraryBodyTypes);
 
 /// The parameter and property types that are never sources (in controllers, Razor Pages handlers, bound properties and
 /// attribute-bound parameters): Scalars (also Nullable), arrays and ScalarCollections of them unless the element is
@@ -285,6 +307,14 @@ public sealed record PropagatorModel(MemberPattern Member, IReadOnlyList<string>
     /// `param-types:` (Task 29): the propagator applies only to the overloads whose parameters at its `from` ordinals
     /// have one of these types (XmlDocument.Load of a Stream holds its data; Load of a file name does not).
     public IReadOnlyList<string> ParamTypes { get; init; } = Array.Empty<string>();
+
+    /// `drop-key-only: true` (ruling R-E39): what reached the propagator's inputs only through a lookup key (R-E18, R-E23)
+    /// does not pass to its outputs (the deserializers: JSON text found by a request key makes no request-data object).
+    public bool DropKeyOnly { get; init; }
+
+    /// `entry: true` (ruling R-E40, IMemoryCache.CreateEntry): the call gives an entry of its receiver; a write into that
+    /// entry (a local the call initialises, or the call itself: `entry.Value = v`) is a write into the receiver.
+    public bool Entry { get; init; }
 }
 
 /// Every model of models/csharp. UnmodelledExternal is the policy for external members no propagator names.
