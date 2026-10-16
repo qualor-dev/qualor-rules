@@ -98,15 +98,29 @@ the tarball holds a licence text for every third-party DLL (`dotnet/engine/licen
 **Which SDK decides the bytes.** The engine's DLLs depend on the SDK that compiles them. `engine/dotnet/global.json`
 pins 8.0.425 with `latestMajor`, so the host (SDK 10) builds too, but its Qualor DLLs differ from CI's, which installs
 exactly 8.0.425. So the host double build above is only a smoke test (it proves host determinism, nothing more), and
-the host sha256 is never the pin. The local reproducibility check builds twice with the pinned SDK on Linux, in the
-`qualor/scanner-dotnet` image (it has 8.0.425 next to 10; the command makes the pin exact) and compares:
+the host sha256 is never the pin.
+
+Add a release entry at the top of `LOG.md` (version, the host smoke sha256, rule count by kind, the ids added
+or changed since the previous release, the OpenGrep version, the `MEASUREMENTS.md` entry it was
+measured in with its Benchmark headline), then `npm run check` and
+`git commit -s -m "docs: log the qualor-rules $V release" -- LOG.md`. This commit is the one the maintainer tags.
+
+**The expected pin: the pinned SDK on Linux, from a git clone of that commit.** The engine DLLs embed the commit
+they are built from in their InformationalVersion (`+<sha>`), so the bytes depend on the commit, not only on the
+files: a copy of the tree without `.git` (or a build of another commit) gives another sha256 (2026.10.5: a `.git`-less
+build gave `d78fbda0…`, CI and a git-clone build of the tagged commit `cf99237b…`). So the check clones the commit that
+is tagged, the LOG commit above, from this repository's `.git` (mounted read-only; from a worktree too), and builds it
+twice with the pinned SDK in the `qualor/scanner-dotnet` image (it has 8.0.425 next to 10; the command makes the pin
+exact), as CI does from its checkout of the tag:
 
 ```sh
+SHA=$(git rev-parse HEAD)                                              # the LOG commit, which the maintainer tags
 SDK=$(node -p "require('./engine/dotnet/global.json').sdk.version")   # the pinned SDK
-MSYS_NO_PATHCONV=1 docker run --rm --name qr-release -e HOME=/tmp -e SDK="$SDK" -v "$(cygpath -w "$PWD")":/src:ro \
-  --entrypoint sh qualor/scanner-dotnet:0.7.1 -c 'mkdir /tmp/r && cd /src \
-    && tar --exclude=./node_modules --exclude=./.tmp --exclude=./.git --exclude=./dist --exclude=bin --exclude=obj --exclude=./engine/dotnet/publish -cf - . | tar -C /tmp/r -xf - \
-    && cd /tmp/r && sed -i "s/latestMajor/disable/" engine/dotnet/global.json \
+G=$(cygpath -w "$(git rev-parse --path-format=absolute --git-common-dir)")   # this repository's .git
+MSYS_NO_PATHCONV=1 docker run --rm --name qr-release -e HOME=/tmp -e SDK="$SDK" -e SHA="$SHA" \
+  -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' -v "$G":/g:ro \
+  --entrypoint sh qualor/scanner-dotnet:0.7.1 -c 'git clone -q --no-checkout /g /tmp/r && cd /tmp/r && git checkout -q "$SHA" \
+    && sed -i "s/latestMajor/disable/" engine/dotnet/global.json \
     && test "$(cd engine/dotnet && dotnet --version)" = "$SDK" \
     && npm ci --ignore-scripts --no-audit --no-fund >/dev/null 2>&1 \
     && npm run release && cp dist/qualor-rules-*.tar.gz /tmp/first.tgz \
@@ -114,22 +128,19 @@ MSYS_NO_PATHCONV=1 docker run --rm --name qr-release -e HOME=/tmp -e SDK="$SDK" 
 ```
 
 The image must have that SDK (`qualor/scanner-dotnet:0.7.1` has 8.0.425 next to 10); when
-`global.json` moves to another SDK, use an image that has it.
+`global.json` moves to another SDK, use an image that has it. Any commit after the build (a fix to the LOG entry,
+say) changes the expected pin: build again from the new HEAD.
 
 The sha256 to pin in qualor-cc is always the one of the tag's CI release build (the release job installs exactly the
 pinned SDK, builds twice and compares), so the tag is published first (step 4) and the pin and the tarball are taken
-from the GitHub release. The Linux sha256 above should equal it; the host's does not have to, and the host tarball is
-never copied into qualor-cc.
-
-Add a release entry at the top of `LOG.md` (version, SHA-256, rule count by kind, the ids added
-or changed since the previous release, the OpenGrep version, the `MEASUREMENTS.md` entry it was
-measured in with its Benchmark headline), then `npm run check` and
-`git commit -s -m "docs: log the qualor-rules $V release" -- LOG.md`.
+from the GitHub release. The Linux git-clone sha256 above is the **expected pin**: it must equal CI's. It cannot be in
+the LOG entry (that commit is part of what it hashes), so it goes into the step 4 report. The host's sha256 does not
+have to equal it, and the host tarball is never copied into qualor-cc.
 
 ## 4. Publish (the maintainer), then fetch the release
 
-Stop and report: the version, the host smoke sha256, the Linux pinned-SDK sha256 and the LOG
-entry. The maintainer pushes `main` and creates the tag (`git push origin main`, `git tag v<V>`,
+Stop and report: the version, the commit to tag, the host smoke sha256, the expected pin (the
+Linux pinned-SDK sha256 of a git clone of that commit) and the LOG entry. The maintainer pushes `main` and creates the tag (`git push origin main`, `git tag v<V>`,
 `git push origin v<V>`); CI's release job builds twice with the pinned SDK and publishes the
 GitHub release. Once it is published, fetch its tarball and checksum (read-only):
 
@@ -138,11 +149,12 @@ V=<version>; D=.tmp/release-$V; mkdir -p "$D"
 curl -fsSL -o "$D/qualor-rules-$V.tar.gz" "https://github.com/qualor-dev/qualor-rules/releases/download/v$V/qualor-rules-$V.tar.gz"
 curl -fsSL -o "$D/qualor-rules-$V.tar.gz.sha256" "https://github.com/qualor-dev/qualor-rules/releases/download/v$V/qualor-rules-$V.tar.gz.sha256"
 (cd "$D" && sha256sum -c "qualor-rules-$V.tar.gz.sha256")              # OK
-cat "$D/qualor-rules-$V.tar.gz.sha256"                                  # the pin; it should equal step 3's Linux sha256
+cat "$D/qualor-rules-$V.tar.gz.sha256"                                  # the pin; it must equal step 3's expected pin
 ```
 
-A difference from the Linux build is a reproducibility question for the maintainer, not a reason
-to pin another sha256.
+A difference from the expected pin is a reproducibility question for the maintainer, not a reason
+to pin another sha256 (first check that the tag names the commit the Linux build cloned:
+`git rev-parse "v$V^{commit}"`).
 
 ## 5. Pin it in qualor-cc (new worktree)
 
@@ -262,7 +274,7 @@ Report to the maintainer and wait:
 
 ```text
 qualor-rules <V>: <n> rules (<i> issues, <h> hotspots; <k> new, <c> changed since <previous>), sha256 <sha>, OpenGrep <x>.
-Reproducible: host twice (smoke) and the SDK of engine/dotnet/global.json on Linux twice, identical; pin = the GitHub release's sha256 (equal to the Linux build: yes | no).
+Reproducible: host twice (smoke) and the SDK of engine/dotnet/global.json on Linux twice from a git clone of the tagged commit, identical; pin = the GitHub release's sha256 (equal to the expected pin: yes | no).
 Measured: MEASUREMENTS.md <date> (rules <sha>): Benchmark <covered categories TPR/FPR>; §8.4 <met | not met: ...>.
 qualor-cc: branch rules-pack-<V> in <W>, commit <sha>; images qualor/scanner:rules-<V>, qualor-analyzers:rules-<V>, qualor/scanner-dotnet:rules-<V>.
 Texts: guide section, README lines, Docker Hub, CHANGELOG updated.

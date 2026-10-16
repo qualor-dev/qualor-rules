@@ -24,6 +24,14 @@ Entry format:
   branches left behind.
 ```
 
+## 2026-10-16: after the 2026.10.5 release (setup)
+
+- **Request:** the post-release follow-ups once Qualor 0.9.0 and pack 2026.10.5 were published (the C# engine plan's release hand-over, "Post-release follow-up").
+- **Done:** `tools/scanner.mjs` `PRODUCT_EXCLUDES` copied again from qualor-cc's `BUILTIN_EXCLUDES` at v0.9.0 (`'**/*.min.mjs'`, `'**/*.min.cjs'` after `'**/*.min.css'`, qualor-cc 3a86a4ca); the two lists are equal (35 entries, `builtinExcludesOf` on v0.9.0's `packages/shared/src/config/schema.ts`), so the probe's drift check passes once its qualor-cc clone has 0.9.0. The `release-pack` skill's step 3 builds the expected pin from a git clone of the tagged commit.
+- **Blocked:** none.
+- **Backlog:** js.xss#minified-bundle-cost: *.min.mjs and *.min.cjs no longer cost (Qualor 0.9.0 and the probe leave them out); unminified vendored copies still do.
+- **Notes:** the 2026.10.5 entry's expected pin `d78fbda0…6502` is not the published sha256: CI's release build is `cf99237b5fbd68eb9b1342fcad3a6e30807621a19def2d6c3efdadec05426fe3`, and qualor-cc pins that. Only `Qualor.Taint.dll`, `Qualor.Taint.Cli.dll` and the manifest's hashes of them differed: the engine DLLs embed the commit in their InformationalVersion (`+<sha>`), CI builds from a checkout of the tag, and the skill's Linux build copied the tree without `.git`. A build from a git clone of b6677af with SDK 8.0.425 (`qualor/scanner-dotnet:0.7.1`, twice, identical) gives `cf99237b…` exactly, so the pack is reproducible. The skill now clones the commit from the repository's `.git` (mounted read-only) and builds after the LOG commit, which is the tagged one; the expected pin goes into the step 4 report, since the LOG commit is part of what it hashes. Gates: `npm run check`, `npm run test:docker` with `qualor/scanner:0.9.0`.
+
 ## 2026-10-15: release 2026.10.5 (`/release-pack`)
 
 - **Request:** the maintainer approved the joint release (the C# rules and the Roslyn taint engine, with Qualor 0.9.0), 2026-10-15; step A of the engine plan's release hand-over.
