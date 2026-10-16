@@ -54,6 +54,8 @@ export const PRODUCT_EXCLUDES = Object.freeze([
   '**/target/**',
   '**/*.min.js',
   '**/*.min.css',
+  '**/*.min.mjs',
+  '**/*.min.cjs',
   '**/vendor/**',
   '.qualor/**',
   '**/obj/**',
