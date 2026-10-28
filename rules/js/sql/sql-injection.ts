@@ -5,6 +5,9 @@ import { headers } from 'next/headers';
 import express, { Request, Response } from 'express';
 import { Pool } from 'pg';
 import { DataSource } from 'typeorm';
+import { PrismaClient } from '@prisma/client';
+import knexFactory from 'knex';
+import { db as shared } from './db';
 
 const app = express();
 const pool = new Pool();
@@ -155,12 +158,7 @@ export async function preview({ url }: NextRequest) {
   return pool.query("SELECT * FROM previews WHERE url = '" + url + "'");
 }
 
-export default app;
-
 // TypeScript type arguments on the call.
-import { PrismaClient } from '@prisma/client';
-import knexFactory from 'knex';
-import { db as shared } from './db';
 const prismaClient = new PrismaClient();
 const kx = knexFactory({ client: 'pg' });
 app.get('/typed', async (req: Request, res: Response) => {
@@ -182,3 +180,5 @@ app.get('/typed', async (req: Request, res: Response) => {
   const t8 = await pool.query<Row>({ text: `SELECT * FROM t WHERE s = '${req.query.s}'` });
   res.json({ t1, t2, t3, t4, t5, t6, t7, t8 });
 });
+
+export default app;
