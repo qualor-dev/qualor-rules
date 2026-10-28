@@ -37,6 +37,9 @@ rules:
         - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Destructuring
       since: 2026.10.1
     # Known limits (each has a `todo` line in the test file):
+    # - OpenGrep 1.30.0 reads an awaited call with type arguments (`await x.f<T>(a)`) as
+    #   `(await x.f)(a)`; the sinks list that form too. A negated call with type arguments
+    #   (`!f<T>(a)`) is read wrongly as well and stays a limit.
     # - Operator injection is reported for the JSON body and the query string, which Express 4's
     #   extended (qs) parser turns into objects; Express 5's default simple parser gives strings,
     #   but its query values are reported too.
@@ -501,10 +504,14 @@ rules:
           - pattern-either:
               # MongoDB driver: db.collection(name), in place or assigned in this file.
               - patterns:
-                  - pattern-inside: $C.$OP(...)
+                  - pattern-either:
+                      - pattern-inside: $C.$OP(...)
+                      - pattern-inside: (await $C.$OP)(...)
                   - metavariable-pattern:
                       metavariable: $C
-                      pattern: $DB.collection(...)
+                      pattern-either:
+                        - pattern: $DB.collection(...)
+                        - pattern: (await $DB.collection)(...)
               - pattern-inside: |
                   $C = $DB.collection(...)
                   ...
@@ -544,7 +551,9 @@ rules:
               - patterns:
                   - pattern-either:
                       - patterns:
-                          - pattern: $C.$OP($F, ...)
+                          - pattern-either:
+                              - pattern: $C.$OP($F, ...)
+                              - pattern: (await $C.$OP)($F, ...)
                           - metavariable-regex:
                               metavariable: $OP
                               regex: ^(find|findOne|findOneAndUpdate|findOneAndDelete|findOneAndReplace|findOneAndRemove|update|updateOne|updateMany|deleteOne|deleteMany|remove|replaceOne|countDocuments|count|exists|where)$
@@ -560,6 +569,8 @@ rules:
                           - pattern-either:
                               - pattern: '$C.$OP({..., $K: $F, ...}, ...)'
                               - pattern: '$C.$OP({..., $LOGIC: [..., {..., $K: $F, ...}, ...], ...}, ...)'
+                              - pattern: '(await $C.$OP)({..., $K: $F, ...}, ...)'
+                              - pattern: '(await $C.$OP)({..., $LOGIC: [..., {..., $K: $F, ...}, ...], ...}, ...)'
                           - metavariable-regex:
                               metavariable: $OP
                               regex: ^(find|findOne|findOneAndUpdate|findOneAndDelete|findOneAndReplace|findOneAndRemove|update|updateOne|updateMany|deleteOne|deleteMany|remove|replaceOne|countDocuments|count|exists|where)$

@@ -18,6 +18,23 @@ app.post('/posts/claim', async (req: Request, res: Response) => {
   res.json(post);
 });
 
+// TypeScript type arguments on the call.
+app.post('/typed', async (req: Request, res: Response) => {
+  // ruleid: js.nosql-injection
+  const u1 = await posts.findOne<Row>({ author: req.body.author });
+  // ruleid: js.nosql-injection
+  const u2 = await posts.find<Row>(req.body.filter).toArray();
+  // ruleid: js.nosql-injection
+  const u3 = await client.db('blog').collection<Row>('posts').findOne(req.body.filter);
+  // ruleid: js.nosql-injection
+  const u4 = await client.db('blog').collection('posts').findOne<Row>({ author: req.body.author });
+  // ok: js.nosql-injection
+  const u5 = await posts.findOne<Row>({ author: String(req.body.author) });
+  // ruleid: js.nosql-injection
+  const u6 = await client.db('blog').collection('posts').findOne({ author: req.body.author });
+  res.json({ u1, u2, u3, u4, u5, u6 });
+});
+
 // Express 5 parses query strings with the simple parser by default: its values are strings or
 // arrays, which cannot carry operators. The rule does not know the parser and reports them.
 app.set('query parser', 'simple');
@@ -78,3 +95,4 @@ app.post('/posts/mine', async (req: Request, res: Response) => {
 });
 
 export default app;
+

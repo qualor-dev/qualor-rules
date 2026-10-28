@@ -36,6 +36,9 @@ rules:
         - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Operators/Destructuring
       since: 2026.10.0
     # Known limits (each has a `todo` line in the test file):
+    # - OpenGrep 1.30.0 reads an awaited call with type arguments (`await x.f<T>(a)`) as
+    #   `(await x.f)(a)`; the sinks list that form too. A negated call with type arguments
+    #   (`!f<T>(a)`) is read wrongly as well and stays a limit.
     # - query()/execute() on a connection made in another module (`require('./db')`), given query
     #   text that does not start with an SQL string literal, is not followed. A method named
     #   query()/execute() is a sink only on a connection made in this file (pg, mysql/mysql2,
@@ -372,7 +375,10 @@ rules:
           - pattern-either:
               - pattern: $DB.query($SQL, ...)
               - pattern: $DB.execute($SQL, ...)
+              - pattern: (await $DB.query)($SQL, ...)
+              - pattern: (await $DB.execute)($SQL, ...)
           - pattern-not: $DB.$M({...}, ...)
+          - pattern-not: (await $DB.$M)({...}, ...)
           - focus-metavariable: $SQL
       # query()/execute() on any receiver when the query text is visibly SQL: a string or
       # template literal that starts with an SQL keyword, in place or assigned to the variable.
@@ -380,6 +386,8 @@ rules:
           - pattern-either:
               - pattern: $X.query($SQL, ...)
               - pattern: $X.execute($SQL, ...)
+              - pattern: (await $X.query)($SQL, ...)
+              - pattern: (await $X.execute)($SQL, ...)
           - metavariable-regex:
               metavariable: $SQL
               regex: (?i)^["'`]\s*\(?\s*(select|insert|update|delete|replace|merge|upsert|with|create|alter|drop|truncate|pragma|exec|execute|call|explain)\b
@@ -394,6 +402,8 @@ rules:
           - pattern-either:
               - pattern: $X.query($SQL, ...)
               - pattern: $X.execute($SQL, ...)
+              - pattern: (await $X.query)($SQL, ...)
+              - pattern: (await $X.execute)($SQL, ...)
           - focus-metavariable: $SQL
       # The query-config objects of node-postgres (`text`) and mysql2 (`sql`).
       - patterns:
@@ -401,11 +411,17 @@ rules:
               - pattern: '$X.query({text: $SQL, ...}, ...)'
               - pattern: '$X.query({sql: $SQL, ...}, ...)'
               - pattern: '$X.execute({sql: $SQL, ...}, ...)'
+              - pattern: '(await $X.query)({text: $SQL, ...}, ...)'
+              - pattern: '(await $X.query)({sql: $SQL, ...}, ...)'
+              - pattern: '(await $X.execute)({sql: $SQL, ...}, ...)'
           - focus-metavariable: $SQL
       # Knex: raw SQL text; the query builder's other methods bind their values.
       - patterns:
-          - pattern: $K.raw($SQL, ...)
+          - pattern-either:
+              - pattern: $K.raw($SQL, ...)
+              - pattern: (await $K.raw)($SQL, ...)
           - pattern-not: $K.raw({...}, ...)
+          - pattern-not: (await $K.raw)({...}, ...)
           - focus-metavariable: $SQL
       - patterns:
           - pattern: $K.$RAW($SQL, ...)
@@ -418,6 +434,8 @@ rules:
           - pattern-either:
               - pattern: $P.$queryRawUnsafe($SQL, ...)
               - pattern: $P.$executeRawUnsafe($SQL, ...)
+              - pattern: (await $P.$queryRawUnsafe)($SQL, ...)
+              - pattern: (await $P.$executeRawUnsafe)($SQL, ...)
           - focus-metavariable: $SQL
       # Sequelize: literal() puts its text into the query unescaped (where, order, attributes).
       - patterns:

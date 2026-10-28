@@ -156,3 +156,29 @@ export async function preview({ url }: NextRequest) {
 }
 
 export default app;
+
+// TypeScript type arguments on the call.
+import { PrismaClient } from '@prisma/client';
+import knexFactory from 'knex';
+import { db as shared } from './db';
+const prismaClient = new PrismaClient();
+const kx = knexFactory({ client: 'pg' });
+app.get('/typed', async (req: Request, res: Response) => {
+  // ruleid: js.sql-injection
+  const t1 = await shared.query<{ n: string }>(`SELECT count(*) AS n FROM invoices WHERE status = '${req.query.status}'`);
+  // ruleid: js.sql-injection
+  const t2 = await pool.query<Row>("SELECT * FROM t WHERE id = '" + req.params.id + "'");
+  // ruleid: js.sql-injection
+  const t3 = await prismaClient.$queryRawUnsafe<Row[]>(`SELECT * FROM t WHERE s = '${req.query.s}'`);
+  // ruleid: js.sql-injection
+  const t4 = await kx.raw<Row>(`SELECT * FROM t WHERE s = '${req.query.s}'`);
+  // ruleid: js.sql-injection
+  const t5 = (await pool.query<Row>(`SELECT * FROM t WHERE s = '${req.query.s}'`)).rows;
+  // ok: js.sql-injection
+  const t6 = await pool.query<Row>('SELECT * FROM t WHERE s = $1', [req.query.s]);
+  // ok: js.sql-injection
+  const t7 = await pool.query<Row>({ text: 'SELECT * FROM t WHERE s = $1', values: [req.query.s] });
+  // ruleid: js.sql-injection
+  const t8 = await pool.query<Row>({ text: `SELECT * FROM t WHERE s = '${req.query.s}'` });
+  res.json({ t1, t2, t3, t4, t5, t6, t7, t8 });
+});
