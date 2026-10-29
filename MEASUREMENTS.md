@@ -22,6 +22,99 @@ current rules).
   lists is a follow-up.
 - Entries are data, not code: no line of a measured project is quoted here.
 
+## 2026-10-29 rules 1299ab4de747a814136fb65bced731f0a3d7d994 (js, python, java, go, csharp)
+
+OpenGrep 1.30.0 with --taint-intrafile; 5 rule directories; results in `.tmp/probe/2026-10-29T07-36-03-229Z`.
+
+### juice-shop (js, 1618a611b173): 22 finding(s), 652 files, 17 error(s)
+
+- js.code-injection: 1
+- js.insecure-cookie: 2
+- js.nosql-injection: 2
+- js.open-redirect: 1
+- js.path-traversal: 9
+- js.sql-injection: 6
+- js.ssrf: 1
+
+### nodegoat (js, c5cb68a7084e): 5 finding(s), 51 files, 1 error(s)
+
+- js.code-injection: 3
+- js.insecure-cookie: 1
+- js.open-redirect: 1
+
+### pygoat (python, 19d17cc88748): 12 finding(s), 85 files, 0 error(s)
+
+- python.code-injection: 2
+- python.command-injection: 2
+- python.path-traversal: 1
+- python.sql-injection: 2
+- python.ssrf: 1
+- python.unsafe-deserialization: 3
+- python.xxe: 1
+
+### owasp-benchmark (java, 8b67a88d73b2): 1154 finding(s), 2772 files, 0 error(s)
+
+| Category | CWE | TP | FN | FP | TN | TPR | FPR | Score | FindSecBugs FPR |
+|---|---|---|---|---|---|---|---|---|---|
+| cmdi | 78 | 115 | 11 | 30 | 95 | 91.3% | 24.0% | 67.3% | 88.8% |
+| crypto | 327 | 97 | 33 | 0 | 116 | 74.6% | 0.0% | 74.6% | 0.0% |
+| hash | 328 | no rule |  |  |  |  |  |  | 0.0% |
+| ldapi | 90 | 24 | 3 | 7 | 25 | 88.9% | 21.9% | 67.0% | 84.4% |
+| pathtraver | 22 | 118 | 15 | 44 | 91 | 88.7% | 32.6% | 56.1% | 95.6% |
+| securecookie | 614 | no rule |  |  |  |  |  |  | 0.0% |
+| sqli | 89 | 255 | 17 | 60 | 172 | 93.8% | 25.9% | 67.9% | 90.5% |
+| trustbound | 501 | no rule |  |  |  |  |  |  | 81.4% |
+| weakrand | 330 | no rule |  |  |  |  |  |  | 0.0% |
+| xpathi | 643 | 14 | 1 | 3 | 17 | 93.3% | 15.0% | 78.3% | 95.0% |
+| xss | 79 | 220 | 26 | 30 | 179 | 89.4% | 14.4% | 75.1% | 52.2% |
+| **mean of covered categories** | | | | | | 88.6% | 19.1% | 69.5% | |
+
+§8.4 target (TPR ≥ 60 %, FPR ≤ 50 % of FindSecBugs' FPR) for the covered injection categories: cmdi met; ldapi met; pathtraver met; sqli met; xpathi met; xss met.
+
+- java.command-injection: 169
+- java.ldap-injection: 31
+- java.path-traversal: 162
+- java.sql-injection: 315
+- java.tls-verification-disabled: 1
+- java.weak-cipher: 97
+- java.xpath-injection: 17
+- java.xss: 361
+- java.xxe: 1
+
+### govwa (go, 4058f79f31ee): 9 finding(s), 24 files, 0 error(s)
+
+- go.insecure-cookie: 1
+- go.weak-hash: 3
+- go.xss: 5
+
+### aspgoat (csharp, db3153f5dae0): 8 finding(s), 34 files, 0 error(s)
+
+- csharp.open-redirect: 2
+- csharp.path-traversal: 2
+- csharp.sql-injection: 1
+- csharp.ssrf: 1
+- csharp.unsafe-deserialization: 1
+- csharp.xxe: 1
+
+### murayama-vulnerable-api (csharp, 465adefe3742): 1 finding(s), 57 files, 0 error(s)
+
+- csharp.ssrf: 1
+
+### vulnerablelightapp (csharp, 8998b55caab6): 7 finding(s), 7 files, 0 error(s)
+
+- csharp.path-traversal: 2
+- csharp.ssrf: 1
+- csharp.unsafe-deserialization: 1
+- csharp.xss: 1
+- csharp.xxe: 2
+
+### dvcsharp-api (csharp, 76c1de3c9d8d): 2 finding(s), 24 files, 0 error(s)
+
+- csharp.sql-injection: 1
+- csharp.ssrf: 1
+
+### vulnerablecoreapp (csharp, 1ae87f8648c7): 0 finding(s), 23 files, 0 error(s)
+
 ## 2026-10-15 rules 6718e8e6a017ed9d1c2e91c1614737f4fd02abe2 (js, python, java, go, csharp)
 
 OpenGrep 1.30.0 with --taint-intrafile; 5 rule directories; results in `.tmp/probe/2026-10-15T12-52-20-536Z`.
