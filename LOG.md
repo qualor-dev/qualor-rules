@@ -24,6 +24,14 @@ Entry format:
   branches left behind.
 ```
 
+## 2026-10-29: release 2026.10.6 (`/release-pack`)
+
+- **Request:** the maintainer asked for the Qualor 0.12.1 patch release, whose first item is this pack: TypeScript type arguments hid SQL and NoSQL sinks (`await pool.query<Row>(sql)`), 2026-10-28.
+- **Done:** qualor-rules-2026.10.6.tar.gz, OpenGrep 1.30.0, manifest `taintIntrafile: true`; 69 rules (63 issues, 6 hotspots). Changed since 2026.10.5: `js.sql-injection` and `js.nosql-injection` (2472a78, 1299ab4) also match the awaited call with type arguments, which OpenGrep 1.30.0 reads as `(await x.f)(a)`; no rule added or removed, the C# engine and models unchanged.
+- **SHA-256:** the expected pin is the git-clone build of this commit with SDK 8.0.425 (step 3), reported with the tag; CI's release build is the pin. The host build (SDK 10, Node 24) at 79bd474 is a smoke test only: twice identical, `599ed27b…6b93`.
+- **Measurement:** MEASUREMENTS.md 2026-10-29 (rules 1299ab4, all five languages, --taint-intrafile; identical to the 2026-10-15 entry): OWASP Benchmark TPR / FPR cmdi 91.3 / 24.0, ldapi 88.9 / 21.9, pathtraver 88.7 / 32.6, sqli 93.8 / 25.9, xpathi 93.3 / 15.0, xss 89.4 / 14.4 %; §8.4 met in all six covered categories. The two changed rules, old against new with `--timeout 0` over all 29 sets (the 19 probe projects and the 10 recall sets): identical findings, juice-shop 8, every other set 0, qualor-cc 0. All rules on qualor-cc (89553b2e, main before 0.12.1): 1 finding, `js.path-traversal` in `cli/src/scan/upload-flow.test.ts:560`, a false positive already open on review.qualor.dev with 2026.10.5 and gone from the 0.12.1 code (the test was rewritten; the rule reports 0 on it): backlog row js.path-traversal#spread-field-taint.
+- **Notes:** built from branch `ts-type-arguments` (worktree `qualor-rules-ts-type-arguments`); the maintainer fast-forwards `main` to it, pushes and tags `v2026.10.6`. The full `npm run probe -- rules` and a first `npm run measure` ran on a degraded WSL VM (about 70 % kernel CPU, load 50 to 70, `wsl` failing with Wsl/Service/0x80072747) and are not recorded: OpenGrep's 5 s per-file timeouts dropped findings of unchanged rules (pygoat 12 → 1; djangoproject-com's known python.open-redirect). The 15 probe projects that finished matched the 2026.10.5 entry apart from those timeouts. After a WSL restart the measurement took 13 minutes. The full probe was not repeated: no other rule, clone or OpenGrep version changed, and the A/B above checks the change without timeouts. Gates: `npm run test:docker` with `qualor/scanner:0.12.0` (84 tool tests, test-rules, test-examples 69 pages, prefilter 69 rules), `npm run test:engine` 853/853, `npm run measure -- --check`, `npm run check`.
+
 ## 2026-10-16: after the 2026.10.5 release (setup)
 
 - **Request:** the post-release follow-ups once Qualor 0.9.0 and pack 2026.10.5 were published (the C# engine plan's release hand-over, "Post-release follow-up").
