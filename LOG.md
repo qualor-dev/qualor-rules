@@ -24,6 +24,13 @@ Entry format:
   branches left behind.
 ```
 
+## 2026-10-29: after the 2026.10.6 release (setup)
+
+- **Request:** the maintainer reported main's CI red after the push of the release.
+- **Done:** published: the tag's CI (test and release jobs green, engine tests 853/853) released `qualor-rules-2026.10.6.tar.gz` with sha256 `dccb4cbd894e6352e51f5d7641b7ffac1db230ca7cef9816648cef14b845eaf9`, equal to the expected pin of the git-clone build. Main's run of the same commit, four seconds earlier, failed the engine tests' locked restore: NU1902 (warnings are errors) for MySqlConnector 2.3.7, GHSA-473q-m89c-ghf8, published that morning; the two runners saw the advisory database at different times. MySqlConnector 2.6.1 (test project only, a reference assembly for the fixtures) and fast-uri 3.1.9 (dev, through ajv; four advisories) in b941c8f, as in Dependabot's PRs #1 and #2. Neither package is in the pack, so the release stands.
+- **Blocked:** none.
+- **Notes:** gates at b941c8f: `npm run test:docker` with `qualor/scanner:0.12.0`, the engine tests in `qualor/scanner-dotnet:0.7.1` with SDK 8.0.425 and `-p:RestoreLockedMode=true` 853/853 (the host's Application Control blocks freshly built test DLLs).
+
 ## 2026-10-29: release 2026.10.6 (`/release-pack`)
 
 - **Request:** the maintainer asked for the Qualor 0.12.1 patch release, whose first item is this pack: TypeScript type arguments hid SQL and NoSQL sinks (`await pool.query<Row>(sql)`), 2026-10-28.
